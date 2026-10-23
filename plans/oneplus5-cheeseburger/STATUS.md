@@ -3,16 +3,19 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 最终目标：iPhone10,2 / iOS 16.7.16（20H392）
-- 当前阶段：**B2 — 骨架、ADT 生成器、IPSW 缓存已完成；内核/prelink 待 macOS**
+- 当前阶段：**B3 — 4K 内核入口已执行，卡在 MMU 使能；`PhysicalBase` 修正已编译未上机**
 - 当前 gate：**G1 通过（2026-10-22）**
 - 基线提交：UniXNU `e95b37d`（main）
 - 本地提交：UniXNU `c8a5eeb`（计划）、`18f3020`（package）、`270ea4b`（B1 记录）、`692d70f`（docs 记录）；本轮 B1 收尾见 `git log -- plans/oneplus5-cheeseburger`
 - 远程仓库：
-  - UniXNU `https://github.com/lss717/UniXNU`（`main`）
+  - UniXNU `https://github.com/lss717/UniXNU`（`main`，`8193701`）
   - UEFI fork `https://github.com/lss717/edk2-msm8998`（分支 `unixnu-cheeseburger`）
-  - 设备仓库 `https://github.com/lss717/UniXNU-cheeseburger`（`main`）
+  - 设备仓库 `https://github.com/lss717/UniXNU-cheeseburger`（`main`，`22742e3`）
 - UEFI 分支：`edk2-msm8998` 的 `unixnu-cheeseburger`，提交 `0471194`、`708fa06`、`7f34479`、`91e17a8`、`8ef28f1`、`1ffb934`
-- 最近更新：2026-10-22
+- 最近更新：2026-10-23
+
+> 2026-10-23 起，跨路线的总 handoff 写在 `~/ios-sweet/NOTES.md` 顶部
+> （A 线 shim 已暂停，本文件是 B 线自己的计划/状态记录）。
 
 ## G1 设备实测（2026-10-22）
 
@@ -77,11 +80,21 @@ IPSW 缓存（`unixnu ipsw fetch`，HTTP range，只取需要的成员）：
 
 ## 下一步
 
-1. **内核/prelink**：推送仓库后 dispatch `macos-cheeseburger.yml`；本机没有 `compression_tool`，kernelcache 仍被阻塞。
-2. **跑 macOS workflow**：已 dispatch `macos-cheeseburger.yml`（run `39763872681`），等 kernel + payload 产物。
-3. 备份 `persist`/`modem`/`modemst1`/`modemst2`/`fsg`/`boot`/`recovery` 等：`plans/oneplus5-cheeseburger/tools/backup-cheeseburger.sh`，在 `fastboot boot twrp-*.img` 后运行（TWRP 的 adbd 是 root；只 boot 不 flash）。TWRP 官方镜像最高 `twrp-3.4.0-1-cheeseburger.img`。
-4. 推 `unixnu-cheeseburger` 分支和 `UniXNU-cheeseburger` 仓库到 GitHub（需确认）。
-5. B6 时再实现 `--identity iphone10,2` 的真实 `/product`、`/buttons` 复制。
+1. **上机验证 `boot-physbase.img`**（唯一动作）：
+
+   ```sh
+   fastboot boot /home/ls/UniXNU-cheeseburger/out/cheeseburger/boot/boot-physbase.img
+   ```
+
+   设备需先接入 127 并进入 fastboot（当前 `fastboot devices` 为空）。
+   出现第 4 段色带 → MMU 已过，换 `payload-ci.img` 继续；仍是三段 →
+   查 TTBR/TCR（stage 4 探针 `_set_mmu_ttb`）或用 QEMU 隔离。
+2. 解释 DarwinBoot 日志里的 `owned=0`（ADT 的 `darwinboot-memory-size`
+   解析正确，诊断固件已编译）。
+3. B6 时再实现 `--identity iphone10,2` 的真实 `/product`、`/buttons` 复制。
+
+（1-5 的旧项——推仓库、dispatch workflow、TWRP 备份——已于 2026-10-22
+完成，见下方日志。）
 
 ## 已完成
 
@@ -279,9 +292,10 @@ Linux x86_64 / Ubuntu 24.04：
 
 ## 阻塞
 
-- 等待设备实测 `boot-op5-b1b-safe.img`。
-- 等待设备侧备份、GPT、RAM、UFS 逻辑块大小。
-- 内核/prelink/userdata 需要 macOS 或 GitHub Actions。
+- 设备当前不在 127 上（2026-10-23 `fastboot devices` 为空），所有上机测试
+  都要等设备接回来。
+- MMU 使能未过：`PhysicalBase` 偏移修正已编译，待上机确认。
+- DarwinBoot 的 `owned=0` 未解释。
 
 ## 工作日志
 
@@ -332,6 +346,7 @@ Linux x86_64 / Ubuntu 24.04：
 | 2026-10-22 | B3 | **`VirtualBase` 修正** | DarwinBoot 原先传最低段（`__PRELINK_TEXT`），改为 `__TEXT`；行为从“硬崩进 crashdump”变为“挂住不重启”，MMU 阶段可能已过 |
 | 2026-10-22 | B3 | 诊断补丁存档 | `patches/darwinboot-virtbase-physbase.patch`（诊断打印、强制 2 GiB、VirtBase、PhysicalBase 修正） |
 | 2026-10-22 | B3 | stage 4 探针 / MMU 定位 | stage 2 出现、stage 3 不出现 → 卡在 MMU 使能；`PhysicalBase` 偏移假设，已编译待测（`boot-physbase.img`） |
+| 2026-10-23 | - | 文档统一 + 产物归档 | 总 handoff 移到 `~/ios-sweet/NOTES.md` 顶部（`58792bc`），A 线标记暂停；B3 的 kernel/payload/CI 日志从 `/tmp/opencode` 归档到 `~/UniXNU/.cache/firmware/b3/`（含 `README.md` 哈希表）；未上机 |
 
 ## 更新规则
 
