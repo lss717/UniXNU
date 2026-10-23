@@ -236,7 +236,7 @@ B3 使用 sheng 的 `board.toml` 作为参考：
 任务：
 
 - [ ] 确认机型是 OnePlus 5（cheeseburger）而不是 5T（dumpling）。
-- [ ] 解锁 bootloader；备份 `persist`、`modem`、`efs`、`boot`、`recovery`，有条件整盘备份。
+- [x] TWRP 下备份 `persist`、`modem`、`modemst1/2`、`fsg`、`fsc`、`boot`、`recovery`、`abl`、`xbl`、`tz`、`keymaster` 与 sda–sdf 的 GPT（2026-10-22）。
 - [ ] `fastboot getvar all`，记录分区大小、RAM、slot 信息。
 - [x] userdata 的 `first_lba`/`last_lba`/`lba_bytes` 已从 UEFI 侧实测（不需要 TWRP）：`0x14F40` / `0x1C627FA` / 4096。
 - [ ] 确认 RAM 容量、UFS 逻辑块大小。

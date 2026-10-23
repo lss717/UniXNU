@@ -107,6 +107,34 @@ IPSW 缓存（`unixnu ipsw fetch`，HTTP range，只取需要的成员）：
 - [x] 按键输入沿用镜像里已有的 Qualcomm `ButtonsDxe`（depex 依赖 `SimpleTextIn`），不再新增驱动；b1e 实测通过。
 - [x] 预检工具 `plans/oneplus5-cheeseburger/tools/check-cheeseburger.py`：b1b 全部通过（FD 空闲 4.97 MiB、模块齐全、boot image 无重叠、payload 可读），b1 也通过（3.35 MiB）。
 
+## B0 备份与存储映射（2026-10-22）
+
+TWRP `3.4.0-1`（`fastboot boot`，未 flash）下用 `tools/backup-cheeseburger.sh` dump，校验通过，共 291 MB：
+
+`/home/ls/UniXNU/.cache/firmware/backups/20261022-201247/`（gitignored；请再复制一份到机器外）
+
+| 分区 | 大小 | SHA-256（前 16） |
+| --- | --- | --- |
+| `persist` | 32 MiB | `b19b1417f5d21c4e…` |
+| `modem` | 110 MiB | `fb13b24e44900211…` |
+| `modemst1` | 2 MiB | `eb8d6aec8f5ae567…` |
+| `modemst2` | 2 MiB | `94dde1682d7ec50e…` |
+| `boot` | 64 MiB | `0ffe333d418b0214…` |
+| `recovery` | 64 MiB | `674a762a382529a0…` |
+| `fsg` / `fsc` / `devcfg` / `devinfo` / `abl` / `xbl` / `tz` / `keymaster` | 2–8 MiB | 见 `SHA256SUMS` |
+| GPT 主/备（sda–sdf） | 32 KiB × | 见 `SHA256SUMS` |
+
+UFS LUN / GPT 映射（4096 B 逻辑块）：
+
+| 设备 | 容量 | 内容 |
+| --- | --- | --- |
+| `sda` | 113.5 GiB | `ssd`、`persist`、`cache`、`misc`、`keystore`、`frp`、`oem_*`、`param`、`reserve1/2`、`config`、**`userdata` `0x14F40..0x1C627FA`** |
+| `sdb` | 4 MiB | `xbl` |
+| `sdc` | 4 MiB | `xblbak` |
+| `sdd` | 128 MiB | `reserve`、`cdt`、`ddr` |
+| `sde` | 4 GiB | `rpm`、`tz`、`hyp`、`pmic`、`modem`、`dsp`、`abl`、`boot`、`system`（3 GiB）、`recovery`、`devcfg`、`logdump`… |
+| `sdf` | 1.5 GiB | `modemst1/2`、`fsg`、`fsc`、`vendor`（1 GiB）、`reserve3` |
+
 ## B3 产物（2026-10-22 首次）
 
 macOS run `39769403554`（kernel + payload 全部通过）：
@@ -271,6 +299,7 @@ Linux x86_64 / Ubuntu 24.04：
 | 2026-10-22 | B3 | 移植 panic screen | 设备仓库 `233f283`；`patch-xnu-entry-probe.py` + `xnu-panic-screen.c` + `Font.h`；run `39771381162` |
 | 2026-10-22 | B3 | panic 补丁找不到 `ld.lld` | 工具查找加 Homebrew keg/versioned 回退；本地已对 4K 内核验证补丁成功；`057a378`；run `39772620480` |
 | 2026-10-22 | B3 | **首次 4K 内核上机** | 内核入口执行（早期色条），随后硬件级崩溃；未到控制台；DarwinBoot window 读到 0，待插桩 |
+| 2026-10-22 | B0 | TWRP 备份 + 存储映射 | 291 MB，16 个分区 + GPT；`persist` 在 sda2，`userdata` sda13；`E83DF1D` 修 adb recovery 状态 |
 
 ## 更新规则
 
