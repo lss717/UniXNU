@@ -357,13 +357,3 @@ index 412f9ec..4466a64 100644
  		return EPERM;
  	}
  
-@@ -230,6 +233,9 @@ bindfs_mount(struct mount * mp, __unused vnode_t devvp, user_addr_t user_data, v
- 	sp->f_flags = flags;
- 
- 	xmp->bindm_flags = BINDM_CASEINSENSITIVE; /* default to case insensitive */
-+	if (native_bindfs_boot_mount) {
-+		xmp->bindm_flags |= BINDM_FORCE_ROOT;
-+	}
- 
- 	error = bindfs_vfs_getlowerattr(vnode_mount(lowerrootvp), &vfa, ctx);
- 	if (error == 0) {
