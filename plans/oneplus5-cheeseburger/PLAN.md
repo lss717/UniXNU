@@ -243,7 +243,7 @@ B3 使用 sheng 的 `board.toml` 作为参考：
 - [ ] macOS + Xcode 或 GitHub Actions 可用；Linux 侧安装 Python 3.11+、git、make、dtc、mtools、LLVM/lld。
 - [x] `git submodule update --init --recursive` 初始化 UniXNU 子模块。
 - [x] clone `edk2-msm8998` 到 `/home/ls/edk2-msm8998`（upstream shallow；`uefi-cheeseburger` fork 待建）。
-- [ ] 下载并校验 iPhone10,2 16.7.16 IPSW 和 iPad7,1 17.7.11 IPSW。
+- [x] 取 iPad7,1 17.7.11 的 `DeviceTree` 与 `StaticTrustCache`（range 请求，未下载整个 IPSW）；iPhone10,2 16.7.16 与 `KernelCache` 待 macOS。
 - [ ] 提取并缓存 `KernelCache`、`DeviceTree`、`StaticTrustCache`、`Cryptex1,SystemTrustCache`；放在 `.cache/firmware/`，不提交。
 - [ ] 记录基线提交、工具版本、IPSW 哈希到 `STATUS.md`。
 
@@ -343,7 +343,7 @@ fastboot boot /home/ls/UniXNU/out/cheeseburger/b1b/boot-op5-b1b-safe.img
   - `CONFIG_XNU_SOURCE_MOCKFS=y`
   - `CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"`
   - 暂不打开：UFS、Adreno、PMGR、PAN、MobileDisplay。
-- [ ] 从 `make-sheng-adt.py` 改出 `make-cheeseburger-adt.py`（当前是带常量的占位脚本，需 IPSW DeviceTree）：
+- [x] 从 `make-sheng-adt.py` 改出 `make-cheeseburger-adt.py`（已生成并通过 `check-adt.py`；`--identity iphone10,2` 的真实 D21AP `/product`、`/buttons` 留到 B6）：
   - MSM8998 常量：GICD `0x17a00000`，GICR `0x17b00000`，stride `0x20000`，timebase `19200000`；
   - CPU regs `0,1,2,3,0x100..0x103`；
   - UFS 节点 `qcom,msm8998-ufshc`（首版只用于匹配，地址用驱动常量）；
@@ -354,7 +354,7 @@ fastboot boot /home/ls/UniXNU/out/cheeseburger/b1b/boot-op5-b1b-safe.img
   - 调用 edk2-msm8998 的 `mkbootimg.py`；
   - header v1，`--kernel_offset 0 --ramdisk_offset 0 --tags_offset 0`；
   - 输出 `out/cheeseburger/boot/boot.img` 和 JSON 报告。
-- [x] 写 `scripts/check-cheeseburger.py`：FD/boot image/payload 预检（ADT 项等生成器完成后加）。
+- [x] 写 `scripts/check-cheeseburger.py`（FD/boot image/payload）和 `scripts/check-adt.py`（Apple DT 结构）。
 - [ ] `unixnu defconfig`、`unixnu fetch`、`unixnu build payload`。
 - [ ] 可选：QEMU 里跑一遍 UniXNU/DarwinBoot 快速验证。
 
