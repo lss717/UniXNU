@@ -79,7 +79,7 @@ IPSW 缓存（`unixnu ipsw fetch`，HTTP range，只取需要的成员）：
 
 1. **内核/prelink**：推送仓库后 dispatch `macos-cheeseburger.yml`；本机没有 `compression_tool`，kernelcache 仍被阻塞。
 2. **跑 macOS workflow**：已 dispatch `macos-cheeseburger.yml`（run `39763872681`），等 kernel + payload 产物。
-3. 备份 `persist`/`modem`/`efs`/`boot`/`recovery`（尚未确认完成）。
+3. 备份 `persist`/`modem`/`modemst1`/`modemst2`/`fsg`/`boot`/`recovery` 等：`plans/oneplus5-cheeseburger/tools/backup-cheeseburger.sh`，在 `fastboot boot twrp-*.img` 后运行（TWRP 的 adbd 是 root；只 boot 不 flash）。TWRP 官方镜像最高 `twrp-3.4.0-1-cheeseburger.img`。
 4. 推 `unixnu-cheeseburger` 分支和 `UniXNU-cheeseburger` 仓库到 GitHub（需确认）。
 5. B6 时再实现 `--identity iphone10,2` 的真实 `/product`、`/buttons` 复制。
 
@@ -231,6 +231,7 @@ Linux x86_64 / Ubuntu 24.04：
 | 2026-10-22 | B2 | 推送三个仓库 | UniXNU `main`、UEFI fork `unixnu-cheeseburger`、设备仓库 `main` |
 | 2026-10-22 | B3 | 首次 macOS 构建失败 | `BINDM_FORCE_ROOT` 未定义：`c4af0f0` 删了定义和消费代码，漏删设置 |
 | 2026-10-22 | B3 | 修复 XNU 补丁并重跑 | `7aa5b33`；workflow run `39765227392` |
+| 2026-10-22 | B3 | 第二次失败：GitHub API 403 | `prepare-xnu-source.py` 加 token/重试；`91cf813`；run `39765521269` |
 
 ## 更新规则
 
