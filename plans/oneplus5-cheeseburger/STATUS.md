@@ -3,7 +3,7 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 最终目标：iPhone10,2 / iOS 16.7.16（20H392）
-- 当前阶段：**B3 — 4K 内核入口已执行，卡在 MMU 使能；`PhysicalBase` 修正已编译未上机**
+- 当前阶段：**B3 完成 — MMU、prelink、crypto、DT panic、IOKit 已通过；XNU 进入 BSD/IOKit 初始化，`_IOKitBSDInit` 返回；下一阶段 B5（UFS/root），普通控制台输出仍不可见**
 - 当前 gate：**G1 通过（2026-10-22）**
 - 基线提交：UniXNU `e95b37d`（main）
 - 本地提交：UniXNU `c8a5eeb`（计划）、`18f3020`（package）、`270ea4b`（B1 记录）、`692d70f`（docs 记录）；本轮 B1 收尾见 `git log -- plans/oneplus5-cheeseburger`
@@ -78,20 +78,221 @@ IPSW 缓存（`unixnu ipsw fetch`，HTTP range，只取需要的成员）：
 - 副本在设备仓库 `.cache/firmware/17.7.11/`（不提交）
 - `KernelCache` 是 LZFSE，`unixnu ipsw fetch` 需要 macOS `compression_tool`；在本机用 `pylib` 的 lzfse 解开了 DeviceTree 的 `bvx2` 流做校验，但内核/prelink 仍按计划走 macOS 或 GitHub Actions。
 
+## B3 探针可信度（2026-10-23）
+
+复核 `payload-stage3b.img` 里的 stage 3 cave：它等待 `384,000,000` 个
+`CNTPCT_EL0` tick，19.2 MHz 下是 **20 秒**，然后执行 PSCI `SYSTEM_RESET`。
+STATUS 里“挂几秒再重启”与这个 20 秒不一致，必须先分清那次重启是：
+
+- 约 20 秒后的探针复位 → **stage 3 已执行，MMU 已过**，后面的问题在 C 初始化；
+- 明显早于 20 秒的 crashdump/watchdog → 没到 stage 3；
+- 没有重启 → 也可能是 PSCI reset 本身不可用，不能反推 MMU 失败。
+
+为此新增一个只验证复位路径的对照镜像（**不写 SCTLR**，只画 stage 1 蓝条，
+等待 8 秒后 PSCI 复位）：
+
+| 文件 | SHA-256 |
+| --- | --- |
+| `out/cheeseburger/boot/boot-psci-control.img` | `b674019d7ed09e1e4e597ecbb2d40d02e091d3412c19ec07aa485b5c299e13b0` |
+| `out/cheeseburger/boot/payload-psci-control.img` | `264156038b5795be205292df8714427d0a7cc7a4b2e502f70956081ac9dd2c40` |
+| 修改后的内核 `kernel-psci-control.macho` | `b8a08bb17cbffc194c97a8fdbbb8c2941a6c5d22d853f66ecd27c919b4d6643a` |
+
+生成方式（设备仓库）：
+
+```sh
+python3 scripts/patch-xnu-entry-probe.py kernel.macho --reset-before-mmu --reset-delay 8
+python3 scripts/make-bootimg.py \
+  --payload out/cheeseburger/boot/payload-psci-control.img \
+  --out out/cheeseburger/boot/boot-psci-control.img
+```
+
+判读：
+
+- 约 8 秒后重启 → PSCI reset 可用；stage 3/4 的“无复位”才有诊断意义。
+- 不重启或延迟远超 8 秒 → 先修复位路径，不要把“无复位”当成 MMU 失败证据。
+
+复核工具（设备仓库 `scripts/check-kernel-bases.py`）会从 Mach-O 重新计算
+`physBase`、2 MiB 对齐和复位延时：
+
+```sh
+scripts/check-kernel-bases.py kernel.macho --address 0x1B007C000
+# physBase 0x1b2e04000, 2 MiB offset congruent: yes
+# reset probes: ... 384000000 ticks 20.000 s
+```
+
+## B3 MMU 实测结论（2026-10-23）
+
+**MMU 已过。** 证据不是色带，而是把“复位延时”当成时钟：
+
+| 镜像 | 探针位置 | 延时 | Android 出现 | 反推 kernel_start |
+| --- | --- | ---: | ---: | ---: |
+| `boot-psci-control.img` | MMU 前 | 8 s | 49.56 s | 未测 |
+| `boot-psci-control-30.img` | MMU 前 | 30 s | 71.61 s | 未测 |
+| `boot-psci-control-20.img` | MMU 前 | 20 s | 61.73 s | **+52.90 s** |
+| `boot-physbase.img` | MMU 后 stage 3 | 20 s | 67.99 s | **+53.42 s** |
+
+- 8 s → 30 s 对照：Android 出现时间相差 22.05 s，正好等于延时差 22 s，
+  证明复位由探针控制，不是 watchdog。
+- 20 s pre-MMU 对照与 `boot-physbase.img` 的 kernel_start 只差 **0.52 s**，
+  说明 stage 3 cave 确实在 MMU 使能后执行并按时复位。
+- Android 出现时间（61.73 vs 67.99）受 Android 自身启动速度影响，不能用来判
+  MMU；`kernel_start = 主机时间 - /proc/uptime` 才是可靠指标。
+
+因此：
+
+- `PhysicalBase` / `VirtBase` 修正有效；
+- 4 KiB bootstrap 页表、TCR/TTBR、SCTLR 切换都已通过；
+- 当前卡点移到 **`arm_init` / 第一次 C 初始化**，不是 MMU。
+
+## B3 根因：prelink 段在 bootstrap KVA 映射之外（2026-10-23）
+
+二分链（stage 4 reset-after，10 s 复位；复位=越过该点）：
+
+| 检查点 | 结果 |
+| --- | --- |
+| `_arm_set_kernel_tbi` 返回 | PASS |
+| `_PE_init_platform(FALSE)` 返回 | PASS |
+| `_cpu_bootstrap` 返回 | PASS |
+| `_arm_vm_init` 返回 | **HANG** |
+| `_vm_set_page_size` 返回 | PASS |
+| `_arm_vm_prot_init` 返回 | **HANG** |
+| 无条件调用 #4 `arm_vm_page_granular_RWNX(segPRELINKTEXTB, segSizePRELINKTEXT, ...)` 之前 | PASS |
+| 同一调用返回后 | **HANG** |
+| 把该调用 `size` 改成 0 | PASS |
+| 把该调用 `size` 改成 4 KiB / 4 MiB / 2 MiB 对齐 | **HANG** |
+
+结论：不是循环次数，而是 helper 访问 `segPRELINKTEXTB` 的第一页就失败。
+
+`start.s` 的 KVA bootstrap 映射从 `VM_KERNEL_LINK_ADDRESS` 开始：
+
+- `VM_KERNEL_LINK_ADDRESS = 0xfffffff007004000`（`__TEXT`）
+- 当前 `__PRELINK_TEXT = 0xfffffff00427c000`，在 `__TEXT` **下方** 0x2d88000
+- 映射只从 `__TEXT` 向上，`__PRELINK_TEXT` 不在 KVA bootstrap 表里
+- `arm_vm_prot_init` 先保护 `__PRELINK_TEXT`，第一次 `arm_kva_to_tte`/TTE 访问就落到未映射页，表现为挂住
+
+因此 `size=0` 能返回；4 KiB 也要访问第一页，照样挂。
+
+进一步实测：
+
+- `mapfix2-stage3`（把 bootstrap KVA 映射起点下移到 `__PRELINK_TEXT`）：
+  **PASS**，kernel_start `+53.24 s` → 映射修复本身没有破坏 MMU。
+- `mapfix2-prot4`（同样映射修复 + 调用 #4 返回后复位）：**HANG**。
+
+剩余阻塞是 `arm_vm_page_granular_helper` 里的断言：
+
+```c
+assert((start - gVirtBase + gPhysBase - pa_offset) >= gPhysBase);
+```
+
+当前 `start = __PRELINK_TEXT = 0x427c000`，`gVirtBase = __TEXT = 0x7004000`，
+`gPhysBase = Address + 0x2d88000`，代入得到 `Address >= Address + 0x2d88000`，
+恒为假。XNU 假定 prelink 段在 kernel link 之上；只修映射不够。
+
+修复方向（需要重建内核，不是再上机二分）：
+
+1. **改 prelink 布局（首选）**：让 `__PRELINK_TEXT`/`__PLK_*` 落在
+   `VM_KERNEL_LINK_ADDRESS`（`__TEXT`）之上，并避免与 native `__TEXT_EXEC`/
+   `__DATA`/`__LINKEDIT` 重叠；需要原始 iPad7,1 `KernelCache` 与 macOS/CI
+   来确认原始段地址和正确的 `slide`。
+2. **改 `start.s` + 断言**：映射下移后，还要放宽
+   `arm_vm_page_granular_helper` 的 `start >= gVirtBase` 假设；改动更大，
+   不推荐先做。
+3. 不建议只跳过 `__PRELINK_TEXT` 的保护；后续 kext/绑定仍会访问 prelink 段。
+
+## B3 prelink 布局修复（2026-10-23 晚）
+
+CI run `39951630215`（`macOS build (cheeseburger)`，success）用设备仓库
+`6bf82fd` 的 `slide = "0x4100000"` 重建内核：
+
+| 段 | 地址 |
+| --- | --- |
+| `__TEXT` / Base / VirtBase | `0xfffffff007004000` |
+| `__PRELINK_INFO` | `0xfffffff0082ec000` |
+| `__PRELINK_TEXT` | `0xfffffff00937c000` |
+| `__PLK_TEXT_EXEC` | `0xfffffff009a20000` |
+| `__PLK_DATA_CONST` | `0xfffffff00ada0000` |
+| `__PRELINK_DATA` | `0xfffffff00bbdc000` |
+
+所有 prelink 段都在 `__TEXT` 之上，且不与 native 段重叠；Base 与 VirtBase
+相同（delta 0）。上机结果：
+
+| 镜像 | 检查点 | 结果 |
+| --- | --- | --- |
+| `slide-prot4` | `arm_vm_prot_init` 的无条件调用 #4 返回 | **PASS**（kernel_start `+42.93 s`） |
+| `slide-vmret` | `_arm_vm_init` 返回 | **PASS**（kernel_start `+45.23 s`） |
+| `slide-pe1` | `_PE_init_platform(TRUE)` 返回 | **crashdump `05c6:900e`** |
+| `slide-pe1-before` | `_PE_init_platform(TRUE)` 调用前 | **crashdump `05c6:900e`** |
+
+因此崩溃在 `_arm_vm_init` 返回之后、`_PE_init_platform(TRUE)` 调用之前。该窗口
+依次调用：
+
+`_PE_consistent_debug_inherit` → `_serial_init` →
+`_kernel_startup_initialize_upto` → `_PE_create_console` → `_PE_init_printf` →
+`_cpu_machine_idle_init` → `_PE_init_platform(TRUE)`
+
+下一步用 stage 4 检查点逐个测这段窗口；第一个 crashdump 的调用就是新的
+阻塞点。设备仍只做 `fastboot boot`，不刷写。
+
+## B3 收尾：XNU 进入 BSD/IOKit（2026-10-23 深夜）
+
+在上面的 prelink 修复之后，又按顺序解决了三个启动阻塞：
+
+1. **BCM2837 panic log 地址错误**：`PE_create_console` 先执行
+   `PLATFORM_PANIC_LOG_PADDR=0x3c0fc000`，MSM8998 上无效。
+   打开 `CONFIG_XNU_DT_PANIC_REGION=y` 后改走 ADT 的 `pram` 路径（我们的
+   ADT 没有 `pram`，安全返回）。CI run `39956257439`。
+2. **source corecrypto 的 FIPS POST**：prelink 后 HMAC 失效。改为
+   `CONFIG_XNU_CRYPTO_BOOTSTRAP="source"`（CI `39960247193`），并在
+   **prelink 之后**用 `scripts/seal-source-crypto-kernel.py` 重新封印。
+   `sealed-panic` 的 FIPS 失败消失。
+3. **trust cache runtime 过早初始化**：`CONFIG_XNU_TRUST_CACHE_RUNTIME`
+   在 `img4if`/`amfi` 注册前调用 `trust_cache_runtime_init()`，panic
+   `image4 interface not available @kern_trustcache.c:472`。B3 先关闭
+   （CI `39968985568`），留到 B5/B6 做 root/AMFI 时再开。
+
+stage 4 实测（全部 PASS）：
+
+- `_kernel_bootstrap`：`printf`、`scale_setup`、`vm_mem_bootstrap`、
+  第二次 `kernel_startup_initialize_upto`、`console_init`、`stackshot_init`、
+  `sched_init`、`mac_policy_init`、`machine_init`、`clock_init`、`task_init`、
+  `thread_init`、`kernel_thread_create`
+- `_kernel_bootstrap_thread` 入口
+- `_bsd_init` 入口
+- `_IOKitBSDInit` 入口，**以及返回**
+
+结论：MMU、prelink、crypto、DT panic、平台专家、IOKit 初始化都已越过。
+普通启动没有可见控制台输出（只有 panic screen 能画），但没有 panic；
+下一次阻塞应在 **root device/UFS**（B5）或控制台 `kprintf` 的显示状态。
+
+另外：DarwinBoot 的 `ADT ...` 大标题已从诊断补丁移除；新固件 FD
+`6da8ee30…`，无标题镜像 `boot-sourcecrypto-sealed-notitle.img`
+`1c25c29a…`。大标题改动保存在
+`plans/oneplus5-cheeseburger/patches/darwinboot-virtbase-physbase.patch`；
+`drivers/DarwinBoot` 子模块保持干净，重建固件前先 apply 该补丁。
+
 ## 下一步
 
-1. **上机验证 `boot-physbase.img`**（唯一动作）：
-
-   ```sh
-   fastboot boot /home/ls/UniXNU-cheeseburger/out/cheeseburger/boot/boot-physbase.img
-   ```
-
-   设备需先接入 127 并进入 fastboot（当前 `fastboot devices` 为空）。
-   出现第 4 段色带 → MMU 已过，换 `payload-ci.img` 继续；仍是三段 →
-   查 TTBR/TCR（stage 4 探针 `_set_mmu_ttb`）或用 QEMU 隔离。
-2. 解释 DarwinBoot 日志里的 `owned=0`（ADT 的 `darwinboot-memory-size`
+0. ~~先跑 PSCI 对照镜像~~（2026-10-23 已完成；8 s / 30 s / 20 s 三个对照都
+   按预期复位，复位路径可信）。
+1. ~~上机验证 `boot-physbase.img`~~（2026-10-23 已完成；stage 3 与 20 s
+   对照的 kernel_start 只差 0.52 s，**MMU 已过**）。
+2. ~~上机跑 panic 内核~~（2026-10-23 已完成：停在 stage 1/2 色带，没有
+   panic；现已由 stage 4 二分解释为 `arm_vm_prot_init` 的未映射 prelink 段）。
+3. ~~改 prelink 布局并重建内核~~（2026-10-23 已完成：CI run
+   `39951630215`，`slide=0x4100000`；`prot4`、`_arm_vm_init` 均已 PASS）。
+4. ~~测试控制台窗口~~（2026-10-23 已完成：`PE_init_printf`、PE1、
+   `machine_startup`、`_kernel_bootstrap`、`_kernel_thread_create`、
+   `_bsd_init`、`_IOKitBSDInit` 全部 PASS）。
+5. **B5：UFS/root**（下一阶段关键路径）：XNU 已在 BSD/IOKit 初始化里等待
+   root device；需要 NativeUfs/APFS/root UUID。没有 UFS 就不会继续到
+   launchd。
+6. **普通控制台输出**：panic screen 能画，但正常 `kprintf` 不出现在屏幕上；
+   先确认 `vc`/`gc` 的 graphics 状态，再做 B5 日志。不是当前启动阻塞。
+7. **重新启用 trust cache runtime**：等 `AppleImage4`/AMFI 的初始化顺序
+   在 prelink 里确定后再打开；当前 B3 先关闭。
+8. 解释 DarwinBoot 日志里的 `owned=0`（ADT 的 `darwinboot-memory-size`
    解析正确，诊断固件已编译）。
-3. B6 时再实现 `--identity iphone10,2` 的真实 `/product`、`/buttons` 复制。
+9. B6 时再实现 `--identity iphone10,2` 的真实 `/product`、`/buttons` 复制。
 
 （1-5 的旧项——推仓库、dispatch workflow、TWRP 备份——已于 2026-10-22
 完成，见下方日志。）
@@ -120,9 +321,13 @@ IPSW 缓存（`unixnu ipsw fetch`，HTTP range，只取需要的成员）：
 - [x] 按键输入沿用镜像里已有的 Qualcomm `ButtonsDxe`（depex 依赖 `SimpleTextIn`），不再新增驱动；b1e 实测通过。
 - [x] 预检工具 `plans/oneplus5-cheeseburger/tools/check-cheeseburger.py`：b1b 全部通过（FD 空闲 4.97 MiB、模块齐全、boot image 无重叠、payload 可读），b1 也通过（3.35 MiB）。
 
-## B3 调试断点（2026-10-22 晚）
+## B3 调试断点（2026-10-22 晚，2026-10-23 已修正）
 
-今天的最后一个结论：stage 2（MMU 使能前）色带出现，stage 3（MMU 后）不出现 → 内核卡在 **MMU 使能**，不是 `arm_vm_init`。`VirtualBase` 已改为 `__TEXT`（`0xfffffff007004000`），但 `PhysicalBase` 仍指向窗口起点（`__PRELINK_TEXT` 对应的物理地址），两者相差 `VirtBase - Base ≈ 0x2D88000`，MMU 开启后第一条取指就会落到错误的物理页。
+> **2026-10-23 更新：本节的“卡在 MMU 使能”结论已被对照实验推翻。**
+> stage 3 的复位时刻与 20 s pre-MMU 对照一致，说明 MMU 已开；卡点移到
+> `arm_init` / 第一次 C 初始化。以下保留为当时的推理记录。
+
+当时的最后结论：stage 2（MMU 使能前）色带出现，stage 3（MMU 后）不出现 → 当时判为内核卡在 **MMU 使能**，不是 `arm_vm_init`。`VirtualBase` 已改为 `__TEXT`（`0xfffffff007004000`），但 `PhysicalBase` 仍指向窗口起点（`__PRELINK_TEXT` 对应的物理地址），两者相差 `VirtBase - Base ≈ 0x2D88000`，MMU 开启后第一条取指就会落到错误的物理页。
 
 已编译但**尚未上机**的修正：
 
@@ -136,8 +341,8 @@ IPSW 缓存（`unixnu ipsw fetch`，HTTP range，只取需要的成员）：
 fastboot boot /home/ls/UniXNU-cheeseburger/out/cheeseburger/boot/boot-physbase.img
 ```
 
-- 出现第 4 段色带 + 20 秒重启 → MMU 已过，换 panic 内核（`payload-ci.img`）继续。
-- 仍三段 → 看 TTBR/TCR（stage 4 探针 `_set_mmu_ttb`）或 QEMU 隔离。
+- 约 20 秒后由 stage 3 探针复位 → MMU 已过，换 panic 内核（`payload-ci.img`）继续。
+- 没有在 20 秒左右重启 → 看 TTBR/TCR（stage 4 探针 `_set_mmu_ttb`）或 QEMU 隔离。
 
 ## B0 备份与存储映射（2026-10-22）
 
@@ -197,7 +402,7 @@ DARWINBOOT: inputs validated; exiting boot services
 - `owned=0` 与 ADT 里的 `darwinboot-memory-size=0x80000000` 不一致（ADT 本地解析确认值正确），需要给 DarwinBoot 加诊断打印确认它是没读到还是被清零。
 - **已确认**：`boot_args->virtBase` 原先取最低段 `__PRELINK_TEXT`（`0xfffffff00427c000`），而 `__TEXT` 在 `0xfffffff007004000`。改为 `__TEXT` 后，内核不再硬崩进 crashdump，而是挂住——MMU 阶段很可能已通过，卡在更后面的早期初始化。
 - 下一层：用 patcher 的 stage 3（MMU 后画条并延时复位）确认 MMU 是否真的开成功，再定位挂住的 symbol。
-- stage 3 探针：只有绿/蓝/品红三段，随后挂几秒再重启 → 未到达 MMU 之后。
+- stage 3 探针：只有绿/蓝/品红三段，随后挂几秒再重启 → 当时判为未到达 MMU 之后。注意：`payload-stage3b` 的 stage 3 cave 实际是 20 秒后 PSCI 复位（见“B3 探针可信度”）；需要按录像计时重新判读，不能直接沿用旧结论。
 - 关键嫌疑：DarwinBoot 的 2 GiB 窗口被分配到物理 `0x18007C000`，而 ADT 的 `dram-size=0xF0000000` 只到 `0x170000000`，窗口在“内核认为不存在”的物理区间；已改为 `0x200000000`（8 GiB）重测。
 - 8 GiB 结果：**仍是三段后挂住**，窗口高度不是唯一原因；MMU 仍未过。
 - 下一批实验（按成本）：① 把窗口强制到 256 MiB，看能否落在 4 GiB 以下；② 给 `arm_vm_init`/pmap 加早图画点（stage 4 reset-after 符号）；③ QEMU 跑同一内核隔离 prelink/内核问题。
@@ -292,10 +497,16 @@ Linux x86_64 / Ubuntu 24.04：
 
 ## 阻塞
 
-- 设备当前不在 127 上（2026-10-23 `fastboot devices` 为空），所有上机测试
-  都要等设备接回来。
-- MMU 使能未过：`PhysicalBase` 偏移修正已编译，待上机确认。
-- DarwinBoot 的 `owned=0` 未解释。
+- 设备已接入（2026-10-23，adb/fastboot 可用）。
+- **MMU 已过**：20 s stage 3 与 20 s pre-MMU 对照的 kernel_start 相差
+  0.52 s；4 KiB 页表、TCR/TTBR、SCTLR 切换均已通过。
+- 当前卡点：XNU 已进入 BSD/IOKit，`_bsd_init`/`_IOKitBSDInit` 返回；
+  普通启动没有可见控制台输出，也没有 panic。下一阶段是 B5 的 UFS/root；
+  没有 root device 时内核会停在 BSD 初始化里等待。
+- trust cache runtime 暂时关闭（img4if/amfi 未注册）；B5/B6 再补。
+- 普通 `kprintf` 不出现在屏幕，只有 panic screen 能画；需要单独查
+  `vc`/`gc` graphics 状态。
+- DarwinBoot 的 `owned=0` 未解释，暂不影响 BSD/IOKit 阶段。
 
 ## 工作日志
 
@@ -347,6 +558,19 @@ Linux x86_64 / Ubuntu 24.04：
 | 2026-10-22 | B3 | 诊断补丁存档 | `patches/darwinboot-virtbase-physbase.patch`（诊断打印、强制 2 GiB、VirtBase、PhysicalBase 修正） |
 | 2026-10-22 | B3 | stage 4 探针 / MMU 定位 | stage 2 出现、stage 3 不出现 → 卡在 MMU 使能；`PhysicalBase` 偏移假设，已编译待测（`boot-physbase.img`） |
 | 2026-10-23 | - | 产物归档 + 状态同步 | B3 的 kernel/payload/CI 日志从 `/tmp/opencode` 归档到 `~/UniXNU/.cache/firmware/b3/`（含 `README.md` 哈希表）；下一步收敛为上机 `boot-physbase.img`；未上机 |
+| 2026-10-23 | B3 | stage 3 计时复核 + PSCI 对照镜像 | `payload-stage3b` 的 stage 3 实际是 20 秒后复位，旧“几秒”记录需重判；给 `patch-xnu-entry-probe.py` 加 `--reset-before-mmu`，生成 `boot-psci-control.img`（蓝条 + 8 秒复位，不写 SCTLR）；预检通过，未上机 |
+| 2026-10-23 | B3 | PSCI 复位路径上机验证 | 8 s 对照 Android 49.56 s、30 s 对照 71.61 s，差 22.05 s ≈ 延时差 22 s；复位由探针控制，不是 watchdog |
+| 2026-10-23 | B3 | **MMU 已过** | 20 s pre-MMU 对照 kernel_start `+52.90 s`，`boot-physbase.img` stage 3 `+53.42 s`，差 0.52 s；stage 3 已执行，MMU 切换成功；下一步转 `arm_init` / C 初始化 |
+| 2026-10-23 | B3 | stage 4 二分到 `_arm_vm_init` | `_arm_set_kernel_tbi`、`_PE_init_platform(FALSE)`、`_cpu_bootstrap` 均返回；`_arm_vm_init` 不返回；`_vm_set_page_size` 返回、`_arm_vm_prot_init` 不返回 |
+| 2026-10-23 | B3 | **根因：prelink 段在 KVA 映射外** | 无条件调用 #4 `arm_vm_page_granular_RWNX(segPRELINKTEXTB, ...)` 返回点不复位；`size=0` 通过，4 KiB/4 MiB/2 MiB 对齐均挂；`start.s` 从 `__TEXT` 向上映射，`__PRELINK_TEXT` 在其下方 0x2d88000，首次 TTE 访问即未映射；需重建内核修 prelink/start.s |
+| 2026-10-23 | B3 | 映射修复验证 | `mapfix2-stage3`（KVA 映射起点下移到 `__PRELINK_TEXT`）PASS，kernel_start `+53.24 s`；MMU 仍正常。`mapfix2-prot4` 仍挂，剩余阻塞是 helper 的 `assert(start >= gVirtBase)`：prelink 在 `__TEXT` 下方，断言恒假 |
+| 2026-10-23 | B3 | **prelink 布局修复** | 设备仓库 `6bf82fd`：`slide = 0x4100000`，CI run `39951630215` success；新布局 `__PRELINK_TEXT` `0x937c000` 在 `__TEXT` 之上，无重叠；`slide-prot4` PASS `+42.93 s`，`_arm_vm_init` PASS `+45.23 s` |
+| 2026-10-23 | B3 | 新 crash 窗口 | `_PE_init_platform(TRUE)` 返回/调用前均 crashdump `05c6:900e`；崩溃在 `arm_vm_init` 返回后、PE1 调用前；待测控制台初始化窗口 |
+| 2026-10-23 | B3 | DT panic region | `CONFIG_XNU_DT_PANIC_REGION=y`；CI `39956257439`；`PE_create_console` 不再访问 BCM2837 `0x3c0fc000` |
+| 2026-10-23 | B3 | source corecrypto + 重新封印 | `CONFIG_XNU_CRYPTO_BOOTSTRAP="source"`；CI `39960247193`；prelink 后用 `seal-source-crypto-kernel.py` 重新封印，FIPS POST 通过；`_kmem_crypto_init`/crypto ctx PASS |
+| 2026-10-23 | B3 | trust cache runtime 延后 | `img4if`/`amfi` 未注册导致 `image4 interface not available @kern_trustcache.c:472`；关闭 `CONFIG_XNU_TRUST_CACHE_RUNTIME`；CI `39968985568` |
+| 2026-10-23 | B3 | **XNU 进入 BSD/IOKit** | `_kernel_bootstrap` 早期、`_kernel_thread_create`、`_kernel_bootstrap_thread`、`_bsd_init`、`_IOKitBSDInit` 入口/返回全部 PASS；普通控制台无输出，panic screen 可用；下一阶段 B5 UFS/root |
+| 2026-10-23 | B3 | DarwinBoot 大标题移除 | 删除 `AdtNode` 的 `UnicodeSPrint`/`DiagDraw`；保留小字 ADT 日志；新 FD `6da8ee30…`，无标题镜像 `1c25c29a…`；子模块/补丁未提交 |
 
 ## 更新规则
 
