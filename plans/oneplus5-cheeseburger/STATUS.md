@@ -6,6 +6,8 @@
 - 当前阶段：**B1 — UEFI 固件与 UniXNU 集成**
 - 当前 gate：**G1（等待设备实测）**
 - 基线提交：UniXNU `e95b37d`（main）
+- 本地提交：UniXNU `c8a5eeb`（计划）、`18f3020`（package）、`270ea4b`（B1 记录）
+- UEFI 分支：`edk2-msm8998` 的 `unixnu-cheeseburger`，提交 `0471194`、`708fa06`
 - 最近更新：2026-10-22
 
 ## 下一步
@@ -96,6 +98,7 @@ Linux x86_64 / Ubuntu 24.04：
 | 2026-10-22 | B1 | 修复 ArmPlatformLibMem + 建分支 | 成功，提交 `0471194` |
 | 2026-10-22 | B1 | 加入 UniXNU/DarwinBoot/initrd 驱动并构建 | 成功；FVMAIN 100% 满 |
 | 2026-10-22 | B1 | 打包 32 MiB 测试 payload + safe boot image | 完成，待设备实测 |
+| 2026-10-22 | B1 | 提交 UniXNU/UEFI 改动 | `18f3020`、`270ea4b`；UEFI `708fa06` |
 
 ## 更新规则
 
