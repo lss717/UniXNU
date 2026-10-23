@@ -14,8 +14,8 @@
 - UEFI 分支：`edk2-msm8998` 的 `unixnu-cheeseburger`，提交 `0471194`、`708fa06`、`7f34479`、`91e17a8`、`8ef28f1`、`1ffb934`
 - 最近更新：2026-10-23
 
-> 2026-10-23 起，跨路线的总 handoff 写在 `~/ios-sweet/NOTES.md` 顶部
-> （A 线 shim 已暂停，本文件是 B 线自己的计划/状态记录）。
+> 本文件是 B 线（UniXNU / 4K）唯一的计划与状态记录。A 线（在 OP5 上用
+> 自建 shim 引导 16K XNU）是另一个独立项目，与本线没有代码依赖。
 
 ## G1 设备实测（2026-10-22）
 
@@ -346,7 +346,7 @@ Linux x86_64 / Ubuntu 24.04：
 | 2026-10-22 | B3 | **`VirtualBase` 修正** | DarwinBoot 原先传最低段（`__PRELINK_TEXT`），改为 `__TEXT`；行为从“硬崩进 crashdump”变为“挂住不重启”，MMU 阶段可能已过 |
 | 2026-10-22 | B3 | 诊断补丁存档 | `patches/darwinboot-virtbase-physbase.patch`（诊断打印、强制 2 GiB、VirtBase、PhysicalBase 修正） |
 | 2026-10-22 | B3 | stage 4 探针 / MMU 定位 | stage 2 出现、stage 3 不出现 → 卡在 MMU 使能；`PhysicalBase` 偏移假设，已编译待测（`boot-physbase.img`） |
-| 2026-10-23 | - | 文档统一 + 产物归档 | 总 handoff 移到 `~/ios-sweet/NOTES.md` 顶部（`58792bc`），A 线标记暂停；B3 的 kernel/payload/CI 日志从 `/tmp/opencode` 归档到 `~/UniXNU/.cache/firmware/b3/`（含 `README.md` 哈希表）；未上机 |
+| 2026-10-23 | - | 产物归档 + 状态同步 | B3 的 kernel/payload/CI 日志从 `/tmp/opencode` 归档到 `~/UniXNU/.cache/firmware/b3/`（含 `README.md` 哈希表）；下一步收敛为上机 `boot-physbase.img`；未上机 |
 
 ## 更新规则
 
