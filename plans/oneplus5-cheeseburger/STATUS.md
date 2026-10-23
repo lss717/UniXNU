@@ -3,8 +3,8 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 最终目标：iPhone10,2 / iOS 16.7.16（20H392）
-- 当前阶段：**B1 — UEFI 固件与 UniXNU 集成**
-- 当前 gate：**G1 — 菜单与 B0 数据已验证；按键与屏幕日志待确认**
+- 当前阶段：**B1 完成 → B2 — 设备仓库、ADT、payload**
+- 当前 gate：**G1 通过（2026-10-22）**
 - 基线提交：UniXNU `e95b37d`（main）
 - 本地提交：UniXNU `c8a5eeb`（计划）、`18f3020`（package）、`270ea4b`（B1 记录）、`692d70f`（docs 记录）；本轮 B1 收尾见 `git log -- plans/oneplus5-cheeseburger`
 - UEFI 分支：`edk2-msm8998` 的 `unixnu-cheeseburger`，提交 `0471194`、`708fa06`、`7f34479`、`91e17a8`、`8ef28f1`
@@ -19,9 +19,9 @@
 - [x] payload 卷挂载成功（菜单来自 `\EFI\UniXNU\unixnu.toml`），说明 `CheeseburgerBootMemoryDxe` 的 DTB 地址 `0x83300000`、`/chosen/linux,initrd-*` 解析和 FAT 栈都工作。
 - [x] `fastboot boot` 的 35 MiB boot image 与 `0x10000000/0x12000000/0x14000000` 布局被 ABL 接受。
 - [x] DTB 地址 `0x83300000`、`/chosen/linux,initrd-*`、只读 BlockIo、FAT、`unixnu.toml` 全部工作。
-- [ ] 按键（电源/音量）是否驱动菜单。
-- [ ] `drivers`/`dh` 能看到 UniXNU、DarwinBoot、BlockIo（需要 Shell）。
-- [ ] `UNIXNU:` 日志上屏（菜单会覆盖，需要专门查看）。
+- [x] 按键：Qualcomm `ButtonsDxe` 三个键都正常——音量上/下移动高亮，电源键选中（等价 Enter）。
+- [x] UniXNU、DarwinBoot、BlockIo 都在：`CheeseburgerInfo` 查到 `UniXNULoader` 协议 `Success`（DarwinBoot 驱动已加载），并枚举到 8 个 BlockIo（没有用 Shell，等价于 `drivers`/`dh`）。
+- [x] `UNIXNU:` 日志上屏：`console = "none"` 的 b1h 实测，`SerialDxe` + `FrameBufferSerialPortLib` 把 `UNIXNU:` 行写在屏幕上。
 
 `fastboot getvar all` 已保存到 `.cache/firmware/op5-getvar.txt`（不提交）：hw-revision 20001、unlocked yes、userdata `0x1C4D8BB000`、boot `0x4000000`、没有 A/B slot。
 
@@ -48,10 +48,10 @@
 
 ## 下一步
 
-1. **采集 B0 数据**：`fastboot boot out/cheeseburger/b1c/boot-op5-b1c-info.img`，拍下 `MEM:`/`GOP:`/`BLK:`/`GPT:` 行。
-2. 确认按键与 `UNIXNU:` 日志；必要时用 DEBUG 目标构建。
+1. **B2 设备仓库**：建 `UniXNU-cheeseburger` 骨架（`board.toml`、`configs/cheeseburger_defconfig`、`make-bootimg.py`、`check-cheeseburger.py`），把已实测的 RAM/UFS/userdata 值填进去。
+2. 准备 iPad7,1 17.7.11 的 IPSW 缓存（`.cache/firmware/`，不提交），B2 的 ADT 需要其中的 DeviceTree。
 3. 备份 `persist`/`modem`/`efs`/`boot`/`recovery`（尚未确认完成）。
-4. 然后做 B2 设备仓库（`board.toml`、`unixnu.toml`、ADT、boot image 脚本）。
+4. 推 `unixnu-cheeseburger` 分支和 `UniXNU-cheeseburger` 仓库到 GitHub（需确认）。
 
 ## 已完成
 
@@ -74,7 +74,7 @@
 - [x] 屏幕日志：RELEASE 也加入 `SerialDxe`，`UNIXNU:` 日志经 `FrameBufferSerialPortLib`（`0x9d400000`）输出到屏幕；`DEBUG` 与 UniXNU 共用同一控制台。
 - [x] 删除内嵌 Linux 镜像 `LinuxSimpleMassStorage`（6.9 MiB），压缩 FV 从 2.60 MiB 降到 1.00 MiB，FD 空闲 4.97 MiB。
 - [x] 重新构建并打包 b1b boot image（UEFI + UniXNU + 32 MiB payload）。
-- [x] 按键输入沿用镜像里已有的 Qualcomm `ButtonsDxe`（depex 依赖 `SimpleTextIn`），不再新增驱动；**待设备确认**。
+- [x] 按键输入沿用镜像里已有的 Qualcomm `ButtonsDxe`（depex 依赖 `SimpleTextIn`），不再新增驱动；b1e 实测通过。
 - [x] 预检工具 `plans/oneplus5-cheeseburger/tools/check-cheeseburger.py`：b1b 全部通过（FD 空闲 4.97 MiB、模块齐全、boot image 无重叠、payload 可读），b1 也通过（3.35 MiB）。
 
 ## 本地产物
@@ -88,6 +88,14 @@
 | `out/cheeseburger/b1d/op5-info-payload.img` | `d6442196cee68440282c30e3569f5cba5e2a4b863cdc893f9bb77c6586ad6176` |
 
 固件变化：移除 `TerminalDxe`（它绑定 `SerialIo`，把每行 `ConOut` 在 framebuffer 上重复画一遍）。`CheeseburgerInfo` 只在 `[Components]` 里构建，不进 FV。
+
+同一固件（FD `217c48fa…`）的 payload 变体：
+
+| 镜像 | 用途 | SHA-256 |
+| --- | --- | --- |
+| `out/cheeseburger/b1e/boot-op5-b1e-keys.img` | 双条目菜单，按键测试 | `a4654ec5be146f34f8211acb852872fbed51e4150e6582f5e69cd0768dac1cd4` |
+| `out/cheeseburger/b1f/boot-op5-b1f-check.img` | DarwinBoot `UniXNULoader` 检查 | `3b70f69d2a800a8039ffa1cedb8ac11f976829108dc2a2d4a2145ac55c8af1ce` |
+| `out/cheeseburger/b1g/boot-op5-b1g-log.img` | `console = "none"`，验证屏上日志 | `2ca7d5cc019beee441dbe728e59d8bbaafd592060d6fcdc2ce1cbb6131578fe2` |
 
 ### b1c（上一版数据采集镜像，已被 b1d 取代）
 
@@ -128,7 +136,7 @@
 - `CheeseburgerBootMemoryDxe` 的 `PcdDeviceTreeStore=0x83300000` **已确认**：payload 卷能挂载说明 DTB/initrd 解析正确。
 - UFS 的 6 个 LUN 都会出现在 UEFI 里；B5 必须按容量选主 LUN（116,264 MiB），不能按枚举顺序。
 - 删除 `LinuxSimpleMassStorage` 后，`PlatformBootManagerLib` 仍会注册一个指向缺失 FV 文件的 “USB Attached SCSI” 启动项（`ENABLE_LINUX_SIMPLE_MASS_STORAGE` 在 family `.dsc.inc` 里）。`UniXNUDxe` 把 UniXNU 放在 `BootOrder` 首位，正常不会走到它。
-- 按键映射依赖 Qualcomm `ButtonsDxe`；UniXNU 菜单需要 Up/Down/Enter，设备上未必一一对应。
+- 按键映射已实测：音量上/下 = Up/Down，电源 = Enter。
 - 还没有在 OnePlus 5 上实测。
 
 ## 待实测
@@ -140,7 +148,7 @@
 - [ ] 触摸 I2C 总线号和地址
 - [x] live DTB 的 `PcdDeviceTreeStore` 和 `/chosen/linux,initrd-*`
 - [x] `boot-op5-b1*-safe.img` 的 load address 被 ABL 接受
-- [ ] `ButtonsDxe` 的电源/音量键能否驱动 UniXNU 菜单
+- [x] `ButtonsDxe` 的电源/音量键驱动 UniXNU 菜单（b1e 实测）
 - [ ] `UNIXNU:` 日志是否出现在屏幕上
 
 ## 主机环境
@@ -182,6 +190,10 @@ Linux x86_64 / Ubuntu 24.04：
 | 2026-10-22 | B1 | **G1 设备实测** | `fastboot boot` 成功；UEFI 启动，UniXNU 菜单、payload 卷、倒计时均正常 |
 | 2026-10-22 | B1 | 诊断程序 `CheeseburgerInfo` 采集 B0 数据 | 8 GB RAM、4 KiB UFS、userdata `0x14F40..0x1C627FA`、GOP `0x9D400000` 1080×1920 |
 | 2026-10-22 | B1 | 移除重复的 `TerminalDxe` 控制台 | 成功；新 FD `217c48fa…`，空闲 4.97 MiB |
+| 2026-10-22 | B1 | 按键实测（b1e，双条目菜单） | 音量上/下移动高亮，电源键选中；不需要移植 KeyInput |
+| 2026-10-22 | B1 | DarwinBoot 协议检查（b1f） | `UniXNULoader` 协议 `Success`；8 个 BlockIo；GOP 1080×1920 stride 1080 |
+| 2026-10-22 | B1 | 屏上日志（b1h，`console=none`，600 s） | `UNIXNU:` 行出现在屏幕；`SerialDxe` 方案成立 |
+| 2026-10-22 | B1 | **G1 全项通过** | 启动、菜单、payload、按键、DarwinBoot、BlockIo、日志、B0 数据全部确认 |
 
 ## 更新规则
 

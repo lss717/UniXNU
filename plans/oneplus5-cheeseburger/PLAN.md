@@ -167,7 +167,7 @@ uefi-cheeseburger/
       CheeseburgerBootMemoryDxe.inf
     # 不新增 GopLog/KeyInput 驱动：
     # - 平台已有 FrameBufferSerialPortLib（0x9d400000）+ SerialDxe 提供屏幕日志；
-    # - 镜像已带 Qualcomm ButtonsDxe，按键待设备确认。
+    # - 镜像已带 Qualcomm ButtonsDxe，按键已实测（音量上/下 + 电源）。
 ```
 
 ---
@@ -277,7 +277,7 @@ B3 使用 sheng 的 `board.toml` 作为参考：
   - 安装只读 `EFI_BLOCK_IO_PROTOCOL`，让 `PartitionDxe`/`FatPkg` 挂载 payload；
   - 首版不做 `AddMemory`，沿用 edk2-msm8998 的内存图。
 - [x] framebuffer 日志：不移植 `ShengGopLogDxe`。edk2-msm8998 自带 `FrameBufferSerialPortLib`（`0x9d400000`，1080×1920×32）；本轮把 `SerialDxe` 加进 RELEASE，`UNIXNU:` 日志和 `DEBUG` 输出走同一个屏幕控制台。
-- [ ] 按键输入：镜像已通过 `Msm8998Binaries/cheeseburger/dxe.inc` 带 Qualcomm `ButtonsDxe`（其 depex 依赖 `SimpleTextIn`）；**待设备确认**电源/音量键能否驱动 UniXNU 菜单。若不可用，再按 `ShengKeyInputDxe` 的 SPMI 方案补驱动。
+- [x] 按键输入：镜像里的 Qualcomm `ButtonsDxe` 已够用——音量上/下移动菜单高亮，电源键选中（b1e 实测），不需要 `ShengKeyInputDxe`。
 - [x] 在 cheeseburger DSC/FDF 加入：
   - `UniXNUPkg/Application/UniXNU/UniXNU.inf`
   - `UniXNUPkg/Driver/UniXNUDxe/UniXNUDxe.inf`
@@ -297,12 +297,13 @@ B3 使用 sheng 的 `board.toml` 作为参考：
 - **非空 ramdisk 不能用 offset 0**：`build.sh` 默认 `kernel_offset=ramdisk_offset=tags_offset=0`，只适合空 ramdisk。测试镜像改用 `ramdisk_offset=0x02000000`、`tags_offset=0x04000000`，避免 32 MiB payload 覆盖 3 MB 内核。
 - `CheeseburgerBootMemoryDxe` 首版硬编码 `PcdDeviceTreeStore=0x83300000`；设备上需要确认该地址和 `/chosen` 属性。
 
-验收（G1）：
+验收（G1，2026-10-22 全部通过）：
 
-- 屏幕/UEFI 日志出现 `UNIXNU:`。
-- 菜单列出至少一个 entry。
-- `OP5ESP` FAT 卷可见，`\EFI\UniXNU\unixnu.toml` 可读。
-- `drivers`/`dh` 能看到 UniXNU、DarwinBoot、BlockIo。
+- [x] 屏幕/UEFI 日志出现 `UNIXNU:`（b1h，`console = "none"`）。
+- [x] 菜单列出至少一个 entry（b1b，`OnePlus 5 B1` / `Exit to firmware`）。
+- [x] `OP5ESP` FAT 卷可见，`\EFI\UniXNU\unixnu.toml` 可读。
+- [x] UniXNU、DarwinBoot、BlockIo 都在（`UniXNULoader` 协议 `Success`，8 个 BlockIo）。
+- [x] 音量上/下 + 电源驱动菜单（b1e）。
 
 命令参考：
 
@@ -316,7 +317,7 @@ fastboot boot /home/ls/UniXNU/out/cheeseburger/b1b/boot-op5-b1b-safe.img
 
 - GCC5 vs CLANGPDB：本轮已用 GCC5 编过 UniXNU/DarwinBoot；后续新增驱动仍要过 GCC 13。
 - edk2-msm8998 的 DTB 存储是固定地址，不是 sheng 的 HOB：`CheeseburgerBootMemoryDxe` 需要设备实测确认。
-- 输入：Qualcomm `ButtonsDxe` 的按键映射未必满足 UniXNU 菜单；设备确认前不算通过。
+- 输入：Qualcomm `ButtonsDxe` 已验证（音量上/下 + 电源 = Enter）。
 
 ---
 
