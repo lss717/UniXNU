@@ -1,0 +1,18 @@
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -2213,7 +2213,14 @@
+ 		assert(segDATACONSTB == segTEXTB + segSizeTEXT);
+ 		assert(segTEXTEXECB == segDATACONSTB + segSizeDATACONST);
+ 		vm_kernel_etext = segTEXTB + segSizeTEXT + segSizeDATACONST + segSizeTEXTEXEC;
+-		vm_kernel_slid_top = vm_prelink_einfo;
++		/*
++		 * A non-Apple relink may place the coalesced prelink text and data
++		 * above __PRELINK_INFO.  ml_static_slide() drops addresses outside
++		 * vm_kernel_slid_base..vm_kernel_slid_top, which zeroes every
++		 * component segment and makes OSKext reject the kext range.
++		 */
++		vm_kernel_slid_top = MAX(vm_prelink_einfo,
++		    MAX(vm_prelink_etext, vm_prelink_edata));
+ 	}
+ 
+ 	dynamic_memory_begin = ROUND_TWIG(dynamic_memory_begin);
