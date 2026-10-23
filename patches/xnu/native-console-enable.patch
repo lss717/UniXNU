@@ -1,0 +1,19 @@
+--- a/osfmk/console/video_console.c
++++ b/osfmk/console/video_console.c
+@@ -2964,6 +2964,16 @@
+ 		gc_enable( !graphics_now );
+ 		gc_acquired = TRUE;
+ 		gc_desire_text = FALSE;
++#if !defined(APPLE_ARM64_ARCH_FAMILY)
++		/*
++		 * kPEAcquireScreen disables the graphics console when graphics_now is
++		 * true.  Non-Apple bring-up keeps the framebuffer console enabled so
++		 * ordinary kprintf output is visible.
++		 */
++		if (graphics_now) {
++			gc_enable(TRUE);
++		}
++#endif
+ 		break;
+ 
+ 	case kPEDisableScreen:

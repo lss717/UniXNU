@@ -3,7 +3,7 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 最终目标：iPhone10,2 / iOS 16.7.16（20H392）
-- 当前阶段：**B3 完成 — MMU、prelink、crypto、DT panic、IOKit 已通过；XNU 进入 BSD/IOKit 初始化，`_IOKitBSDInit` 返回；下一阶段 B5（UFS/root），普通控制台输出仍不可见**
+- 当前阶段：**B3 完成 + 普通控制台已上屏；当前阻塞是 prelink 的 `kmod_info` start/stop 未随 slide 重定位，`Libm`/`corecrypto` 加载失败；下一阶段 B5（UFS/root）**
 - 当前 gate：**G1 通过（2026-10-22）**
 - 基线提交：UniXNU `e95b37d`（main）
 - 本地提交：UniXNU `c8a5eeb`（计划）、`18f3020`（package）、`270ea4b`（B1 记录）、`692d70f`（docs 记录）；本轮 B1 收尾见 `git log -- plans/oneplus5-cheeseburger`
@@ -270,6 +270,33 @@ stage 4 实测（全部 PASS）：
 `plans/oneplus5-cheeseburger/patches/darwinboot-virtbase-physbase.patch`；
 `drivers/DarwinBoot` 子模块保持干净，重建固件前先 apply 该补丁。
 
+### 普通控制台输出（2026-10-23）
+
+`console_init` 之后普通 `kprintf` 不上屏，但 panic screen 能画。原因是
+`initialize_screen(kPEAcquireScreen)` 会 `gc_enable(FALSE)`，把 graphics
+console 的 `gc_enabled` 清掉；`console_is_serial()` 因此返回 true。
+
+在 `console_init` 返回后调用 `gc_enable(TRUE)`，普通 XNU 日志立即上屏。
+测试镜像 `boot-console-fix.img`（`8d08d3b6…`）实测输出：
+
+```text
+standard timeslicing quantum is 10000 us
+...
+debug_log_init: Error!! gPanicBase is still not initialized
+...
+Kext com.apple.kec.Libm module start pointer is outside of kext range
+  (start 0xfffffff0035b2e - kext starts at 0xfffffff00949b680)
+...
+lockdown_mode: lockdown mode in nvram is off
+```
+
+当前新的阻塞：**`emit_prelink.py` 没有把 `kmod_info` 的 start/stop
+（+180/+188）随 slide 写入**，只写了 kmod address（+156）。
+`Libm`/`corecrypto` 的 start 仍在 slide 前地址，OSKext 校验范围失败。
+修复方向：在 `kits/NativePrelink/emit_prelink.py` 里同时写
+`start + slide`/`stop + slide`。上游 `UniXNU/NativePrelink` 只有读权限，
+需要在设备仓库放一个同名 kit 覆盖，或走 fork/上游 PR。
+
 ## 下一步
 
 0. ~~先跑 PSCI 对照镜像~~（2026-10-23 已完成；8 s / 30 s / 20 s 三个对照都
@@ -286,13 +313,18 @@ stage 4 实测（全部 PASS）：
 5. **B5：UFS/root**（下一阶段关键路径）：XNU 已在 BSD/IOKit 初始化里等待
    root device；需要 NativeUfs/APFS/root UUID。没有 UFS 就不会继续到
    launchd。
-6. **普通控制台输出**：panic screen 能画，但正常 `kprintf` 不出现在屏幕上；
-   先确认 `vc`/`gc` 的 graphics 状态，再做 B5 日志。不是当前启动阻塞。
-7. **重新启用 trust cache runtime**：等 `AppleImage4`/AMFI 的初始化顺序
+6. ~~普通控制台输出~~（2026-10-23 已完成：`console_init` 后
+   `gc_enable(TRUE)`，`boot-console-fix.img` 日志上屏）。
+7. **修 prelink `kmod_info` start/stop**（当前动作）：
+   `emit_prelink.py` 只写了 kmod address（+156），还要写
+   `start + slide`/`stop + slide`（+180/+188）。上游
+   `UniXNU/NativePrelink` 只读，需要在设备仓库放同名 kit 覆盖或 fork。
+   修完后 `Libm`/`corecrypto` 应能通过 OSKext 范围校验。
+8. **重新启用 trust cache runtime**：等 `AppleImage4`/AMFI 的初始化顺序
    在 prelink 里确定后再打开；当前 B3 先关闭。
-8. 解释 DarwinBoot 日志里的 `owned=0`（ADT 的 `darwinboot-memory-size`
+9. 解释 DarwinBoot 日志里的 `owned=0`（ADT 的 `darwinboot-memory-size`
    解析正确，诊断固件已编译）。
-9. B6 时再实现 `--identity iphone10,2` 的真实 `/product`、`/buttons` 复制。
+10. B6 时再实现 `--identity iphone10,2` 的真实 `/product`、`/buttons` 复制。
 
 （1-5 的旧项——推仓库、dispatch workflow、TWRP 备份——已于 2026-10-22
 完成，见下方日志。）
@@ -500,12 +532,13 @@ Linux x86_64 / Ubuntu 24.04：
 - 设备已接入（2026-10-23，adb/fastboot 可用）。
 - **MMU 已过**：20 s stage 3 与 20 s pre-MMU 对照的 kernel_start 相差
   0.52 s；4 KiB 页表、TCR/TTBR、SCTLR 切换均已通过。
-- 当前卡点：XNU 已进入 BSD/IOKit，`_bsd_init`/`_IOKitBSDInit` 返回；
-  普通启动没有可见控制台输出，也没有 panic。下一阶段是 B5 的 UFS/root；
-  没有 root device 时内核会停在 BSD 初始化里等待。
+- 当前卡点：`emit_prelink.py` 没有把 `kmod_info` 的 start/stop（+180/+188）
+  随 slide 写入；`com.apple.kec.Libm`/`corecrypto` 的 start 指针仍在
+  slide 前地址，OSKext 范围校验失败。
+- 普通控制台输出已解决：`console_init` 后调用 `gc_enable(TRUE)`；
+  panic screen 和普通 `kprintf` 都能上屏。
 - trust cache runtime 暂时关闭（img4if/amfi 未注册）；B5/B6 再补。
-- 普通 `kprintf` 不出现在屏幕，只有 panic screen 能画；需要单独查
-  `vc`/`gc` graphics 状态。
+- 下一阶段是 B5 的 UFS/root；没有 root device 时内核会停在 BSD 初始化。
 - DarwinBoot 的 `owned=0` 未解释，暂不影响 BSD/IOKit 阶段。
 
 ## 工作日志
@@ -570,7 +603,9 @@ Linux x86_64 / Ubuntu 24.04：
 | 2026-10-23 | B3 | source corecrypto + 重新封印 | `CONFIG_XNU_CRYPTO_BOOTSTRAP="source"`；CI `39960247193`；prelink 后用 `seal-source-crypto-kernel.py` 重新封印，FIPS POST 通过；`_kmem_crypto_init`/crypto ctx PASS |
 | 2026-10-23 | B3 | trust cache runtime 延后 | `img4if`/`amfi` 未注册导致 `image4 interface not available @kern_trustcache.c:472`；关闭 `CONFIG_XNU_TRUST_CACHE_RUNTIME`；CI `39968985568` |
 | 2026-10-23 | B3 | **XNU 进入 BSD/IOKit** | `_kernel_bootstrap` 早期、`_kernel_thread_create`、`_kernel_bootstrap_thread`、`_bsd_init`、`_IOKitBSDInit` 入口/返回全部 PASS；普通控制台无输出，panic screen 可用；下一阶段 B5 UFS/root |
-| 2026-10-23 | B3 | DarwinBoot 大标题移除 | 删除 `AdtNode` 的 `UnicodeSPrint`/`DiagDraw`；保留小字 ADT 日志；新 FD `6da8ee30…`，无标题镜像 `1c25c29a…`；子模块/补丁未提交 |
+| 2026-10-23 | B3 | DarwinBoot 大标题移除 | 删除 `AdtNode` 的 `UnicodeSPrint`/`DiagDraw`；保留小字 ADT 日志；新 FD `6da8ee30…`，无标题镜像 `1c25c29a…`；补丁已提交，子模块干净 |
+| 2026-10-23 | B3 | **普通控制台输出恢复** | `initialize_screen(kPEAcquireScreen)` 会 `gc_enable(FALSE)`；在 `console_init` 后调用 `gc_enable(TRUE)`，XNU 日志/panic 均上屏；测试镜像 `boot-console-fix.img` `8d08d3b6…` |
+| 2026-10-23 | B3 | **新阻塞：kmod start/stop 未 slide** | 日志显示 `Libm`/`corecrypto` start 指针在 `0xfffffff003…`，kext 在 `0xfffffff009…`；`emit_prelink.py` 只写 kmod address（+156），没有写 start/stop（+180/+188）；需修 prelink kit |
 
 ## 更新规则
 
