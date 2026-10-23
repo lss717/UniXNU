@@ -3,7 +3,7 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 最终目标：iPhone10,2 / iOS 16.7.16（20H392）
-- 当前阶段：**B3 完成 + 普通控制台已上屏；当前阻塞是 prelink 的 `kmod_info` start/stop 未随 slide 重定位，`Libm`/`corecrypto` 加载失败；下一阶段 B5（UFS/root）**
+- 当前阶段：**B3 完成 + 普通控制台已上屏；已定位 prelink kext 范围失败的根因是 `vm_kernel_slid_top` 未覆盖 slide 后的 prelink 段（段地址被 `ml_static_slide()` 清 0）；修复补丁 `707fde9` 待 CI/上机验证；下一阶段 B5（UFS/root）**
 - 当前 gate：**G1 通过（2026-10-22）**
 - 基线提交：UniXNU `e95b37d`（main）
 - 本地提交：UniXNU `c8a5eeb`（计划）、`18f3020`（package）、`270ea4b`（B1 记录）、`692d70f`（docs 记录）；本轮 B1 收尾见 `git log -- plans/oneplus5-cheeseburger`
@@ -297,6 +297,41 @@ lockdown_mode: lockdown mode in nvram is off
 `start + slide`/`stop + slide`。上游 `UniXNU/NativePrelink` 只有读权限，
 需要在设备仓库放一个同名 kit 覆盖，或走 fork/上游 PR。
 
+已做：
+
+- 设备仓库同名 kit 写 start/stop + slide，并扩展 `kmod_info.size`
+  （`aee6b08`，CI `39978443505`）。字段层面 start 已在
+  `address..address+size` 内。
+- 但 OSKext 仍走 **`LC_SEGMENT_SPLIT_INFO` 的 segment 遍历**，继续报
+  `outside of kext range`。
+- 试验把 19 个组件的 `LC_SEGMENT_SPLIT_INFO` 改成 `LC_NOTE`：
+  内核 panic `kalloc_type_view_parse: No support for non-split seg KCs`
+  ——不能去掉 split 信息。
+
+进一步离线核对输出布局：
+
+- `__PRELINK_INFO`：`0xfffffff00833c000..0xfffffff008381000`
+- `__PRELINK_TEXT`：`0xfffffff00937c000` 起
+- `__PLK_TEXT_EXEC`：`0xfffffff009a20000` 起
+- `__PRELINK_DATA`：`0xfffffff00bbdc000..0xfffffff00bd30000`
+
+`arm_vm_init` 在非 fileset 情况下把 `vm_kernel_slid_top` 设为
+`vm_prelink_einfo`（`0xfffffff008381000`），因此
+`ml_static_slide()` 判定所有组件段（`>= 0xfffffff00937c000`）
+**不是 slid 地址并返回 0**；`OSKext::slidePrelinkedExecutable()`
+随后把每个组的 segment `vmaddr` 清成 0，导致 start 指针全部越界。
+这也解释了为什么 start/address 打印值已经是 slide 后的最终值，
+但范围检查仍失败。
+
+修复：`patches/xnu/native-prelink-slid-top.patch` 把
+`vm_kernel_slid_top` 扩到 `MAX(vm_prelink_einfo, vm_prelink_etext,
+vm_prelink_edata)`，覆盖所有 coalesced prelink 段。已提交
+`707fde9`，等待 CI 和上机验证。当前构建还带一个临时的
+`zzz-kext-debug.patch`，只打印 CoreAnalytics 的 `kext_slide`/段表，
+验证通过后删除。
+
+这也是 B5（UFS/root）之前最后一个明显的 prelink 阻塞。
+
 ## 下一步
 
 0. ~~先跑 PSCI 对照镜像~~（2026-10-23 已完成；8 s / 30 s / 20 s 三个对照都
@@ -315,11 +350,11 @@ lockdown_mode: lockdown mode in nvram is off
    launchd。
 6. ~~普通控制台输出~~（2026-10-23 已完成：`console_init` 后
    `gc_enable(TRUE)`，`boot-console-fix.img` 日志上屏）。
-7. **修 prelink `kmod_info` start/stop**（当前动作）：
-   `emit_prelink.py` 只写了 kmod address（+156），还要写
-   `start + slide`/`stop + slide`（+180/+188）。上游
-   `UniXNU/NativePrelink` 只读，需要在设备仓库放同名 kit 覆盖或 fork。
-   修完后 `Libm`/`corecrypto` 应能通过 OSKext 范围校验。
+7. **修 prelink kext 范围**（当前动作）：
+   `emit_prelink.py` 已补 start/stop slide 和 size；真正根因是
+   `vm_kernel_slid_top` 仍取 `vm_prelink_einfo`，而 slide 后的
+   prelink text/data 在它上面，`ml_static_slide()` 把组件段清 0。
+   已提交 `native-prelink-slid-top.patch`（`707fde9`），待 CI/上机。
 8. **重新启用 trust cache runtime**：等 `AppleImage4`/AMFI 的初始化顺序
    在 prelink 里确定后再打开；当前 B3 先关闭。
 9. 解释 DarwinBoot 日志里的 `owned=0`（ADT 的 `darwinboot-memory-size`
