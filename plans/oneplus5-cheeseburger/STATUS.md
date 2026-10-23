@@ -7,6 +7,10 @@
 - 当前 gate：**G1 通过（2026-10-22）**
 - 基线提交：UniXNU `e95b37d`（main）
 - 本地提交：UniXNU `c8a5eeb`（计划）、`18f3020`（package）、`270ea4b`（B1 记录）、`692d70f`（docs 记录）；本轮 B1 收尾见 `git log -- plans/oneplus5-cheeseburger`
+- 远程仓库：
+  - UniXNU `https://github.com/lss717/UniXNU`（`main`）
+  - UEFI fork `https://github.com/lss717/edk2-msm8998`（分支 `unixnu-cheeseburger`）
+  - 设备仓库 `https://github.com/lss717/UniXNU-cheeseburger`（`main`）
 - UEFI 分支：`edk2-msm8998` 的 `unixnu-cheeseburger`，提交 `0471194`、`708fa06`、`7f34479`、`91e17a8`、`8ef28f1`、`1ffb934`
 - 最近更新：2026-10-22
 
@@ -62,7 +66,7 @@ G1 现场照片在 `assets/`：`g1-b1c-info-scrolled.jpg`（首版滚屏）、`g
 
 GitHub Actions：`UniXNU/.github/workflows/macos-cheeseburger.yml`（kernel + payload，artifact 上传；固件仍由 edk2-msm8998 单独构建）。
 
-设备仓库的 B3 内核暂时不含 legacy display / boot-progress：sheng 的两个 builder 绑定了它的 Adreno/触摸/背光探针，需要先用 cheeseburger 的 kit 替换，否则 XNU 的 panic 在屏幕上看不见。
+设备仓库的 B3 内核暂时不含 legacy display / boot-progress（sheng 的两个 builder 绑定了它的 Adreno/触摸/背光探针）。这不影响 B3 看 panic：DarwinBoot 把 GOP framebuffer 放进 `boot_args->Video`，XNU 自己的 verbose/panic 控制台直接画到面板；legacy display 是 B7 给 `IOMobileFramebuffer`/SpringBoard 用的。
 
 IPSW 缓存（`unixnu ipsw fetch`，HTTP range，只取需要的成员）：
 
@@ -74,7 +78,7 @@ IPSW 缓存（`unixnu ipsw fetch`，HTTP range，只取需要的成员）：
 ## 下一步
 
 1. **内核/prelink**：推送仓库后 dispatch `macos-cheeseburger.yml`；本机没有 `compression_tool`，kernelcache 仍被阻塞。
-2. **B3 显示 kit**：替换 sheng 的 legacy display / boot-progress builder，保证 panic 能上屏。
+2. **跑 macOS workflow**：已 dispatch `macos-cheeseburger.yml`（run `39763872681`），等 kernel + payload 产物。
 3. 备份 `persist`/`modem`/`efs`/`boot`/`recovery`（尚未确认完成）。
 4. 推 `unixnu-cheeseburger` 分支和 `UniXNU-cheeseburger` 仓库到 GitHub（需确认）。
 5. B6 时再实现 `--identity iphone10,2` 的真实 `/product`、`/buttons` 复制。
