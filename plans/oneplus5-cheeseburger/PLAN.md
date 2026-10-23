@@ -162,8 +162,9 @@ uefi-cheeseburger/
     Drivers/CheeseburgerBootMemoryDxe/
       CheeseburgerBootMemoryDxe.c
       CheeseburgerBootMemoryDxe.inf
-    Drivers/CheeseburgerGopLogDxe/       # 从 ShengGopLogDxe 移植/改名
-    Drivers/CheeseburgerKeyInputDxe/     # 从 ShengKeyInputDxe 移植/改名
+    # 不新增 GopLog/KeyInput 驱动：
+    # - 平台已有 FrameBufferSerialPortLib（0x9d400000）+ SerialDxe 提供屏幕日志；
+    # - 镜像已带 Qualcomm ButtonsDxe，按键待设备确认。
 ```
 
 ---
@@ -272,8 +273,8 @@ B3 使用 sheng 的 `board.toml` 作为参考：
   - 解析 `/chosen/linux,initrd-start` 和 `/chosen/linux,initrd-end`；
   - 安装只读 `EFI_BLOCK_IO_PROTOCOL`，让 `PartitionDxe`/`FatPkg` 挂载 payload；
   - 首版不做 `AddMemory`，沿用 edk2-msm8998 的内存图。
-- [ ] 移植/改名 `ShengGopLogDxe` 为 framebuffer 日志；无 UART 时靠屏幕看 `UNIXNU:`/`DARWINBOOT:`。
-- [ ] 移植/改名 `ShengKeyInputDxe`，映射 OnePlus 5 的电源/音量键，供 UniXNU 菜单使用。
+- [x] framebuffer 日志：不移植 `ShengGopLogDxe`。edk2-msm8998 自带 `FrameBufferSerialPortLib`（`0x9d400000`，1080×1920×32）；本轮把 `SerialDxe` 加进 RELEASE，`UNIXNU:` 日志和 `DEBUG` 输出走同一个屏幕控制台。
+- [ ] 按键输入：镜像已通过 `Msm8998Binaries/cheeseburger/dxe.inc` 带 Qualcomm `ButtonsDxe`（其 depex 依赖 `SimpleTextIn`）；待设备确认电源/音量键能否驱动 UniXNU 菜单。若不可用，再按 `ShengKeyInputDxe` 的 SPMI 方案补驱动。
 - [x] 在 cheeseburger DSC/FDF 加入：
   - `UniXNUPkg/Application/UniXNU/UniXNU.inf`
   - `UniXNUPkg/Driver/UniXNUDxe/UniXNUDxe.inf`
@@ -284,12 +285,12 @@ B3 使用 sheng 的 `board.toml` 作为参考：
   - `ArmPlatformLibMem.c` 的 `MemoryTable` 改为 `STATIC`，绕开 GCC 13 的 `-Werror=dangling-pointer`；
   - 旧 edk2 缺 `<Library/FdtLib.h>`，加一个映射到 `libfdt` 的兼容头；
   - 旧 edk2 缺 `<AsmMacroLib.h>`，加一个最小 `ASM_FUNC` 兼容头。
-- [ ] 写 `scripts/check-cheeseburger.py` 预检：FD size `0x600000`、FD base `0xd0000000`、DTB、payload。
+- [x] 写预检工具（`plans/oneplus5-cheeseburger/tools/check-cheeseburger.py`，B2 移入设备仓库）：FD `0x600000`/FV `0x5F8000`、FD 空闲量、boot image 地址与重叠、payload 的 FAT/`OP5ESP`/`EFI\UniXNU\unixnu.toml`；模块表需 `--fvmap` 指定构建产物 `FVMAIN.Fv.txt`。
 - [x] 准备只含 `unixnu.toml` 的 32 MiB `OP5ESP` payload，并打包测试 boot image；待设备验证菜单和卷。
 
 本轮发现：
 
-- **FV 空间很紧**：从 FDF 移除 `SimpleInitMain`（8.4 MB）和 `LogoDxe`（6.2 MB）后，`FVMAIN` 仍是 100% 满（压缩 FV 约 43%，剩余约 3.5 MB）。再加 GopLog/KeyInput 时可能需要继续删模块或增大 FD。
+- **FD 空间足够**：`FVMAIN` 是 `NumBlocks=0`（按内容定长），所以构建日志里的 `EFI_FV_TAKEN == TOTAL`（“100% 满”）是设计结果，不是没有余量。真正的预算在 6 MiB FD：从 FDF 移除 6.9 MiB 的内嵌 Linux（`LinuxSimpleMassStorage`）后，压缩 FV 只用 1,050,320 B，**FD 空闲 5,208,368 B（4.97 MiB）**（2026-10-22 实测）。
 - **非空 ramdisk 不能用 offset 0**：`build.sh` 默认 `kernel_offset=ramdisk_offset=tags_offset=0`，只适合空 ramdisk。测试镜像改用 `ramdisk_offset=0x02000000`、`tags_offset=0x04000000`，避免 32 MiB payload 覆盖 3 MB 内核。
 - `CheeseburgerBootMemoryDxe` 首版硬编码 `PcdDeviceTreeStore=0x83300000`；设备上需要确认该地址和 `/chosen` 属性。
 
@@ -305,14 +306,14 @@ B3 使用 sheng 的 `board.toml` 作为参考：
 ```sh
 cd /home/ls/edk2-msm8998
 UNIXNU_TREE=/home/ls/UniXNU bash build.sh --device cheeseburger --release RELEASE
-fastboot boot /home/ls/UniXNU/out/cheeseburger/b1/boot-op5-b1-safe.img
+fastboot boot /home/ls/UniXNU/out/cheeseburger/b1b/boot-op5-b1b-safe.img
 ```
 
 风险：
 
 - GCC5 vs CLANGPDB：本轮已用 GCC5 编过 UniXNU/DarwinBoot；后续新增驱动仍要过 GCC 13。
 - edk2-msm8998 的 DTB 存储是固定地址，不是 sheng 的 HOB：`CheeseburgerBootMemoryDxe` 需要设备实测确认。
-- 输入：edk2-msm8998 的按键映射可能不满足 UniXNU 菜单，需要移植 KeyInput。
+- 输入：Qualcomm `ButtonsDxe` 的按键映射未必满足 UniXNU 菜单；设备确认前不算通过。
 
 ---
 

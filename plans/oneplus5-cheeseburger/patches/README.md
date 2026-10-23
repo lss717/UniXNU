@@ -9,6 +9,7 @@
 | `0001-platform-static-memory-map.patch` | `ArmPlatformLibMem.c` 的 `MemoryTable` 改为 `STATIC`，绕开 GCC 13 的 `-Werror=dangling-pointer` |
 | `0002-uefi-unixnu-integration.patch` | `build.sh` 的 `PACKAGES_PATH`、cheeseburger DSC/FDF、`CheeseburgerBootMemoryDxe` |
 | `0003-unixnu-embeddedpkg-fdt.patch` | `UniXNULib.inf` 增加 `EmbeddedPkg/EmbeddedPkg.dec`（`gFdtTableGuid`） |
+| `0004-release-framebuffer-log-and-drop-linux.patch` | RELEASE 也加 `SerialDxe`（屏幕日志）；删除内嵌 Linux `LinuxSimpleMassStorage` |
 
 ## 旧 edk2 兼容头
 
@@ -57,6 +58,7 @@ python3 mkbootimg.py \
 ## 待办
 
 - 把这两个兼容头变成 `uefi-cheeseburger` 的正式 package，而不是复制到 edk2 子模块。
-- 补 `CheeseburgerGopLogDxe` / `CheeseburgerKeyInputDxe`。
-- FVMAIN 已 100% 满；加驱动前要删模块或增大 FD。
-- 设备实测 `0x83300000` 和 `/chosen/linux,initrd-*`。
+- 屏幕日志已由 `FrameBufferSerialPortLib`（`0x9d400000`）+ `SerialDxe` 提供，不需要 `CheeseburgerGopLogDxe`。
+- 按键沿用镜像里的 Qualcomm `ButtonsDxe`；只有设备上不可用时才补 `CheeseburgerKeyInputDxe`。
+- FD 空闲 4.97 MiB（`FVMAIN_COMPACT` 用 1,050,320 B）；`FVMAIN` 的 “100% 满” 是 `NumBlocks=0` 的设计结果。
+- 设备实测 `0x83300000`、`/chosen/linux,initrd-*`、`0x9d400000` 和按键映射。
