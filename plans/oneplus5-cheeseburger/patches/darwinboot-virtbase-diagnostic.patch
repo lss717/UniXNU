@@ -1,0 +1,67 @@
+diff --git a/DarwinBootPkg/Driver/DarwinBoot.c b/DarwinBootPkg/Driver/DarwinBoot.c
+index 25ce2d2..606cfc2 100644
+--- a/DarwinBootPkg/Driver/DarwinBoot.c
++++ b/DarwinBootPkg/Driver/DarwinBoot.c
+@@ -35,6 +35,7 @@ typedef struct {
+   UINT64   Base;
+   UINT64   End;
+   UINT64   Entry;
++  UINT64   VirtBase;
+ } KERNEL;
+ 
+ STATIC EFI_HANDLE  mImage;
+@@ -45,6 +46,7 @@ VOID EFIAPI DarwinEnter (UINT64 Args, UINT64 Entry, UINT64 Memory, UINT64 Size,
+ 
+ STATIC UINT32 U32 (CONST VOID *P) { return ReadUnaligned32 ((CONST UINT32 *)P); }
+ STATIC UINT64 U64 (CONST VOID *P) { return ReadUnaligned64 ((CONST UINT64 *)P); }
++STATIC VOID DiagDraw (CONST CHAR16 *Text, UINTN Row);
+ 
+ STATIC
+ EFI_STATUS
+@@ -149,6 +151,9 @@ ParseKernel (CONST UINT8 *Data, UINTN Size, KERNEL *Kernel)
+         Segment->FileOffset = U64 (Data + Offset + 40);
+         Segment->FileSize = U64 (Data + Offset + 48);
+         Segment->Protection = U32 (Data + Offset + 60);
++        if (AsciiStrnCmp ((CONST CHAR8 *)(Data + Offset + 8), "__TEXT", 16) == 0) {
++          Kernel->VirtBase = Segment->Address;
++        }
+         if ((Segment->Size > WINDOW_SIZE) || (Segment->Address > MAX_UINT64 - Segment->Size) ||
+             (Segment->FileSize > Segment->Size) || (Segment->FileOffset > Size) ||
+             (Segment->FileSize > Size - Segment->FileOffset)) { return EFI_LOAD_ERROR; }
+@@ -261,6 +266,16 @@ AdtNode (CONST UINT8 *Data, UINTN Size, UINTN *Offset, UINTN Depth, UINTN Parent
+     *AddonOffset = AddonCandidate;
+   }
+   if (MemoryCandidate != MAX_UINTN) {
++    {
++      CHAR16 Line[96];
++      Print (L"DARWINBOOT: adt cand %lu key %a lo %08x hi %08x path %lu\n",
++             (UINT64)MemoryCandidate, (CONST CHAR8 *)(Data + MemoryCandidate - 36),
++             ReadUnaligned32 ((CONST UINT32 *)(Data + MemoryCandidate)), ReadUnaligned32 ((CONST UINT32 *)(Data + MemoryCandidate + 4)),
++             (UINT64)Path);
++      UnicodeSPrint (Line, sizeof (Line), L"ADT %a %08x %08x", (CONST CHAR8 *)(Data + MemoryCandidate - 36),
++                     ReadUnaligned32 ((CONST UINT32 *)(Data + MemoryCandidate)), ReadUnaligned32 ((CONST UINT32 *)(Data + MemoryCandidate + 4)));
++      DiagDraw (Line, 0);
++    }
+     if ((Path != 1) || (*WindowSize != 0)) { return FALSE; }
+     *WindowSize = U64 (Data + MemoryCandidate);
+     if (!DarwinWindowSizeValid (*WindowSize)) { return FALSE; }
+@@ -556,7 +571,10 @@ Boot (
+   KeepPacked = FALSE;
+   if (!AdtNode (Tree, TreeSize, &Offset, 0, 3, &RamdiskOffset, &TrustCacheOffset, &AddonOffset, &WindowSize, &KeepPacked) || (Offset != TreeSize)) { Status = EFI_COMPROMISED_DATA; goto Fail; }
+   if (KeepPacked && (!RamdiskPacked || (RamdiskOffset == MAX_UINTN))) { Status = EFI_COMPROMISED_DATA; goto Fail; }
++  Print (L"DARWINBOOT: parsed window 0x%lx base 0x%lx virt 0x%lx end 0x%lx entry 0x%lx\n",
++         (UINT64)WindowSize, Kernel.Base, Kernel.VirtBase, Kernel.End, Kernel.Entry);
+   if (WindowSize == 0) { WindowSize = WINDOW_SIZE; }
++  WindowSize = 0x80000000;  /* diagnostic override: 2 GiB window */
+   if (Kernel.Base > MAX_UINT64 - WindowSize) { Status = EFI_LOAD_ERROR; goto Fail; }
+   if (Request->Ramdisk != NULL) {
+     if ((RamdiskOffset == MAX_UINTN) || (U64 ((UINT8 *)Tree + RamdiskOffset) != 0) ||
+@@ -621,7 +639,7 @@ Boot (
+   Args = (DARWIN_BOOT_ARGS *)(UINTN)ArgsAddress;
+   Args->Revision = 2;
+   Args->Version = 2;
+-  Args->VirtualBase = Kernel.Base;
++  Args->VirtualBase = Kernel.VirtBase ? Kernel.VirtBase : Kernel.Base;
+   Args->PhysicalBase = Address;
+   Args->MemorySize = WindowSize;
+   Args->MemorySizeActual = WindowSize;
