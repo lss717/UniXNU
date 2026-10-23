@@ -4,17 +4,53 @@
 - 线路：B — UniXNU / 4K
 - 最终目标：iPhone10,2 / iOS 16.7.16（20H392）
 - 当前阶段：**B1 — UEFI 固件与 UniXNU 集成**
-- 当前 gate：**G1（等待设备实测）**
+- 当前 gate：**G1 — 菜单与 B0 数据已验证；按键与屏幕日志待确认**
 - 基线提交：UniXNU `e95b37d`（main）
 - 本地提交：UniXNU `c8a5eeb`（计划）、`18f3020`（package）、`270ea4b`（B1 记录）、`692d70f`（docs 记录）；本轮 B1 收尾见 `git log -- plans/oneplus5-cheeseburger`
-- UEFI 分支：`edk2-msm8998` 的 `unixnu-cheeseburger`，提交 `0471194`、`708fa06`、`7f34479`
+- UEFI 分支：`edk2-msm8998` 的 `unixnu-cheeseburger`，提交 `0471194`、`708fa06`、`7f34479`、`91e17a8`、`8ef28f1`
 - 最近更新：2026-10-22
+
+## G1 设备实测（2026-10-22）
+
+`fastboot boot out/cheeseburger/b1b/boot-op5-b1b-safe.img` 被 ABL 接受（`Booting OKAY`），设备随后从 USB 消失。屏幕确认：
+
+- [x] UEFI 启动，有屏幕输出。
+- [x] UniXNU 菜单出现：标题 `OnePlus 5 B1`、条目 `Exit to firmware`、倒计时可见。
+- [x] payload 卷挂载成功（菜单来自 `\EFI\UniXNU\unixnu.toml`），说明 `CheeseburgerBootMemoryDxe` 的 DTB 地址 `0x83300000`、`/chosen/linux,initrd-*` 解析和 FAT 栈都工作。
+- [x] `fastboot boot` 的 35 MiB boot image 与 `0x10000000/0x12000000/0x14000000` 布局被 ABL 接受。
+- [x] DTB 地址 `0x83300000`、`/chosen/linux,initrd-*`、只读 BlockIo、FAT、`unixnu.toml` 全部工作。
+- [ ] 按键（电源/音量）是否驱动菜单。
+- [ ] `drivers`/`dh` 能看到 UniXNU、DarwinBoot、BlockIo（需要 Shell）。
+- [ ] `UNIXNU:` 日志上屏（菜单会覆盖，需要专门查看）。
+
+`fastboot getvar all` 已保存到 `.cache/firmware/op5-getvar.txt`（不提交）：hw-revision 20001、unlocked yes、userdata `0x1C4D8BB000`、boot `0x4000000`、没有 A/B slot。
+
+### 诊断镜像 b1c（采集 B0 数据）
+
+固件与 b1b 完全相同（FD `3b7a4c60…`），只换了 payload：加入 `EFI/UniXNU/Info.efi`（`CheeseburgerInfo`），并把 `unixnu.toml` 的默认项设为 `Board info`。该程序在屏上打印内存总量、GOP 模式、整盘 BlockIo 的逻辑块大小和 GPT 的 userdata 边界，停留 180 秒后重启。
+
+## B0 设备数据（2026-10-22 实测）
+
+由 payload 里的 `CheeseburgerInfo.efi` 打印，数值与 `fastboot getvar` 交叉验证。
+
+| 项目 | 值 |
+| --- | --- |
+| RAM | **8 GB**（UEFI 内存图 7039 MiB / 51 descriptors） |
+| UFS 逻辑块 | **4096 B** |
+| UFS 主 LUN | 29,763,584 块 = 116,264 MiB |
+| `userdata` | `first_lba = 0x14F40` (85,824)，`last_lba = 0x1C627FA` (29,763,578)，29,677,755 块 = 115,928 MiB |
+| `userdata` 交叉验证 | 29,677,755 × 4096 = `0x1C4D8BB000`，等于 `fastboot getvar partition-size:userdata` |
+| GOP | 1080×1920，stride 1080，fmt 1（BGRX），base `0x9D400000`，size `0x7E9000` |
+| 其他 LUN | 4 MiB ×2、128 MiB、4096 MiB、1536 MiB（带 GPT：toolsfv/logfs/sti/…/vendor/reserve3） |
+| 无 A/B | `getvar current-slot` 不存在；`unlocked: yes`；`hw-revision: 20001` |
+
+`userdata` 末尾 5 块是 GPT 备份表/头；`FirstUsableLBA` 在 `0x14F40` 之前留给主 GPT。
 
 ## 下一步
 
-1. **设备实测**：`fastboot boot out/cheeseburger/b1b/boot-op5-b1b-safe.img`；失败时回退 `out/cheeseburger/b1/boot-op5-b1-safe.img`。
-2. 如果菜单不出现：先看屏幕上的 `CHEESEBURGER:` / `UNIXNU:` 日志；再确认 `CheeseburgerBootMemoryDxe` 的 DTB 地址 `0x83300000` 和 `/chosen/linux,initrd-start/-end`，必要时用 DEBUG 目标构建。
-3. 设备侧补齐：备份、GPT、RAM、UFS 逻辑块大小（B0 剩余项）。
+1. **采集 B0 数据**：`fastboot boot out/cheeseburger/b1c/boot-op5-b1c-info.img`，拍下 `MEM:`/`GOP:`/`BLK:`/`GPT:` 行。
+2. 确认按键与 `UNIXNU:` 日志；必要时用 DEBUG 目标构建。
+3. 备份 `persist`/`modem`/`efs`/`boot`/`recovery`（尚未确认完成）。
 4. 然后做 B2 设备仓库（`board.toml`、`unixnu.toml`、ADT、boot image 脚本）。
 
 ## 已完成
@@ -43,7 +79,25 @@
 
 ## 本地产物
 
-### b1b（当前测试镜像，2026-10-22 重建）
+### b1d（当前固件 + B0 数据采集，2026-10-22）
+
+| 文件 | SHA-256 |
+| --- | --- |
+| `out/cheeseburger/b1d/boot-op5-b1d-info.img` | `3709f7d2e9c1c7fde4641afd85dcffa0088753d2a4120f17ec73fe6af78650d3` |
+| `out/cheeseburger/b1d/MSM8998PKG_UEFI.fd` | `217c48fad447d92c80a10bec867e651f670c0fd102b1bd85c64771b7670a4b86` |
+| `out/cheeseburger/b1d/op5-info-payload.img` | `d6442196cee68440282c30e3569f5cba5e2a4b863cdc893f9bb77c6586ad6176` |
+
+固件变化：移除 `TerminalDxe`（它绑定 `SerialIo`，把每行 `ConOut` 在 framebuffer 上重复画一遍）。`CheeseburgerInfo` 只在 `[Components]` 里构建，不进 FV。
+
+### b1c（上一版数据采集镜像，已被 b1d 取代）
+
+| 文件 | SHA-256 |
+| --- | --- |
+| `out/cheeseburger/b1c/boot-op5-b1c-info.img` | `61875356ff4f4264d80c4c287d2c20979f9429293ccd03280ef57c9f240de35f` |
+| `out/cheeseburger/b1c/MSM8998PKG_UEFI.fd` | `3b7a4c601506b036d46ed4baaba4ef5e99e9e4e4e90ee4a1fa2b721af17d4bff` |
+| `out/cheeseburger/b1c/op5-info-payload.img` | `593f2928e4e0d0bbb73b3589837bbc3b7ab5e1c4349f0745551860ea17f8ac4a` |
+
+### b1b（G1 测试镜像，2026-10-22 重建）
 
 | 文件 | SHA-256 |
 | --- | --- |
@@ -71,20 +125,21 @@
 ## 已知问题
 
 - **非空 ramdisk 不能用 offset 0**：32 MiB payload 会覆盖内核；设备脚本必须显式设置 ramdisk/tags offset。
-- `CheeseburgerBootMemoryDxe` 首版硬编码 `PcdDeviceTreeStore=0x83300000`，待设备确认。
+- `CheeseburgerBootMemoryDxe` 的 `PcdDeviceTreeStore=0x83300000` **已确认**：payload 卷能挂载说明 DTB/initrd 解析正确。
+- UFS 的 6 个 LUN 都会出现在 UEFI 里；B5 必须按容量选主 LUN（116,264 MiB），不能按枚举顺序。
 - 删除 `LinuxSimpleMassStorage` 后，`PlatformBootManagerLib` 仍会注册一个指向缺失 FV 文件的 “USB Attached SCSI” 启动项（`ENABLE_LINUX_SIMPLE_MASS_STORAGE` 在 family `.dsc.inc` 里）。`UniXNUDxe` 把 UniXNU 放在 `BootOrder` 首位，正常不会走到它。
 - 按键映射依赖 Qualcomm `ButtonsDxe`；UniXNU 菜单需要 Up/Down/Enter，设备上未必一一对应。
 - 还没有在 OnePlus 5 上实测。
 
 ## 待实测
 
-- [ ] RAM：6 GB / 8 GB
-- [ ] userdata `first_lba` / `last_lba`
-- [ ] `lba_bytes`（UFS 逻辑块）
-- [ ] GOP framebuffer 地址/大小/stride，以及 `0x9d400000` 是否与面板一致
+- [x] RAM：**8 GB**（7039 MiB 可用）
+- [x] userdata `first_lba` / `last_lba`：`0x14F40` / `0x1C627FA`
+- [x] `lba_bytes`：**4096**
+- [x] GOP framebuffer：`0x9D400000`，1080×1920，stride 1080，BGRX，`0x7E9000`
 - [ ] 触摸 I2C 总线号和地址
-- [ ] live DTB 的 `PcdDeviceTreeStore` 和 `/chosen/linux,initrd-*`
-- [ ] `boot-op5-b1b-safe.img` 的 load address 是否被 ABL 接受
+- [x] live DTB 的 `PcdDeviceTreeStore` 和 `/chosen/linux,initrd-*`
+- [x] `boot-op5-b1*-safe.img` 的 load address 被 ABL 接受
 - [ ] `ButtonsDxe` 的电源/音量键能否驱动 UniXNU 菜单
 - [ ] `UNIXNU:` 日志是否出现在屏幕上
 
@@ -124,6 +179,9 @@ Linux x86_64 / Ubuntu 24.04：
 | 2026-10-22 | B1 | 复核 FD 空间（解析 FD 头） | 实际空闲 3.35 MiB；“FVMAIN 100% 满”是 `NumBlocks=0` 的假象 |
 | 2026-10-22 | B1 | `SerialDxe` 进 RELEASE + 删除内嵌 Linux | 成功；压缩 FV 1.00 MiB，FD 空闲 4.97 MiB；UEFI `7f34479` |
 | 2026-10-22 | B1 | 重建并打包 b1b | 完成；FD `3b7a4c60…`，boot `ea89a9c7…`；待设备实测 |
+| 2026-10-22 | B1 | **G1 设备实测** | `fastboot boot` 成功；UEFI 启动，UniXNU 菜单、payload 卷、倒计时均正常 |
+| 2026-10-22 | B1 | 诊断程序 `CheeseburgerInfo` 采集 B0 数据 | 8 GB RAM、4 KiB UFS、userdata `0x14F40..0x1C627FA`、GOP `0x9D400000` 1080×1920 |
+| 2026-10-22 | B1 | 移除重复的 `TerminalDxe` 控制台 | 成功；新 FD `217c48fa…`，空闲 4.97 MiB |
 
 ## 更新规则
 

@@ -1,0 +1,26 @@
+commit 91e17a8c379f00f96b3863ec7e2e078c8da6a6de
+Author: rpone <rponeawa@qq.com>
+Date:   Thu Oct 22 17:49:35 2026 +0800
+
+    fix(cheeseburger): drop the duplicate serial terminal console
+    
+    TerminalDxe binds SerialIo, and on this board SerialIo is the frame buffer
+    console that FrameBufferSerialPortLib draws.  Every ConOut line was therefore
+    rendered a second time on top of the GraphicsConsole copy, at a different
+    size and position.  There is no UART, so remove TerminalDxe; UniXNU keeps
+    using SerialIo directly for its log.
+
+diff --git a/Platforms/Msm8998Pkg/Device/oneplus/cheeseburger/cheeseburger.fdf b/Platforms/Msm8998Pkg/Device/oneplus/cheeseburger/cheeseburger.fdf
+index 7f6724f..5941886 100644
+--- a/Platforms/Msm8998Pkg/Device/oneplus/cheeseburger/cheeseburger.fdf
++++ b/Platforms/Msm8998Pkg/Device/oneplus/cheeseburger/cheeseburger.fdf
+@@ -128,7 +128,8 @@ READ_LOCK_STATUS   = TRUE
+     INF MdeModulePkg/Universal/Console/ConPlatformDxe/ConPlatformDxe.inf
+     INF MdeModulePkg/Universal/Console/ConSplitterDxe/ConSplitterDxe.inf
+     INF MdeModulePkg/Universal/Console/GraphicsConsoleDxe/GraphicsConsoleDxe.inf
+-    INF MdeModulePkg/Universal/Console/TerminalDxe/TerminalDxe.inf
++    # TerminalDxe would bind SerialIo (the frame buffer) and print every
++    # ConOut line a second time over the one GraphicsConsole already draws.
+ 
+     #
+     # SerialIo on the frame buffer.  The family DSC only includes SerialDxe for

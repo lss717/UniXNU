@@ -10,6 +10,8 @@
 | `0002-uefi-unixnu-integration.patch` | `build.sh` 的 `PACKAGES_PATH`、cheeseburger DSC/FDF、`CheeseburgerBootMemoryDxe` |
 | `0003-unixnu-embeddedpkg-fdt.patch` | `UniXNULib.inf` 增加 `EmbeddedPkg/EmbeddedPkg.dec`（`gFdtTableGuid`） |
 | `0004-release-framebuffer-log-and-drop-linux.patch` | RELEASE 也加 `SerialDxe`（屏幕日志）；删除内嵌 Linux `LinuxSimpleMassStorage` |
+| `0005-drop-duplicate-terminal-console.patch` | 移除 `TerminalDxe`，避免 `ConOut` 在 framebuffer 上重复渲染 |
+| `0006-board-info-app.patch` | `CheeseburgerInfo`：从 payload 启动，打印 RAM/GOP/BlockIo/GPT userdata |
 
 ## 旧 edk2 兼容头
 
@@ -61,4 +63,5 @@ python3 mkbootimg.py \
 - 屏幕日志已由 `FrameBufferSerialPortLib`（`0x9d400000`）+ `SerialDxe` 提供，不需要 `CheeseburgerGopLogDxe`。
 - 按键沿用镜像里的 Qualcomm `ButtonsDxe`；只有设备上不可用时才补 `CheeseburgerKeyInputDxe`。
 - FD 空闲 4.97 MiB（`FVMAIN_COMPACT` 用 1,050,320 B）；`FVMAIN` 的 “100% 满” 是 `NumBlocks=0` 的设计结果。
-- 设备实测 `0x83300000`、`/chosen/linux,initrd-*`、`0x9d400000` 和按键映射。
+- 设备实测 `0x83300000`、`/chosen/linux,initrd-*`、`0x9d400000` 已完成；按键映射仍待确认。
+- `CheeseburgerInfo` 不进 FV：只加在 DSC 的 `[Components]`，由 payload 的 `Info.efi` 提供。

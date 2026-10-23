@@ -83,29 +83,32 @@ Android ABL
 | --- | --- | --- |
 | SoC | MSM8998（Snapdragon 835），4×Kryo 280 Gold + 4×Silver | 已确认 |
 | GPU | Adreno 540 | 已确认 |
-| RAM | 6 GB 或 8 GB，DRAM base `0x80000000` | 容量待实测 |
+| RAM | **8 GB**（UEFI 内存图 7039 MiB），DRAM base `0x80000000` | 已实测 |
 | 屏幕 | 1080×1920 AMOLED | 已确认 |
-| Framebuffer 参考 | `0x9d400000`，大小 `0x2400000`，stride `1080*4` | 待 UEFI 实测 |
+| Framebuffer | `0x9d400000`，1080×1920，stride 1080，BGRX，size `0x7E9000` | 已实测 |
 | UFS HC | `0x1da4000`，大小 `0x2500`，IRQ GIC SPI 265 | 待实测 |
 | UFS PHY | `0x1da7000`，大小 `0x1000` | 待实测 |
-| UFS 逻辑块 | 通常 4096 | 待实测 |
+| UFS 逻辑块 | **4096** | 已实测 |
 | GICD | `0x17a00000`，大小 `0x10000` | 参考值 |
 | GICR | `0x17b00000`，大小 `0x100000`，stride `0x20000` | 参考值 |
 | Timer | 19.2 MHz | 参考值 |
 | CPU MPIDR | `0,1,2,3,0x100,0x101,0x102,0x103` | 参考值 |
 | Touch | Synaptics RMI4，I2C `0x20` | 待实测 |
+| userdata | `first_lba 0x14F40`，`last_lba 0x1C627FA`，29,677,755 块（113.2 GiB） | 已实测 |
 | PMIC | PM8998 + PMI8998 + PM8005 | 已确认 |
 | UEFI FD | base `0xd0000000`，size `0x600000`，FV 在 `+0x8000` | 已确认 |
 | Boot image | header v1，kernel/ramdisk/tags offset 全 0 | 已确认 |
-| 设备代号 | cheeseburger；5T 是 dumpling，不要混用 | 待确认机型 |
+| 设备代号 | cheeseburger；5T 是 dumpling，不要混用 | `product: msm8998`，128 GB / 8 GB 机型 |
 
 ### 3.1 必须在 B0 补齐的值
 
-- [ ] 实际 RAM：6 GB 还是 8 GB。
-- [ ] userdata GPT 的 `first_lba`、`last_lba`。
-- [ ] `lba_bytes`（UFS 逻辑块大小）。
-- [ ] 实际 framebuffer 地址/大小/stride（UEFI GOP 日志）。
+- [x] 实际 RAM：**8 GB**（UEFI 内存图 7039 MiB / 51 descriptors）。
+- [x] userdata GPT 的 `first_lba 0x14F40`、`last_lba 0x1C627FA`（29,677,755 × 4096 = `0x1C4D8BB000`，与 `fastboot getvar` 一致）。
+- [x] `lba_bytes` = **4096**。
+- [x] 实际 framebuffer：`0x9D400000`，1080×1920，stride 1080，BGRX，size `0x7E9000`。
 - [ ] 触摸 I2C 总线号和地址（后续 B7 用）。
+
+采集方式：payload ESP 里的 `CheeseburgerInfo.efi`（`patches/0006-board-info-app.patch`），由 UniXNU 菜单启动，打印内存、GOP、各整盘的逻辑块大小和 GPT `userdata` 边界。
 
 采集命令（设备侧）：
 
@@ -235,7 +238,7 @@ B3 使用 sheng 的 `board.toml` 作为参考：
 - [ ] 确认机型是 OnePlus 5（cheeseburger）而不是 5T（dumpling）。
 - [ ] 解锁 bootloader；备份 `persist`、`modem`、`efs`、`boot`、`recovery`，有条件整盘备份。
 - [ ] `fastboot getvar all`，记录分区大小、RAM、slot 信息。
-- [ ] TWRP/postmarketOS 下 dump GPT，记录 userdata 的 `first_lba`/`last_lba`/`lba_bytes`。
+- [x] userdata 的 `first_lba`/`last_lba`/`lba_bytes` 已从 UEFI 侧实测（不需要 TWRP）：`0x14F40` / `0x1C627FA` / 4096。
 - [ ] 确认 RAM 容量、UFS 逻辑块大小。
 - [ ] macOS + Xcode 或 GitHub Actions 可用；Linux 侧安装 Python 3.11+、git、make、dtc、mtools、LLVM/lld。
 - [x] `git submodule update --init --recursive` 初始化 UniXNU 子模块。
@@ -266,7 +269,7 @@ B3 使用 sheng 的 `board.toml` 作为参考：
 任务（2026-10-22 进展）：
 
 - [x] 用上游 `edk2-msm8998` 构建 `cheeseburger` 基线，确认 FD 生成和 `boot-cheeseburger.img` 打包。
-- [ ] 在设备上验证屏幕输出、UEFI shell、`map -r` 能看到 UFS 分区。
+- [x] 在设备上验证屏幕输出、UniXNU 菜单、payload 卷；UEFI Shell 的 `map -r` 尚未跑（无键盘）。
 - [x] 建本地分支 `unixnu-cheeseburger`；GitHub fork 待建。
 - [x] 移植 `ShengBootMemoryDxe` -> `CheeseburgerBootMemoryDxe`：
   - edk2-msm8998 用 `PcdDeviceTreeStore = 0x83300000` 保存 live DTB 指针，首版直接读该地址；
@@ -274,7 +277,7 @@ B3 使用 sheng 的 `board.toml` 作为参考：
   - 安装只读 `EFI_BLOCK_IO_PROTOCOL`，让 `PartitionDxe`/`FatPkg` 挂载 payload；
   - 首版不做 `AddMemory`，沿用 edk2-msm8998 的内存图。
 - [x] framebuffer 日志：不移植 `ShengGopLogDxe`。edk2-msm8998 自带 `FrameBufferSerialPortLib`（`0x9d400000`，1080×1920×32）；本轮把 `SerialDxe` 加进 RELEASE，`UNIXNU:` 日志和 `DEBUG` 输出走同一个屏幕控制台。
-- [ ] 按键输入：镜像已通过 `Msm8998Binaries/cheeseburger/dxe.inc` 带 Qualcomm `ButtonsDxe`（其 depex 依赖 `SimpleTextIn`）；待设备确认电源/音量键能否驱动 UniXNU 菜单。若不可用，再按 `ShengKeyInputDxe` 的 SPMI 方案补驱动。
+- [ ] 按键输入：镜像已通过 `Msm8998Binaries/cheeseburger/dxe.inc` 带 Qualcomm `ButtonsDxe`（其 depex 依赖 `SimpleTextIn`）；**待设备确认**电源/音量键能否驱动 UniXNU 菜单。若不可用，再按 `ShengKeyInputDxe` 的 SPMI 方案补驱动。
 - [x] 在 cheeseburger DSC/FDF 加入：
   - `UniXNUPkg/Application/UniXNU/UniXNU.inf`
   - `UniXNUPkg/Driver/UniXNUDxe/UniXNUDxe.inf`
@@ -456,7 +459,7 @@ python3 package/Scripts/qemu-run.py out/esp \
   - UFS 2.1 HC 的命令队列、UIC、power mode；
   - SMMU：MMU-500，4K；先试 `ArmSmmu4K`，不匹配就新写 context bank。
 - [ ] 第一版用“handoff 模式”：UEFI 已初始化 HC/PHY/时钟，XNU 只接管命令提交；SMMU 先旁路/复用 UEFI 映射。
-- [ ] 填 `userdata` 的 GPT LBAs，`lba_bytes` 用实测值。
+- [x] `userdata` 的 GPT LBAs 与 `lba_bytes`：`0x14F40`–`0x1C627FA`，4096 B（2026-10-22 实测）。
 - [ ] 用 B3 的 iPad 临时 root 先验证 OS/SystemOS 窗口和 root UUID。
 - [ ] 备份后 flash userdata；确认 `OS`/`SystemOS` 媒体出现。
 - [ ] 确认 root UUID 匹配，`launchd` 启动。
