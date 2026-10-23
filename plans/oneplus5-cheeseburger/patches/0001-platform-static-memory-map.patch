@@ -1,0 +1,19 @@
+commit 0471194dbfcf13185d073fb30ecaedff1259cf59
+Author: rpone <rponeawa@qq.com>
+Date:   Thu Oct 22 15:32:25 2026 +0800
+
+    fix(platform): keep the virtual memory map in static storage
+
+diff --git a/Platforms/Msm8998FamilyPkg/Library/ArmPlatformLib/ArmPlatformLibMem.c b/Platforms/Msm8998FamilyPkg/Library/ArmPlatformLib/ArmPlatformLibMem.c
+index 2e3f9f2..934b66f 100644
+--- a/Platforms/Msm8998FamilyPkg/Library/ArmPlatformLib/ArmPlatformLibMem.c
++++ b/Platforms/Msm8998FamilyPkg/Library/ArmPlatformLib/ArmPlatformLibMem.c
+@@ -33,7 +33,7 @@ ArmPlatformGetVirtualMemoryMap (
+   //TO-DO:ADD MEMORY MAP HERE
+   PARM_MEMORY_REGION_DESCRIPTOR_EX MemoryDescriptorEx =
+       GetPlatformMemoryMap();
+-  ARM_MEMORY_REGION_DESCRIPTOR
++  STATIC ARM_MEMORY_REGION_DESCRIPTOR
+         MemoryTable[MAX_ARM_MEMORY_REGION_DESCRIPTOR_COUNT];
+   UINTN Index = 0;
+ 

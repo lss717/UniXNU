@@ -262,27 +262,36 @@ B3 使用 sheng 的 `board.toml` 作为参考：
 
 **目标**：OnePlus 5 能启动带 UniXNU/DarwinBoot 的 UEFI，菜单出现，payload FAT 卷可读。
 
-任务：
+任务（2026-10-22 进展）：
 
-- [ ] 用上游 `edk2-msm8998` 构建 `cheeseburger`，`fastboot boot boot-cheeseburger.img`。
-- [ ] 验证屏幕输出、UEFI shell、`map -r` 能看到 UFS 分区。
-- [ ] 建 `uefi-cheeseburger` fork，保留 `Config/cheeseburger.conf` 和 `Platforms/Msm8998Pkg/Device/oneplus/cheeseburger/`。
-- [ ] 移植 `ShengBootMemoryDxe` -> `CheeseburgerBootMemoryDxe`：
-  - 找到 edk2-msm8998 保存 DTB 的 HOB（或等价入口参数）；
+- [x] 用上游 `edk2-msm8998` 构建 `cheeseburger` 基线，确认 FD 生成和 `boot-cheeseburger.img` 打包。
+- [ ] 在设备上验证屏幕输出、UEFI shell、`map -r` 能看到 UFS 分区。
+- [x] 建本地分支 `unixnu-cheeseburger`；GitHub fork 待建。
+- [x] 移植 `ShengBootMemoryDxe` -> `CheeseburgerBootMemoryDxe`：
+  - edk2-msm8998 用 `PcdDeviceTreeStore = 0x83300000` 保存 live DTB 指针，首版直接读该地址；
   - 解析 `/chosen/linux,initrd-start` 和 `/chosen/linux,initrd-end`；
   - 安装只读 `EFI_BLOCK_IO_PROTOCOL`，让 `PartitionDxe`/`FatPkg` 挂载 payload；
   - 首版不做 `AddMemory`，沿用 edk2-msm8998 的内存图。
 - [ ] 移植/改名 `ShengGopLogDxe` 为 framebuffer 日志；无 UART 时靠屏幕看 `UNIXNU:`/`DARWINBOOT:`。
 - [ ] 移植/改名 `ShengKeyInputDxe`，映射 OnePlus 5 的电源/音量键，供 UniXNU 菜单使用。
-- [ ] 在 cheeseburger DSC/FDF 加入：
+- [x] 在 cheeseburger DSC/FDF 加入：
   - `UniXNUPkg/Application/UniXNU/UniXNU.inf`
   - `UniXNUPkg/Driver/UniXNUDxe/UniXNUDxe.inf`
   - `DarwinBootPkg/Driver/DarwinBoot.inf`
   - `CheeseburgerBootMemoryDxe.inf`
-- [ ] DSC 补 `FdtLib`、`UniXNULib`、`PACKAGES_PATH`（`{tree}/package`、`{tree}/drivers/DarwinBoot`）。
-- [ ] 用 GCC5 构建；若 UniXNU/DarwinBoot 出现 GCC 兼容问题，先用 CLANGPDB 单独出 EFI，再作为 binary 塞进 FV。
+- [x] DSC 补 `FdtLib`、`UniXNULib`、`PACKAGES_PATH`（`{tree}/package`、`{tree}/drivers/DarwinBoot`）。
+- [x] 用 GCC5 构建成功；本轮加了三个兼容修补：
+  - `ArmPlatformLibMem.c` 的 `MemoryTable` 改为 `STATIC`，绕开 GCC 13 的 `-Werror=dangling-pointer`；
+  - 旧 edk2 缺 `<Library/FdtLib.h>`，加一个映射到 `libfdt` 的兼容头；
+  - 旧 edk2 缺 `<AsmMacroLib.h>`，加一个最小 `ASM_FUNC` 兼容头。
 - [ ] 写 `scripts/check-cheeseburger.py` 预检：FD size `0x600000`、FD base `0xd0000000`、DTB、payload。
-- [ ] 用只含 `unixnu.toml` 的 payload 启动，确认菜单和 `OP5ESP` 文件。
+- [x] 准备只含 `unixnu.toml` 的 32 MiB `OP5ESP` payload，并打包测试 boot image；待设备验证菜单和卷。
+
+本轮发现：
+
+- **FV 空间很紧**：从 FDF 移除 `SimpleInitMain`（8.4 MB）和 `LogoDxe`（6.2 MB）后，`FVMAIN` 仍是 100% 满（压缩 FV 约 43%，剩余约 3.5 MB）。再加 GopLog/KeyInput 时可能需要继续删模块或增大 FD。
+- **非空 ramdisk 不能用 offset 0**：`build.sh` 默认 `kernel_offset=ramdisk_offset=tags_offset=0`，只适合空 ramdisk。测试镜像改用 `ramdisk_offset=0x02000000`、`tags_offset=0x04000000`，避免 32 MiB payload 覆盖 3 MB 内核。
+- `CheeseburgerBootMemoryDxe` 首版硬编码 `PcdDeviceTreeStore=0x83300000`；设备上需要确认该地址和 `/chosen` 属性。
 
 验收（G1）：
 
@@ -294,15 +303,15 @@ B3 使用 sheng 的 `board.toml` 作为参考：
 命令参考：
 
 ```sh
-cd uefi-cheeseburger
-bash build.sh --device cheeseburger --release RELEASE
-fastboot boot boot-cheeseburger.img
+cd /home/ls/edk2-msm8998
+UNIXNU_TREE=/home/ls/UniXNU bash build.sh --device cheeseburger --release RELEASE
+fastboot boot /home/ls/UniXNU/out/cheeseburger/b1/boot-op5-b1-safe.img
 ```
 
 风险：
 
-- GCC5 vs CLANGPDB：UniXNU/DarwinBoot 可能需要 GCC 兼容修补。
-- edk2-msm8998 的 DTB HOB 与 sheng 不同：`CheeseburgerBootMemoryDxe` 需要改 HOB 查找。
+- GCC5 vs CLANGPDB：本轮已用 GCC5 编过 UniXNU/DarwinBoot；后续新增驱动仍要过 GCC 13。
+- edk2-msm8998 的 DTB 存储是固定地址，不是 sheng 的 HOB：`CheeseburgerBootMemoryDxe` 需要设备实测确认。
 - 输入：edk2-msm8998 的按键映射可能不满足 UniXNU 菜单，需要移植 KeyInput。
 
 ---

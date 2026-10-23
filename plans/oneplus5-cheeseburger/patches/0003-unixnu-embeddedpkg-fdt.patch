@@ -1,0 +1,12 @@
+diff --git a/package/UniXNUPkg/Library/UniXNULib/UniXNULib.inf b/package/UniXNUPkg/Library/UniXNULib/UniXNULib.inf
+index bfdb3b3..cce5fce 100644
+--- a/package/UniXNUPkg/Library/UniXNULib/UniXNULib.inf
++++ b/package/UniXNUPkg/Library/UniXNULib/UniXNULib.inf
+@@ -30,6 +30,7 @@
+ 
+ [Packages]
+   MdePkg/MdePkg.dec
++  EmbeddedPkg/EmbeddedPkg.dec
+   UniXNUPkg/UniXNUPkg.dec
+ 
+ [LibraryClasses]
