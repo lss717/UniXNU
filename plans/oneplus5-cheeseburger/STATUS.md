@@ -7,7 +7,7 @@
 - 当前 gate：**G1 通过（2026-10-22）**
 - 基线提交：UniXNU `e95b37d`（main）
 - 本地提交：UniXNU `c8a5eeb`（计划）、`18f3020`（package）、`270ea4b`（B1 记录）、`692d70f`（docs 记录）；本轮 B1 收尾见 `git log -- plans/oneplus5-cheeseburger`
-- UEFI 分支：`edk2-msm8998` 的 `unixnu-cheeseburger`，提交 `0471194`、`708fa06`、`7f34479`、`91e17a8`、`8ef28f1`
+- UEFI 分支：`edk2-msm8998` 的 `unixnu-cheeseburger`，提交 `0471194`、`708fa06`、`7f34479`、`91e17a8`、`8ef28f1`、`1ffb934`
 - 最近更新：2026-10-22
 
 ## G1 设备实测（2026-10-22）

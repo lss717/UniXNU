@@ -12,6 +12,7 @@
 | `0004-release-framebuffer-log-and-drop-linux.patch` | RELEASE 也加 `SerialDxe`（屏幕日志）；删除内嵌 Linux `LinuxSimpleMassStorage` |
 | `0005-drop-duplicate-terminal-console.patch` | 移除 `TerminalDxe`，避免 `ConOut` 在 framebuffer 上重复渲染 |
 | `0006-board-info-app.patch` | `CheeseburgerInfo`：从 payload 启动，打印 RAM/GOP/BlockIo/GPT userdata |
+| `0007-info-loader-protocol.patch` | `CheeseburgerInfo` 增加 DarwinBoot `UniXNULoader` 协议检查 |
 
 ## 旧 edk2 兼容头
 

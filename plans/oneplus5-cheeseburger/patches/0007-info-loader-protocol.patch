@@ -1,0 +1,59 @@
+commit 1ffb9349029dec154434c4ff1f4aebde0cb45567
+Author: rpone <rponeawa@qq.com>
+Date:   Thu Oct 22 18:19:46 2026 +0800
+
+    feat(cheeseburger): report the DarwinBoot loader protocol
+    
+    Locate the UniXNULoader protocol that DarwinBoot installs and print whether
+    it is present, so the device test can confirm the driver loaded without
+    starting the UEFI Shell.  On the phone it reported Success with 8 block
+    devices.
+
+diff --git a/Platforms/Msm8998Pkg/Device/oneplus/cheeseburger/Applications/CheeseburgerInfo/CheeseburgerInfo.c b/Platforms/Msm8998Pkg/Device/oneplus/cheeseburger/Applications/CheeseburgerInfo/CheeseburgerInfo.c
+index 7814349..45f2bd4 100644
+--- a/Platforms/Msm8998Pkg/Device/oneplus/cheeseburger/Applications/CheeseburgerInfo/CheeseburgerInfo.c
++++ b/Platforms/Msm8998Pkg/Device/oneplus/cheeseburger/Applications/CheeseburgerInfo/CheeseburgerInfo.c
+@@ -28,6 +28,7 @@ STATIC UINT32   mGopWidth;
+ STATIC UINT32   mGopHeight;
+ STATIC UINT32   mGopStride;
+ STATIC UINT64   mGopBase;
++STATIC BOOLEAN  mLoaderPresent;
+ STATIC BOOLEAN  mUserdataFound;
+ STATIC UINT64   mUserdataFirst;
+ STATIC UINT64   mUserdataLast;
+@@ -229,6 +230,21 @@ PrintGpt (
+   FreePages (Sector, EFI_SIZE_TO_PAGES (BlockIo->Media->BlockSize));
+ }
+ 
++STATIC
++VOID
++PrintLoader (
++  VOID
++  )
++{
++  EFI_STATUS  Status;
++  VOID        *Loader;
++  EFI_GUID    LoaderGuid = { 0x0f0a492e, 0x5a6a, 0x49f6, { 0xa1, 0xbf, 0x74, 0x3c, 0x87, 0xab, 0x1c, 0xfe } };
++
++  Status = gBS->LocateProtocol (&LoaderGuid, NULL, &Loader);
++  mLoaderPresent = !EFI_ERROR (Status);
++  Print (L"LOADER: DarwinBoot UniXNULoader protocol %r\r\n", Status);
++}
++
+ STATIC
+ VOID
+ PrintDisks (
+@@ -288,11 +304,13 @@ CheeseburgerInfoEntry (
+   Print (L"-----------------\r\n");
+   PrintMemory ();
+   PrintGop ();
++  PrintLoader ();
+   PrintDisks ();
+   Print (L"-----------------\r\n");
+   Print (L"SUMMARY\r\n");
+   Print (L"  RAM %lu MiB, GOP %ux%u stride %u base 0x%lx\r\n",
+          mRamMiB, mGopWidth, mGopHeight, mGopStride, mGopBase);
++  Print (L"  DarwinBoot loader %a\r\n", mLoaderPresent ? "present" : "MISSING");
+   if (mUserdataFound) {
+     Print (L"  userdata first 0x%lx last 0x%lx, block %u bytes\r\n",
+            mUserdataFirst, mUserdataLast, mUserdataBlockSize);
