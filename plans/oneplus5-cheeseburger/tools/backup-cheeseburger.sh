@@ -17,7 +17,11 @@ OUT=${1:-"$ROOT/.cache/firmware/backups/$(date +%Y%m%d-%H%M%S)"}
 
 command -v adb >/dev/null 2>&1 || { echo 'adb not found' >&2; exit 1; }
 
-adb wait-for-device
+# TWRP's adbd reports state "recovery", which "adb wait-for-device" never accepts.
+if ! adb devices | grep -qE '^[0-9A-Za-z]+[[:space:]]+(device|recovery)$'; then
+  echo 'no adb device in device/recovery state; boot TWRP first.' >&2
+  exit 1
+fi
 STATE=$(adb shell getprop ro.twrp.version 2>/dev/null | tr -d '\r')
 if [ -z "$STATE" ]; then
   echo 'This does not look like TWRP (ro.twrp.version is empty); boot TWRP first.' >&2
