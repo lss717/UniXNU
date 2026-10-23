@@ -3,7 +3,7 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 最终目标：iPhone10,2 / iOS 16.7.16（20H392）
-- 当前阶段：**B1 完成 → B2 — 设备仓库、ADT、payload**
+- 当前阶段：**B2 — 设备仓库骨架已建立；ADT 生成器与 IPSW 待补**
 - 当前 gate：**G1 通过（2026-10-22）**
 - 基线提交：UniXNU `e95b37d`（main）
 - 本地提交：UniXNU `c8a5eeb`（计划）、`18f3020`（package）、`270ea4b`（B1 记录）、`692d70f`（docs 记录）；本轮 B1 收尾见 `git log -- plans/oneplus5-cheeseburger`
@@ -48,10 +48,21 @@ G1 现场照片在 `assets/`：`g1-b1c-info-scrolled.jpg`（首版滚屏）、`g
 
 `userdata` 末尾 5 块是 GPT 备份表/头；`FirstUsableLBA` 在 `0x14F40` 之前留给主 GPT。
 
+## B2 进展（2026-10-22）
+
+本地仓库 `/home/ls/UniXNU-cheeseburger`（`main`，提交 `a67972c`，尚未推送）：
+
+- `board.toml`：B3 的 iPad7,1 17.7.11 fixture、实测 userdata/RAM/GOP 值、`[payload]`；
+- `board.iphone10-2.toml`：B6 目标 profile 的占位；
+- `configs/cheeseburger_defconfig`：计划里的最小内核配置；
+- `scripts/make-bootimg.py`：调 edk2-msm8998 的 `mkbootimg.py`，地址 `0x10000000/0x12000000/0x14000000`，输出 JSON 报告；已用当前固件实测生成并预检通过；
+- `scripts/check-cheeseburger.py`：B1 预检工具的仓库版本，默认读 edk2 构建产物；
+- `scripts/make-cheeseburger-adt.py`：**占位**，需要 IPSW 里的 iPad7,1 DeviceTree。
+
 ## 下一步
 
-1. **B2 设备仓库**：建 `UniXNU-cheeseburger` 骨架（`board.toml`、`configs/cheeseburger_defconfig`、`make-bootimg.py`、`check-cheeseburger.py`），把已实测的 RAM/UFS/userdata 值填进去。
-2. 准备 iPad7,1 17.7.11 的 IPSW 缓存（`.cache/firmware/`，不提交），B2 的 ADT 需要其中的 DeviceTree。
+1. **IPSW 缓存**：下载/校验 iPad7,1 17.7.11，取出 `DeviceTree` 放到 `.cache/firmware/`（ADT 生成器的输入）。
+2. **ADT 生成器**：用 `UniXNU-sheng` 的 `make-sheng-adt.py` 改出 MSM8998 版本（GIC/CPU/UFS/timebase 常量已记录）。
 3. 备份 `persist`/`modem`/`efs`/`boot`/`recovery`（尚未确认完成）。
 4. 推 `unixnu-cheeseburger` 分支和 `UniXNU-cheeseburger` 仓库到 GitHub（需确认）。
 
@@ -196,6 +207,7 @@ Linux x86_64 / Ubuntu 24.04：
 | 2026-10-22 | B1 | DarwinBoot 协议检查（b1f） | `UniXNULoader` 协议 `Success`；8 个 BlockIo；GOP 1080×1920 stride 1080 |
 | 2026-10-22 | B1 | 屏上日志（b1h，`console=none`，600 s） | `UNIXNU:` 行出现在屏幕；`SerialDxe` 方案成立 |
 | 2026-10-22 | B1 | **G1 全项通过** | 启动、菜单、payload、按键、DarwinBoot、BlockIo、日志、B0 数据全部确认 |
+| 2026-10-22 | B2 | 建立 `UniXNU-cheeseburger` 骨架 | 本地 `a67972c`；board/defconfig/bootimg/check 完成，ADT 仍是占位 |
 
 ## 更新规则
 

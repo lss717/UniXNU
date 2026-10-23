@@ -327,9 +327,9 @@ fastboot boot /home/ls/UniXNU/out/cheeseburger/b1b/boot-op5-b1b-safe.img
 
 任务：
 
-- [ ] 创建 `UniXNU-cheeseburger` 骨架（见 4.2）。
-- [ ] 写 `board.toml`，B3 用 iPad7,1 临时 profile；同时保留 `board.iphone10-2.toml`。
-- [ ] 写 `configs/cheeseburger_defconfig`，首期最小集：
+- [x] 创建 `UniXNU-cheeseburger` 骨架（本地 `/home/ls/UniXNU-cheeseburger`，`a67972c`）。
+- [x] 写 `board.toml`（iPad7,1 fixture + 实测值）和 `board.iphone10-2.toml`（B6 占位）。
+- [x] 写 `configs/cheeseburger_defconfig`，首期最小集：
   - `CONFIG_XNU_BUILD_ARCHIVES=y`
   - `CONFIG_XNU_SOURCE_CORECRYPTO14=y`
   - `CONFIG_XNU_SOURCE_PTHREAD=y`
@@ -343,18 +343,18 @@ fastboot boot /home/ls/UniXNU/out/cheeseburger/b1b/boot-op5-b1b-safe.img
   - `CONFIG_XNU_SOURCE_MOCKFS=y`
   - `CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"`
   - 暂不打开：UFS、Adreno、PMGR、PAN、MobileDisplay。
-- [ ] 从 `make-sheng-adt.py` 改出 `make-cheeseburger-adt.py`：
+- [ ] 从 `make-sheng-adt.py` 改出 `make-cheeseburger-adt.py`（当前是带常量的占位脚本，需 IPSW DeviceTree）：
   - MSM8998 常量：GICD `0x17a00000`，GICR `0x17b00000`，stride `0x20000`，timebase `19200000`；
   - CPU regs `0,1,2,3,0x100..0x103`；
   - UFS 节点 `qcom,msm8998-ufshc`（首版只用于匹配，地址用驱动常量）；
   - 支持 `--identity ipad7,1` 和 `--identity iphone10,2`；
   - iPhone 模式下复制真实 D21AP `/product`、`/buttons`。
-- [ ] 写 `scripts/make-bootimg.py`：
+- [x] 写 `scripts/make-bootimg.py`（已用当前固件生成并预检通过）：
   - 输入：`workspace/uefi-cheeseburger.img.gz-dtb`、`payload.img`；
   - 调用 edk2-msm8998 的 `mkbootimg.py`；
   - header v1，`--kernel_offset 0 --ramdisk_offset 0 --tags_offset 0`；
   - 输出 `out/cheeseburger/boot/boot.img` 和 JSON 报告。
-- [ ] 写 `scripts/check-cheeseburger.py`：FD/DTB/payload/ADT 预检。
+- [x] 写 `scripts/check-cheeseburger.py`：FD/boot image/payload 预检（ADT 项等生成器完成后加）。
 - [ ] `unixnu defconfig`、`unixnu fetch`、`unixnu build payload`。
 - [ ] 可选：QEMU 里跑一遍 UniXNU/DarwinBoot 快速验证。
 
