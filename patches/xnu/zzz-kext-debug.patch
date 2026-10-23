@@ -1,0 +1,24 @@
+--- a/libkern/c++/OSKext.cpp
++++ b/libkern/c++/OSKext.cpp
+@@ -8003,6 +8003,21 @@
+ 	 */
+ 	if (getcommandfromheader((kernel_mach_header_t *)kmod_info->address, LC_SEGMENT_SPLIT_INFO) ||
+ 	    isInFileset()) {
++		if (!strcmp(getIdentifierCString(), "com.apple.iokit.CoreAnalyticsFamily")) {
++			kernel_segment_command_t *debug_seg;
++			IOLog("UNIXNU-KEXT: %s kext_slide=0x%lx address=0x%lx start=0x%lx size=0x%llx\n",
++			    getIdentifierCString(), (unsigned long)kext_slide,
++			    (unsigned long)kmod_info->address, (unsigned long)address,
++			    (unsigned long long)kmod_info->size);
++			for (debug_seg = firstsegfromheader((kernel_mach_header_t *)kmod_info->address);
++			    debug_seg != NULL;
++			    debug_seg = nextsegfromheader((kernel_mach_header_t *)kmod_info->address, debug_seg)) {
++				IOLog("UNIXNU-KEXT: seg %s vmaddr=0x%llx vmsize=0x%llx\n",
++				    debug_seg->segname,
++				    (unsigned long long)debug_seg->vmaddr,
++				    (unsigned long long)debug_seg->vmsize);
++			}
++		}
+ 		/* This will likely be how we deal with split kexts; walk the segments to
+ 		 * check that the function lies inside one of the segments of this kext.
+ 		 */
