@@ -60,6 +60,10 @@ G1 现场照片在 `assets/`：`g1-b1c-info-scrolled.jpg`（首版滚屏）、`g
 - `scripts/make-cheeseburger-adt.py`：从 `make-sheng-adt.py` 改出，MSM8998 常量（GICD `0x17a00000`、GICR `0x17b00000`/stride `0x20000`、19.2 MHz、4×A73 + 4×A53、UFS 节点）；生成 13 KiB Apple 格式树；
 - `scripts/check-adt.py`：解析 Apple DT 格式并检查 `/cpus`、`/arm-io/intc`、`/chosen`、`/defaults`、`/options`、`/buttons`、`/product`，生成结果全部通过。
 
+GitHub Actions：`UniXNU/.github/workflows/macos-cheeseburger.yml`（kernel + payload，artifact 上传；固件仍由 edk2-msm8998 单独构建）。
+
+设备仓库的 B3 内核暂时不含 legacy display / boot-progress：sheng 的两个 builder 绑定了它的 Adreno/触摸/背光探针，需要先用 cheeseburger 的 kit 替换，否则 XNU 的 panic 在屏幕上看不见。
+
 IPSW 缓存（`unixnu ipsw fetch`，HTTP range，只取需要的成员）：
 
 - `out/ipsw/21H461/DeviceTree.j120ap.im4p`（35 KB）
@@ -69,10 +73,11 @@ IPSW 缓存（`unixnu ipsw fetch`，HTTP range，只取需要的成员）：
 
 ## 下一步
 
-1. **内核/prelink**：在 macOS 或 GitHub Actions 上跑 `unixnu ipsw fetch`（KernelCache）+ `unixnu build kernel`；本机没有 `compression_tool`，这一步被阻塞。
-2. 备份 `persist`/`modem`/`efs`/`boot`/`recovery`（尚未确认完成）。
-3. 推 `unixnu-cheeseburger` 分支和 `UniXNU-cheeseburger` 仓库到 GitHub（需确认）。
-4. B6 时再实现 `--identity iphone10,2` 的真实 `/product`、`/buttons` 复制。
+1. **内核/prelink**：推送仓库后 dispatch `macos-cheeseburger.yml`；本机没有 `compression_tool`，kernelcache 仍被阻塞。
+2. **B3 显示 kit**：替换 sheng 的 legacy display / boot-progress builder，保证 panic 能上屏。
+3. 备份 `persist`/`modem`/`efs`/`boot`/`recovery`（尚未确认完成）。
+4. 推 `unixnu-cheeseburger` 分支和 `UniXNU-cheeseburger` 仓库到 GitHub（需确认）。
+5. B6 时再实现 `--identity iphone10,2` 的真实 `/product`、`/buttons` 复制。
 
 ## 已完成
 
@@ -218,6 +223,7 @@ Linux x86_64 / Ubuntu 24.04：
 | 2026-10-22 | B2 | 建立 `UniXNU-cheeseburger` 骨架 | 本地 `a67972c`；board/defconfig/bootimg/check 完成 |
 | 2026-10-22 | B2 | 取 iPad7,1 DeviceTree / StaticTrustCache | `unixnu ipsw fetch` range 请求成功；KernelCache 需 macOS 的 LZFSE |
 | 2026-10-22 | B2 | MSM8998 ADT 生成器 + 校验 | 生成 13 KiB 树；`check-adt.py` 全项通过；设备仓库 `31f2bf7` |
+| 2026-10-22 | B2 | macOS workflow + B3 配置裁剪 | `macos-cheeseburger.yml`；内核先不带 display/boot-progress kit |
 
 ## 更新规则
 

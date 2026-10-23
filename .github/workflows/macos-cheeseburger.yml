@@ -1,0 +1,149 @@
+name: macOS build (cheeseburger)
+
+# Kernel and payload for the OnePlus 5 port.  The firmware volume is built separately by
+# edk2-msm8998/build.sh (GCC5) and packaged with the device repository's make-bootimg.py;
+# this workflow only covers the steps that need Xcode.
+#
+# Inputs are the device repository and ref.  Run it after pushing UniXNU-cheeseburger:
+#   gh workflow run macos-cheeseburger.yml -f device_repository=<owner>/UniXNU-cheeseburger
+#
+# Secrets:
+#   UNIXNU_DEVICE_TOKEN    checkout token for a private device repository (optional)
+#   UNIXNU_UNIQUE_CHIP_ID  platform seed for the payload ADT (optional for the first run)
+
+on:
+  workflow_dispatch:
+    inputs:
+      device_repository:
+        description: Device repository as owner/name
+        required: true
+        default: lss717/UniXNU-cheeseburger
+      device_ref:
+        description: Device repository ref
+        required: true
+        default: main
+      ipsw_url:
+        description: IPSW URL (empty uses board.toml [ipsw])
+        required: false
+        default: ""
+      trust_cache_url:
+        description: Trust cache bundle URL (optional)
+        required: false
+        default: ""
+      build_userdata:
+        description: Also build the userdata image (needs the Data seed later)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-cheeseburger-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+  UNIXNU_DEVICE: ${{ github.workspace }}/device
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.device_repository }}
+          ref: ${{ inputs.device_ref }}
+          path: device
+          token: ${{ secrets.UNIXNU_DEVICE_TOKEN || github.token }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Report the runner toolchain
+        run: |
+          sw_vers
+          uname -m
+          xcodebuild -version
+          xcode-select -p
+          xcrun --sdk iphoneos --find mig || echo 'mig not found for iphoneos'
+          /usr/bin/compression_tool -h >/dev/null 2>&1 && echo 'compression_tool ok' || echo 'compression_tool missing'
+
+      - name: Install host tools
+        run: |
+          brew install cmake ninja unifdef llvm mtools dtc
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix unifdef)/bin" >> "$GITHUB_PATH"
+
+      - name: Select the device
+        run: |
+          ./unixnu defconfig cheeseburger_defconfig -D "$UNIXNU_DEVICE"
+          ./unixnu fetch xnu libplatform libdispatch AvailabilityVersions libpthread \
+                          corecrypto-2023 IOStorageFamily -D "$UNIXNU_DEVICE"
+
+      - name: Prepare inputs
+        env:
+          TRUST_CACHE_URL: ${{ inputs.trust_cache_url }}
+        run: |
+          if [ -n "$TRUST_CACHE_URL" ]; then
+            curl -fL "$TRUST_CACHE_URL" -o "$RUNNER_TEMP/trustcache"
+          fi
+
+      - name: Build kernel
+        env:
+          IPSW_URL: ${{ inputs.ipsw_url }}
+        run: |
+          args=()
+          if [ -n "$IPSW_URL" ]; then args+=(--ipsw "$IPSW_URL"); fi
+          ./unixnu build kernel "${args[@]}" -D "$UNIXNU_DEVICE"
+
+      - name: Build payload
+        env:
+          UNIQUE_CHIP_ID: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
+        run: |
+          args=()
+          if [ -f "$RUNNER_TEMP/trustcache" ]; then args+=(--trust-cache "$RUNNER_TEMP/trustcache"); fi
+          if [ -n "$UNIQUE_CHIP_ID" ]; then args+=(--unique-chip-id "$UNIQUE_CHIP_ID"); fi
+          ./unixnu build payload "${args[@]}" -D "$UNIXNU_DEVICE"
+
+      - name: Build userdata
+        if: inputs.build_userdata
+        env:
+          IPSW_URL: ${{ inputs.ipsw_url }}
+        run: |
+          args=()
+          if [ -n "$IPSW_URL" ]; then args+=(--ipsw "$IPSW_URL"); fi
+          ./unixnu build userdata "${args[@]}" -D "$UNIXNU_DEVICE"
+
+      - name: Summarise the artifacts
+        if: always()
+        run: |
+          {
+            echo '## cheeseburger build'
+            echo
+            echo '```'
+            find out/cheeseburger -maxdepth 3 -type f \( -name '*.json' -o -name '*.img' -o -name '*.macho' -o -name '*.adt' \) -printf '%10s  %p\n' 2>/dev/null | sort -k2
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload kernel and payload
+        uses: actions/upload-artifact@v4
+        with:
+          name: unixnu-cheeseburger
+          path: |
+            out/cheeseburger/kernel/**
+            out/cheeseburger/payload/**
+            out/cheeseburger/logs/**
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove proprietary inputs
+        if: always()
+        run: |
+          rm -rf out/ipsw out/feeds device/.cache/firmware out/cheeseburger/tree/.cache/firmware
+          rm -f "$RUNNER_TEMP/trustcache"
