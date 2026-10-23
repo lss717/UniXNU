@@ -1,5 +1,5 @@
 diff --git a/DarwinBootPkg/Driver/DarwinBoot.c b/DarwinBootPkg/Driver/DarwinBoot.c
-index 25ce2d2..606cfc2 100644
+index 25ce2d2..ff02177 100644
 --- a/DarwinBootPkg/Driver/DarwinBoot.c
 +++ b/DarwinBootPkg/Driver/DarwinBoot.c
 @@ -35,6 +35,7 @@ typedef struct {
@@ -56,12 +56,20 @@ index 25ce2d2..606cfc2 100644
    if (Kernel.Base > MAX_UINT64 - WindowSize) { Status = EFI_LOAD_ERROR; goto Fail; }
    if (Request->Ramdisk != NULL) {
      if ((RamdiskOffset == MAX_UINTN) || (U64 ((UINT8 *)Tree + RamdiskOffset) != 0) ||
-@@ -621,7 +639,7 @@ Boot (
+@@ -621,8 +639,14 @@ Boot (
    Args = (DARWIN_BOOT_ARGS *)(UINTN)ArgsAddress;
    Args->Revision = 2;
    Args->Version = 2;
 -  Args->VirtualBase = Kernel.Base;
+-  Args->PhysicalBase = Address;
 +  Args->VirtualBase = Kernel.VirtBase ? Kernel.VirtBase : Kernel.Base;
-   Args->PhysicalBase = Address;
++  /*
++   * virtBase/physBase must describe the same byte: the window maps Kernel.Base to
++   * Address, and the kernel text lives at VirtBase (__TEXT), so its physical base is
++   * Address + (VirtBase - Base).  Passing Address alone makes the MMU map __TEXT to
++   * the kext region and the first fetch after SCTLR_EL1 faults.
++   */
++  Args->PhysicalBase = Address + (Args->VirtualBase - Kernel.Base);
    Args->MemorySize = WindowSize;
    Args->MemorySizeActual = WindowSize;
+   Args->TopOfKernelData = Address + Used;
