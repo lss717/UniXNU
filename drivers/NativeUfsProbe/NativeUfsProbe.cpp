@@ -108,6 +108,48 @@ public:
                              IOStorageCompletion *completion) override;
 };
 
+class NativeUfsWindow : public IOBlockStorageDevice {
+  OSDeclareDefaultStructors (NativeUfsWindow)
+  NativeUfsProbe *host = nullptr;
+  uint64_t absolute = 0;
+  uint64_t bytes = 0;
+  uint8_t *bounce = nullptr;
+  IOLock *lock = nullptr;
+  char label[32] = {};
+  bool online = false;
+
+public:
+  bool configure (NativeUfsProbe *parent, const char *name, uint64_t absoluteByte,
+                  uint64_t length);
+  bool start (IOService *) override { online = true; return true; }
+  IOReturn doEjectMedia () override { return kIOReturnUnsupported; }
+  IOReturn doFormatMedia (UInt64) override { return kIOReturnNotWritable; }
+  UInt32 doGetFormatCapacities (UInt64 *, UInt32) const override { return 0; }
+  char *getVendorString () override { return const_cast<char *> ("Native"); }
+  char *getProductString () override { return label; }
+  char *getRevisionString () override { return const_cast<char *> ("B5"); }
+  char *getAdditionalDeviceInfoString () override { return const_cast<char *> ("SHNGROOT read-only window"); }
+  IOReturn reportBlockSize (UInt64 *value) override { *value = 512; return kIOReturnSuccess; }
+  IOReturn reportMaxValidBlock (UInt64 *value) override { *value = bytes / 512 - 1; return kIOReturnSuccess; }
+  IOReturn reportMediaState (bool *present, bool *changed) override {
+    *present = online;
+    if (changed) {
+      *changed = false;
+    }
+    return kIOReturnSuccess;
+  }
+  IOReturn reportRemovability (bool *value) override { *value = false; return kIOReturnSuccess; }
+  IOReturn reportEjectability (bool *value) override { *value = false; return kIOReturnSuccess; }
+  IOReturn reportWriteProtection (bool *value) override { *value = true; return kIOReturnSuccess; }
+  IOReturn doSynchronizeCache () override { return online ? kIOReturnSuccess : kIOReturnNotReady; }
+  IOReturn doSynchronize (UInt64, UInt64, IOOptionBits) override { return doSynchronizeCache (); }
+  IOReturn getWriteCacheState (bool *value) override { *value = false; return kIOReturnSuccess; }
+  IOReturn setWriteCacheState (bool) override { return kIOReturnNotWritable; }
+  IOReturn doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block, UInt64 count,
+                             IOStorageAttributes *attributes,
+                             IOStorageCompletion *completion) override;
+};
+
 class NativeUfsProbe : public IOService {
   OSDeclareDefaultStructors (NativeUfsProbe)
   UfsQueue fQueue = {};
@@ -120,10 +162,12 @@ public:
   bool start (IOService *provider) override;
   bool readBlocks (uint8_t unit, uint64_t block, uint64_t count, uint32_t blockSize,
                    IOMemoryDescriptor *dst, uint64_t *done);
+  bool readWindow4k (uint64_t lba, void *out);
 };
 
 OSDefineMetaClassAndStructors (NativeUfsProbe, IOService)
 OSDefineMetaClassAndStructors (NativeUfsLun, IOBlockStorageDevice)
+OSDefineMetaClassAndStructors (NativeUfsWindow, IOBlockStorageDevice)
 
 static uint32_t
 read32 (uintptr_t base, unsigned offset)
@@ -526,6 +570,83 @@ NativeUfsProbe::readBlocks (uint8_t unit, uint64_t block, uint64_t count,
     *done = total;
   }
   return ok;
+}
+
+bool
+NativeUfsProbe::readWindow4k (uint64_t lba, void *out)
+{
+  if (!fReady || !fLock || !out || lba > 0xffffffffULL) {
+    return false;
+  }
+  IOLockLock (fLock);
+  uint8_t cdb[16] = { 0x28 };
+  putBe32 (cdb + 2, static_cast<uint32_t> (lba));
+  cdb[8] = 1;
+  bool ok = ufsCommand (&fQueue, 0, cdb, 4096, out);
+  IOLockUnlock (fLock);
+  return ok;
+}
+
+bool
+NativeUfsWindow::configure (NativeUfsProbe *parent, const char *name,
+                            uint64_t absoluteByte, uint64_t length)
+{
+  host = parent;
+  absolute = absoluteByte;
+  bytes = length;
+  bounce = static_cast<uint8_t *> (IOMalloc (4096));
+  lock = IOLockAlloc ();
+  if (name) {
+    strlcpy (label, name, sizeof (label));
+  }
+  setProperty ("B5Window", label);
+  setProperty ("B5Offset", absolute, 64);
+  setProperty ("B5Bytes", bytes, 64);
+  setProperty ("B5ReadOnly", true);
+  return host && absolute && bytes && !(absolute & 4095) && !(bytes & 511) &&
+         bounce && lock;
+}
+
+IOReturn
+NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
+                                   UInt64 count, IOStorageAttributes *,
+                                   IOStorageCompletion *completion)
+{
+  if (!buffer || !completion || !completion->action || !count ||
+      block >= bytes / 512 || count > bytes / 512 - block ||
+      buffer->getLength () < count * 512) {
+    return kIOReturnBadArgument;
+  }
+  if (buffer->getDirection () != kIODirectionIn) {
+    return kIOReturnNotWritable;
+  }
+  if (!online || !bounce || !lock) {
+    return kIOReturnNotReady;
+  }
+  uint64_t cursor = absolute + block * 512;
+  uint64_t end = cursor + count * 512;
+  uint64_t done = 0;
+  bool ok = true;
+  IOLockLock (lock);
+  while (cursor < end) {
+    uint64_t page = cursor & ~4095ULL;
+    unsigned inPage = static_cast<unsigned> (cursor - page);
+    unsigned wanted = static_cast<unsigned> (end - cursor);
+    if (wanted > 4096 - inPage) {
+      wanted = 4096 - inPage;
+    }
+    if (!host->readWindow4k (page / 4096, bounce) ||
+        buffer->writeBytes (done, bounce + inPage, wanted) != wanted) {
+      ok = false;
+      break;
+    }
+    cursor += wanted;
+    done += wanted;
+  }
+  IOLockUnlock (lock);
+  completion->action (completion->target, completion->parameter,
+                      ok ? kIOReturnSuccess : kIOReturnIOError, done);
+  return kIOReturnSuccess;
 }
 
 bool
@@ -1002,6 +1123,10 @@ NativeUfsProbe::start (IOService *provider)
     panic ("NATIVE_UFS_GPT: read lock allocation failed");
   }
   fReady = true;
+  char rootName[4][33] = {};
+  uint64_t rootOffset[4] = {};
+  uint64_t rootSize[4] = {};
+  unsigned rootWindows = 0;
   {
     uint8_t header[4096] = {};
     uint8_t readUserdata[16] = { 0x28 };
@@ -1023,6 +1148,10 @@ NativeUfsProbe::start (IOService *provider)
           name[32] = 0;
           uint64_t offset = getLe64 (entry + 32);
           uint64_t size = getLe64 (entry + 40);
+          strlcpy (rootName[index], name, sizeof (rootName[index]));
+          rootOffset[index] = offset;
+          rootSize[index] = size;
+          rootWindows++;
           IOLog ("NATIVE_UFS_ROOT: window[%u]=%s off=%llx size=%llx\n",
                  index, name, offset, size);
         }
@@ -1051,6 +1180,32 @@ NativeUfsProbe::start (IOService *provider)
   if (child) {
     child->release ();
   }
-  IOLog ("NATIVE_UFS_GPT: start returning published=%u\n", published ? 1 : 0);
+
+  unsigned windowsPublished = 0;
+  for (unsigned index = 0; index < rootWindows; index++) {
+    uint64_t absolute = 0x14f40ULL * 4096ULL + rootOffset[index];
+    IOLog ("NATIVE_UFS_ROOT: preparing window[%u]=%s abs=%llx bytes=%llx\n",
+           index, rootName[index], absolute, rootSize[index]);
+    NativeUfsWindow *window = new NativeUfsWindow;
+    bool started = window && window->init (nullptr) &&
+                   window->configure (this, rootName[index], absolute,
+                                      rootSize[index]) &&
+                   window->attach (this) && window->start (this);
+    if (started) {
+      window->registerService ();
+      windowsPublished++;
+      IOLog ("NATIVE_UFS_ROOT: published window[%u]=%s abs=%llx bytes=%llx\n",
+             index, rootName[index], absolute, rootSize[index]);
+      // Keep the reference: the window owns its bounce buffer and lock.
+    } else {
+      IOLog ("NATIVE_UFS_ROOT: window[%u]=%s publication failed\n",
+             index, rootName[index]);
+      if (window) {
+        window->release ();
+      }
+    }
+  }
+  IOLog ("NATIVE_UFS_GPT: start returning published=%u windows=%u\n",
+         published ? 1 : 0, windowsPublished);
   return published;
 }
