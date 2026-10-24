@@ -343,7 +343,7 @@ NativeUfsProbe::start (IOService *provider)
     }
     uint32_t *utrd = reinterpret_cast<uint32_t *> (list);
     zero32 (utrd, 32);
-    utrd[0] = 0x10000000U | (direction << 25);
+    utrd[0] = 0x01000000U | (direction << 25);
     utrd[2] = 0x0fU;
     utrd[4] = static_cast<uint32_t> (ucdPhys);
     utrd[5] = static_cast<uint32_t> (ucdPhys >> 32);
