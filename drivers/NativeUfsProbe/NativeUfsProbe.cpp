@@ -239,7 +239,7 @@ NativeUfsProbe::start (IOService *provider)
   uint64_t dmaPhys = dma->getPhysicalSegment (0, &contiguous, kIOMemoryMapperNone);
   if (!dmaVirt || !dmaPhys || (dmaPhys & 0xfff) || contiguous < UFS_DMA_SIZE) {
     panic ("NATIVE_UFS_GPT: DMA buffer invalid virt=%p phys=%llx size=%llx",
-           dmaVirt, dmaPhys, uint64_t (contiguous));
+           (void *) dmaVirt, dmaPhys, uint64_t (contiguous));
   }
   if (!(cap & 0x01000000U) && dmaPhys + UFS_DMA_SIZE > 0x100000000ULL) {
     panic ("NATIVE_UFS_GPT: DMA above 4G without 64AS phys=%llx cap=%08x",
@@ -435,7 +435,7 @@ NativeUfsProbe::start (IOService *provider)
   int used = 0;
 #define ADD(...) do { \
   if (used < int (sizeof (text))) { \
-    int _n = snprintf (text + used, sizeof (text) - used, __VA_ARGS__); \
+    int _n = snprintf (text + used, size_t (sizeof (text) - size_t (used)), __VA_ARGS__); \
     if (_n > 0) used += _n; \
     if (used >= int (sizeof (text))) used = int (sizeof (text)) - 1; \
   } \
@@ -477,7 +477,7 @@ NativeUfsProbe::start (IOService *provider)
     name[nameLength] = 0;
     bool key = false;
     for (unsigned k = 0; k < sizeof (keys) / sizeof (keys[0]); k++) {
-      if (!strcmp (name, keys[k])) {
+      if (!__builtin_strcmp (name, keys[k])) {
         key = true;
         break;
       }
