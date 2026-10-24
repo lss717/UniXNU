@@ -103,18 +103,12 @@ putBe32 (uint8_t *at, uint32_t value)
 }
 
 static void
-cacheCleanInhibit (void *start, size_t length, bool invalidate)
+zero32 (void *start, size_t length)
 {
-  __asm__ volatile ("dsb sy" ::: "memory");
-  for (uintptr_t address = reinterpret_cast<uintptr_t> (start) & ~uintptr_t (63);
-       address < reinterpret_cast<uintptr_t> (start) + length; address += 64) {
-    if (invalidate) {
-      __asm__ volatile ("dc ivac, %0" :: "r" (address) : "memory");
-    } else {
-      __asm__ volatile ("dc civac, %0" :: "r" (address) : "memory");
-    }
+  volatile uint32_t *word = static_cast<volatile uint32_t *> (start);
+  for (size_t index = 0; index < length / 4; index++) {
+    word[index] = 0;
   }
-  __asm__ volatile ("dsb sy" ::: "memory");
 }
 
 static uintptr_t
@@ -124,7 +118,7 @@ mapPhysCacheable (uint64_t phys, uint64_t length, OSSharedPtr<IOMemoryMap> &keep
   if (!memory) {
     return 0;
   }
-  keep = OSSharedPtr<IOMemoryMap> (memory->map (kIOMapAnywhere), OSNoRetain);
+  keep = OSSharedPtr<IOMemoryMap> (memory->map (kIOMapAnywhere | kIOMapInhibitCache), OSNoRetain);
   memory->release ();
   return keep ? static_cast<uintptr_t> (keep->getVirtualAddress ()) : 0;
 }
@@ -274,8 +268,7 @@ NativeUfsProbe::start (IOService *provider)
     panic ("NATIVE_UFS_GPT: low DMA window exceeds 4G");
   }
   IOLog ("NATIVE_UFS_GPT: DMA phys=%llx size=%x\n", phys, UFS_DMA_SIZE);
-  bzero (memory, UFS_DMA_SIZE);
-  cacheCleanInhibit (memory, UFS_DMA_SIZE, false);
+  zero32 (memory, UFS_DMA_SIZE);
 
   // Install the private queue, preserving the firmware values only for a
   // diagnostic rollback-free log.  The controller is not reset.
@@ -323,7 +316,7 @@ NativeUfsProbe::start (IOService *provider)
       return false;
     }
     uint32_t *utrd = reinterpret_cast<uint32_t *> (memory);
-    bzero (utrd, 32);
+    zero32 (utrd, 32);
     utrd[0] = 0x10000000U | (direction << 25);
     utrd[2] = 0x0fU;
     utrd[4] = static_cast<uint32_t> (ucdPhys);
@@ -337,8 +330,7 @@ NativeUfsProbe::start (IOService *provider)
       prd[2] = 0;
       prd[3] = bytes - 1;
     }
-    cacheCleanInhibit (memory, UFS_DMA_SIZE, false);
-    write32 (hc, UFS_REG_IS, 1);
+      write32 (hc, UFS_REG_IS, 1);
     write32 (hc, UFS_REG_UTRLDBR, 1);
     uint32_t ocs = 0x0f;
     if (!waitForCompletion (hc, memory, &ocs)) {
@@ -347,7 +339,6 @@ NativeUfsProbe::start (IOService *provider)
              read32 (hc, UFS_REG_IS), read32 (hc, UFS_REG_UTRLDBR));
       return false;
     }
-    cacheCleanInhibit (memory, UFS_DMA_SIZE, true);
     if (ocs) {
       IOLog ("NATIVE_UFS_GPT: OCS=%x is=%08x\n", ocs, read32 (hc, UFS_REG_IS));
       return false;
@@ -359,7 +350,7 @@ NativeUfsProbe::start (IOService *provider)
     if (poisoned || read32 (hc, UFS_REG_UTRLDBR)) {
       return false;
     }
-    bzero (memory + UFS_UCD_OFFSET, UFS_DATA_OFFSET - UFS_UCD_OFFSET);
+    zero32 (memory + UFS_UCD_OFFSET, UFS_DATA_OFFSET - UFS_UCD_OFFSET);
     memory[UFS_UCD_OFFSET + 3] = 1;
     if (!submit (0, 0)) {
       return false;
@@ -373,7 +364,7 @@ NativeUfsProbe::start (IOService *provider)
         read32 (hc, UFS_REG_UTRLDBR)) {
       return false;
     }
-    bzero (memory + UFS_UCD_OFFSET, UFS_DMA_SIZE - UFS_UCD_OFFSET);
+    zero32 (memory + UFS_UCD_OFFSET, UFS_DMA_SIZE - UFS_UCD_OFFSET);
     uint8_t *q = memory + UFS_UCD_OFFSET;
     q[0] = 1;
     q[1] = bytes ? 0x40 : 0;
