@@ -300,7 +300,6 @@ NativeUfsProbe::start (IOService *provider)
   IOLog ("NATIVE_UFS_GPT: private queue installed ba=%llx\n", phys + UFS_LIST_OFFSET);
 
   bool poisoned = false;
-  uint8_t *ucd = memory + UFS_UCD_OFFSET;
   uint8_t *data = memory + UFS_DATA_OFFSET;
   uint64_t ucdPhys = phys + UFS_UCD_OFFSET;
   uint64_t dataPhys = phys + UFS_DATA_OFFSET;
