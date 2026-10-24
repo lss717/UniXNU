@@ -40,6 +40,15 @@
 #define UFS_REG_UTRLDBR 0x58U
 #define UFS_REG_UTRLRSR 0x60U
 #define UFS_REG_TASK_DOORBELL 0x78U
+#define UFS_REG_AHIT 0x18U
+#define UFS_REG_UICCMD 0x90U
+#define UFS_REG_UICARG1 0x94U
+#define UFS_REG_UICARG2 0x98U
+#define UFS_REG_UICARG3 0x9cU
+#define UFS_IS_UCCS 0x400U
+#define UFS_IS_UEE 0x2U
+#define UFS_UIC_DME_GET 0x01U
+#define UFS_UIC_DME_HIBERNATE_EXIT 0x18U
 
 #define UFS_FATAL_STATUS 0x71880U
 
@@ -146,6 +155,33 @@ mapPhys (uint64_t phys, uint64_t length, OSSharedPtr<IOMemoryMap> &keep)
   keep = OSSharedPtr<IOMemoryMap> (memory->map (kIOMapAnywhere), OSNoRetain);
   memory->release ();
   return keep ? static_cast<uintptr_t> (keep->getVirtualAddress ()) : 0;
+}
+
+static bool
+waitRegister (uintptr_t base, unsigned offset, uint32_t mask, uint32_t expected,
+              unsigned microseconds);
+
+static bool
+uicCommand (uintptr_t hc, uint32_t opcode, uint32_t arg1, uint32_t arg2,
+            uint32_t *result)
+{
+  uint32_t pending = read32 (hc, UFS_REG_IS);
+  if (pending & (UFS_IS_UCCS | UFS_IS_UEE)) {
+    write32 (hc, UFS_REG_IS, pending & (UFS_IS_UCCS | UFS_IS_UEE));
+  }
+  write32 (hc, UFS_REG_UICARG1, arg1);
+  write32 (hc, UFS_REG_UICARG2, arg2);
+  write32 (hc, UFS_REG_UICARG3, 0);
+  write32 (hc, UFS_REG_UICCMD, opcode);
+  if (!waitRegister (hc, UFS_REG_IS, UFS_IS_UCCS, UFS_IS_UCCS, 100000)) {
+    return false;
+  }
+  uint32_t status = read32 (hc, UFS_REG_IS);
+  write32 (hc, UFS_REG_IS, UFS_IS_UCCS | UFS_IS_UEE);
+  if (result) {
+    *result = read32 (hc, UFS_REG_UICARG3);
+  }
+  return (status & UFS_IS_UEE) == 0;
 }
 
 static bool
@@ -311,6 +347,26 @@ NativeUfsProbe::start (IOService *provider)
            hce, hcs, is, doorbell, taskDoorbell);
   }
 
+  uint32_t ahit = read32 (hc, UFS_REG_AHIT);
+  IOLog ("NATIVE_UFS_GPT: uic probe ahit=%08x is=%08x hcs=%08x\n",
+         ahit, read32 (hc, UFS_REG_IS), read32 (hc, UFS_REG_HCS));
+  uint32_t powerMode = 0;
+  bool gotPowerMode = uicCommand (hc, UFS_UIC_DME_GET, 0x15710000U, 0, &powerMode);
+  IOLog ("NATIVE_UFS_GPT: uic ahit=%08x get=%u mode=%08x is=%08x hcs=%08x\n",
+         ahit, gotPowerMode, powerMode, read32 (hc, UFS_REG_IS),
+         read32 (hc, UFS_REG_HCS));
+  if (!gotPowerMode) {
+    uint32_t wakeResult = 0;
+    bool woke = uicCommand (hc, UFS_UIC_DME_HIBERNATE_EXIT, 0, 0, &wakeResult);
+    IOLog ("NATIVE_UFS_GPT: uic hibernate-exit=%u result=%08x is=%08x hcs=%08x\n",
+           woke, wakeResult, read32 (hc, UFS_REG_IS), read32 (hc, UFS_REG_HCS));
+    powerMode = 0;
+    gotPowerMode = uicCommand (hc, UFS_UIC_DME_GET, 0x15710000U, 0, &powerMode);
+    IOLog ("NATIVE_UFS_GPT: uic after-wake get=%u mode=%08x is=%08x hcs=%08x\n",
+           gotPowerMode, powerMode, read32 (hc, UFS_REG_IS),
+           read32 (hc, UFS_REG_HCS));
+  }
+
   // The firmware's own UTRL/UCD page is the only low physical DMA region that
   // the controller is known to have used.  Reuse that page (not the firmware
   // high data buffer): list at +0, UCD at +0x100, response at +0x200, PRDT at
@@ -346,6 +402,8 @@ NativeUfsProbe::start (IOService *provider)
   zero32 (ucd, UFS_FW_UCD_SIZE);
   cacheClean (list, 4096);
   cacheClean (ucd, UFS_FW_UCD_SIZE);
+  IOLog ("NATIVE_UFS_GPT: firmware page zero list0=%08x list2=%08x ucd0=%08x\n",
+         read32 (listVirt, 0), read32 (listVirt, 8), read32 (ucdVirt, 0));
   IOLog ("NATIVE_UFS_GPT: firmware page list=%llx ucd=%llx data=%llx cap=%x fw=%08x/%08x\n",
          listPhys, ucdPhys, dataPhys, dataCapacity, fw0, fw2);
 
