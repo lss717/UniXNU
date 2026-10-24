@@ -233,14 +233,43 @@ NativeUfsProbe::start (IOService *provider)
     panic ("NATIVE_UFS_GPT: GCC map failed");
   }
   uintptr_t gcc = static_cast<uintptr_t> (gccMap->getVirtualAddress ());
-  const unsigned clockOffsets[] = { 0x7500c, 0x75008, 0x76008 };
-  for (unsigned index = 0; index < 3; index++) {
+  const unsigned clockOffsets[] = {
+    0x75004, // UFS GDSC
+    0x7500c, // gcc_ufs_ahb_clk
+    0x75008, // gcc_ufs_axi_clk
+    0x76008, // gcc_ufs_unipro_core_clk
+    0x82028, // gcc_aggre1_ufs_axi_clk
+    0x7600c, // gcc_ufs_ice_core_clk
+    0x76040, // gcc_ufs_phy_aux_clk
+    0x75010, // gcc_ufs_tx_symbol_0_clk
+    0x75014, // gcc_ufs_rx_symbol_0_clk
+    0x7605c, // gcc_ufs_rx_symbol_1_clk
+  };
+  const unsigned clockCount = sizeof (clockOffsets) / sizeof (clockOffsets[0]);
+  for (unsigned index = 0; index < clockCount; index++) {
     uint32_t value = read32 (gcc, clockOffsets[index]);
     IOLog ("NATIVE_UFS_GPT: gcc %x=%08x\n", clockOffsets[index], value);
-    if (value & 0x80000000U) {
-      panic ("NATIVE_UFS_GPT: UFS clock gated at %x=%08x; cold init not implemented",
-             clockOffsets[index], value);
+  }
+  // The three branches checked by P8/P11 are not the whole UFS AXI path on
+  // MSM8998: gcc_aggre1_ufs_axi_clk (0x82028) gates the UFS bus master's
+  // access to DDR.  If the hand-off left that branch disabled, the CPU can
+  // still read the host registers while every DMA command hangs forever.
+  // Enable only the branch bit (BIT0), preserve all other fields, and require
+  // the branch to report enabled and not halted (BIT31 clear).
+  const unsigned criticalClocks[] = { 0x7500c, 0x75008, 0x76008, 0x82028 };
+  for (unsigned index = 0; index < sizeof (criticalClocks) / sizeof (criticalClocks[0]); index++) {
+    unsigned offset = criticalClocks[index];
+    uint32_t value = read32 (gcc, offset);
+    if ((value & 0x80000001U) == 0x00000001U) {
+      continue;
     }
+    IOLog ("NATIVE_UFS_GPT: enabling gcc %x old=%08x\n", offset, value);
+    write32 (gcc, offset, value | 0x00000001U);
+    if (!waitRegister (gcc, offset, 0x80000001U, 0x00000001U, 20000)) {
+      panic ("NATIVE_UFS_GPT: UFS clock not running at %x=%08x",
+             offset, read32 (gcc, offset));
+    }
+    IOLog ("NATIVE_UFS_GPT: gcc %x now=%08x\n", offset, read32 (gcc, offset));
   }
 
   IOMemoryDescriptor *hcDesc = IOMemoryDescriptor::withPhysicalAddress (
@@ -285,9 +314,6 @@ NativeUfsProbe::start (IOService *provider)
   }
   if (!dma) {
     panic ("NATIVE_UFS_GPT: DMA allocation failed");
-  }
-  if (dma->prepare () != kIOReturnSuccess) {
-    panic ("NATIVE_UFS_GPT: DMA prepare failed");
   }
   uint8_t *memory = static_cast<uint8_t *> (dma->getBytesNoCopy ());
   IOByteCount contiguous = 0;
