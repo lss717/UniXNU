@@ -396,6 +396,72 @@ uecpa=00000001 uecdl=00000000 uecpr=fffff000 uecdme=00000000
 相关提交：`drivers/NativeUfsProbe`、`d1a4eb6`；截图
 `assets/b5-ufs-probe-readonly.jpg`。
 
+### B5 UTRD 命令类型对照（2026-10-24）
+
+上机日志已经把问题缩到 **UFS UTP 请求描述符（UTRD）的命令类型位**：
+
+- UIC `DME_GET` 成功（`get=1 mode=0x11`），`AHIT=0`；
+- GCC `0x82028=1`，UFS AGGRE1 AXI 时钟本来就在运行；
+- firmware `0xffffe000` 低页写入后回读为 0，cache clean 生效；
+- anoc1/anoc2 SMMU 没有启用的 SMR，DT 也没有 UFS `iommus`，暂不按 SMMU
+  翻译处理；
+- 但 UTP doorbell 后没有完成，且 CPU 读 `UTRLDBR/IS` 会挂住。
+
+对照 OnePlus 5（MSM8998）vendor 内核 `drivers/scsi/ufs` 后确认了当前探针的
+结构性错误：**之前沿用 P11 的 `0x10000000`（UTP native UFS，CT=1）发送
+SCSI 命令和 NOP，和 Qualcomm Android 代码不一致。**
+
+`ufshci.h`：
+
+```c
+UTP_CMD_TYPE_SCSI       = 0
+UTP_CMD_TYPE_UFS        = 1
+UTP_CMD_TYPE_DEV_MANAGE = 2
+UTP_SCSI_COMMAND        = 0x00000000
+UTP_NATIVE_UFS_COMMAND  = 0x10000000
+UTP_REQ_DESC_INT_CMD    = 0x01000000
+UTP_DEVICE_TO_HOST      = 0x04000000
+```
+
+`ufshcd_prepare_req_desc_hdr()` 的 DW0 组包：
+
+```c
+dword_0 = data_direction | (command_type << 28);
+if (intr_cmd)
+    dword_0 |= UTP_REQ_DESC_INT_CMD;
+```
+
+正确值：
+
+| 命令 | DW0 |
+| --- | --- |
+| SCSI TEST UNIT READY | `0x01000000` |
+| SCSI READ CAPACITY / READ(10) | `0x05000000` |
+| NOP OUT | `0x21000000` |
+
+直接证据：UEFI 留在 firmware 请求槽里的 UTRD 是 `05000000/00000000`，即
+**SCSI + DEVICE_TO_HOST + INT**，而当前探针 CAP/READ 发的是
+`0x10000000 | (2 << 25) = 0x14000000`（CT=1），NOP 发的是 `0x10000000`。
+这解释了为什么 firmware 低页、cache clean 和 UIC 都正常时 UTP 仍不完成。
+
+下一步顺序（只读，不写分区）：
+
+1. 只修 UTRD CT：NOP=`0x21000000`，SCSI TUR=`0x01000000`，
+   CAP/READ=`0x05000000`；保留 firmware 低页和 cache clean。
+2. doorbell 后不再读 `UTRLDBR/IS`，只轮询 UTRD 内存 OCS；OCS 从
+   `0x0f` 变化即完成，避免 CPU 在 MMIO 上挂死。
+3. NOP 完成后先发 CAP16；若返回 NOT READY，再按 vendor
+   `ufshcd_set_dev_pwr_mode()` 向 W-LUN `0xD0` 发 START STOP UNIT
+   (`{0x1b,0,0,0,0x10,0}`)。
+4. 若 CT 修正后 UTP 仍不执行，再按 vendor `ufshcd_hba_enable()` /
+   `ufshcd_make_hba_operational()` 做 HCE reset、DME_LINKSTARTUP、
+   UTRL/UTMRL base 和 run-stop 初始化；最后才考虑 `msm_bus` 的
+   BIMC/CNOC 带宽投票。
+
+当前仍只在 firmware 低页的 4 KiB 内使用 list/UCD/PRDT/小 data；
+GPT 需要 4 KiB data，等 CAP 通后再扩大低地址 data 区。全套操作保持只读，
+不发送 WRITE/UNMAP/FORMAT，也不刷写、擦除或修改任何分区。
+
 ## 下一步
 
 0. ~~先跑 PSCI 对照镜像~~（2026-10-23 已完成；8 s / 30 s / 20 s 三个对照都

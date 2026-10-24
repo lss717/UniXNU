@@ -256,20 +256,13 @@ readCommandAllowed (unsigned opcode, unsigned direction, unsigned bytes)
 }
 
 static bool
-waitForCompletion (uintptr_t hc, uint8_t *list, uint32_t *ocs)
+waitForCompletion (uint8_t *list, uint32_t *ocs)
 {
   for (unsigned loop = 0; loop < 100000; loop++) {
-    uint32_t doorbell = read32 (hc, UFS_REG_UTRLDBR);
-    uint32_t status = read32 (hc, UFS_REG_IS);
-    if (status & UFS_FATAL_STATUS) {
-      return false;
-    }
-    if (!(doorbell & 1)) {
-      cacheInvalidate (list, 64);
-      *ocs = read32 (reinterpret_cast<uintptr_t> (list), 8) & 0xff;
-      if (*ocs != 0x0f) {
-        return true;
-      }
+    cacheInvalidate (list, 64);
+    *ocs = read32 (reinterpret_cast<uintptr_t> (list), 8) & 0xff;
+    if (*ocs != 0x0f) {
+      return true;
     }
     IODelay (2);
   }
@@ -491,7 +484,10 @@ NativeUfsProbe::start (IOService *provider)
     }
     uint32_t *utrd = reinterpret_cast<uint32_t *> (list);
     zero32 (utrd, 32);
-    utrd[0] = 0x10000000U | (direction << 25);
+    // Vendor ufshci.h/ufshcd.c: SCSI is CT=0, NOP OUT is UTP_CMD_TYPE_DEV_MANAGE
+    // (CT=2); both carry UTP_REQ_DESC_INT_CMD.  P11's 0x10000000 (native UFS
+    // CT=1) is not the SCSI/NOP descriptor and leaves the UTP engine stuck.
+    utrd[0] = (q[0] == 0) ? 0x21000000U : (0x01000000U | (direction << 25));
     utrd[2] = 0x0fU;
     utrd[4] = static_cast<uint32_t> (ucdPhys);
     utrd[5] = static_cast<uint32_t> (ucdPhys >> 32);
@@ -506,21 +502,27 @@ NativeUfsProbe::start (IOService *provider)
     }
     cacheClean (list, 4096);
     cacheClean (ucd, UFS_FW_UCD_SIZE);
+    IOLog ("NATIVE_UFS_GPT: ring type=%08x dir=%u bytes=%u\n",
+           utrd[0], direction, bytes);
     write32 (hc, UFS_REG_IS, 0xffffffffU);
     write32 (hc, UFS_REG_UTRLDBR, 1);
+    IOLog ("NATIVE_UFS_GPT: doorbell rung\n");
     uint32_t ocs = 0x0f;
-    if (!waitForCompletion (hc, list, &ocs)) {
+    if (!waitForCompletion (list, &ocs)) {
       poisoned = true;
-      IOLog ("NATIVE_UFS_GPT: completion timeout/fatal is=%08x db=%08x\n",
-             read32 (hc, UFS_REG_IS), read32 (hc, UFS_REG_UTRLDBR));
+      IOLog ("NATIVE_UFS_GPT: OCS timeout type=%08x ocs=%x\n",
+             utrd[0], ocs);
       return false;
     }
     cacheInvalidate (list, 4096);
     cacheInvalidate (ucd, UFS_FW_UCD_SIZE);
     if (ocs) {
-      IOLog ("NATIVE_UFS_GPT: OCS=%x is=%08x\n", ocs, read32 (hc, UFS_REG_IS));
+      IOLog ("NATIVE_UFS_GPT: OCS=%x type=%08x\n", ocs, utrd[0]);
       return false;
     }
+    IOLog ("NATIVE_UFS_GPT: done type=%08x rsp=%02x/%02x tag=%u\n",
+           utrd[0], q[UFS_RSP_OFFSET], q[UFS_RSP_OFFSET + 7],
+           q[UFS_RSP_OFFSET + 3]);
     return true;
   };
 
@@ -571,8 +573,7 @@ NativeUfsProbe::start (IOService *provider)
   };
 
   if (!nop ()) {
-    panic ("NATIVE_UFS_GPT: firmware-page NOP failed is=%08x db=%08x",
-           read32 (hc, UFS_REG_IS), read32 (hc, UFS_REG_UTRLDBR));
+    panic ("NATIVE_UFS_GPT: firmware-page NOP failed; see OCS/type log");
   }
   IOLog ("NATIVE_UFS_GPT: firmware-page NOP completed\n");
 
@@ -584,23 +585,32 @@ NativeUfsProbe::start (IOService *provider)
     lastLba[lun] = 0;
     blockSize[lun] = 0;
     lunStatus[lun] = 0xee;
+    uint8_t cap16[16] = { 0x9e, 0x10 };
+    putBe32 (cap16 + 10, 32);
+    if (command (static_cast<uint8_t> (lun), cap16, 32, data)) {
+      lastLba[lun] = getBe64 (data);
+      blockSize[lun] = getBe32 (data + 8);
+      lunStatus[lun] = 0;
+      continue;
+    }
     uint8_t cap10[16] = { 0x25 };
     if (command (static_cast<uint8_t> (lun), cap10, 8, data)) {
       lastLba[lun] = getBe32 (data);
       blockSize[lun] = getBe32 (data + 4);
       lunStatus[lun] = 0;
-      continue;
     }
-    uint8_t cap16[16] = { 0x9e, 0x10 };
-    if (command (static_cast<uint8_t> (lun), cap16, 32, data)) {
-      lastLba[lun] = getBe64 (data);
-      blockSize[lun] = getBe32 (data + 8);
-      lunStatus[lun] = 0;
-    }
+  }
+  for (unsigned lun = 0; lun < maxLun; lun++) {
+    IOLog ("NATIVE_UFS_GPT: L%u st=%02x last=%llx bs=%x\n", lun,
+           lunStatus[lun], lastLba[lun], blockSize[lun]);
   }
   if (lunStatus[0] || blockSize[0] != 4096) {
     panic ("NATIVE_UFS_GPT: LUN0 capacity failed status=%x last=%llx bs=%x",
            lunStatus[0], lastLba[0], blockSize[0]);
+  }
+  if (dataCapacity < 2 * blockSize[0]) {
+    panic ("NATIVE_UFS_GPT: CAP OK; GPT buffer too small cap=%x need=%x",
+           dataCapacity, 2 * blockSize[0]);
   }
 
   uint8_t read10[16] = { 0x28 };
