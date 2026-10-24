@@ -3,7 +3,7 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 最终目标：iPhone10,2 / iOS 16.7.16（20H392）
-- 当前阶段：**B3 完成；B5 只读 UFS 探针确认 UEFI handoff 可用（HCS UTRL ready/HCE enabled/VER 0x210）；下一步基于 handoff 读取 GPT，完整 root 仍需 APFS 镜像**
+- 当前阶段：**B3 完成；B5 只读 UFS/GPT 已打通（6 LUN、LUN0 4096B、userdata `0x14f40..0x1c627fa`）；完整 root 仍需 APFS/userdata 写入**
 - 当前 gate：**G1 通过（2026-10-22）**
 - 基线提交：UniXNU `e95b37d`（main）
 - 本地提交：UniXNU `c8a5eeb`（计划）、`18f3020`（package）、`270ea4b`（B1 记录）、`692d70f`（docs 记录）；本轮 B1 收尾见 `git log -- plans/oneplus5-cheeseburger`
@@ -12,7 +12,7 @@
   - UEFI fork `https://github.com/lss717/edk2-msm8998`（分支 `unixnu-cheeseburger`）
   - 设备仓库 `https://github.com/lss717/UniXNU-cheeseburger`（`main`，`22742e3`）
 - UEFI 分支：`edk2-msm8998` 的 `unixnu-cheeseburger`，提交 `0471194`、`708fa06`、`7f34479`、`91e17a8`、`8ef28f1`、`1ffb934`
-- 最近更新：2026-10-23
+- 最近更新：2026-10-24
 
 > 本文件是 B 线（UniXNU / 4K）唯一的计划与状态记录。A 线（在 OP5 上用
 > 自建 shim 引导 16K XNU）是另一个独立项目，与本线没有代码依赖。
@@ -444,34 +444,44 @@ if (intr_cmd)
 `0x10000000 | (2 << 25) = 0x14000000`（CT=1），NOP 发的是 `0x10000000`。
 这解释了为什么 firmware 低页、cache clean 和 UIC 都正常时 UTP 仍不完成。
 
-下一步顺序（只读，不写分区）：
-
-1. 只修 UTRD CT：NOP=`0x21000000`，SCSI TUR=`0x01000000`，
-   CAP/READ=`0x05000000`；保留 firmware 低页和 cache clean。
-2. doorbell 后不再读 `UTRLDBR/IS`，只轮询 UTRD 内存 OCS；OCS 从
-   `0x0f` 变化即完成，避免 CPU 在 MMIO 上挂死。
-3. NOP 完成后先发 CAP16；若返回 NOT READY，再按 vendor
-   `ufshcd_set_dev_pwr_mode()` 向 W-LUN `0xD0` 发 START STOP UNIT
-   (`{0x1b,0,0,0,0x10,0}`)。
-4. 若 CT 修正后 UTP 仍不执行，再按 vendor `ufshcd_hba_enable()` /
-   `ufshcd_make_hba_operational()` 做 HCE reset、DME_LINKSTARTUP、
-   UTRL/UTMRL base 和 run-stop 初始化；最后才考虑 `msm_bus` 的
-   BIMC/CNOC 带宽投票。
-
-当前仍只在 firmware 低页的 4 KiB 内使用 list/UCD/PRDT/小 data；
-GPT 需要 4 KiB data，等 CAP 通后再扩大低地址 data 区。全套操作保持只读，
-不发送 WRITE/UNMAP/FORMAT，也不刷写、擦除或修改任何分区。
-
-**2026-10-24 上机验证（CT 修正 + OCS-only 轮询）**：NOP 和
-READ CAPACITY(16) 均完成，随后在 GPT 数据区检查处 panic：
+**2026-10-24 上机验证（CT 修正 + OCS-only 轮询 + 4 KiB data）**：
+NOP、READ CAPACITY(16)、LBA1 GPT header 和 entries 全部完成。实机输出：
 
 ```text
-NATIVE_UFS_GPT: CAP OK; GPT buffer too small cap=700 need=2000
+NATIVE_UFS_GPT warm-link read-only
+cap=1587001f ver=00000210 is=00000400 hcs=0000100f hce=00000001
+queue=ffffe000 ucd=ffffe100 data=187b15000 cap=1000
+
+L0 st=00 last=1c627ff bs=1000
+L1 st=00 last=3ff     bs=1000
+L2 st=00 last=3ff     bs=1000
+L3 st=00 last=7fff    bs=1000
+L4 st=00 last=fffff   bs=1000
+L5 st=00 last=5ffff   bs=1000
+
+GPT hdr=6bf93f53 ent=2b0de4e9 n=32 esz=128
+cur=1 bak=1c627ff usable=6..1c627fa
+persist  8-2007       32M
+cache    2000-12007   256M
+misc     12000-12107  1M
+userdata 14f40-1c627fa 115928M
+partitions=32 listed=4
 ```
 
-`need=0x2000` 即两个 4096 字节块，说明 LUN0 块大小为 4096，UTP 传输路径
-在修正 UTRD CT 后已经打通；当前仅缺 4 KiB 的 GPT data 缓冲区。下一步改为
-读取 LBA1 的单个 4 KiB GPT header，并用独立 4 KiB DMA 区读 entries。
+结论：
+
+- UTRD CT 修正是根因：SCSI 必须 CT=0（CAP/READ `0x05000000`），NOP 必须
+  CT=2（`0x21000000`），不能用 P11 的 `0x10000000`。
+- 修正后即使 GPT data 在高地址 `0x187b15000`，DMA 也能完成，说明此前
+  own-DMA 失败不是高地址不可达，而是错误 UTRD 类型让 UTP 挂死。
+- LUN0 为 4096 字节块、最后 LBA `0x1c627ff`；GPT 当前/备份 LBA 为
+  `1`/`0x1c627ff`，可用区 `6..0x1c627fa`。
+- `userdata` 为 `0x14f40..0x1c627fa`（约 115928 MiB），与主机侧备份
+  几何一致。
+
+**B5 只读 UFS/GPT 访问已打通，未执行任何分区写入。** 完整 B5 root 仍需
+APFS/userdata 写入（破坏性），必须单独批准并保留当前完整备份；本阶段到此
+停止，不发送 WRITE/UNMAP/FORMAT，也不刷写、擦除或修改任何分区。
 
 ## 下一步
 
