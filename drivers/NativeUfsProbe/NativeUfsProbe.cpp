@@ -378,6 +378,7 @@ extern "C" void thread_deallocate (thread_t);
 static void
 mediaReportThread (void *, wait_result_t)
 {
+  IOLog ("NATIVE_UFS_MEDIA: report thread start\n");
   unsigned count = 0;
   for (unsigned tick = 0; tick < 200; tick++) {
     OSDictionary *matching = IOService::serviceMatching ("IOMedia");
@@ -388,6 +389,9 @@ mediaReportThread (void *, wait_result_t)
     }
     OSSafeReleaseNULL (iterator);
     OSSafeReleaseNULL (matching);
+    if (tick % 50 == 0 || count) {
+      IOLog ("NATIVE_UFS_MEDIA: tick=%u media=%u\n", tick, count);
+    }
     if (count) {
       break;
     }
@@ -395,6 +399,7 @@ mediaReportThread (void *, wait_result_t)
   }
   IOSleep (500);
   dumpMediaServices ();
+  IOLog ("NATIVE_UFS_MEDIA: report thread done\n");
 }
 
 static bool
@@ -1011,5 +1016,6 @@ NativeUfsProbe::start (IOService *provider)
   if (child) {
     child->release ();
   }
+  IOLog ("NATIVE_UFS_GPT: start returning published=%u\n", published ? 1 : 0);
   return published;
 }
