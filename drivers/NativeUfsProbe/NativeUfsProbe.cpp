@@ -582,17 +582,24 @@ NativeUfsLun::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
     IOLog ("NATIVE_UFS_IO: timing block=%llx ufs_ticks=%llu total_ticks=%llu\n",
            block, finished - started, mach_absolute_time () - started);
   }
+  if (gIoRequests >= 8 && !gMediaDumped) {
+    gMediaDumped = true;
+    IOLog ("NATIVE_UFS_IO: one-shot IOMedia snapshot before completion at request %u\n",
+           gIoRequests);
+    dumpMediaServices ();
+  }
   if (completion && completion->action) {
+    if (gIoRequests <= 8) {
+      IOLog ("NATIVE_UFS_IO: completion enter block=%llx\n", block);
+    }
     completion->action (completion->target, completion->parameter, status, done);
+    if (gIoRequests <= 8) {
+      IOLog ("NATIVE_UFS_IO: completion leave block=%llx\n", block);
+    }
   }
   if ((gIoRequests & 31) == 0) {
     IOLog ("NATIVE_UFS_IO: requests=%u block0=%u last_block=%llx\n",
            gIoRequests, gBlock0Requests, block);
-  }
-  if (gIoRequests >= 8 && !gMediaDumped) {
-    gMediaDumped = true;
-    IOLog ("NATIVE_UFS_IO: one-shot IOMedia snapshot at request %u\n", gIoRequests);
-    dumpMediaServices ();
   }
   return kIOReturnSuccess;
 }
