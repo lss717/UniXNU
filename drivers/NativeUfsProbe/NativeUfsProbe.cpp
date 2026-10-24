@@ -13,6 +13,7 @@
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IODeviceMemory.h>
+#include <IOKit/storage/IOBlockStorageDevice.h>
 #include <kern/debug.h>
 #include <kern/task.h>
 #include <libkern/libkern.h>
@@ -52,14 +53,70 @@
 
 #define UFS_FATAL_STATUS 0x71880U
 
+struct UfsQueue {
+  uintptr_t hc;
+  uint8_t *list;
+  uint8_t *ucd;
+  uint8_t *data;
+  uint64_t ucdPhys;
+  uint64_t dataPhys;
+  uint32_t dataCapacity;
+  bool poisoned;
+};
+
+class NativeUfsProbe;
+
+class NativeUfsLun : public IOBlockStorageDevice {
+  OSDeclareDefaultStructors (NativeUfsLun)
+  NativeUfsProbe *host = nullptr;
+  uint8_t lun = 0;
+  uint64_t last = 0;
+  uint32_t sector = 0;
+
+public:
+  bool configure (NativeUfsProbe *parent, uint8_t unit, uint64_t lastLba, uint32_t blockSize);
+  IOReturn doEjectMedia () override { return kIOReturnUnsupported; }
+  IOReturn doFormatMedia (UInt64) override { return kIOReturnNotWritable; }
+  UInt32 doGetFormatCapacities (UInt64 *, UInt32) const override { return 0; }
+  char *getVendorString () override { return const_cast<char *> ("Qualcomm"); }
+  char *getProductString () override { return const_cast<char *> ("MSM8998 UFS read-only"); }
+  char *getRevisionString () override { return const_cast<char *> ("B5"); }
+  char *getAdditionalDeviceInfoString () override { return const_cast<char *> ("NativeUfsProbe warm-link LUN"); }
+  IOReturn reportBlockSize (UInt64 *value) override { *value = sector; return kIOReturnSuccess; }
+  IOReturn reportMaxValidBlock (UInt64 *value) override { *value = last; return kIOReturnSuccess; }
+  IOReturn reportMediaState (bool *present, bool *changed) override {
+    *present = true;
+    if (changed) {
+      *changed = false;
+    }
+    return kIOReturnSuccess;
+  }
+  IOReturn reportRemovability (bool *value) override { *value = false; return kIOReturnSuccess; }
+  IOReturn reportEjectability (bool *value) override { *value = false; return kIOReturnSuccess; }
+  IOReturn reportWriteProtection (bool *value) override { *value = true; return kIOReturnSuccess; }
+  IOReturn doSynchronizeCache () override { return kIOReturnNotWritable; }
+  IOReturn doSynchronize (UInt64, UInt64, IOOptionBits) override { return kIOReturnNotWritable; }
+  IOReturn getWriteCacheState (bool *value) override { *value = false; return kIOReturnSuccess; }
+  IOReturn setWriteCacheState (bool) override { return kIOReturnNotWritable; }
+  IOReturn doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block, UInt64 count,
+                             IOStorageAttributes *attributes,
+                             IOStorageCompletion *completion) override;
+};
+
 class NativeUfsProbe : public IOService {
   OSDeclareDefaultStructors (NativeUfsProbe)
+  UfsQueue fQueue = {};
+  IOLock *fLock = nullptr;
+  bool fReady = false;
 
 public:
   bool start (IOService *provider) override;
+  bool readBlocks (uint8_t unit, uint64_t block, uint64_t count, uint32_t blockSize,
+                   IOMemoryDescriptor *dst, uint64_t *done);
 };
 
 OSDefineMetaClassAndStructors (NativeUfsProbe, IOService)
+OSDefineMetaClassAndStructors (NativeUfsLun, IOBlockStorageDevice)
 
 static uint32_t
 read32 (uintptr_t base, unsigned offset)
@@ -269,6 +326,206 @@ waitForCompletion (uint8_t *list, uint32_t *ocs)
   return false;
 }
 
+static bool
+blockRange (uint64_t block, uint64_t count, uint64_t last, uint32_t blockSize)
+{
+  return count && blockSize >= 512 && blockSize <= 4096 &&
+         (blockSize & (blockSize - 1)) == 0 && block <= last &&
+         count - 1 <= last - block;
+}
+
+static bool
+ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes)
+{
+  if (!q || q->poisoned || bytes > q->dataCapacity ||
+      read32 (q->hc, UFS_REG_UTRLDBR) ||
+      (read32 (q->hc, UFS_REG_IS) & UFS_FATAL_STATUS)) {
+    return false;
+  }
+  uint8_t *ucd = q->ucd;
+  if (ucd[0] == 1) {
+    if (!readCommandAllowed (ucd[16], direction, bytes)) {
+      return false;
+    }
+  } else if (ucd[0] != 0 || bytes || direction) {
+    return false;
+  }
+  uint32_t *utrd = reinterpret_cast<uint32_t *> (q->list);
+  zero32 (utrd, 32);
+  // Vendor ufshci.h/ufshcd.c: SCSI is CT=0, NOP OUT is UTP_CMD_TYPE_DEV_MANAGE
+  // (CT=2); both carry UTP_REQ_DESC_INT_CMD.  0x10000000 is native UFS CT=1 and
+  // leaves this controller's UTP engine stuck.
+  utrd[0] = (ucd[0] == 0) ? 0x21000000U : (0x01000000U | (direction << 25));
+  utrd[2] = 0x0fU;
+  utrd[4] = static_cast<uint32_t> (q->ucdPhys);
+  utrd[5] = static_cast<uint32_t> (q->ucdPhys >> 32);
+  utrd[6] = (512U >> 2) | ((UFS_RSP_OFFSET >> 2) << 16);
+  utrd[7] = (bytes ? 1U : 0U) | ((UFS_PRDT_OFFSET >> 2) << 16);
+  if (bytes) {
+    uint32_t *prd = reinterpret_cast<uint32_t *> (ucd + UFS_PRDT_OFFSET);
+    prd[0] = static_cast<uint32_t> (q->dataPhys);
+    prd[1] = static_cast<uint32_t> (q->dataPhys >> 32);
+    prd[2] = 0;
+    prd[3] = bytes - 1;
+  }
+  cacheClean (q->list, 4096);
+  cacheClean (q->ucd, UFS_FW_UCD_SIZE);
+  IOLog ("NATIVE_UFS_GPT: ring type=%08x dir=%u bytes=%u\n",
+         utrd[0], direction, bytes);
+  write32 (q->hc, UFS_REG_IS, 0xffffffffU);
+  write32 (q->hc, UFS_REG_UTRLDBR, 1);
+  IOLog ("NATIVE_UFS_GPT: doorbell rung\n");
+  uint32_t ocs = 0x0f;
+  if (!waitForCompletion (q->list, &ocs)) {
+    q->poisoned = true;
+    IOLog ("NATIVE_UFS_GPT: OCS timeout type=%08x ocs=%x\n", utrd[0], ocs);
+    return false;
+  }
+  cacheInvalidate (q->list, 4096);
+  cacheInvalidate (q->ucd, UFS_FW_UCD_SIZE);
+  if (ocs) {
+    IOLog ("NATIVE_UFS_GPT: OCS=%x type=%08x\n", ocs, utrd[0]);
+    return false;
+  }
+  IOLog ("NATIVE_UFS_GPT: done type=%08x rsp=%02x/%02x tag=%u\n",
+         utrd[0], ucd[UFS_RSP_OFFSET], ucd[UFS_RSP_OFFSET + 7],
+         ucd[UFS_RSP_OFFSET + 3]);
+  return true;
+}
+
+static bool
+ufsCommand (UfsQueue *q, uint8_t lun, const uint8_t *cdb, unsigned bytes, void *dst)
+{
+  if (!q || !readCommandAllowed (cdb[0], bytes ? 2 : 0, bytes) || q->poisoned ||
+      bytes > q->dataCapacity || read32 (q->hc, UFS_REG_UTRLDBR)) {
+    return false;
+  }
+  zero32 (q->ucd, UFS_FW_UCD_SIZE);
+  uint8_t *req = q->ucd;
+  req[0] = 1;
+  req[1] = bytes ? 0x40 : 0;
+  req[2] = lun;
+  req[3] = 1;
+  putBe32 (req + 12, bytes);
+  memcpy (req + 16, cdb, 16);
+  cacheInvalidate (q->data, bytes);
+  if (!ufsSubmit (q, bytes ? 2 : 0, bytes)) {
+    return false;
+  }
+  cacheInvalidate (q->data, bytes);
+  const uint8_t *response = req + UFS_RSP_OFFSET;
+  if (response[0] != 0x21 || response[2] != lun || response[3] != 1 ||
+      response[4] || response[6] || response[7] || response[10] ||
+      response[11] || getBe32 (response + 12)) {
+    IOLog ("NATIVE_UFS_GPT: bad response type=%x lun=%x tag=%x flags=%x r6=%x status=%x r10=%x r11=%x residual=%x\n",
+           response[0], response[2], response[3], response[4], response[6],
+           response[7], response[10], response[11], getBe32 (response + 12));
+    return false;
+  }
+  if (bytes && dst && dst != q->data) {
+    memcpy (dst, q->data, bytes);
+  }
+  return true;
+}
+
+static bool
+ufsNop (UfsQueue *q)
+{
+  if (!q || q->poisoned || read32 (q->hc, UFS_REG_UTRLDBR)) {
+    return false;
+  }
+  zero32 (q->ucd, UFS_FW_UCD_SIZE);
+  q->ucd[3] = 1;
+  if (!ufsSubmit (q, 0, 0)) {
+    return false;
+  }
+  const uint8_t *response = q->ucd + UFS_RSP_OFFSET;
+  return response[0] == 0x20 && response[3] == 1;
+}
+
+bool
+NativeUfsProbe::readBlocks (uint8_t unit, uint64_t block, uint64_t count,
+                            uint32_t blockSize, IOMemoryDescriptor *dst,
+                            uint64_t *done)
+{
+  if (!fReady || !fLock || !dst || dst->getDirection () != kIODirectionIn ||
+      !blockSize || block > 0xffffffffULL) {
+    return false;
+  }
+  IOLockLock (fLock);
+  uint64_t total = 0;
+  bool ok = true;
+  while (count) {
+    unsigned chunk = static_cast<unsigned> (fQueue.dataCapacity / blockSize);
+    if (chunk == 0) {
+      ok = false;
+      break;
+    }
+    if (count < chunk) {
+      chunk = static_cast<unsigned> (count);
+    }
+    uint8_t cdb[16] = { 0 };
+    cdb[0] = 0x28;
+    putBe32 (cdb + 2, static_cast<uint32_t> (block));
+    cdb[7] = static_cast<uint8_t> (chunk >> 8);
+    cdb[8] = static_cast<uint8_t> (chunk);
+    unsigned bytes = chunk * blockSize;
+    if (!ufsCommand (&fQueue, unit, cdb, bytes, nullptr)) {
+      ok = false;
+      break;
+    }
+    if (dst->writeBytes (static_cast<IOByteCount> (total), fQueue.data,
+                         static_cast<IOByteCount> (bytes)) !=
+        static_cast<IOByteCount> (bytes)) {
+      ok = false;
+      break;
+    }
+    total += bytes;
+    block += chunk;
+    count -= chunk;
+  }
+  IOLockUnlock (fLock);
+  if (done) {
+    *done = total;
+  }
+  return ok;
+}
+
+bool
+NativeUfsLun::configure (NativeUfsProbe *parent, uint8_t unit, uint64_t lastLba,
+                         uint32_t blockSize)
+{
+  host = parent;
+  lun = unit;
+  last = lastLba;
+  sector = blockSize;
+  setProperty ("B5Lun", unit, 32);
+  setProperty ("B5ReadOnly", true);
+  return true;
+}
+
+IOReturn
+NativeUfsLun::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
+                                UInt64 count, IOStorageAttributes *,
+                                IOStorageCompletion *completion)
+{
+  if (!buffer || buffer->getDirection () != kIODirectionIn) {
+    return kIOReturnNotWritable;
+  }
+  if (!host || !blockRange (block, count, last, sector) ||
+      count > ~uint64_t (0) / sector ||
+      buffer->getLength () != count * sector) {
+    return kIOReturnBadArgument;
+  }
+  uint64_t done = 0;
+  bool ok = host->readBlocks (lun, block, count, sector, buffer, &done);
+  IOReturn status = ok ? kIOReturnSuccess : kIOReturnIOError;
+  if (completion && completion->action) {
+    completion->action (completion->target, completion->parameter, status, done);
+  }
+  return kIOReturnSuccess;
+}
+
 bool
 NativeUfsProbe::start (IOService *provider)
 {
@@ -467,113 +724,9 @@ NativeUfsProbe::start (IOService *provider)
   }
   IOLog ("NATIVE_UFS_GPT: private queue installed ba=%llx\n", listPhys);
 
-  bool poisoned = false;
+  UfsQueue queue = { hc, list, ucd, data, ucdPhys, dataPhys, dataCapacity, false };
 
-  auto submit = [&] (unsigned direction, unsigned bytes) -> bool {
-    if (poisoned || bytes > dataCapacity || read32 (hc, UFS_REG_UTRLDBR) ||
-        (read32 (hc, UFS_REG_IS) & UFS_FATAL_STATUS)) {
-      return false;
-    }
-    uint8_t *q = ucd;
-    if (q[0] == 1) {
-      if (!readCommandAllowed (q[16], direction, bytes)) {
-        return false;
-      }
-    } else if (q[0] != 0 || bytes || direction) {
-      return false;
-    }
-    uint32_t *utrd = reinterpret_cast<uint32_t *> (list);
-    zero32 (utrd, 32);
-    // Vendor ufshci.h/ufshcd.c: SCSI is CT=0, NOP OUT is UTP_CMD_TYPE_DEV_MANAGE
-    // (CT=2); both carry UTP_REQ_DESC_INT_CMD.  P11's 0x10000000 (native UFS
-    // CT=1) is not the SCSI/NOP descriptor and leaves the UTP engine stuck.
-    utrd[0] = (q[0] == 0) ? 0x21000000U : (0x01000000U | (direction << 25));
-    utrd[2] = 0x0fU;
-    utrd[4] = static_cast<uint32_t> (ucdPhys);
-    utrd[5] = static_cast<uint32_t> (ucdPhys >> 32);
-    utrd[6] = (512U >> 2) | ((UFS_RSP_OFFSET >> 2) << 16);
-    utrd[7] = (bytes ? 1U : 0U) | ((UFS_PRDT_OFFSET >> 2) << 16);
-    if (bytes) {
-      uint32_t *prd = reinterpret_cast<uint32_t *> (q + UFS_PRDT_OFFSET);
-      prd[0] = static_cast<uint32_t> (dataPhys);
-      prd[1] = static_cast<uint32_t> (dataPhys >> 32);
-      prd[2] = 0;
-      prd[3] = bytes - 1;
-    }
-    cacheClean (list, 4096);
-    cacheClean (ucd, UFS_FW_UCD_SIZE);
-    IOLog ("NATIVE_UFS_GPT: ring type=%08x dir=%u bytes=%u\n",
-           utrd[0], direction, bytes);
-    write32 (hc, UFS_REG_IS, 0xffffffffU);
-    write32 (hc, UFS_REG_UTRLDBR, 1);
-    IOLog ("NATIVE_UFS_GPT: doorbell rung\n");
-    uint32_t ocs = 0x0f;
-    if (!waitForCompletion (list, &ocs)) {
-      poisoned = true;
-      IOLog ("NATIVE_UFS_GPT: OCS timeout type=%08x ocs=%x\n",
-             utrd[0], ocs);
-      return false;
-    }
-    cacheInvalidate (list, 4096);
-    cacheInvalidate (ucd, UFS_FW_UCD_SIZE);
-    if (ocs) {
-      IOLog ("NATIVE_UFS_GPT: OCS=%x type=%08x\n", ocs, utrd[0]);
-      return false;
-    }
-    IOLog ("NATIVE_UFS_GPT: done type=%08x rsp=%02x/%02x tag=%u\n",
-           utrd[0], q[UFS_RSP_OFFSET], q[UFS_RSP_OFFSET + 7],
-           q[UFS_RSP_OFFSET + 3]);
-    return true;
-  };
-
-
-  auto command = [&] (uint8_t lun, const uint8_t *cdb, unsigned bytes, void *dst) -> bool {
-    if (!readCommandAllowed (cdb[0], bytes ? 2 : 0, bytes) || poisoned ||
-        bytes > dataCapacity || read32 (hc, UFS_REG_UTRLDBR)) {
-      return false;
-    }
-    zero32 (ucd, UFS_FW_UCD_SIZE);
-    uint8_t *q = ucd;
-    q[0] = 1;
-    q[1] = bytes ? 0x40 : 0;
-    q[2] = lun;
-    q[3] = 1;
-    putBe32 (q + 12, bytes);
-    memcpy (q + 16, cdb, 16);
-    cacheInvalidate (data, bytes);
-    if (!submit (bytes ? 2 : 0, bytes)) {
-      return false;
-    }
-    cacheInvalidate (data, bytes);
-    const uint8_t *response = q + UFS_RSP_OFFSET;
-    if (response[0] != 0x21 || response[2] != lun || response[3] != 1 ||
-        response[4] || response[6] || response[7] || response[10] ||
-        response[11] || getBe32 (response + 12)) {
-      IOLog ("NATIVE_UFS_GPT: bad response type=%x lun=%x tag=%x flags=%x r6=%x status=%x r10=%x r11=%x residual=%x\n",
-             response[0], response[2], response[3], response[4], response[6],
-             response[7], response[10], response[11], getBe32 (response + 12));
-      return false;
-    }
-    if (bytes && dst && dst != data) {
-      memcpy (dst, data, bytes);
-    }
-    return true;
-  };
-
-  auto nop = [&] () -> bool {
-    if (poisoned || read32 (hc, UFS_REG_UTRLDBR)) {
-      return false;
-    }
-    zero32 (ucd, UFS_FW_UCD_SIZE);
-    ucd[3] = 1;
-    if (!submit (0, 0)) {
-      return false;
-    }
-    const uint8_t *response = ucd + UFS_RSP_OFFSET;
-    return response[0] == 0x20 && response[3] == 1;
-  };
-
-  if (!nop ()) {
+  if (!ufsNop (&queue)) {
     panic ("NATIVE_UFS_GPT: firmware-page NOP failed; see OCS/type log");
   }
   IOLog ("NATIVE_UFS_GPT: firmware-page NOP completed\n");
@@ -588,14 +741,14 @@ NativeUfsProbe::start (IOService *provider)
     lunStatus[lun] = 0xee;
     uint8_t cap16[16] = { 0x9e, 0x10 };
     putBe32 (cap16 + 10, 32);
-    if (command (static_cast<uint8_t> (lun), cap16, 32, data)) {
+    if (ufsCommand (&queue, static_cast<uint8_t> (lun), cap16, 32, data)) {
       lastLba[lun] = getBe64 (data);
       blockSize[lun] = getBe32 (data + 8);
       lunStatus[lun] = 0;
       continue;
     }
     uint8_t cap10[16] = { 0x25 };
-    if (command (static_cast<uint8_t> (lun), cap10, 8, data)) {
+    if (ufsCommand (&queue, static_cast<uint8_t> (lun), cap10, 8, data)) {
       lastLba[lun] = getBe32 (data);
       blockSize[lun] = getBe32 (data + 4);
       lunStatus[lun] = 0;
@@ -632,13 +785,16 @@ NativeUfsProbe::start (IOService *provider)
   data = gptData;
   dataPhys = gptPhys;
   dataCapacity = blockSize[0];
+  queue.data = data;
+  queue.dataPhys = dataPhys;
+  queue.dataCapacity = dataCapacity;
   IOLog ("NATIVE_UFS_GPT: GPT data phys=%llx size=%x\n", gptPhys, dataCapacity);
 
   uint8_t read10[16] = { 0x28 };
   putBe32 (read10 + 2, 1);
   read10[7] = 0;
   read10[8] = 1;
-  if (!command (0, read10, blockSize[0], data)) {
+  if (!ufsCommand (&queue, 0, read10, blockSize[0], data)) {
     panic ("NATIVE_UFS_GPT: LBA1 header READ10 failed");
   }
   const uint8_t *header = data;
@@ -669,7 +825,7 @@ NativeUfsProbe::start (IOService *provider)
   putBe32 (read10 + 2, static_cast<uint32_t> (entriesLba));
   read10[7] = static_cast<uint8_t> (entryBlocks >> 8);
   read10[8] = static_cast<uint8_t> (entryBlocks);
-  if (!command (0, read10, entryBlocks * blockSize[0], data)) {
+  if (!ufsCommand (&queue, 0, read10, entryBlocks * blockSize[0], data)) {
     panic ("NATIVE_UFS_GPT: GPT entries READ10 failed");
   }
 
@@ -733,6 +889,56 @@ NativeUfsProbe::start (IOService *provider)
     listed++;
   }
   ADD ("partitions=%u listed=%u\n", entryCount, listed);
-  panic ("%s", text);
-  return false;
+  IOLog ("%s", text);
+
+  IOOptionBits readOptions = static_cast<IOOptionBits> (kIODirectionInOut) |
+                             static_cast<IOOptionBits> (kIOMemoryPhysicallyContiguous) |
+                             static_cast<IOOptionBits> (kIOMemoryMapperNone);
+  IOBufferMemoryDescriptor *readDma = IOBufferMemoryDescriptor::inTaskWithPhysicalMask (
+    kernel_task, readOptions, UFS_DATA_MAX, 0x00000000ffffffffULL);
+  if (!readDma) {
+    IOLog ("NATIVE_UFS_GPT: read DMA low failed; high fallback\n");
+    readDma = IOBufferMemoryDescriptor::inTaskWithOptions (
+      kernel_task, readOptions, UFS_DATA_MAX, 4096);
+  }
+  if (!readDma) {
+    panic ("NATIVE_UFS_GPT: read DMA allocation failed");
+  }
+  uint8_t *readData = static_cast<uint8_t *> (readDma->getBytesNoCopy ());
+  IOByteCount readContiguous = 0;
+  uint64_t readPhys = readDma->getPhysicalSegment (0, &readContiguous, kIOMemoryMapperNone);
+  if (!readData || !readPhys || (readPhys & 0xfff) ||
+      readContiguous < UFS_DATA_MAX) {
+    panic ("NATIVE_UFS_GPT: read DMA invalid phys=%llx cont=%llx", readPhys,
+           uint64_t (readContiguous));
+  }
+  queue.data = readData;
+  queue.dataPhys = readPhys;
+  queue.dataCapacity = UFS_DATA_MAX;
+  queue.poisoned = false;
+  fQueue = queue;
+  fLock = IOLockAlloc ();
+  if (!fLock) {
+    panic ("NATIVE_UFS_GPT: read lock allocation failed");
+  }
+  fReady = true;
+  IOLog ("NATIVE_UFS_GPT: read DMA phys=%llx size=%x; publishing LUN0\n",
+         readPhys, UFS_DATA_MAX);
+
+  bool published = false;
+  NativeUfsLun *child = new NativeUfsLun;
+  if (child && child->init (nullptr) &&
+      child->configure (this, 0, lastLba[0], blockSize[0]) &&
+      child->attach (this) && child->start (this)) {
+    child->registerService ();
+    published = true;
+    IOLog ("NATIVE_UFS_GPT: published LUN0 last=%llx bs=%x read-only\n",
+           lastLba[0], blockSize[0]);
+  } else {
+    IOLog ("NATIVE_UFS_GPT: LUN0 publication failed\n");
+  }
+  if (child) {
+    child->release ();
+  }
+  return published;
 }
