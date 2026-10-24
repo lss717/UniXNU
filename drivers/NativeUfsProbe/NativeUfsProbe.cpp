@@ -398,12 +398,12 @@ mediaReportThread (void *, wait_result_t)
     if (count) {
       break;
     }
-    IOSleep (100);
+    IODelay (100000);
     if (tick < 3) {
       IOLog ("NATIVE_UFS_MEDIA: tick=%u slept\n", tick);
     }
   }
-  IOSleep (500);
+  IODelay (500000);
   dumpMediaServices ();
   IOLog ("NATIVE_UFS_MEDIA: report thread done\n");
 }
