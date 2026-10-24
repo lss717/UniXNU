@@ -223,7 +223,7 @@ NativeUfsProbe::start (IOService *provider)
   if (!listMap) {
     panic ("NATIVE_UFS_GPT: firmware request list map failed base=%llx", utrlPhys);
   }
-  uint8_t *list = static_cast<uint8_t *> (listMap->getVirtualAddress ());
+  uint8_t *list = reinterpret_cast<uint8_t *> (listMap->getVirtualAddress ());
 
   IOBufferMemoryDescriptor *dma = IOBufferMemoryDescriptor::inTaskWithOptions (
     kernel_task,
