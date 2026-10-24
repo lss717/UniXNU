@@ -451,11 +451,17 @@ ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes)
   }
   cacheClean (q->list, 4096);
   cacheClean (q->ucd, UFS_FW_UCD_SIZE);
-  IOLog ("NATIVE_UFS_GPT: ring type=%08x dir=%u bytes=%u\n",
-         utrd[0], direction, bytes);
+  static unsigned gCommandLogs;
+  bool logCommand = gCommandLogs++ < 64;
+  if (logCommand) {
+    IOLog ("NATIVE_UFS_GPT: ring type=%08x dir=%u bytes=%u\n",
+           utrd[0], direction, bytes);
+  }
   write32 (q->hc, UFS_REG_IS, 0xffffffffU);
   write32 (q->hc, UFS_REG_UTRLDBR, 1);
-  IOLog ("NATIVE_UFS_GPT: doorbell rung\n");
+  if (logCommand) {
+    IOLog ("NATIVE_UFS_GPT: doorbell rung\n");
+  }
   uint32_t ocs = 0x0f;
   if (!waitForCompletion (q->list, &ocs)) {
     q->poisoned = true;
@@ -468,9 +474,11 @@ ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes)
     IOLog ("NATIVE_UFS_GPT: OCS=%x type=%08x\n", ocs, utrd[0]);
     return false;
   }
-  IOLog ("NATIVE_UFS_GPT: done type=%08x rsp=%02x/%02x tag=%u\n",
-         utrd[0], ucd[UFS_RSP_OFFSET], ucd[UFS_RSP_OFFSET + 7],
-         ucd[UFS_RSP_OFFSET + 3]);
+  if (logCommand) {
+    IOLog ("NATIVE_UFS_GPT: done type=%08x rsp=%02x/%02x tag=%u\n",
+           utrd[0], ucd[UFS_RSP_OFFSET], ucd[UFS_RSP_OFFSET + 7],
+           ucd[UFS_RSP_OFFSET + 3]);
+  }
   return true;
 }
 
@@ -607,6 +615,8 @@ NativeUfsWindow::configure (NativeUfsProbe *parent, const char *name,
          bounce && lock;
 }
 
+static unsigned gWindowRequests;
+
 IOReturn
 NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
                                    UInt64 count, IOStorageAttributes *,
@@ -622,6 +632,11 @@ NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
   }
   if (!online || !bounce || !lock) {
     return kIOReturnNotReady;
+  }
+  unsigned request = gWindowRequests++;
+  if (request < 8 || (request & 255) == 0) {
+    IOLog ("NATIVE_UFS_WINDOW: %s req=%u block=%llx count=%llu\n",
+           label, request, block, count);
   }
   uint64_t cursor = absolute + block * 512;
   uint64_t end = cursor + count * 512;
