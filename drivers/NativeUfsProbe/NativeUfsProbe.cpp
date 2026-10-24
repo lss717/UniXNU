@@ -106,6 +106,8 @@ public:
 class NativeUfsProbe : public IOService {
   OSDeclareDefaultStructors (NativeUfsProbe)
   UfsQueue fQueue = {};
+  OSSharedPtr<IOMemoryMap> fListMap;
+  OSSharedPtr<IOMemoryMap> fUcdMap;
   IOLock *fLock = nullptr;
   bool fReady = false;
 
@@ -917,6 +919,8 @@ NativeUfsProbe::start (IOService *provider)
   queue.dataCapacity = UFS_DATA_MAX;
   queue.poisoned = false;
   fQueue = queue;
+  fListMap = listMap;
+  fUcdMap = ucdMap;
   fLock = IOLockAlloc ();
   if (!fLock) {
     panic ("NATIVE_UFS_GPT: read lock allocation failed");
