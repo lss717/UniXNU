@@ -3,7 +3,7 @@
 //
 // The firmware leaves UFSHCI enabled with a valid transfer-request list.  This
 // driver reuses that list (slot 0 only), points the command descriptor and data
-// buffer at a private physically-contiguous allocation, and issues read-only
+// buffer in the kernel image, and issues read-only
 // SCSI commands: TEST UNIT READY, READ CAPACITY(10), READ(10) of LBA 0/1 and
 // the GPT entry array.  There is no SCSI WRITE, no partition modification and
 // no controller reset.  MSM8998's ufshc node has no iommus property, so unlike
@@ -12,12 +12,14 @@
 #include <IOKit/IOPlatformExpert.h>
 #include <IOKit/IOLib.h>
 #include <IOKit/IODeviceMemory.h>
-#include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <kern/debug.h>
-#include <kern/task.h>
 #include <libkern/libkern.h>
 #include <pexpert/pexpert.h>
+#include <vm/pmap.h>
+#include <mach/vm_param.h>
+
+extern "C" ppnum_t pmap_find_phys (pmap_t pmap, addr64_t va);
 
 #define MSM8998_UFS_HC_BASE 0x1da4000ULL
 #define MSM8998_UFS_HC_SIZE 0x2500ULL
@@ -29,6 +31,11 @@
 #define UFS_PRDT_OFFSET 1024U
 #define UFS_DATA_OFFSET 4096U
 #define UFS_DATA_MAX 32768U
+
+// The platform-expert start callback runs before IOKit memory allocation is
+// safe to use.  Put the DMA descriptors/data in the kernel image instead and
+// derive their physical address from the kernel pmap.
+static uint8_t gUfsDma[UFS_DMA_SIZE] __attribute__((aligned(4096))) = { 1 };
 
 #define UFS_REG_IS 0x20U
 #define UFS_REG_HCS 0x30U
@@ -74,6 +81,36 @@ mapPhys (uint64_t phys, uint64_t length, OSSharedPtr<IOMemoryMap> &keep)
   keep = OSSharedPtr<IOMemoryMap> (memory->map (kIOMapAnywhere | kIOMapInhibitCache), OSNoRetain);
   memory->release ();
   return keep ? static_cast<uintptr_t> (keep->getVirtualAddress ()) : 0;
+}
+static uintptr_t
+mapPhysCacheable (uint64_t phys, uint64_t length, OSSharedPtr<IOMemoryMap> &keep)
+{
+  IODeviceMemory *memory = IODeviceMemory::withRange (phys, length);
+  if (!memory) {
+    return 0;
+  }
+  keep = OSSharedPtr<IOMemoryMap> (memory->map (kIOMapAnywhere), OSNoRetain);
+  memory->release ();
+  return keep ? static_cast<uintptr_t> (keep->getVirtualAddress ()) : 0;
+}
+
+static uint64_t
+dmaPhysical (uint8_t *virt, size_t length)
+{
+  uint64_t base = 0;
+  for (size_t offset = 0; offset < length; offset += 4096) {
+    ppnum_t page = pmap_find_phys (kernel_pmap, (addr64_t) (uintptr_t) (virt + offset));
+    if (!page) {
+      return 0;
+    }
+    uint64_t physical = ptoa_64 (page);
+    if (!base) {
+      base = physical;
+    } else if (physical != base + offset) {
+      return 0;
+    }
+  }
+  return base;
 }
 
 static void
@@ -181,6 +218,8 @@ NativeUfsProbe::probe (IOService *provider, SInt32 *score)
 bool
 NativeUfsProbe::start (IOService *provider)
 {
+  IOLog ("NATIVE_UFS_GPT: start provider=%s\n",
+         provider ? provider->getMetaClass ()->getClassName () : "null");
   if (!OSDynamicCast (IOPlatformExpertDevice, provider)) {
     return false;
   }
@@ -213,34 +252,20 @@ NativeUfsProbe::start (IOService *provider)
            utrlPhys, hcs);
   }
 
-  IOMemoryDescriptor *listDesc = IOMemoryDescriptor::withPhysicalAddress (
-    utrlPhys, UFS_LIST_SIZE, kIODirectionInOut);
   OSSharedPtr<IOMemoryMap> listMap;
-  if (listDesc) {
-    listMap = OSSharedPtr<IOMemoryMap> (listDesc->map (kIOMapAnywhere), OSNoRetain);
-    listDesc->release ();
-  }
-  if (!listMap) {
+  uintptr_t listVirt = mapPhysCacheable (utrlPhys, UFS_LIST_SIZE, listMap);
+  if (!listVirt) {
     panic ("NATIVE_UFS_GPT: firmware request list map failed base=%llx", utrlPhys);
   }
-  uint8_t *list = reinterpret_cast<uint8_t *> (listMap->getVirtualAddress ());
+  IOLog ("NATIVE_UFS_GPT: utrl=%llx list_virt=%p\n", utrlPhys, (void *) listVirt);
+  uint8_t *list = reinterpret_cast<uint8_t *> (listVirt);
 
-  IOBufferMemoryDescriptor *dma = IOBufferMemoryDescriptor::inTaskWithOptions (
-    kernel_task,
-    static_cast<IOOptionBits> (kIODirectionInOut) |
-    static_cast<IOOptionBits> (kIOMemoryPhysicallyContiguous) |
-    static_cast<IOOptionBits> (kIOMemoryMapperNone),
-    UFS_DMA_SIZE, 4096);
-  if (!dma) {
-    panic ("NATIVE_UFS_GPT: DMA allocation failed");
+  uint8_t *dmaVirt = gUfsDma;
+  uint64_t dmaPhys = dmaPhysical (dmaVirt, UFS_DMA_SIZE);
+  if (!dmaPhys) {
+    panic ("NATIVE_UFS_GPT: static DMA pages are not physically contiguous");
   }
-  uint8_t *dmaVirt = static_cast<uint8_t *> (dma->getBytesNoCopy ());
-  IOByteCount contiguous = 0;
-  uint64_t dmaPhys = dma->getPhysicalSegment (0, &contiguous, kIOMemoryMapperNone);
-  if (!dmaVirt || !dmaPhys || (dmaPhys & 0xfff) || contiguous < UFS_DMA_SIZE) {
-    panic ("NATIVE_UFS_GPT: DMA buffer invalid virt=%p phys=%llx size=%llx",
-           (void *) dmaVirt, dmaPhys, uint64_t (contiguous));
-  }
+  IOLog ("NATIVE_UFS_GPT: dma=%llx size=%x\n", dmaPhys, UFS_DMA_SIZE);
   if (!(cap & 0x01000000U) && dmaPhys + UFS_DMA_SIZE > 0x100000000ULL) {
     panic ("NATIVE_UFS_GPT: DMA above 4G without 64AS phys=%llx cap=%08x",
            dmaPhys, cap);
