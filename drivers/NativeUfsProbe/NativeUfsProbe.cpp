@@ -157,6 +157,29 @@ mapPhys (uint64_t phys, uint64_t length, OSSharedPtr<IOMemoryMap> &keep)
   return keep ? static_cast<uintptr_t> (keep->getVirtualAddress ()) : 0;
 }
 
+static void
+dumpSmmu (uintptr_t smmu, const char *name)
+{
+  uint32_t idr0 = read32 (smmu, 0x20);
+  uint32_t idr1 = read32 (smmu, 0x24);
+  uint32_t idr2 = read32 (smmu, 0x28);
+  IOLog ("NATIVE_UFS_GPT: smmu %s idr0=%08x idr1=%08x idr2=%08x sCR0=%08x\n",
+         name, idr0, idr1, idr2, read32 (smmu, 0x00));
+  unsigned groups = idr0 & 0xff;
+  if (groups > 64) {
+    groups = 64;
+  }
+  for (unsigned index = 0; index < groups; index++) {
+    uint32_t smr = read32 (smmu, 0x800 + 4 * index);
+    if (!(smr & 0x80000000U)) {
+      continue;
+    }
+    uint32_t s2cr = read32 (smmu, 0xc00 + 4 * index);
+    IOLog ("NATIVE_UFS_GPT: smmu %s smr[%u]=%08x s2cr=%08x\n",
+           name, index, smr, s2cr);
+  }
+}
+
 static bool
 waitRegister (uintptr_t base, unsigned offset, uint32_t mask, uint32_t expected,
               unsigned microseconds);
@@ -365,6 +388,20 @@ NativeUfsProbe::start (IOService *provider)
     IOLog ("NATIVE_UFS_GPT: uic after-wake get=%u mode=%08x is=%08x hcs=%08x\n",
            gotPowerMode, powerMode, read32 (hc, UFS_REG_IS),
            read32 (hc, UFS_REG_HCS));
+  }
+
+  OSSharedPtr<IOMemoryMap> smmu1Map, smmu2Map;
+  uintptr_t smmu1 = mapPhys (0x1680000ULL, 0x10000ULL, smmu1Map);
+  if (smmu1) {
+    dumpSmmu (smmu1, "anoc1");
+  } else {
+    IOLog ("NATIVE_UFS_GPT: smmu anoc1 map failed\n");
+  }
+  uintptr_t smmu2 = mapPhys (0x16c0000ULL, 0x40000ULL, smmu2Map);
+  if (smmu2) {
+    dumpSmmu (smmu2, "anoc2");
+  } else {
+    IOLog ("NATIVE_UFS_GPT: smmu anoc2 map failed\n");
   }
 
   // The firmware's own UTRL/UCD page is the only low physical DMA region that
