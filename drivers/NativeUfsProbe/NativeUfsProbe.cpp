@@ -241,12 +241,18 @@ NativeUfsProbe::start (IOService *provider)
   IOLog ("NATIVE_UFS_GPT: post DMA alloc kr=%d va=%llx\n",
          dmaResult, uint64_t (dmaAddress));
   if (dmaResult != KERN_SUCCESS || !dmaAddress) {
-    panic ("NATIVE_UFS_GPT: low DMA allocation failed kr=%d", dmaResult);
+    IOLog ("NATIVE_UFS_GPT: low DMA failed kr=%d, high fallback\n", dmaResult);
+    dmaAddress = 0;
+    dmaResult = kmem_alloc_contig (kernel_map, &dmaAddress,
+      UFS_DMA_SIZE, PAGE_MASK, 0, 0, dmaFlags, VM_KERN_MEMORY_IOKIT);
+  }
+  if (dmaResult != KERN_SUCCESS || !dmaAddress) {
+    panic ("NATIVE_UFS_GPT: DMA allocation failed kr=%d", dmaResult);
   }
   uint8_t *dmaVirt = reinterpret_cast<uint8_t *> (dmaAddress);
   uint64_t dmaPhys = dmaPhysical (dmaVirt, UFS_DMA_SIZE);
-  if (!dmaPhys || dmaPhys + UFS_DMA_SIZE > 0x100000000ULL) {
-    panic ("NATIVE_UFS_GPT: DMA not contiguous/low phys=%llx", dmaPhys);
+  if (!dmaPhys) {
+    panic ("NATIVE_UFS_GPT: DMA pages are not physically contiguous");
   }
   IOLog ("NATIVE_UFS_GPT: dma=%llx size=%x\n", dmaPhys, UFS_DMA_SIZE);
   uint8_t *list = dmaVirt + UFS_LIST_OFFSET;
@@ -313,7 +319,7 @@ NativeUfsProbe::start (IOService *provider)
 
     uint64_t ucdPhys = dmaPhys + UFS_UCD_OFFSET;
     uint32_t direction = dataLength ? 2U : 0U;
-    *reinterpret_cast<uint32_t *> (list + 0) = 0x10000000U | (direction << 25);
+    *reinterpret_cast<uint32_t *> (list + 0) = 0x11000000U | (direction << 25);
     *reinterpret_cast<uint32_t *> (list + 8) = 0x0fU;
     *reinterpret_cast<uint32_t *> (list + 16) = static_cast<uint32_t> (ucdPhys);
     *reinterpret_cast<uint32_t *> (list + 20) = static_cast<uint32_t> (ucdPhys >> 32);
