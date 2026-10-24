@@ -21,13 +21,8 @@
 #define MSM8998_GCC_BASE 0x100000ULL
 #define MSM8998_GCC_SIZE 0xb0000ULL
 
-#define UFS_LOW_BASE 0xffff0000ULL
-#define UFS_DMA_SIZE 0xA000U
-#define UFS_LIST_OFFSET 0U
-#define UFS_UCD_OFFSET 0x1000U
 #define UFS_RSP_OFFSET 512U
 #define UFS_PRDT_OFFSET 1024U
-#define UFS_DATA_OFFSET 0x2000U
 #define UFS_DATA_MAX 0x8000U
 
 #define UFS_REG_IS 0x20U
@@ -172,7 +167,7 @@ readCommandAllowed (unsigned opcode, unsigned direction, unsigned bytes)
 }
 
 static bool
-waitForCompletion (uintptr_t hc, uint8_t *memory, uint32_t *ocs)
+waitForCompletion (uintptr_t hc, uint8_t *list, uint32_t *ocs)
 {
   for (unsigned loop = 0; loop < 100000; loop++) {
     uint32_t doorbell = read32 (hc, UFS_REG_UTRLDBR);
@@ -181,8 +176,7 @@ waitForCompletion (uintptr_t hc, uint8_t *memory, uint32_t *ocs)
       return false;
     }
     if (!(doorbell & 1)) {
-      __asm__ volatile ("dc ivac, %0\n dsb sy" :: "r" (memory) : "memory");
-      *ocs = read32 (reinterpret_cast<uintptr_t> (memory), 8) & 0xff;
+      *ocs = read32 (reinterpret_cast<uintptr_t> (list), 8) & 0xff;
       if (*ocs != 0x0f) {
         return true;
       }
@@ -257,18 +251,53 @@ NativeUfsProbe::start (IOService *provider)
            hce, hcs, is, doorbell, taskDoorbell);
   }
 
-  OSSharedPtr<IOMemoryMap> dmaMap;
-  uintptr_t dmaVirt = mapPhysCacheable (UFS_LOW_BASE, UFS_DMA_SIZE, dmaMap);
-  if (!dmaVirt) {
-    panic ("NATIVE_UFS_GPT: low DMA map failed");
+  uint64_t utrlPhys = (uint64_t (read32 (hc, UFS_REG_UTRLBAU)) << 32) |
+                      read32 (hc, UFS_REG_UTRLBA);
+  OSSharedPtr<IOMemoryMap> listMap, ucdMap, dataMap;
+  uintptr_t listVirt = mapPhysCacheable (utrlPhys, 4096, listMap);
+  if (!listVirt) {
+    panic ("NATIVE_UFS_GPT: firmware UTRL map failed base=%llx", utrlPhys);
   }
-  uint8_t *memory = reinterpret_cast<uint8_t *> (dmaVirt);
-  uint64_t phys = UFS_LOW_BASE;
-  if (phys + UFS_DMA_SIZE > 0x100000000ULL) {
-    panic ("NATIVE_UFS_GPT: low DMA window exceeds 4G");
+  uint8_t *list = reinterpret_cast<uint8_t *> (listVirt);
+  uint32_t fw[8];
+  for (unsigned index = 0; index < 8; index++) {
+    fw[index] = read32 (listVirt, index * 4);
   }
-  IOLog ("NATIVE_UFS_GPT: DMA phys=%llx size=%x\n", phys, UFS_DMA_SIZE);
-  zero32 (memory, UFS_DMA_SIZE);
+  uint64_t fwUcd = (uint64_t (fw[5]) << 32) | fw[4];
+  uint32_t fwPrdtOff = (fw[7] >> 16) & 0xffff;
+  uint32_t fwPrdtCount = fw[7] & 0xffff;
+  IOLog ("NATIVE_UFS_GPT: fw utrl=%llx utrd=%08x/%08x ucd=%llx prdt=%x/%x\n",
+         utrlPhys, fw[0], fw[2], fwUcd, fwPrdtOff, fwPrdtCount);
+  if (!fwUcd || !fwPrdtCount || fwPrdtOff >= 4096 / 4) {
+    panic ("NATIVE_UFS_GPT: firmware UCD metadata invalid ucd=%llx prdt=%x/%x",
+           fwUcd, fwPrdtOff, fwPrdtCount);
+  }
+  uintptr_t ucdVirt = mapPhysCacheable (fwUcd, 4096, ucdMap);
+  if (!ucdVirt) {
+    panic ("NATIVE_UFS_GPT: firmware UCD map failed base=%llx", fwUcd);
+  }
+  uint8_t *ucd = reinterpret_cast<uint8_t *> (ucdVirt);
+  uint32_t *fwPrd = reinterpret_cast<uint32_t *> (ucd + fwPrdtOff * 4);
+  uint64_t fwData = (uint64_t (fwPrd[1]) << 32) | fwPrd[0];
+  uint32_t fwDataLen = fwPrd[3] + 1;
+  IOLog ("NATIVE_UFS_GPT: fw data=%llx len=%x\n", fwData, fwDataLen);
+  if (!fwData || fwDataLen < 512) {
+    panic ("NATIVE_UFS_GPT: firmware data invalid data=%llx len=%x", fwData, fwDataLen);
+  }
+  uintptr_t dataVirt = mapPhysCacheable (fwData, UFS_DATA_MAX, dataMap);
+  if (!dataVirt) {
+    panic ("NATIVE_UFS_GPT: firmware data map failed base=%llx", fwData);
+  }
+  uint8_t *data = reinterpret_cast<uint8_t *> (dataVirt);
+  uint64_t listPhys = utrlPhys;
+  uint64_t ucdPhys = fwUcd;
+  uint64_t dataPhys = fwData;
+  uint32_t dataCapacity = fwDataLen > UFS_DATA_MAX ? UFS_DATA_MAX : fwDataLen;
+  IOLog ("NATIVE_UFS_GPT: firmware queue list=%llx ucd=%llx data=%llx cap=%x\n",
+         listPhys, ucdPhys, dataPhys, dataCapacity);
+  zero32 (list, 4096);
+  zero32 (ucd, 4096);
+  zero32 (data, dataCapacity);
 
   // Install the private queue, preserving the firmware values only for a
   // diagnostic rollback-free log.  The controller is not reset.
@@ -283,31 +312,28 @@ NativeUfsProbe::start (IOService *provider)
            read32 (hc, UFS_REG_UTRLRSR), read32 (hc, UFS_REG_UTRLDBR));
   }
   write32 (hc, UFS_REG_IE, 0);
-  write32 (hc, UFS_REG_UTRLBA, static_cast<uint32_t> (phys + UFS_LIST_OFFSET));
-  write32 (hc, UFS_REG_UTRLBAU, static_cast<uint32_t> ((phys + UFS_LIST_OFFSET) >> 32));
+  write32 (hc, UFS_REG_UTRLBA, static_cast<uint32_t> (listPhys));
+  write32 (hc, UFS_REG_UTRLBAU, static_cast<uint32_t> (listPhys >> 32));
   write32 (hc, UFS_REG_UTRLRSR, 1);
   if (!waitRegister (hc, UFS_REG_UTRLRSR, 1, 1, 10000)) {
     panic ("NATIVE_UFS_GPT: queue did not start rsr=%x", read32 (hc, UFS_REG_UTRLRSR));
   }
-  if (read32 (hc, UFS_REG_UTRLBA) != static_cast<uint32_t> (phys + UFS_LIST_OFFSET) ||
-      read32 (hc, UFS_REG_UTRLBAU) != static_cast<uint32_t> ((phys + UFS_LIST_OFFSET) >> 32)) {
+  if (read32 (hc, UFS_REG_UTRLBA) != static_cast<uint32_t> (listPhys) ||
+      read32 (hc, UFS_REG_UTRLBAU) != static_cast<uint32_t> (listPhys >> 32)) {
     panic ("NATIVE_UFS_GPT: queue base readback ba=%x/%x want=%llx",
            read32 (hc, UFS_REG_UTRLBA), read32 (hc, UFS_REG_UTRLBAU),
-           phys + UFS_LIST_OFFSET);
+           listPhys);
   }
-  IOLog ("NATIVE_UFS_GPT: private queue installed ba=%llx\n", phys + UFS_LIST_OFFSET);
+  IOLog ("NATIVE_UFS_GPT: private queue installed ba=%llx\n", listPhys);
 
   bool poisoned = false;
-  uint8_t *data = memory + UFS_DATA_OFFSET;
-  uint64_t ucdPhys = phys + UFS_UCD_OFFSET;
-  uint64_t dataPhys = phys + UFS_DATA_OFFSET;
 
   auto submit = [&] (unsigned direction, unsigned bytes) -> bool {
-    if (poisoned || read32 (hc, UFS_REG_UTRLDBR) ||
+    if (poisoned || bytes > dataCapacity || read32 (hc, UFS_REG_UTRLDBR) ||
         (read32 (hc, UFS_REG_IS) & UFS_FATAL_STATUS)) {
       return false;
     }
-    uint8_t *q = memory + UFS_UCD_OFFSET;
+    uint8_t *q = ucd;
     if (q[0] == 1) {
       if (!readCommandAllowed (q[16], direction, bytes)) {
         return false;
@@ -315,7 +341,7 @@ NativeUfsProbe::start (IOService *provider)
     } else if (q[0] != 0 || bytes || direction) {
       return false;
     }
-    uint32_t *utrd = reinterpret_cast<uint32_t *> (memory);
+    uint32_t *utrd = reinterpret_cast<uint32_t *> (list);
     zero32 (utrd, 32);
     utrd[0] = 0x10000000U | (direction << 25);
     utrd[2] = 0x0fU;
@@ -333,7 +359,7 @@ NativeUfsProbe::start (IOService *provider)
       write32 (hc, UFS_REG_IS, 1);
     write32 (hc, UFS_REG_UTRLDBR, 1);
     uint32_t ocs = 0x0f;
-    if (!waitForCompletion (hc, memory, &ocs)) {
+    if (!waitForCompletion (hc, list, &ocs)) {
       poisoned = true;
       IOLog ("NATIVE_UFS_GPT: completion timeout/fatal is=%08x db=%08x\n",
              read32 (hc, UFS_REG_IS), read32 (hc, UFS_REG_UTRLDBR));
@@ -350,22 +376,23 @@ NativeUfsProbe::start (IOService *provider)
     if (poisoned || read32 (hc, UFS_REG_UTRLDBR)) {
       return false;
     }
-    zero32 (memory + UFS_UCD_OFFSET, UFS_DATA_OFFSET - UFS_UCD_OFFSET);
-    memory[UFS_UCD_OFFSET + 3] = 1;
+    zero32 (ucd, 4096);
+    ucd[3] = 1;
     if (!submit (0, 0)) {
       return false;
     }
-    const uint8_t *response = memory + UFS_UCD_OFFSET + UFS_RSP_OFFSET;
+    const uint8_t *response = ucd + UFS_RSP_OFFSET;
     return response[0] == 0x20 && response[3] == 1;
   };
 
   auto command = [&] (uint8_t lun, const uint8_t *cdb, unsigned bytes, void *dst) -> bool {
     if (!readCommandAllowed (cdb[0], bytes ? 2 : 0, bytes) || poisoned ||
-        read32 (hc, UFS_REG_UTRLDBR)) {
+        bytes > dataCapacity || read32 (hc, UFS_REG_UTRLDBR)) {
       return false;
     }
-    zero32 (memory + UFS_UCD_OFFSET, UFS_DMA_SIZE - UFS_UCD_OFFSET);
-    uint8_t *q = memory + UFS_UCD_OFFSET;
+    zero32 (ucd, 4096);
+    zero32 (data, bytes);
+    uint8_t *q = ucd;
     q[0] = 1;
     q[1] = bytes ? 0x40 : 0;
     q[2] = lun;
@@ -474,7 +501,7 @@ NativeUfsProbe::start (IOService *provider)
   ADD ("NATIVE_UFS_GPT warm-link read-only\n");
   ADD ("cap=%08x ver=%08x is=%08x hcs=%08x hce=%08x\n",
        cap, version, is, hcs, hce);
-  ADD ("queue=%llx dma=%llx\n", phys, uint64_t (UFS_DMA_SIZE));
+  ADD ("queue=%llx ucd=%llx data=%llx cap=%x\n", listPhys, ucdPhys, dataPhys, dataCapacity);
   for (unsigned lun = 0; lun < maxLun; lun++) {
     ADD ("L%u st=%02x last=%llx bs=%x\n", lun, lunStatus[lun],
          lastLba[lun], blockSize[lun]);
