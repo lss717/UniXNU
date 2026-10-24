@@ -581,6 +581,32 @@ NATIVE_UFS_GPT: done type=05000000 rsp=21/00 tag=1
 
 **当前不执行第 2 步以后的任何写操作。** 先确认 APFS 输入与用户批准。
 
+### B5 root 可行性检查（B，2026-10-24）
+
+只读检查结果：
+
+- 完整备份校验：`SHA256SUMS` 共 84 项，**84 成功、0 失败**。
+- 实机 userdata 几何与 `board.toml` 一致：
+  `first_lba=0x14f40`、`last_lba=0x1c627fa`、`lba_bytes=4096`。
+- 仓库内没有现成的 `userdata-root.img`、APFS 根卷或 SHNGROOT 镜像。
+- `board.toml` 当前 IPSW 是 **iPad7,1 / 17.7.11（21H461）**，仅作 B3
+  fixture；不是最终 **iPhone10,2 / 16.7.16（20H392）** 根输入。
+- `board.iphone10-2.toml` 仍是 TODO：IPSW URL/哈希、20H392 prelink、
+  D21AP `/product`/`/buttons`、userdata 窗口都未完成。
+- `NativeUfsProbe`/`NativeUfsLun` 只有 READ10；没有 WRITE10、UNMAP、
+  FORMAT 或任何写工具。
+- `unixnu build userdata` 需要 macOS `hdiutil` 和目标 IPSW；当前没有可
+  验证的目标 APFS root 输入，不能生成有效根镜像。
+
+因此 B 的阻塞点不是 UFS 读路径，而是：
+
+1. 缺少目标 iPhone10,2 16.7.16 的可验证 root/APFS 输入；
+2. 缺少 B6 profile 的 IPSW 哈希/prelink/ADT 数据；
+3. 缺少受控的 userdata 写入路径。
+
+**B 当前不执行。** 只有在前述输入齐备、并明确批准写入 userdata 后，才
+进入备份校验后的实际写盘阶段；不盲目写入 iPad fixture 根镜像。
+
 ## 下一步
 
 0. ~~先跑 PSCI 对照镜像~~（2026-10-23 已完成；8 s / 30 s / 20 s 三个对照都
