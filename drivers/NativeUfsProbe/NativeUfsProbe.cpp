@@ -11,6 +11,7 @@
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
+#include <IOKit/IODeviceMemory.h>
 #include <kern/debug.h>
 #include <libkern/libkern.h>
 #include <libkern/c++/OSData.h>
@@ -114,6 +115,18 @@ cacheCleanInhibit (void *start, size_t length, bool invalidate)
     }
   }
   __asm__ volatile ("dsb sy" ::: "memory");
+}
+
+static uintptr_t
+mapPhysCacheable (uint64_t phys, uint64_t length, OSSharedPtr<IOMemoryMap> &keep)
+{
+  IODeviceMemory *memory = IODeviceMemory::withRange (phys, length);
+  if (!memory) {
+    return 0;
+  }
+  keep = OSSharedPtr<IOMemoryMap> (memory->map (kIOMapAnywhere), OSNoRetain);
+  memory->release ();
+  return keep ? static_cast<uintptr_t> (keep->getVirtualAddress ()) : 0;
 }
 
 static bool
@@ -250,17 +263,12 @@ NativeUfsProbe::start (IOService *provider)
            hce, hcs, is, doorbell, taskDoorbell);
   }
 
-  IOMemoryDescriptor *dmaDesc = IOMemoryDescriptor::withPhysicalAddress (
-    UFS_LOW_BASE, UFS_DMA_SIZE, kIODirectionInOut);
-  if (!dmaDesc) {
-    panic ("NATIVE_UFS_GPT: low DMA descriptor failed");
-  }
-  IOMemoryMap *dmaMap = dmaDesc->map ();
-  dmaDesc->release ();
-  if (!dmaMap) {
+  OSSharedPtr<IOMemoryMap> dmaMap;
+  uintptr_t dmaVirt = mapPhysCacheable (UFS_LOW_BASE, UFS_DMA_SIZE, dmaMap);
+  if (!dmaVirt) {
     panic ("NATIVE_UFS_GPT: low DMA map failed");
   }
-  uint8_t *memory = reinterpret_cast<uint8_t *> (dmaMap->getVirtualAddress ());
+  uint8_t *memory = reinterpret_cast<uint8_t *> (dmaVirt);
   uint64_t phys = UFS_LOW_BASE;
   if (phys + UFS_DMA_SIZE > 0x100000000ULL) {
     panic ("NATIVE_UFS_GPT: low DMA window exceeds 4G");
