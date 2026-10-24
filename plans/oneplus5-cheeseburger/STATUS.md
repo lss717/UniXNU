@@ -479,9 +479,32 @@ partitions=32 listed=4
 - `userdata` 为 `0x14f40..0x1c627fa`（约 115928 MiB），与主机侧备份
   几何一致。
 
-**B5 只读 UFS/GPT 访问已打通，未执行任何分区写入。** 完整 B5 root 仍需
-APFS/userdata 写入（破坏性），必须单独批准并保留当前完整备份；本阶段到此
-停止，不发送 WRITE/UNMAP/FORMAT，也不刷写、擦除或修改任何分区。
+主机侧 `gpt-primary-sda.bin` 逐项核对：
+
+```text
+header_crc=6bf93f53  entries_crc=2b0de4e9
+cur=1  bak=0x1c627ff  first=6  last=0x1c627fa  n=32  esz=128
+persist  0x8..0x2007
+cache    0x2008..0x12007
+misc     0x12008..0x12107
+userdata 0x14f40..0x1c627fa
+```
+
+LUN 容量也与备份 `lun-sizes.txt` 全部一致：
+
+| LUN | 实机 last LBA | 备份字节数 |
+| --- | --- | --- |
+| 0 | `0x1c627ff` | 121911640064 |
+| 1 | `0x3ff` | 4194304 |
+| 2 | `0x3ff` | 4194304 |
+| 3 | `0x7fff` | 134217728 |
+| 4 | `0xfffff` | 4294967296 |
+| 5 | `0x5ffff` | 1610612736 |
+
+**B5 只读 UFS/GPT 访问已打通并完成主机备份核对，未执行任何分区写入。**
+完整 B5 root 仍需 APFS/userdata 写入（破坏性），必须单独批准并保留当前完整
+备份；本阶段到此停止，不发送 WRITE/UNMAP/FORMAT，也不刷写、擦除或修改
+任何分区。
 
 ## 下一步
 
