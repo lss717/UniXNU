@@ -122,6 +122,25 @@ jobs:
           if [ -n "$IPSW_URL" ]; then args+=(--ipsw "$IPSW_URL"); fi
           ./unixnu build userdata "${args[@]}" -D "$UNIXNU_DEVICE"
 
+      - name: Split userdata image for artifact transport
+        if: inputs.build_userdata
+        run: |
+          cd out/cheeseburger/userdata
+          test -f userdata-root.img
+          python3 - <<'PY'
+import hashlib
+from pathlib import Path
+image = Path('userdata-root.img')
+h = hashlib.sha256()
+with image.open('rb') as f:
+    for block in iter(lambda: f.read(8 << 20), b''):
+        h.update(block)
+Path('userdata-root.img.sha256').write_text(h.hexdigest() + '  userdata-root.img\n')
+print('userdata bytes=', image.stat().st_size, 'sha256=', h.hexdigest())
+PY
+          split -b 1992294400 userdata-root.img userdata-root.img.part.
+          ls -lh userdata-root.img.part.*
+
       - name: Summarise the artifacts
         if: always()
         run: |
@@ -141,6 +160,18 @@ jobs:
             out/cheeseburger/kernel/**
             out/cheeseburger/payload/**
             out/cheeseburger/logs/**
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload userdata parts
+        if: inputs.build_userdata
+        uses: actions/upload-artifact@v4
+        with:
+          name: unixnu-cheeseburger-userdata
+          path: |
+            out/cheeseburger/userdata/userdata-root.json
+            out/cheeseburger/userdata/userdata-root.img.sha256
+            out/cheeseburger/userdata/userdata-root.img.part.*
           if-no-files-found: error
           retention-days: 7
 
