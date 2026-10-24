@@ -352,7 +352,7 @@ NativeUfsProbe::start (IOService *provider)
 
     uint64_t ucdCommandPhys = ucdPhys;
     uint32_t direction = dataLength ? 2U : 0U;
-    *reinterpret_cast<uint32_t *> (list + 0) = 0x11000000U | (direction << 25);
+    *reinterpret_cast<uint32_t *> (list + 0) = 0x01000000U | (direction << 25);
     *reinterpret_cast<uint32_t *> (list + 8) = 0x0fU;
     *reinterpret_cast<uint32_t *> (list + 16) = static_cast<uint32_t> (ucdCommandPhys);
     *reinterpret_cast<uint32_t *> (list + 20) = static_cast<uint32_t> (ucdCommandPhys >> 32);
