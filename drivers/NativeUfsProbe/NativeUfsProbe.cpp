@@ -490,6 +490,7 @@ dumpRootMedia (void)
 static void
 ufsHeartbeatThread (void *, wait_result_t)
 {
+  IOLog ("NATIVE_UFS_HB: thread started\n");
   for (unsigned tick = 1; tick <= 18; tick++) {
     IOSleep (5000);
     IOLog ("NATIVE_UFS_HB: t=%us cmds=%llu inflight=%llu last=%llx/%llu "
@@ -549,7 +550,7 @@ ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes)
   cacheClean (q->list, 4096);
   cacheClean (q->ucd, UFS_FW_UCD_SIZE);
   static unsigned gCommandLogs;
-  bool logCommand = gCommandLogs++ < 64;
+  bool logCommand = gCommandLogs++ < 24;
   if (logCommand) {
     IOLog ("NATIVE_UFS_GPT: ring type=%08x dir=%u bytes=%u\n",
            utrd[0], direction, bytes);
@@ -741,7 +742,7 @@ NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
   gWindowLastBlock = block;
   gWindowLastCount = count;
   gWindowInFlight = 1;
-  if (request < 8 || (request & 255) == 0) {
+  if (request < 16 || (request & 127) == 0) {
     IOLog ("NATIVE_UFS_WINDOW: %s req=%llu block=%llx count=%llu\n",
            label, request, block, count);
   }
@@ -1285,6 +1286,13 @@ NativeUfsProbe::start (IOService *provider)
       IOLog ("NATIVE_UFS_ROOT: userdata first-block READ10 failed\n");
     }
   }
+  IOLog ("NATIVE_UFS_HB: starting before publication\n");
+  thread_t heartbeat = nullptr;
+  if (kernel_thread_start (ufsHeartbeatThread, nullptr, &heartbeat) == KERN_SUCCESS) {
+    thread_deallocate (heartbeat);
+  } else {
+    IOLog ("NATIVE_UFS_HB: cannot start heartbeat thread\n");
+  }
   IOLog ("NATIVE_UFS_GPT: read DMA phys=%llx size=%x; publishing LUN0\n",
          readPhys, UFS_DATA_MAX);
 
@@ -1293,7 +1301,9 @@ NativeUfsProbe::start (IOService *provider)
   if (child && child->init (nullptr) &&
       child->configure (this, 0, lastLba[0], blockSize[0]) &&
       child->attach (this) && child->start (this)) {
+    IOLog ("NATIVE_UFS_PUB: before LUN0 register\n");
     child->registerService ();
+    IOLog ("NATIVE_UFS_PUB: after LUN0 register\n");
     published = true;
     IOLog ("NATIVE_UFS_GPT: published LUN0 last=%llx bs=%x read-only\n",
            lastLba[0], blockSize[0]);
@@ -1315,7 +1325,11 @@ NativeUfsProbe::start (IOService *provider)
                                       rootSize[index]) &&
                    window->attach (this) && window->start (this);
     if (started) {
+      IOLog ("NATIVE_UFS_PUB: before window[%u]=%s register\n",
+             index, rootName[index]);
       window->registerService ();
+      IOLog ("NATIVE_UFS_PUB: after window[%u]=%s register\n",
+             index, rootName[index]);
       windowsPublished++;
       IOLog ("NATIVE_UFS_ROOT: published window[%u]=%s abs=%llx bytes=%llx\n",
              index, rootName[index], absolute, rootSize[index]);
@@ -1330,11 +1344,5 @@ NativeUfsProbe::start (IOService *provider)
   }
   IOLog ("NATIVE_UFS_GPT: start returning published=%u windows=%u\n",
          published ? 1 : 0, windowsPublished);
-  thread_t heartbeat = nullptr;
-  if (kernel_thread_start (ufsHeartbeatThread, nullptr, &heartbeat) == KERN_SUCCESS) {
-    thread_deallocate (heartbeat);
-  } else {
-    IOLog ("NATIVE_UFS_HB: cannot start heartbeat thread\n");
-  }
   return published;
 }
