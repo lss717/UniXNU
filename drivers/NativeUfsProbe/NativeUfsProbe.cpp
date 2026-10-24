@@ -371,43 +371,6 @@ dumpMediaServices (void)
   IOLog ("NATIVE_UFS_MEDIA: total=%u\n", count);
 }
 
-extern "C" kern_return_t kernel_thread_start (void (*) (void *, wait_result_t),
-                                              void *, thread_t *);
-extern "C" void thread_deallocate (thread_t);
-
-static void
-mediaReportThread (void *, wait_result_t)
-{
-  IOLog ("NATIVE_UFS_MEDIA: report thread start\n");
-  unsigned count = 0;
-  for (unsigned tick = 0; tick < 200; tick++) {
-    if (tick < 3) {
-      IOLog ("NATIVE_UFS_MEDIA: tick=%u enter\n", tick);
-    }
-    OSDictionary *matching = IOService::serviceMatching ("IOMedia");
-    OSIterator *iterator = matching ? IOService::getMatchingServices (matching) : nullptr;
-    count = 0;
-    while (iterator && iterator->getNextObject ()) {
-      count++;
-    }
-    OSSafeReleaseNULL (iterator);
-    OSSafeReleaseNULL (matching);
-    if (tick < 3) {
-      IOLog ("NATIVE_UFS_MEDIA: tick=%u media=%u\n", tick, count);
-    }
-    if (count) {
-      break;
-    }
-    IODelay (100000);
-    if (tick < 3) {
-      IOLog ("NATIVE_UFS_MEDIA: tick=%u slept\n", tick);
-    }
-  }
-  IODelay (500000);
-  dumpMediaServices ();
-  IOLog ("NATIVE_UFS_MEDIA: report thread done\n");
-}
-
 static bool
 ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes)
 {
@@ -579,6 +542,9 @@ NativeUfsLun::configure (NativeUfsProbe *parent, uint8_t unit, uint64_t lastLba,
 }
 
 static unsigned gIoRequestLog;
+static unsigned gIoRequests;
+static unsigned gBlock0Requests;
+static bool gMediaDumped;
 
 IOReturn
 NativeUfsLun::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
@@ -592,6 +558,10 @@ NativeUfsLun::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
       count > ~uint64_t (0) / sector ||
       buffer->getLength () != count * sector) {
     return kIOReturnBadArgument;
+  }
+  gIoRequests++;
+  if (block == 0) {
+    gBlock0Requests++;
   }
   if (gIoRequestLog < 16) {
     IOLog ("NATIVE_UFS_IO: req block=%llx count=%llu sector=%x len=%llx\n",
@@ -608,6 +578,15 @@ NativeUfsLun::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
   }
   if (completion && completion->action) {
     completion->action (completion->target, completion->parameter, status, done);
+  }
+  if ((gIoRequests & 31) == 0) {
+    IOLog ("NATIVE_UFS_IO: requests=%u block0=%u last_block=%llx\n",
+           gIoRequests, gBlock0Requests, block);
+  }
+  if (gIoRequests >= 32 && !gMediaDumped) {
+    gMediaDumped = true;
+    IOLog ("NATIVE_UFS_IO: one-shot IOMedia snapshot at request %u\n", gIoRequests);
+    dumpMediaServices ();
   }
   return kIOReturnSuccess;
 }
@@ -1018,12 +997,6 @@ NativeUfsProbe::start (IOService *provider)
   if (child && child->init (nullptr) &&
       child->configure (this, 0, lastLba[0], blockSize[0]) &&
       child->attach (this) && child->start (this)) {
-    thread_t reportThread = nullptr;
-    if (kernel_thread_start (mediaReportThread, nullptr, &reportThread) != KERN_SUCCESS) {
-      IOLog ("NATIVE_UFS_MEDIA: report thread start failed\n");
-    } else {
-      thread_deallocate (reportThread);
-    }
     child->registerService ();
     published = true;
     IOLog ("NATIVE_UFS_GPT: published LUN0 last=%llx bs=%x read-only\n",
