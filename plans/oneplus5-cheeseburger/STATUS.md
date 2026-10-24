@@ -475,22 +475,32 @@ fastboot boot /home/ls/UniXNU-cheeseburger/out/cheeseburger/boot/boot-physbase.i
 - 约 20 秒后由 stage 3 探针复位 → MMU 已过，换 panic 内核（`payload-ci.img`）继续。
 - 没有在 20 秒左右重启 → 看 TTBR/TCR（stage 4 探针 `_set_mmu_ttb`）或 QEMU 隔离。
 
-## B0 备份与存储映射（2026-10-22）
+## B0 备份与存储映射（2026-10-24 重做）
 
-TWRP `3.4.0-1`（`fastboot boot`，未 flash）下用 `tools/backup-cheeseburger.sh` dump，校验通过，共 291 MB：
+当前系统已由用户重写刷写，2026-10-22 的旧备份无法对应/启动，已删除。
+2026-10-24 用 TWRP `3.4.0-1`（`fastboot boot`，未 flash）重新 dump：
 
-`/home/ls/UniXNU/.cache/firmware/backups/20261022-201247/`（gitignored；请再复制一份到机器外）
+`/home/ls/UniXNU/.cache/firmware/backups/20261024-125857/`（gitignored；4.7 GB）
 
-| 分区 | 大小 | SHA-256（前 16） |
+范围：除 `userdata`（约 113 GB）和可重建的 `cache` 外的**全部命名分区**，
+包含 `system`、`vendor`、`boot`、`recovery`、`modem`、`persist`、`keymaster`
+以及 `sda–sdf` 的主/备 GPT。每个文件都做了尺寸校验；关键分区另外与设备
+原始分区做了远程 SHA-256 对比，全部一致。完整清单见目录内 `SHA256SUMS`
+和 `partition-sizes.txt`。
+
+| 关键分区 | 大小 | SHA-256 |
 | --- | --- | --- |
-| `persist` | 32 MiB | `b19b1417f5d21c4e…` |
-| `modem` | 110 MiB | `fb13b24e44900211…` |
-| `modemst1` | 2 MiB | `eb8d6aec8f5ae567…` |
-| `modemst2` | 2 MiB | `94dde1682d7ec50e…` |
-| `boot` | 64 MiB | `0ffe333d418b0214…` |
-| `recovery` | 64 MiB | `674a762a382529a0…` |
-| `fsg` / `fsc` / `devcfg` / `devinfo` / `abl` / `xbl` / `tz` / `keymaster` | 2–8 MiB | 见 `SHA256SUMS` |
-| GPT 主/备（sda–sdf） | 32 KiB × | 见 `SHA256SUMS` |
+| `boot` | 64 MiB | `b3f8c0b470c9c9b93a4a8e18ffcdacd104df66eb5e0cdc94fde40b4759325453` |
+| `recovery` | 64 MiB | `f6625f1350d8b6655a49cf89edcd93d2a8884886f5fb0863ecaeee66cb4bd2a7` |
+| `system` | 3 GiB | `acb4a6217aa4390eb6e2da2f514e93588b6dee83ab918e871d01924b3b4eb892` |
+| `vendor` | 1 GiB | `dbe1e60b7de6de93e20fc287a40dfa313a1861151af60a6708a8f1e30f4a3660` |
+| `persist` | 32 MiB | `69c67d371854280e6846dc69818cf9c84364a9cae93b8f70ca6f17461872a8ca` |
+| `modem` | 110 MiB | `2e89843d24f9aa8c6c9287781482d982f435456b34e0049c93b3c895f0bb7729` |
+| `modemst1` | 2 MiB | `e2bcc4531b24e20f1a23988440d3bd9772692ba8e2f7c488c3845123918e9eb2` |
+| `modemst2` | 2 MiB | `1fc7abb2e03c498bff273e3ae5a465a1eaf06485b06d5ac8d46f0a35e1d4044d` |
+| `keymaster` | 512 KiB | `72283e73c873ffb3421d7866bfa02622906df99730652e419cbfeb0c87a45ada` |
+| `abl` / `xbl` / `tz` / `devcfg` / `devinfo` | 4–8 MiB | 见 `SHA256SUMS` |
+| GPT 主/备（sda–sdf） | 32 KiB × 12 | 见 `SHA256SUMS` |
 
 UFS LUN / GPT 映射（4096 B 逻辑块）：
 
@@ -682,7 +692,8 @@ Linux x86_64 / Ubuntu 24.04：
 | 2026-10-22 | B3 | 移植 panic screen | 设备仓库 `233f283`；`patch-xnu-entry-probe.py` + `xnu-panic-screen.c` + `Font.h`；run `39771381162` |
 | 2026-10-22 | B3 | panic 补丁找不到 `ld.lld` | 工具查找加 Homebrew keg/versioned 回退；本地已对 4K 内核验证补丁成功；`057a378`；run `39772620480` |
 | 2026-10-22 | B3 | **首次 4K 内核上机** | 内核入口执行（早期色条），随后硬件级崩溃；未到控制台；DarwinBoot window 读到 0，待插桩 |
-| 2026-10-22 | B0 | TWRP 备份 + 存储映射 | 291 MB，16 个分区 + GPT；`persist` 在 sda2，`userdata` sda13；`e83df1d` 修 adb recovery 状态 |
+| 2026-10-22 | B0 | TWRP 备份 + 存储映射 | 291 MB，16 个分区 + GPT；`persist` 在 sda2，`userdata` sda13；`e83df1d` 修 adb recovery 状态；该旧备份已失效并删除 |
+| 2026-10-24 | B0 | **当前系统重新备份（旧备份已删除）** | TWRP 3.4.0-1；4.7 GB，全部命名分区（除 `userdata`/`cache`）+ sda–sdf 主/备 GPT；关键分区远程 SHA-256 一致；`.cache/firmware/backups/20261024-125857/` |
 | 2026-10-22 | B3 | CI 流水线首次全绿 | run `39776627855`：kernel + payload（含 panic screen）+ 上传全部成功；payload `551fa561…` |
 | 2026-10-22 | B3 | DarwinBoot 窗口诊断 | 临时固件 `cb47dfe6…` 打印 ADT 属性和解析值，待上机读数 |
 | 2026-10-22 | B3 | 诊断：ADT 值正确，`WindowSize` 仍 0 | 大字号确认 `darwinboot-memory-size=0x80000000`；强制 2 GiB 仍崩 → 窗口不是根因 |
