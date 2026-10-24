@@ -10,10 +10,8 @@
 // SCSI write/format/unmap path.
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
-#include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <kern/debug.h>
-#include <kern/task.h>
 #include <libkern/libkern.h>
 #include <libkern/c++/OSData.h>
 
@@ -22,13 +20,14 @@
 #define MSM8998_GCC_BASE 0x100000ULL
 #define MSM8998_GCC_SIZE 0xb0000ULL
 
-#define UFS_DMA_SIZE 0x22000U
+#define UFS_LOW_BASE 0xffff0000ULL
+#define UFS_DMA_SIZE 0xA000U
 #define UFS_LIST_OFFSET 0U
 #define UFS_UCD_OFFSET 0x1000U
 #define UFS_RSP_OFFSET 512U
 #define UFS_PRDT_OFFSET 1024U
 #define UFS_DATA_OFFSET 0x2000U
-#define UFS_DATA_MAX 131072U
+#define UFS_DATA_MAX 0x8000U
 
 #define UFS_REG_IS 0x20U
 #define UFS_REG_IE 0x24U
@@ -251,22 +250,20 @@ NativeUfsProbe::start (IOService *provider)
            hce, hcs, is, doorbell, taskDoorbell);
   }
 
-  IOBufferMemoryDescriptor *dma = IOBufferMemoryDescriptor::inTaskWithOptions (
-    kernel_task,
-    static_cast<IOOptionBits> (kIODirectionInOut) |
-    static_cast<IOOptionBits> (kIOMemoryPhysicallyContiguous) |
-    static_cast<IOOptionBits> (kIOMemoryMapperNone),
-    UFS_DMA_SIZE, 4096);
-  if (!dma) {
-    panic ("NATIVE_UFS_GPT: DMA allocation failed");
+  IOMemoryDescriptor *dmaDesc = IOMemoryDescriptor::withPhysicalAddress (
+    UFS_LOW_BASE, UFS_DMA_SIZE, kIODirectionInOut);
+  if (!dmaDesc) {
+    panic ("NATIVE_UFS_GPT: low DMA descriptor failed");
   }
-  uint8_t *memory = static_cast<uint8_t *> (dma->getBytesNoCopy ());
-  IOByteCount contiguous = 0;
-  uint64_t phys = dma->getPhysicalSegment (0, &contiguous, kIOMemoryMapperNone);
-  if (!memory || !phys || (phys & 0xfff) || contiguous < UFS_DMA_SIZE ||
-      (!(cap & (1U << 24)) && phys + UFS_DMA_SIZE > 0x100000000ULL)) {
-    panic ("NATIVE_UFS_GPT: DMA invalid phys=%llx contiguous=%llx cap=%08x",
-           phys, uint64_t (contiguous), cap);
+  IOMemoryMap *dmaMap = dmaDesc->map ();
+  dmaDesc->release ();
+  if (!dmaMap) {
+    panic ("NATIVE_UFS_GPT: low DMA map failed");
+  }
+  uint8_t *memory = reinterpret_cast<uint8_t *> (dmaMap->getVirtualAddress ());
+  uint64_t phys = UFS_LOW_BASE;
+  if (phys + UFS_DMA_SIZE > 0x100000000ULL) {
+    panic ("NATIVE_UFS_GPT: low DMA window exceeds 4G");
   }
   IOLog ("NATIVE_UFS_GPT: DMA phys=%llx size=%x\n", phys, UFS_DMA_SIZE);
   bzero (memory, UFS_DMA_SIZE);
