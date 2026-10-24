@@ -10,9 +10,11 @@
 // SCSI write/format/unmap path.
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
+#include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IODeviceMemory.h>
 #include <kern/debug.h>
+#include <kern/task.h>
 #include <libkern/libkern.h>
 #include <libkern/c++/OSData.h>
 
@@ -23,7 +25,10 @@
 
 #define UFS_RSP_OFFSET 512U
 #define UFS_PRDT_OFFSET 1024U
-#define UFS_DATA_MAX 0x8000U
+#define UFS_UCD_OFFSET 0x1000U
+#define UFS_DATA_OFFSET 0x2000U
+#define UFS_DATA_MAX 0x20000U
+#define UFS_DMA_SIZE (UFS_DATA_OFFSET + UFS_DATA_MAX)
 
 #define UFS_REG_IS 0x20U
 #define UFS_REG_IE 0x24U
@@ -106,16 +111,28 @@ zero32 (void *start, size_t length)
   }
 }
 
-static uintptr_t
-mapPhysCacheable (uint64_t phys, uint64_t length, OSSharedPtr<IOMemoryMap> &keep)
+static void
+cacheClean (void *start, size_t length)
 {
-  IODeviceMemory *memory = IODeviceMemory::withRange (phys, length);
-  if (!memory) {
-    return 0;
+  uintptr_t address = reinterpret_cast<uintptr_t> (start) & ~uintptr_t (63);
+  uintptr_t end = reinterpret_cast<uintptr_t> (start) + length;
+  __asm__ volatile ("dsb sy" ::: "memory");
+  for (; address < end; address += 64) {
+    __asm__ volatile ("dc civac, %0" :: "r" (address) : "memory");
   }
-  keep = OSSharedPtr<IOMemoryMap> (memory->map (kIOMapAnywhere | kIOMapInhibitCache), OSNoRetain);
-  memory->release ();
-  return keep ? static_cast<uintptr_t> (keep->getVirtualAddress ()) : 0;
+  __asm__ volatile ("dsb sy" ::: "memory");
+}
+
+static void
+cacheInvalidate (void *start, size_t length)
+{
+  uintptr_t address = reinterpret_cast<uintptr_t> (start) & ~uintptr_t (63);
+  uintptr_t end = reinterpret_cast<uintptr_t> (start) + length;
+  __asm__ volatile ("dsb sy" ::: "memory");
+  for (; address < end; address += 64) {
+    __asm__ volatile ("dc ivac, %0" :: "r" (address) : "memory");
+  }
+  __asm__ volatile ("dsb sy" ::: "memory");
 }
 
 static bool
@@ -176,6 +193,7 @@ waitForCompletion (uintptr_t hc, uint8_t *list, uint32_t *ocs)
       return false;
     }
     if (!(doorbell & 1)) {
+      cacheInvalidate (list, 64);
       *ocs = read32 (reinterpret_cast<uintptr_t> (list), 8) & 0xff;
       if (*ocs != 0x0f) {
         return true;
@@ -251,53 +269,45 @@ NativeUfsProbe::start (IOService *provider)
            hce, hcs, is, doorbell, taskDoorbell);
   }
 
-  uint64_t utrlPhys = (uint64_t (read32 (hc, UFS_REG_UTRLBAU)) << 32) |
-                      read32 (hc, UFS_REG_UTRLBA);
-  OSSharedPtr<IOMemoryMap> listMap, ucdMap, dataMap;
-  uintptr_t listVirt = mapPhysCacheable (utrlPhys, 4096, listMap);
-  if (!listVirt) {
-    panic ("NATIVE_UFS_GPT: firmware UTRL map failed base=%llx", utrlPhys);
+  // Own physically-contiguous DMA, exactly the P8/P11 warm-link layout.  The
+  // first allocation is restricted below 4 GiB; the controller CAP says 64-bit
+  // is supported, but the firmware hand-off is known to have left low memory
+  // reachable.  Fall back to any address only when the low request is refused.
+  IOOptionBits dmaOptions = static_cast<IOOptionBits> (kIODirectionInOut) |
+                            static_cast<IOOptionBits> (kIOMemoryPhysicallyContiguous) |
+                            static_cast<IOOptionBits> (kIOMemoryMapperNone);
+  IOBufferMemoryDescriptor *dma = IOBufferMemoryDescriptor::inTaskWithPhysicalMask (
+    kernel_task, dmaOptions, UFS_DMA_SIZE, 0x00000000ffffffffULL);
+  if (!dma) {
+    IOLog ("NATIVE_UFS_GPT: low DMA allocation failed; high fallback\n");
+    dma = IOBufferMemoryDescriptor::inTaskWithOptions (
+      kernel_task, dmaOptions, UFS_DMA_SIZE, 4096);
   }
-  uint8_t *list = reinterpret_cast<uint8_t *> (listVirt);
-  uint32_t fw[8];
-  for (unsigned index = 0; index < 8; index++) {
-    fw[index] = read32 (listVirt, index * 4);
+  if (!dma) {
+    panic ("NATIVE_UFS_GPT: DMA allocation failed");
   }
-  uint64_t fwUcd = (uint64_t (fw[5]) << 32) | fw[4];
-  uint32_t fwPrdtOff = (fw[7] >> 16) & 0xffff;
-  uint32_t fwPrdtCount = fw[7] & 0xffff;
-  IOLog ("NATIVE_UFS_GPT: fw utrl=%llx utrd=%08x/%08x ucd=%llx prdt=%x/%x\n",
-         utrlPhys, fw[0], fw[2], fwUcd, fwPrdtOff, fwPrdtCount);
-  if (!fwUcd || !fwPrdtCount || fwPrdtOff >= 4096 / 4) {
-    panic ("NATIVE_UFS_GPT: firmware UCD metadata invalid ucd=%llx prdt=%x/%x",
-           fwUcd, fwPrdtOff, fwPrdtCount);
+  if (dma->prepare () != kIOReturnSuccess) {
+    panic ("NATIVE_UFS_GPT: DMA prepare failed");
   }
-  uintptr_t ucdVirt = mapPhysCacheable (fwUcd, 4096, ucdMap);
-  if (!ucdVirt) {
-    panic ("NATIVE_UFS_GPT: firmware UCD map failed base=%llx", fwUcd);
+  uint8_t *memory = static_cast<uint8_t *> (dma->getBytesNoCopy ());
+  IOByteCount contiguous = 0;
+  uint64_t phys = dma->getPhysicalSegment (0, &contiguous, kIOMemoryMapperNone);
+  if (!memory || !phys || (phys & 0xfff) || contiguous < UFS_DMA_SIZE ||
+      (!(cap & (1U << 24)) && phys + UFS_DMA_SIZE > 0x100000000ULL)) {
+    panic ("NATIVE_UFS_GPT: DMA invalid phys=%llx contiguous=%llx cap=%08x",
+           phys, uint64_t (contiguous), cap);
   }
-  uint8_t *ucd = reinterpret_cast<uint8_t *> (ucdVirt);
-  uint32_t *fwPrd = reinterpret_cast<uint32_t *> (ucd + fwPrdtOff * 4);
-  uint64_t fwData = (uint64_t (fwPrd[1]) << 32) | fwPrd[0];
-  uint32_t fwDataLen = fwPrd[3] + 1;
-  IOLog ("NATIVE_UFS_GPT: fw data=%llx len=%x\n", fwData, fwDataLen);
-  if (!fwData || fwDataLen < 512) {
-    panic ("NATIVE_UFS_GPT: firmware data invalid data=%llx len=%x", fwData, fwDataLen);
-  }
-  uintptr_t dataVirt = mapPhysCacheable (fwData, UFS_DATA_MAX, dataMap);
-  if (!dataVirt) {
-    panic ("NATIVE_UFS_GPT: firmware data map failed base=%llx", fwData);
-  }
-  uint8_t *data = reinterpret_cast<uint8_t *> (dataVirt);
-  uint64_t listPhys = utrlPhys;
-  uint64_t ucdPhys = fwUcd;
-  uint64_t dataPhys = fwData;
-  uint32_t dataCapacity = fwDataLen > UFS_DATA_MAX ? UFS_DATA_MAX : fwDataLen;
-  IOLog ("NATIVE_UFS_GPT: firmware queue list=%llx ucd=%llx data=%llx cap=%x\n",
-         listPhys, ucdPhys, dataPhys, dataCapacity);
-  zero32 (list, 4096);
-  zero32 (ucd, 4096);
-  zero32 (data, dataCapacity);
+  uint8_t *list = memory;
+  uint8_t *ucd = memory + UFS_UCD_OFFSET;
+  uint8_t *data = memory + UFS_DATA_OFFSET;
+  uint64_t listPhys = phys;
+  uint64_t ucdPhys = phys + UFS_UCD_OFFSET;
+  uint64_t dataPhys = phys + UFS_DATA_OFFSET;
+  uint32_t dataCapacity = UFS_DATA_MAX;
+  zero32 (memory, UFS_DMA_SIZE);
+  cacheClean (memory, UFS_DMA_SIZE);
+  IOLog ("NATIVE_UFS_GPT: own DMA phys=%llx list=%llx ucd=%llx data=%llx cap=%x\n",
+         phys, listPhys, ucdPhys, dataPhys, dataCapacity);
 
   // Install the private queue, preserving the firmware values only for a
   // diagnostic rollback-free log.  The controller is not reset.
@@ -314,9 +324,12 @@ NativeUfsProbe::start (IOService *provider)
   write32 (hc, UFS_REG_IE, 0);
   write32 (hc, UFS_REG_UTRLBA, static_cast<uint32_t> (listPhys));
   write32 (hc, UFS_REG_UTRLBAU, static_cast<uint32_t> (listPhys >> 32));
+  write32 (hc, UFS_REG_IS, 0xffffffffU);
   write32 (hc, UFS_REG_UTRLRSR, 1);
-  if (!waitRegister (hc, UFS_REG_UTRLRSR, 1, 1, 10000)) {
-    panic ("NATIVE_UFS_GPT: queue did not start rsr=%x", read32 (hc, UFS_REG_UTRLRSR));
+  if (!waitRegister (hc, UFS_REG_UTRLRSR, 1, 1, 10000) ||
+      !waitRegister (hc, UFS_REG_HCS, 2, 2, 10000)) {
+    panic ("NATIVE_UFS_GPT: queue did not start rsr=%x hcs=%x",
+           read32 (hc, UFS_REG_UTRLRSR), read32 (hc, UFS_REG_HCS));
   }
   if (read32 (hc, UFS_REG_UTRLBA) != static_cast<uint32_t> (listPhys) ||
       read32 (hc, UFS_REG_UTRLBAU) != static_cast<uint32_t> (listPhys >> 32)) {
@@ -343,7 +356,7 @@ NativeUfsProbe::start (IOService *provider)
     }
     uint32_t *utrd = reinterpret_cast<uint32_t *> (list);
     zero32 (utrd, 32);
-    utrd[0] = (q[0] == 1) ? (0x01000000U | (direction << 25)) : 0x10000000U;
+    utrd[0] = 0x10000000U | (direction << 25);
     utrd[2] = 0x0fU;
     utrd[4] = static_cast<uint32_t> (ucdPhys);
     utrd[5] = static_cast<uint32_t> (ucdPhys >> 32);
@@ -356,7 +369,8 @@ NativeUfsProbe::start (IOService *provider)
       prd[2] = 0;
       prd[3] = bytes - 1;
     }
-      write32 (hc, UFS_REG_IS, 1);
+    cacheClean (memory, UFS_DMA_SIZE);
+    write32 (hc, UFS_REG_IS, 0xffffffffU);
     write32 (hc, UFS_REG_UTRLDBR, 1);
     uint32_t ocs = 0x0f;
     if (!waitForCompletion (hc, list, &ocs)) {
@@ -365,6 +379,7 @@ NativeUfsProbe::start (IOService *provider)
              read32 (hc, UFS_REG_IS), read32 (hc, UFS_REG_UTRLDBR));
       return false;
     }
+    cacheInvalidate (memory, UFS_DMA_SIZE);
     if (ocs) {
       IOLog ("NATIVE_UFS_GPT: OCS=%x is=%08x\n", ocs, read32 (hc, UFS_REG_IS));
       return false;
@@ -372,18 +387,6 @@ NativeUfsProbe::start (IOService *provider)
     return true;
   };
 
-  auto nop = [&] () -> bool {
-    if (poisoned || read32 (hc, UFS_REG_UTRLDBR)) {
-      return false;
-    }
-    zero32 (ucd, 4096);
-    ucd[3] = 1;
-    if (!submit (0, 0)) {
-      return false;
-    }
-    const uint8_t *response = ucd + UFS_RSP_OFFSET;
-    return response[0] == 0x20 && response[3] == 1;
-  };
 
   auto command = [&] (uint8_t lun, const uint8_t *cdb, unsigned bytes, void *dst) -> bool {
     if (!readCommandAllowed (cdb[0], bytes ? 2 : 0, bytes) || poisoned ||
@@ -417,11 +420,7 @@ NativeUfsProbe::start (IOService *provider)
     return true;
   };
 
-  if (!nop ()) {
-    panic ("NATIVE_UFS_GPT: NOP OUT failed is=%08x db=%08x",
-           read32 (hc, UFS_REG_IS), read32 (hc, UFS_REG_UTRLDBR));
-  }
-  IOLog ("NATIVE_UFS_GPT: NOP OUT completed\n");
+  IOLog ("NATIVE_UFS_GPT: skipping NOP; direct CAP\n");
 
   const unsigned maxLun = 6;
   uint64_t lastLba[maxLun];
