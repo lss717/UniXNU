@@ -32,6 +32,8 @@ static volatile uint64_t gUfsCommands;
 static volatile uint64_t gUfsInFlight;
 static volatile uint64_t gUfsLastLba;
 static volatile uint64_t gUfsLastBytes;
+static volatile uint64_t gUfsLastLoops;
+static volatile uint64_t gUfsLastTicks;
 static volatile uint64_t gWindowRequests;
 static volatile uint64_t gWindowBytes;
 static volatile uint64_t gWindowInFlight;
@@ -176,6 +178,7 @@ public:
   bool start (IOService *provider) override;
   bool readBlocks (uint8_t unit, uint64_t block, uint64_t count, uint32_t blockSize,
                    IOMemoryDescriptor *dst, uint64_t *done);
+  bool readWindowBulk (uint64_t lba, uint32_t blocks, void *out);
   bool readWindow4k (uint64_t lba, void *out);
 };
 
@@ -378,16 +381,18 @@ readCommandAllowed (unsigned opcode, unsigned direction, unsigned bytes)
 }
 
 static bool
-waitForCompletion (uint8_t *list, uint32_t *ocs)
+waitForCompletion (uint8_t *list, uint32_t *ocs, unsigned *loops)
 {
   for (unsigned loop = 0; loop < 100000; loop++) {
     cacheInvalidate (list, 64);
     *ocs = read32 (reinterpret_cast<uintptr_t> (list), 8) & 0xff;
     if (*ocs != 0x0f) {
+      *loops = loop;
       return true;
     }
     IODelay (2);
   }
+  *loops = 100000;
   return false;
 }
 
@@ -560,25 +565,49 @@ ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes)
   if (logCommand) {
     IOLog ("NATIVE_UFS_GPT: doorbell rung\n");
   }
+  uint64_t commandStart = mach_absolute_time ();
   uint32_t ocs = 0x0f;
-  if (!waitForCompletion (q->list, &ocs)) {
+  unsigned loops = 0;
+  if (!waitForCompletion (q->list, &ocs, &loops)) {
     q->poisoned = true;
     gUfsInFlight = 0;
-    IOLog ("NATIVE_UFS_GPT: OCS timeout type=%08x ocs=%x\n", utrd[0], ocs);
+    gUfsLastLoops = loops;
+    gUfsLastTicks = mach_absolute_time () - commandStart;
+    IOLog ("NATIVE_UFS_GPT: OCS timeout type=%08x ocs=%x loops=%u\n",
+           utrd[0], ocs, loops);
     return false;
   }
   cacheInvalidate (q->list, 4096);
   cacheInvalidate (q->ucd, UFS_FW_UCD_SIZE);
   if (ocs) {
     gUfsInFlight = 0;
-    IOLog ("NATIVE_UFS_GPT: OCS=%x type=%08x\n", ocs, utrd[0]);
+    gUfsLastLoops = loops;
+    gUfsLastTicks = mach_absolute_time () - commandStart;
+    IOLog ("NATIVE_UFS_GPT: OCS=%x type=%08x loops=%u\n", ocs, utrd[0], loops);
     return false;
   }
   gUfsInFlight = 0;
+  gUfsLastLoops = loops;
+  gUfsLastTicks = mach_absolute_time () - commandStart;
   if (logCommand) {
-    IOLog ("NATIVE_UFS_GPT: done type=%08x rsp=%02x/%02x tag=%u\n",
+    IOLog ("NATIVE_UFS_GPT: done type=%08x rsp=%02x/%02x tag=%u loops=%u ticks=%llu\n",
            utrd[0], ucd[UFS_RSP_OFFSET], ucd[UFS_RSP_OFFSET + 7],
-           ucd[UFS_RSP_OFFSET + 3]);
+           ucd[UFS_RSP_OFFSET + 3], loops,
+           (unsigned long long) gUfsLastTicks);
+  }
+  if ((gUfsCommands & 63) == 0) {
+    IOLog ("NATIVE_UFS_PROGRESS: cmds=%llu last=%llx/%llu loops=%llu ticks=%llu "
+           "winReq=%llu winBytes=%llu winFlight=%llu lastWin=%llx/%llu\n",
+           (unsigned long long) gUfsCommands,
+           (unsigned long long) gUfsLastLba,
+           (unsigned long long) gUfsLastBytes,
+           (unsigned long long) gUfsLastLoops,
+           (unsigned long long) gUfsLastTicks,
+           (unsigned long long) gWindowRequests,
+           (unsigned long long) gWindowBytes,
+           (unsigned long long) gWindowInFlight,
+           (unsigned long long) gWindowLastBlock,
+           (unsigned long long) gWindowLastCount);
   }
   return true;
 }
@@ -684,20 +713,30 @@ NativeUfsProbe::readBlocks (uint8_t unit, uint64_t block, uint64_t count,
 }
 
 bool
-NativeUfsProbe::readWindow4k (uint64_t lba, void *out)
+NativeUfsProbe::readWindowBulk (uint64_t lba, uint32_t blocks, void *out)
 {
-  if (!fReady || !fLock || !out || lba > 0xffffffffULL) {
+  if (!fReady || !fLock || !out || !blocks ||
+      blocks > UFS_DATA_MAX / 4096 ||
+      lba > 0xffffffffULL - (blocks - 1)) {
     return false;
   }
   IOLockLock (fLock);
   uint8_t cdb[16] = { 0x28 };
   putBe32 (cdb + 2, static_cast<uint32_t> (lba));
-  cdb[8] = 1;
+  cdb[7] = static_cast<uint8_t> (blocks >> 8);
+  cdb[8] = static_cast<uint8_t> (blocks);
+  unsigned bytes = blocks * 4096;
   gUfsLastLba = lba;
-  gUfsLastBytes = 4096;
-  bool ok = ufsCommand (&fQueue, 0, cdb, 4096, out);
+  gUfsLastBytes = bytes;
+  bool ok = ufsCommand (&fQueue, 0, cdb, bytes, out);
   IOLockUnlock (fLock);
   return ok;
+}
+
+bool
+NativeUfsProbe::readWindow4k (uint64_t lba, void *out)
+{
+  return readWindowBulk (lba, 1, out);
 }
 
 bool
@@ -707,7 +746,7 @@ NativeUfsWindow::configure (NativeUfsProbe *parent, const char *name,
   host = parent;
   absolute = absoluteByte;
   bytes = length;
-  bounce = static_cast<uint8_t *> (IOMalloc (4096));
+  bounce = static_cast<uint8_t *> (IOMalloc (UFS_DATA_MAX));
   lock = IOLockAlloc ();
   if (name) {
     strlcpy (label, name, sizeof (label));
@@ -746,6 +785,7 @@ NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
     IOLog ("NATIVE_UFS_WINDOW: %s req=%llu block=%llx count=%llu\n",
            label, request, block, count);
   }
+  uint64_t requestStart = mach_absolute_time ();
   uint64_t cursor = absolute + block * 512;
   uint64_t end = cursor + count * 512;
   uint64_t done = 0;
@@ -754,11 +794,20 @@ NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
   while (cursor < end) {
     uint64_t page = cursor & ~4095ULL;
     unsigned inPage = static_cast<unsigned> (cursor - page);
-    unsigned wanted = static_cast<unsigned> (end - cursor);
-    if (wanted > 4096 - inPage) {
-      wanted = 4096 - inPage;
+    uint64_t available = end - page;
+    if (available > UFS_DATA_MAX) {
+      available = UFS_DATA_MAX;
     }
-    if (!host->readWindow4k (page / 4096, bounce) ||
+    uint32_t blocks = static_cast<uint32_t> ((available + 4095) / 4096);
+    if (blocks > UFS_DATA_MAX / 4096) {
+      blocks = UFS_DATA_MAX / 4096;
+    }
+    unsigned readLength = blocks * 4096;
+    unsigned wanted = static_cast<unsigned> (end - cursor);
+    if (wanted > readLength - inPage) {
+      wanted = readLength - inPage;
+    }
+    if (!host->readWindowBulk (page / 4096, blocks, bounce) ||
         buffer->writeBytes (done, bounce + inPage, wanted) != wanted) {
       ok = false;
       break;
@@ -768,6 +817,12 @@ NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
   }
   IOLockUnlock (lock);
   gWindowInFlight = 0;
+  uint64_t requestTicks = mach_absolute_time () - requestStart;
+  if (request < 16 || (request & 63) == 0 || requestTicks > 19200000ULL) {
+    IOLog ("NATIVE_UFS_WINDOW: %s req=%llu done=%llu ok=%u ticks=%llu\n",
+           label, request, done, ok ? 1 : 0,
+           (unsigned long long) requestTicks);
+  }
   completion->action (completion->target, completion->parameter,
                       ok ? kIOReturnSuccess : kIOReturnIOError, done);
   return kIOReturnSuccess;
