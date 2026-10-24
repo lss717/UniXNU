@@ -234,9 +234,10 @@ NativeUfsProbe::start (IOService *provider)
   }
   IOLog ("NATIVE_UFS_GPT: pre DMA alloc fw_utrl=%llx\n", utrlPhys);
   vm_offset_t dmaAddress = 0;
+  kma_flags_t dmaFlags = static_cast<kma_flags_t> (
+    KMA_DATA | KMA_ZERO | KMA_PERMANENT | KMA_LOMEM);
   kern_return_t dmaResult = kmem_alloc_contig (kernel_map, &dmaAddress,
-    UFS_DMA_SIZE, PAGE_MASK, 0xfffff, 0,
-    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT);
+    UFS_DMA_SIZE, PAGE_MASK, 0xfffff, 0, dmaFlags, VM_KERN_MEMORY_IOKIT);
   IOLog ("NATIVE_UFS_GPT: post DMA alloc kr=%d va=%llx\n",
          dmaResult, uint64_t (dmaAddress));
   if (dmaResult != KERN_SUCCESS || !dmaAddress) {
