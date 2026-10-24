@@ -1,0 +1,18 @@
+--- a/osfmk/prng/prng_random.c
++++ b/osfmk/prng/prng_random.c
+@@ -264,6 +264,15 @@
+ register_and_init_prng(struct cckprng_ctx *ctx, const struct cckprng_funcs *funcs)
+ {
+ 	assert(cpu_number() == master_cpu);
++	/*
++	 * A non-Apple relink may initialize the source corecrypto provider and
++	 * then start the prelinked corecrypto component.  The provider is
++	 * already live at that point; reinitializing it would assert on the
++	 * PRNG-ready flag, so make the setup idempotent.
++	 */
++	if (prng_ready) {
++		return;
++	}
+ 	assert(!prng_ready);
+ 
+ 	entropy_init();
