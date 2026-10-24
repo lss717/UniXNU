@@ -16,16 +16,12 @@
 #include <kern/debug.h>
 #include <libkern/libkern.h>
 #include <pexpert/pexpert.h>
-#include <vm/pmap.h>
-#include <vm/vm_kern.h>
-#include <mach/vm_param.h>
-
-extern "C" ppnum_t pmap_find_phys (pmap_t pmap, addr64_t va);
 
 #define MSM8998_UFS_HC_BASE 0x1da4000ULL
 #define MSM8998_UFS_HC_SIZE 0x2500ULL
 
 #define UFS_LIST_SIZE 4096U
+#define UFS_LOW_BASE 0xffff0000ULL
 #define UFS_DMA_SIZE 0xA000U
 #define UFS_LIST_OFFSET 0U
 #define UFS_UCD_OFFSET 0x1000U
@@ -79,25 +75,17 @@ mapPhys (uint64_t phys, uint64_t length, OSSharedPtr<IOMemoryMap> &keep)
   memory->release ();
   return keep ? static_cast<uintptr_t> (keep->getVirtualAddress ()) : 0;
 }
-static uint64_t
-dmaPhysical (uint8_t *virt, size_t length)
+static uintptr_t
+mapPhysCacheable (uint64_t phys, uint64_t length, OSSharedPtr<IOMemoryMap> &keep)
 {
-  uint64_t base = 0;
-  for (size_t offset = 0; offset < length; offset += 4096) {
-    ppnum_t page = pmap_find_phys (kernel_pmap, (addr64_t) (uintptr_t) (virt + offset));
-    if (!page) {
-      return 0;
-    }
-    uint64_t physical = ptoa_64 (page);
-    if (!base) {
-      base = physical;
-    } else if (physical != base + offset) {
-      return 0;
-    }
+  IODeviceMemory *memory = IODeviceMemory::withRange (phys, length);
+  if (!memory) {
+    return 0;
   }
-  return base;
+  keep = OSSharedPtr<IOMemoryMap> (memory->map (kIOMapAnywhere), OSNoRetain);
+  memory->release ();
+  return keep ? static_cast<uintptr_t> (keep->getVirtualAddress ()) : 0;
 }
-
 static void
 zero32 (void *start, size_t length)
 {
@@ -232,39 +220,25 @@ NativeUfsProbe::start (IOService *provider)
     panic ("NATIVE_UFS_GPT: firmware request outstanding db=%08x hcs=%08x",
            doorbell, hcs);
   }
-  IOLog ("NATIVE_UFS_GPT: pre DMA alloc fw_utrl=%llx\n", utrlPhys);
-  vm_offset_t dmaAddress = 0;
-  kma_flags_t dmaFlags = static_cast<kma_flags_t> (
-    KMA_DATA | KMA_ZERO | KMA_PERMANENT);
-  kern_return_t dmaResult = kmem_alloc_contig (kernel_map, &dmaAddress,
-    UFS_DMA_SIZE, PAGE_MASK, 0xfffff, 0, dmaFlags, VM_KERN_MEMORY_IOKIT);
-  IOLog ("NATIVE_UFS_GPT: post DMA alloc kr=%d va=%llx\n",
-         dmaResult, uint64_t (dmaAddress));
-  if (dmaResult != KERN_SUCCESS || !dmaAddress) {
-    IOLog ("NATIVE_UFS_GPT: low DMA failed kr=%d, high fallback\n", dmaResult);
-    dmaAddress = 0;
-    dmaResult = kmem_alloc_contig (kernel_map, &dmaAddress,
-      UFS_DMA_SIZE, PAGE_MASK, 0, 0, dmaFlags, VM_KERN_MEMORY_IOKIT);
+  IOLog ("NATIVE_UFS_GPT: fw_utrl=%llx using low window %llx\n",
+         utrlPhys, uint64_t (UFS_LOW_BASE));
+  OSSharedPtr<IOMemoryMap> lowMap;
+  uintptr_t lowVirt = mapPhysCacheable (UFS_LOW_BASE, UFS_DMA_SIZE, lowMap);
+  if (!lowVirt) {
+    panic ("NATIVE_UFS_GPT: low DMA window map failed");
   }
-  if (dmaResult != KERN_SUCCESS || !dmaAddress) {
-    panic ("NATIVE_UFS_GPT: DMA allocation failed kr=%d", dmaResult);
-  }
-  uint8_t *dmaVirt = reinterpret_cast<uint8_t *> (dmaAddress);
-  uint64_t dmaPhys = dmaPhysical (dmaVirt, UFS_DMA_SIZE);
-  if (!dmaPhys) {
-    panic ("NATIVE_UFS_GPT: DMA pages are not physically contiguous");
-  }
-  IOLog ("NATIVE_UFS_GPT: dma=%llx size=%x\n", dmaPhys, UFS_DMA_SIZE);
-  uint8_t *list = dmaVirt + UFS_LIST_OFFSET;
-  if (!(cap & 0x01000000U) && dmaPhys + UFS_DMA_SIZE > 0x100000000ULL) {
-    panic ("NATIVE_UFS_GPT: DMA above 4G without 64AS phys=%llx cap=%08x",
-           dmaPhys, cap);
-  }
-  zero32 (dmaVirt, UFS_DMA_SIZE);
-  cacheClean (dmaVirt, UFS_DMA_SIZE);
-
-  uint8_t *ucd = dmaVirt + UFS_UCD_OFFSET;
-  uint8_t *data = dmaVirt + UFS_DATA_OFFSET;
+  uint8_t *list = reinterpret_cast<uint8_t *> (lowVirt + UFS_LIST_OFFSET);
+  uint8_t *ucd = reinterpret_cast<uint8_t *> (lowVirt + UFS_UCD_OFFSET);
+  uint8_t *data = reinterpret_cast<uint8_t *> (lowVirt + UFS_DATA_OFFSET);
+  uint64_t listPhys = UFS_LOW_BASE + UFS_LIST_OFFSET;
+  uint64_t ucdPhys = UFS_LOW_BASE + UFS_UCD_OFFSET;
+  uint64_t dataPhys = UFS_LOW_BASE + UFS_DATA_OFFSET;
+  IOLog ("NATIVE_UFS_GPT: dma=%llx ucd=%llx data=%llx size=%x\n",
+         listPhys, ucdPhys, dataPhys, UFS_DMA_SIZE);
+  zero32 (list, UFS_LIST_SIZE);
+  zero32 (ucd, UFS_LIST_SIZE);
+  zero32 (data, UFS_DATA_MAX);
+  cacheClean (list, UFS_DMA_SIZE);
 
   // Take over the queue with our own static UTRL list.  The firmware list lives
   // in reserved memory; writing it is not a safe early-boot assumption.  Do not
@@ -280,8 +254,8 @@ NativeUfsProbe::start (IOService *provider)
   zero32 (list, 32);
   cacheClean (list, UFS_LIST_SIZE);
   IOLog ("NATIVE_UFS_GPT: pre base\n");
-  write32 (hc, UFS_REG_UTRLBA, static_cast<uint32_t> (dmaPhys));
-  write32 (hc, UFS_REG_UTRLBAU, static_cast<uint32_t> (dmaPhys >> 32));
+  write32 (hc, UFS_REG_UTRLBA, static_cast<uint32_t> (listPhys));
+  write32 (hc, UFS_REG_UTRLBAU, static_cast<uint32_t> (listPhys >> 32));
   IOLog ("NATIVE_UFS_GPT: pre start\n");
   write32 (hc, UFS_REG_UTRLRSR, 1);
   IOLog ("NATIVE_UFS_GPT: pre wait-ready\n");
@@ -290,10 +264,10 @@ NativeUfsProbe::start (IOService *provider)
   }
   IOLog ("NATIVE_UFS_GPT: base readback %08x/%08x\n",
          read32 (hc, UFS_REG_UTRLBA), read32 (hc, UFS_REG_UTRLBAU));
-  if (read32 (hc, UFS_REG_UTRLBA) != static_cast<uint32_t> (dmaPhys) ||
-      read32 (hc, UFS_REG_UTRLBAU) != static_cast<uint32_t> (dmaPhys >> 32)) {
+  if (read32 (hc, UFS_REG_UTRLBA) != static_cast<uint32_t> (listPhys) ||
+      read32 (hc, UFS_REG_UTRLBAU) != static_cast<uint32_t> (listPhys >> 32)) {
     panic ("NATIVE_UFS_GPT: request list base not taken ba=%08x/%08x want=%llx",
-           read32 (hc, UFS_REG_UTRLBA), read32 (hc, UFS_REG_UTRLBAU), dmaPhys);
+           read32 (hc, UFS_REG_UTRLBA), read32 (hc, UFS_REG_UTRLBAU), listPhys);
   }
 
   uint8_t tag = 0;
@@ -317,17 +291,16 @@ NativeUfsProbe::start (IOService *provider)
       ucd[16 + index] = cdb[index];
     }
 
-    uint64_t ucdPhys = dmaPhys + UFS_UCD_OFFSET;
+    uint64_t ucdCommandPhys = ucdPhys;
     uint32_t direction = dataLength ? 2U : 0U;
     *reinterpret_cast<uint32_t *> (list + 0) = 0x11000000U | (direction << 25);
     *reinterpret_cast<uint32_t *> (list + 8) = 0x0fU;
-    *reinterpret_cast<uint32_t *> (list + 16) = static_cast<uint32_t> (ucdPhys);
-    *reinterpret_cast<uint32_t *> (list + 20) = static_cast<uint32_t> (ucdPhys >> 32);
+    *reinterpret_cast<uint32_t *> (list + 16) = static_cast<uint32_t> (ucdCommandPhys);
+    *reinterpret_cast<uint32_t *> (list + 20) = static_cast<uint32_t> (ucdCommandPhys >> 32);
     *reinterpret_cast<uint32_t *> (list + 24) = (512U >> 2) | ((UFS_RSP_OFFSET >> 2) << 16);
     *reinterpret_cast<uint32_t *> (list + 28) = (dataLength ? 1U : 0U) |
                                                ((UFS_PRDT_OFFSET >> 2) << 16);
     if (dataLength) {
-      uint64_t dataPhys = dmaPhys + UFS_DATA_OFFSET;
       uint8_t *prd = ucd + UFS_PRDT_OFFSET;
       *reinterpret_cast<uint32_t *> (prd + 0) = static_cast<uint32_t> (dataPhys);
       *reinterpret_cast<uint32_t *> (prd + 4) = static_cast<uint32_t> (dataPhys >> 32);
@@ -469,7 +442,7 @@ NativeUfsProbe::start (IOService *provider)
 } while (0)
   ADD ("NATIVE_UFS_GPT handoff read-only\n");
   ADD ("hc=%p cap=%08x ver=%08x utrl=%llx\n", (void *) hc, cap, version, utrlPhys);
-  ADD ("smmu=direct (ufshc has no iommus) dma=%llx\n", dmaPhys);
+  ADD ("smmu=direct (ufshc has no iommus) dma=%llx\n", listPhys);
   for (unsigned lun = 0; lun < maxLun; lun++) {
     ADD ("L%u last=%08x bs=%08x st=%06x\n", lun, lastLba[lun],
          blockSize[lun], lunStatus[lun]);
