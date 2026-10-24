@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // Minimal MSM8998 UFS handoff GPT/LUN probe.
 //
-// The firmware leaves UFSHCI enabled with a valid transfer-request list.  This
-// driver reuses that list (slot 0 only), points the command descriptor and data
-// buffer in the kernel image, and issues read-only
+// The firmware leaves UFSHCI enabled.  This driver takes over the UTRL engine
+// with a private static list/descriptor/data buffer in the kernel image and
+// issues read-only
 // SCSI commands: TEST UNIT READY, READ CAPACITY(10), READ(10) of LBA 0/1 and
 // the GPT entry array.  There is no SCSI WRITE, no partition modification and
 // no controller reset.  MSM8998's ufshc node has no iommus property, so unlike
@@ -25,11 +25,12 @@ extern "C" ppnum_t pmap_find_phys (pmap_t pmap, addr64_t va);
 #define MSM8998_UFS_HC_SIZE 0x2500ULL
 
 #define UFS_LIST_SIZE 4096U
-#define UFS_DMA_SIZE 0x9000U
-#define UFS_UCD_OFFSET 0U
+#define UFS_DMA_SIZE 0xA000U
+#define UFS_LIST_OFFSET 0U
+#define UFS_UCD_OFFSET 0x1000U
 #define UFS_RSP_OFFSET 512U
 #define UFS_PRDT_OFFSET 1024U
-#define UFS_DATA_OFFSET 4096U
+#define UFS_DATA_OFFSET 0x2000U
 #define UFS_DATA_MAX 32768U
 
 // The platform-expert start callback runs before IOKit memory allocation is
@@ -82,18 +83,6 @@ mapPhys (uint64_t phys, uint64_t length, OSSharedPtr<IOMemoryMap> &keep)
   memory->release ();
   return keep ? static_cast<uintptr_t> (keep->getVirtualAddress ()) : 0;
 }
-static uintptr_t
-mapPhysCacheable (uint64_t phys, uint64_t length, OSSharedPtr<IOMemoryMap> &keep)
-{
-  IODeviceMemory *memory = IODeviceMemory::withRange (phys, length);
-  if (!memory) {
-    return 0;
-  }
-  keep = OSSharedPtr<IOMemoryMap> (memory->map (kIOMapAnywhere), OSNoRetain);
-  memory->release ();
-  return keep ? static_cast<uintptr_t> (keep->getVirtualAddress ()) : 0;
-}
-
 static uint64_t
 dmaPhysical (uint8_t *virt, size_t length)
 {
@@ -247,25 +236,14 @@ NativeUfsProbe::start (IOService *provider)
     panic ("NATIVE_UFS_GPT: firmware request outstanding db=%08x hcs=%08x",
            doorbell, hcs);
   }
-  if (!utrlPhys || (utrlPhys & 0x3ff)) {
-    panic ("NATIVE_UFS_GPT: no usable firmware request list base=%llx hcs=%08x",
-           utrlPhys, hcs);
-  }
-
-  OSSharedPtr<IOMemoryMap> listMap;
-  uintptr_t listVirt = mapPhysCacheable (utrlPhys, UFS_LIST_SIZE, listMap);
-  if (!listVirt) {
-    panic ("NATIVE_UFS_GPT: firmware request list map failed base=%llx", utrlPhys);
-  }
-  IOLog ("NATIVE_UFS_GPT: utrl=%llx list_virt=%p\n", utrlPhys, (void *) listVirt);
-  uint8_t *list = reinterpret_cast<uint8_t *> (listVirt);
-
   uint8_t *dmaVirt = gUfsDma;
   uint64_t dmaPhys = dmaPhysical (dmaVirt, UFS_DMA_SIZE);
   if (!dmaPhys) {
     panic ("NATIVE_UFS_GPT: static DMA pages are not physically contiguous");
   }
-  IOLog ("NATIVE_UFS_GPT: dma=%llx size=%x\n", dmaPhys, UFS_DMA_SIZE);
+  IOLog ("NATIVE_UFS_GPT: fw_utrl=%llx dma=%llx size=%x\n",
+         utrlPhys, dmaPhys, UFS_DMA_SIZE);
+  uint8_t *list = dmaVirt + UFS_LIST_OFFSET;
   if (!(cap & 0x01000000U) && dmaPhys + UFS_DMA_SIZE > 0x100000000ULL) {
     panic ("NATIVE_UFS_GPT: DMA above 4G without 64AS phys=%llx cap=%08x",
            dmaPhys, cap);
@@ -276,24 +254,34 @@ NativeUfsProbe::start (IOService *provider)
   uint8_t *ucd = dmaVirt + UFS_UCD_OFFSET;
   uint8_t *data = dmaVirt + UFS_DATA_OFFSET;
 
-  // Reuse the firmware's request list at slot 0.  Do not reset the host or the
-  // link; only quiesce and restart the UTRL engine.
+  // Take over the queue with our own static UTRL list.  The firmware list lives
+  // in reserved memory; writing it is not a safe early-boot assumption.  Do not
+  // reset the host or the link.
+  IOLog ("NATIVE_UFS_GPT: pre IE\n");
   write32 (hc, UFS_REG_IE, 0);
+  IOLog ("NATIVE_UFS_GPT: pre stop\n");
   write32 (hc, UFS_REG_UTRLRSR, 0);
+  IOLog ("NATIVE_UFS_GPT: pre wait-stop\n");
   if (!waitClear (hc, UFS_REG_UTRLRSR, 1, 10000)) {
     panic ("NATIVE_UFS_GPT: request list did not stop rsr=%08x", read32 (hc, UFS_REG_UTRLRSR));
   }
   zero32 (list, 32);
-  write32 (hc, UFS_REG_UTRLBA, static_cast<uint32_t> (utrlPhys));
-  write32 (hc, UFS_REG_UTRLBAU, static_cast<uint32_t> (utrlPhys >> 32));
+  cacheClean (list, UFS_LIST_SIZE);
+  IOLog ("NATIVE_UFS_GPT: pre base\n");
+  write32 (hc, UFS_REG_UTRLBA, static_cast<uint32_t> (dmaPhys));
+  write32 (hc, UFS_REG_UTRLBAU, static_cast<uint32_t> (dmaPhys >> 32));
+  IOLog ("NATIVE_UFS_GPT: pre start\n");
   write32 (hc, UFS_REG_UTRLRSR, 1);
+  IOLog ("NATIVE_UFS_GPT: pre wait-ready\n");
   if (!waitSet (hc, UFS_REG_HCS, 2, 10000)) {
     panic ("NATIVE_UFS_GPT: request list not ready hcs=%08x", read32 (hc, UFS_REG_HCS));
   }
-  if (read32 (hc, UFS_REG_UTRLBA) != static_cast<uint32_t> (utrlPhys) ||
-      read32 (hc, UFS_REG_UTRLBAU) != static_cast<uint32_t> (utrlPhys >> 32)) {
+  IOLog ("NATIVE_UFS_GPT: base readback %08x/%08x\n",
+         read32 (hc, UFS_REG_UTRLBA), read32 (hc, UFS_REG_UTRLBAU));
+  if (read32 (hc, UFS_REG_UTRLBA) != static_cast<uint32_t> (dmaPhys) ||
+      read32 (hc, UFS_REG_UTRLBAU) != static_cast<uint32_t> (dmaPhys >> 32)) {
     panic ("NATIVE_UFS_GPT: request list base not taken ba=%08x/%08x want=%llx",
-           read32 (hc, UFS_REG_UTRLBA), read32 (hc, UFS_REG_UTRLBAU), utrlPhys);
+           read32 (hc, UFS_REG_UTRLBA), read32 (hc, UFS_REG_UTRLBAU), dmaPhys);
   }
 
   uint8_t tag = 0;
@@ -388,7 +376,9 @@ NativeUfsProbe::start (IOService *provider)
   for (unsigned lun = 0; lun < maxLun; lun++) {
     lastLba[lun] = 0xffffffffU;
     blockSize[lun] = 0;
+    IOLog ("NATIVE_UFS_GPT: L%u TUR\n", lun);
     ProbeResult tur = testUnit (static_cast<uint8_t> (lun));
+    IOLog ("NATIVE_UFS_GPT: L%u CAP\n", lun);
     ProbeResult capacity = issue (static_cast<uint8_t> (lun), cap10, sizeof (cap10), 8);
     lunStatus[lun] = (tur.ocs << 16) | (capacity.ocs << 8) | capacity.scsi;
     if (capacity.ocs == 0 && capacity.scsi == 0) {
