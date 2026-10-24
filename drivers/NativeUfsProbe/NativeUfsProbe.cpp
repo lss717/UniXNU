@@ -1002,6 +1002,37 @@ NativeUfsProbe::start (IOService *provider)
     panic ("NATIVE_UFS_GPT: read lock allocation failed");
   }
   fReady = true;
+  {
+    uint8_t header[4096] = {};
+    uint8_t readUserdata[16] = { 0x28 };
+    putBe32 (readUserdata + 2, 0x14f40U);
+    readUserdata[8] = 1;
+    if (ufsCommand (&queue, 0, readUserdata, sizeof (header), header)) {
+      uint32_t magic = getLe32 (header);
+      uint32_t magic2 = getLe32 (header + 4);
+      uint32_t version = getLe32 (header + 8);
+      uint32_t windows = getLe32 (header + 12);
+      uint64_t imageBytes = getLe64 (header + 16);
+      IOLog ("NATIVE_UFS_ROOT: userdata[0x14f40] magic=%08x/%08x ver=%u windows=%u image=%llx\n",
+             magic, magic2, version, windows, imageBytes);
+      if (magic == 0x474e4853U && magic2 == 0x544f4f52U && windows <= 4) {
+        for (uint32_t index = 0; index < windows; index++) {
+          const uint8_t *entry = header + 24 + index * 128;
+          char name[33];
+          memcpy (name, entry, 32);
+          name[32] = 0;
+          uint64_t offset = getLe64 (entry + 32);
+          uint64_t size = getLe64 (entry + 40);
+          IOLog ("NATIVE_UFS_ROOT: window[%u]=%s off=%llx size=%llx\n",
+                 index, name, offset, size);
+        }
+      } else {
+        IOLog ("NATIVE_UFS_ROOT: SHNGROOT header not recognized\n");
+      }
+    } else {
+      IOLog ("NATIVE_UFS_ROOT: userdata first-block READ10 failed\n");
+    }
+  }
   IOLog ("NATIVE_UFS_GPT: read DMA phys=%llx size=%x; publishing LUN0\n",
          readPhys, UFS_DATA_MAX);
 
