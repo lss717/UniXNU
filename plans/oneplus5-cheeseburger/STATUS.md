@@ -583,29 +583,32 @@ NATIVE_UFS_GPT: done type=05000000 rsp=21/00 tag=1
 
 ### B5 root 可行性检查（B，2026-10-24）
 
+用户确认：Android 系统是初始状态、没有个人数据，**不需要个人数据备份**；
+B5 先用现有 **iPad7,1 / iPadOS 17.7.11（21H461）** fixture 跑通，之后再
+切 iPhone10,2 / 16.7.16。当前系统完整备份仍保留，作为误写/回滚保护。
+
 只读检查结果：
 
 - 完整备份校验：`SHA256SUMS` 共 84 项，**84 成功、0 失败**。
 - 实机 userdata 几何与 `board.toml` 一致：
   `first_lba=0x14f40`、`last_lba=0x1c627fa`、`lba_bytes=4096`。
 - 仓库内没有现成的 `userdata-root.img`、APFS 根卷或 SHNGROOT 镜像。
-- `board.toml` 当前 IPSW 是 **iPad7,1 / 17.7.11（21H461）**，仅作 B3
-  fixture；不是最终 **iPhone10,2 / 16.7.16（20H392）** 根输入。
-- `board.iphone10-2.toml` 仍是 TODO：IPSW URL/哈希、20H392 prelink、
-  D21AP `/product`/`/buttons`、userdata 窗口都未完成。
+- 第一轮 B5 使用 `board.toml` 的 iPad7,1 / 17.7.11 fixture；iPhone10,2
+  profile 的 IPSW/哈希/prelink/ADT 仍留到后续。
 - `NativeUfsProbe`/`NativeUfsLun` 只有 READ10；没有 WRITE10、UNMAP、
   FORMAT 或任何写工具。
-- `unixnu build userdata` 需要 macOS `hdiutil` 和目标 IPSW；当前没有可
-  验证的目标 APFS root 输入，不能生成有效根镜像。
+- XNU 侧还缺 SHNGROOT 窗口发布/APFS root UUID 匹配；仅写入镜像不会让
+  root matcher 自动完成。
 
-因此 B 的阻塞点不是 UFS 读路径，而是：
+第一轮阻塞点：
 
-1. 缺少目标 iPhone10,2 16.7.16 的可验证 root/APFS 输入；
-2. 缺少 B6 profile 的 IPSW 哈希/prelink/ADT 数据；
-3. 缺少受控的 userdata 写入路径。
+1. 构建并校验 iPad fixture 的 `userdata-root.img`；
+2. 把镜像写入 userdata（需要明确的 fastboot/写入批准）；
+3. 在 XNU 侧发布 SHNGROOT 的 OS/SystemOS 窗口，并配置 APFS 根 UUID。
 
-**B 当前不执行。** 只有在前述输入齐备、并明确批准写入 userdata 后，才
-进入备份校验后的实际写盘阶段；不盲目写入 iPad fixture 根镜像。
+**写入 userdata 是破坏性操作。** 用户已确认无个人数据、无需个人数据备份；
+但执行前仍应保留当前系统完整备份，并只写 userdata 分区，不碰其他 LUN/
+分区。
 
 ## 下一步
 
