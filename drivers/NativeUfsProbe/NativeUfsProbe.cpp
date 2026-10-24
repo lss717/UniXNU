@@ -16,7 +16,7 @@
 #include <IOKit/storage/IOBlockStorageDevice.h>
 #include <kern/debug.h>
 #include <kern/task.h>
-#include <kern/thread.h>
+#include <kern/clock.h>
 #include <libkern/libkern.h>
 #include <libkern/c++/OSData.h>
 #include <libkern/c++/OSDictionary.h>
@@ -568,13 +568,19 @@ NativeUfsLun::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
            block, count, sector, buffer->getLength ());
     gIoRequestLog++;
   }
+  uint64_t started = mach_absolute_time ();
   uint64_t done = 0;
   bool ok = host->readBlocks (lun, block, count, sector, buffer, &done);
+  uint64_t finished = mach_absolute_time ();
   IOReturn status = ok ? kIOReturnSuccess : kIOReturnIOError;
   if (gIoRequestLog < 32) {
     IOLog ("NATIVE_UFS_IO: done block=%llx count=%llu ok=%u done=%llx status=%x\n",
            block, count, ok ? 1 : 0, done, status);
     gIoRequestLog++;
+  }
+  if (gIoRequests <= 8) {
+    IOLog ("NATIVE_UFS_IO: timing block=%llx ufs_ticks=%llu total_ticks=%llu\n",
+           block, finished - started, mach_absolute_time () - started);
   }
   if (completion && completion->action) {
     completion->action (completion->target, completion->parameter, status, done);
@@ -583,7 +589,7 @@ NativeUfsLun::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
     IOLog ("NATIVE_UFS_IO: requests=%u block0=%u last_block=%llx\n",
            gIoRequests, gBlock0Requests, block);
   }
-  if (gIoRequests >= 32 && !gMediaDumped) {
+  if (gIoRequests >= 8 && !gMediaDumped) {
     gMediaDumped = true;
     IOLog ("NATIVE_UFS_IO: one-shot IOMedia snapshot at request %u\n", gIoRequests);
     dumpMediaServices ();
