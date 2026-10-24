@@ -3,7 +3,7 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 最终目标：iPhone10,2 / iOS 16.7.16（20H392）
-- 当前阶段：**B3 完成；B5 只读 UFS/GPT 已打通（6 LUN、LUN0 4096B、userdata `0x14f40..0x1c627fa`）；完整 root 仍需 APFS/userdata 写入**
+- 当前阶段：**B3 完成；B5 只读 UFS/GPT 已打通，LUN0 只读 IOBlockStorageDevice 已发布并进入 IOStorageDriver 读盘路径；完整 root 仍需 APFS/userdata 写入**
 - 当前 gate：**G1 通过（2026-10-22）**
 - 基线提交：UniXNU `e95b37d`（main）
 - 本地提交：UniXNU `c8a5eeb`（计划）、`18f3020`（package）、`270ea4b`（B1 记录）、`692d70f`（docs 记录）；本轮 B1 收尾见 `git log -- plans/oneplus5-cheeseburger`
@@ -505,6 +505,39 @@ LUN 容量也与备份 `lun-sizes.txt` 全部一致：
 完整 B5 root 仍需 APFS/userdata 写入（破坏性），必须单独批准并保留当前完整
 备份；本阶段到此停止，不发送 WRITE/UNMAP/FORMAT，也不刷写、擦除或修改
 任何分区。
+
+### B5 只读 IOBlockStorageDevice / IOMedia（2026-10-24）
+
+在 GPT 探测通过后，把探针扩展为只读 `NativeUfsLun : IOBlockStorageDevice`：
+
+- `NativeUfsLun` 只实现读方向；`doAsyncReadWrite` 对非
+  `kIODirectionIn` 返回 `kIOReturnNotWritable`，`reportWriteProtection=true`，
+  没有任何 WRITE/UNMAP/FORMAT 命令。
+- 使用 IoStorage 的独立 128 KiB DMA 区（实机回退到高地址
+  `0x106c02000`），每个 READ10 最多 32 个 4096B 块。
+- list/UCD 的 firmware 低页映射提升为 probe 成员，避免 `start()` 返回后
+  `OSSharedPtr<IOMemoryMap>` 释放、后续 IOMedia 读盘访问已卸载地址。
+- `NativeUfsLun` 的 190 个 vtable 槽位绑定到原始 IOStorageFamily ABI；
+  binding 表在设备仓库
+  `scripts/data/IOStorageFamily-bindings.json`，生成/校验脚本为
+  `scripts/bind-native-ufs-storage.py`。
+
+实机结果：
+
+```text
+NATIVE_UFS_GPT: read DMA low failed; high fallback
+NATIVE_UFS_GPT: read DMA phys=106c02000 size=20000; publishing LUN0
+NATIVE_UFS_GPT: published LUN0 last=1c627ff bs=1000 read-only
+NATIVE_UFS_GPT: ring type=05000000 dir=2 bytes=4096
+NATIVE_UFS_GPT: done type=05000000 rsp=21/00 tag=1
+...（连续 4096B 读）
+```
+
+发布后 IOStorageDriver 已匹配并连续读取 4096 字节块，说明只读 block-device
+路径和 IOMedia 探测已经启动；没有新的 data abort 或 panic。日志中的
+root matcher 仍等待 `IOMedia Content=Apple_HFS`，尚未证明 APFS 根卷/IOMedia
+最终内容匹配。完整 B5 root 仍需后续只读 IORegistry/APFS 验证，以及单独批准
+的 userdata 写入；本阶段没有修改任何分区。
 
 ## 下一步
 
