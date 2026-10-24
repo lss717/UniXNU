@@ -3,7 +3,7 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 最终目标：iPhone10,2 / iOS 16.7.16（20H392）
-- 当前阶段：**B3 完成 + 普通控制台已上屏；prelink kext 范围错误已由 `707fde9` 修复，当前阻塞是 source-corecrypto 与 prelinked corecrypto 重复 start 的 PRNG 断言；跳过二次 start 的镜像 `03e52565…` 待上机；下一阶段 B5（UFS/root）**
+- 当前阶段：**B3 完成；prelink/PRNG 已打通，XNU 进入 BSD/IOKit，CoreAnalyticsHub + APFS 已启动；当前阻塞是 B5：没有 UFS IOMedia，APFS 等 root**
 - 当前 gate：**G1 通过（2026-10-22）**
 - 基线提交：UniXNU `e95b37d`（main）
 - 本地提交：UniXNU `c8a5eeb`（计划）、`18f3020`（package）、`270ea4b`（B1 记录）、`692d70f`（docs 记录）；本轮 B1 收尾见 `git log -- plans/oneplus5-cheeseburger`
@@ -343,10 +343,33 @@ prng_random.c:267 Assertion failed: !prng_ready
 `source_corecrypto14_status == KERN_SUCCESS` 时，只跳过 prelinked
 `com.apple.kec.corecrypto` 的第二次 `startfunc`，仍保留
 `OSRuntimeInitializeCPP` 和 started 状态，依赖它的 kext 不受影响。
-设备仓库提交 `17dd668`；CI `40056309030` success，已构建
-`boot-corecrypto-skip-panic.img`（SHA `03e52565…`），等待上机。
-当前构建还带临时 `zzz-kext-debug.patch`，只打印 CoreAnalytics 的
-`kext_slide`/段表，验证后删除。
+设备仓库提交 `17dd668`；CI `40056309030` success。
+
+PRNG 修复分两步：
+
+- `patches/xnu/zzz-prng-idempotent.patch`（`29e4e88`）：重复调用
+  `register_and_init_prng()` 时直接返回，避免断言。
+- source bootstrap 增加 `prng_ready` 早退保护，并合并进
+  `source-corecrypto14-bootstrap.patch`（`8c30e45`），避免第二次初始化
+  覆盖 prelinked corecrypto 的 PRNG 上下文。
+
+上机 `boot-prng-sourceguard-panic.img`（SHA `400fe389…`）后：
+
+- `prng_random.c` 断言和 `pc=0` 空回调都消失。
+- XNU 进入 BSD/IOKit：`CoreAnalyticsHub` start 完成，
+  `AppleFSCompressionTypeZlib`、`apfs_module_start`（v2236.140.6）启动，
+  `apfs_sysctl_register` 完成。
+- 最后停在：
+
+```text
+Waiting on <dict ... IOProviderClass IOMedia ...
+  Content Apple_APFS>
+```
+
+即 **B5：没有 UFS 块设备/IOMedia，APFS 等不到 root**。
+`NativeUfs` 目前是 sheng SM8550 版本，`CONFIG_XNU_NATIVE_UFS` 仍未打开；
+下一步是 MSM8998 UFS host/PHY/GCC/SMMU 与 root publication 移植。
+当前构建还带临时 `zzz-kext-debug.patch`，验证后删除。
 
 ## 下一步
 
