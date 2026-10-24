@@ -16,6 +16,7 @@
 #include <IOKit/storage/IOBlockStorageDevice.h>
 #include <kern/debug.h>
 #include <kern/task.h>
+#include <kern/thread.h>
 #include <libkern/libkern.h>
 #include <libkern/c++/OSData.h>
 #include <libkern/c++/OSDictionary.h>
@@ -368,6 +369,32 @@ dumpMediaServices (void)
   OSSafeReleaseNULL (iterator);
   OSSafeReleaseNULL (matching);
   IOLog ("NATIVE_UFS_MEDIA: total=%u\n", count);
+}
+
+extern "C" kern_return_t kernel_thread_start (void (*) (void *, wait_result_t),
+                                              void *, thread_t *);
+extern "C" void thread_deallocate (thread_t);
+
+static void
+mediaReportThread (void *, wait_result_t)
+{
+  unsigned count = 0;
+  for (unsigned tick = 0; tick < 200; tick++) {
+    OSDictionary *matching = IOService::serviceMatching ("IOMedia");
+    OSIterator *iterator = matching ? IOService::getMatchingServices (matching) : nullptr;
+    count = 0;
+    while (iterator && iterator->getNextObject ()) {
+      count++;
+    }
+    OSSafeReleaseNULL (iterator);
+    OSSafeReleaseNULL (matching);
+    if (count) {
+      break;
+    }
+    IOSleep (100);
+  }
+  IOSleep (500);
+  dumpMediaServices ();
 }
 
 static bool
@@ -968,16 +995,18 @@ NativeUfsProbe::start (IOService *provider)
   if (child && child->init (nullptr) &&
       child->configure (this, 0, lastLba[0], blockSize[0]) &&
       child->attach (this) && child->start (this)) {
+    thread_t reportThread = nullptr;
+    if (kernel_thread_start (mediaReportThread, nullptr, &reportThread) != KERN_SUCCESS) {
+      IOLog ("NATIVE_UFS_MEDIA: report thread start failed\n");
+    } else {
+      thread_deallocate (reportThread);
+    }
     child->registerService ();
     published = true;
     IOLog ("NATIVE_UFS_GPT: published LUN0 last=%llx bs=%x read-only\n",
            lastLba[0], blockSize[0]);
   } else {
     IOLog ("NATIVE_UFS_GPT: LUN0 publication failed\n");
-  }
-  if (published) {
-    IOSleep (2000);
-    dumpMediaServices ();
   }
   if (child) {
     child->release ();
