@@ -533,7 +533,6 @@ NativeUfsProbe::start (IOService *provider)
       return false;
     }
     zero32 (ucd, UFS_FW_UCD_SIZE);
-    zero32 (data, bytes);
     uint8_t *q = ucd;
     q[0] = 1;
     q[1] = bytes ? 0x40 : 0;
@@ -541,9 +540,11 @@ NativeUfsProbe::start (IOService *provider)
     q[3] = 1;
     putBe32 (q + 12, bytes);
     memcpy (q + 16, cdb, 16);
+    cacheInvalidate (data, bytes);
     if (!submit (bytes ? 2 : 0, bytes)) {
       return false;
     }
+    cacheInvalidate (data, bytes);
     const uint8_t *response = q + UFS_RSP_OFFSET;
     if (response[0] != 0x21 || response[2] != lun || response[3] != 1 ||
         response[4] || response[6] || response[7] || response[10] ||
@@ -608,19 +609,39 @@ NativeUfsProbe::start (IOService *provider)
     panic ("NATIVE_UFS_GPT: LUN0 capacity failed status=%x last=%llx bs=%x",
            lunStatus[0], lastLba[0], blockSize[0]);
   }
-  if (dataCapacity < 2 * blockSize[0]) {
-    panic ("NATIVE_UFS_GPT: CAP OK; GPT buffer too small cap=%x need=%x",
-           dataCapacity, 2 * blockSize[0]);
+  IOOptionBits gptOptions = static_cast<IOOptionBits> (kIODirectionInOut) |
+                             static_cast<IOOptionBits> (kIOMemoryPhysicallyContiguous) |
+                             static_cast<IOOptionBits> (kIOMemoryMapperNone);
+  IOBufferMemoryDescriptor *gptDma = IOBufferMemoryDescriptor::inTaskWithPhysicalMask (
+    kernel_task, gptOptions, blockSize[0], 0x00000000ffffffffULL);
+  if (!gptDma) {
+    IOLog ("NATIVE_UFS_GPT: GPT low DMA failed; high fallback\n");
+    gptDma = IOBufferMemoryDescriptor::inTaskWithOptions (
+      kernel_task, gptOptions, blockSize[0], 4096);
   }
+  if (!gptDma) {
+    panic ("NATIVE_UFS_GPT: GPT DMA allocation failed");
+  }
+  uint8_t *gptData = static_cast<uint8_t *> (gptDma->getBytesNoCopy ());
+  IOByteCount gptContiguous = 0;
+  uint64_t gptPhys = gptDma->getPhysicalSegment (0, &gptContiguous, kIOMemoryMapperNone);
+  if (!gptData || !gptPhys || (gptPhys & 0xfff) || gptContiguous < blockSize[0]) {
+    panic ("NATIVE_UFS_GPT: GPT DMA invalid phys=%llx cont=%llx", gptPhys,
+           uint64_t (gptContiguous));
+  }
+  data = gptData;
+  dataPhys = gptPhys;
+  dataCapacity = blockSize[0];
+  IOLog ("NATIVE_UFS_GPT: GPT data phys=%llx size=%x\n", gptPhys, dataCapacity);
 
   uint8_t read10[16] = { 0x28 };
-  putBe32 (read10 + 2, 0);
+  putBe32 (read10 + 2, 1);
   read10[7] = 0;
-  read10[8] = 2;
-  if (!command (0, read10, 2 * blockSize[0], data)) {
-    panic ("NATIVE_UFS_GPT: LBA0/1 READ10 failed");
+  read10[8] = 1;
+  if (!command (0, read10, blockSize[0], data)) {
+    panic ("NATIVE_UFS_GPT: LBA1 header READ10 failed");
   }
-  const uint8_t *header = data + blockSize[0];
+  const uint8_t *header = data;
   uint32_t signature0 = getLe32 (header);
   uint32_t signature1 = getLe32 (header + 4);
   uint32_t headerCrc = getLe32 (header + 16);
@@ -640,7 +661,7 @@ NativeUfsProbe::start (IOService *provider)
   }
   uint32_t entryBytes = entryCount * entrySize;
   uint32_t entryBlocks = (entryBytes + blockSize[0] - 1) / blockSize[0];
-  if (entryBlocks * blockSize[0] > UFS_DATA_MAX) {
+  if (entryBlocks * blockSize[0] > dataCapacity) {
     panic ("NATIVE_UFS_GPT: GPT entries too large n=%u esz=%u", entryCount, entrySize);
   }
   memset (read10, 0, sizeof (read10));

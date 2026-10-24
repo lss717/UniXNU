@@ -462,6 +462,17 @@ if (intr_cmd)
 GPT 需要 4 KiB data，等 CAP 通后再扩大低地址 data 区。全套操作保持只读，
 不发送 WRITE/UNMAP/FORMAT，也不刷写、擦除或修改任何分区。
 
+**2026-10-24 上机验证（CT 修正 + OCS-only 轮询）**：NOP 和
+READ CAPACITY(16) 均完成，随后在 GPT 数据区检查处 panic：
+
+```text
+NATIVE_UFS_GPT: CAP OK; GPT buffer too small cap=700 need=2000
+```
+
+`need=0x2000` 即两个 4096 字节块，说明 LUN0 块大小为 4096，UTP 传输路径
+在修正 UTRD CT 后已经打通；当前仅缺 4 KiB 的 GPT data 缓冲区。下一步改为
+读取 LBA1 的单个 4 KiB GPT header，并用独立 4 KiB DMA 区读 entries。
+
 ## 下一步
 
 0. ~~先跑 PSCI 对照镜像~~（2026-10-23 已完成；8 s / 30 s / 20 s 三个对照都
