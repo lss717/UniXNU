@@ -17,6 +17,7 @@
 #include <libkern/libkern.h>
 #include <pexpert/pexpert.h>
 #include <vm/pmap.h>
+#include <vm/vm_kern.h>
 #include <mach/vm_param.h>
 
 extern "C" ppnum_t pmap_find_phys (pmap_t pmap, addr64_t va);
@@ -32,11 +33,6 @@ extern "C" ppnum_t pmap_find_phys (pmap_t pmap, addr64_t va);
 #define UFS_PRDT_OFFSET 1024U
 #define UFS_DATA_OFFSET 0x2000U
 #define UFS_DATA_MAX 32768U
-
-// The platform-expert start callback runs before IOKit memory allocation is
-// safe to use.  Put the DMA descriptors/data in the kernel image instead and
-// derive their physical address from the kernel pmap.
-static uint8_t gUfsDma[UFS_DMA_SIZE] __attribute__((aligned(4096))) = { 1 };
 
 #define UFS_REG_IS 0x20U
 #define UFS_REG_HCS 0x30U
@@ -236,13 +232,22 @@ NativeUfsProbe::start (IOService *provider)
     panic ("NATIVE_UFS_GPT: firmware request outstanding db=%08x hcs=%08x",
            doorbell, hcs);
   }
-  uint8_t *dmaVirt = gUfsDma;
-  uint64_t dmaPhys = dmaPhysical (dmaVirt, UFS_DMA_SIZE);
-  if (!dmaPhys) {
-    panic ("NATIVE_UFS_GPT: static DMA pages are not physically contiguous");
+  IOLog ("NATIVE_UFS_GPT: pre DMA alloc fw_utrl=%llx\n", utrlPhys);
+  vm_offset_t dmaAddress = 0;
+  kern_return_t dmaResult = kmem_alloc_contig (kernel_map, &dmaAddress,
+    UFS_DMA_SIZE, PAGE_MASK, 0xfffff, 0,
+    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT);
+  IOLog ("NATIVE_UFS_GPT: post DMA alloc kr=%d va=%llx\n",
+         dmaResult, uint64_t (dmaAddress));
+  if (dmaResult != KERN_SUCCESS || !dmaAddress) {
+    panic ("NATIVE_UFS_GPT: low DMA allocation failed kr=%d", dmaResult);
   }
-  IOLog ("NATIVE_UFS_GPT: fw_utrl=%llx dma=%llx size=%x\n",
-         utrlPhys, dmaPhys, UFS_DMA_SIZE);
+  uint8_t *dmaVirt = reinterpret_cast<uint8_t *> (dmaAddress);
+  uint64_t dmaPhys = dmaPhysical (dmaVirt, UFS_DMA_SIZE);
+  if (!dmaPhys || dmaPhys + UFS_DMA_SIZE > 0x100000000ULL) {
+    panic ("NATIVE_UFS_GPT: DMA not contiguous/low phys=%llx", dmaPhys);
+  }
+  IOLog ("NATIVE_UFS_GPT: dma=%llx size=%x\n", dmaPhys, UFS_DMA_SIZE);
   uint8_t *list = dmaVirt + UFS_LIST_OFFSET;
   if (!(cap & 0x01000000U) && dmaPhys + UFS_DMA_SIZE > 0x100000000ULL) {
     panic ("NATIVE_UFS_GPT: DMA above 4G without 64AS phys=%llx cap=%08x",
