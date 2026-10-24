@@ -3,7 +3,7 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 最终目标：iPhone10,2 / iOS 16.7.16（20H392）
-- 当前阶段：**B3 完成；prelink/PRNG 已打通，XNU 进入 BSD/IOKit，CoreAnalyticsHub + APFS 已启动；当前阻塞是 B5：没有 UFS IOMedia，APFS 等 root**
+- 当前阶段：**B3 完成；B5 只读 UFS 探针确认 UEFI handoff 可用（HCS UTRL ready/HCE enabled/VER 0x210）；下一步基于 handoff 读取 GPT，完整 root 仍需 APFS 镜像**
 - 当前 gate：**G1 通过（2026-10-22）**
 - 基线提交：UniXNU `e95b37d`（main）
 - 本地提交：UniXNU `c8a5eeb`（计划）、`18f3020`（package）、`270ea4b`（B1 记录）、`692d70f`（docs 记录）；本轮 B1 收尾见 `git log -- plans/oneplus5-cheeseburger`
@@ -370,6 +370,31 @@ Waiting on <dict ... IOProviderClass IOMedia ...
 `NativeUfs` 目前是 sheng SM8550 版本，`CONFIG_XNU_NATIVE_UFS` 仍未打开；
 下一步是 MSM8998 UFS host/PHY/GCC/SMMU 与 root publication 移植。
 当前构建还带临时 `zzz-kext-debug.patch`，验证后删除。
+
+### B5 只读 UFS 探针（2026-10-24）
+
+独立 `drivers/NativeUfsProbe` + `native-ufs-probe=20`，只映射
+`0x1da4000` 并读 HC 寄存器，不写 MMIO、不提交命令、不碰分区。
+上机结果：
+
+```text
+NATIVE_UFS_PROBE MSM8998 read-only
+hc=0xfffffff7a520f000 cap=1587001f ver=00000210
+is=00000400 hcs=0000100f hce=00000001
+utrlba=ffffe000 utrldbr=00000000
+uecpa=00000001 uecdl=00000000 uecpr=fffff000 uecdme=00000000
+```
+
+结论：
+
+- `VER=0x210`：UFS 2.1 HC。
+- `HCS bit0=1`：UTRL ready；`HCE bit0=1`：controller enabled。
+- UEFI 已把控制器/链路留在可 handoff 状态，**不必先重做 PHY/GCC 初始化**。
+- 下一步：handoff 模式复用 firmware 请求列表/SMMU，先做只读 GPT/LUN 探测；
+  完整 root 需要 APFS 镜像写入 userdata，属于破坏性操作，必须单独确认/备份。
+
+相关提交：`drivers/NativeUfsProbe`、`d1a4eb6`；截图
+`assets/b5-ufs-probe-readonly.jpg`。
 
 ## 下一步
 
