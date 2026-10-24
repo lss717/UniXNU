@@ -544,7 +544,7 @@ ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes)
     prd[2] = 0;
     prd[3] = bytes - 1;
   }
-  gUfsCommands++;
+  gUfsCommands = gUfsCommands + 1;
   gUfsInFlight = 1;
   cacheClean (q->list, 4096);
   cacheClean (q->ucd, UFS_FW_UCD_SIZE);
@@ -735,8 +735,9 @@ NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
   if (!online || !bounce || !lock) {
     return kIOReturnNotReady;
   }
-  uint64_t request = gWindowRequests++;
-  gWindowBytes += count * 512;
+  uint64_t request = gWindowRequests;
+  gWindowRequests = request + 1;
+  gWindowBytes = gWindowBytes + count * 512;
   gWindowLastBlock = block;
   gWindowLastCount = count;
   gWindowInFlight = 1;
