@@ -3,7 +3,7 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 最终目标：iPhone10,2 / iOS 16.7.16（20H392）
-- 当前阶段：**B3 完成 + 普通控制台已上屏；已定位 prelink kext 范围失败的根因是 `vm_kernel_slid_top` 未覆盖 slide 后的 prelink 段（段地址被 `ml_static_slide()` 清 0）；修复补丁 `707fde9` 待 CI/上机验证；下一阶段 B5（UFS/root）**
+- 当前阶段：**B3 完成 + 普通控制台已上屏；prelink kext 范围错误已由 `707fde9` 修复，当前阻塞是 source-corecrypto 与 prelinked corecrypto 重复 start 的 PRNG 断言；跳过二次 start 的镜像 `03e52565…` 待上机；下一阶段 B5（UFS/root）**
 - 当前 gate：**G1 通过（2026-10-22）**
 - 基线提交：UniXNU `e95b37d`（main）
 - 本地提交：UniXNU `c8a5eeb`（计划）、`18f3020`（package）、`270ea4b`（B1 记录）、`692d70f`（docs 记录）；本轮 B1 收尾见 `git log -- plans/oneplus5-cheeseburger`
@@ -326,11 +326,27 @@ lockdown_mode: lockdown mode in nvram is off
 修复：`patches/xnu/native-prelink-slid-top.patch` 把
 `vm_kernel_slid_top` 扩到 `MAX(vm_prelink_einfo, vm_prelink_etext,
 vm_prelink_edata)`，覆盖所有 coalesced prelink 段。已提交
-`707fde9`，等待 CI 和上机验证。当前构建还带一个临时的
-`zzz-kext-debug.patch`，只打印 CoreAnalytics 的 `kext_slide`/段表，
-验证通过后删除。
+`707fde9`；CI `39987525491` 上机后 **kext 范围错误已消失**，
+CoreAnalytics 等 kext 开始真正执行。
 
-这也是 B5（UFS/root）之前最后一个明显的 prelink 阻塞。
+新阻塞：`corecrypto` 通过 source-corecrypto 早启动已经调用过
+`corecrypto_kext_start()`，prelinked `com.apple.kec.corecrypto`
+再次 start 时触发：
+
+```
+prng_random.c:267 Assertion failed: !prng_ready
+```
+
+修复已合并进设备侧
+`kits/NativePrelink/patches/xnu-10063.141.1-security-init.patch`
+（避免第二轮构建时 security-init patch 无法 reverse）：当
+`source_corecrypto14_status == KERN_SUCCESS` 时，只跳过 prelinked
+`com.apple.kec.corecrypto` 的第二次 `startfunc`，仍保留
+`OSRuntimeInitializeCPP` 和 started 状态，依赖它的 kext 不受影响。
+设备仓库提交 `17dd668`；CI `40056309030` success，已构建
+`boot-corecrypto-skip-panic.img`（SHA `03e52565…`），等待上机。
+当前构建还带临时 `zzz-kext-debug.patch`，只打印 CoreAnalytics 的
+`kext_slide`/段表，验证后删除。
 
 ## 下一步
 
