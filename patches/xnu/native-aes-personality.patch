@@ -52,9 +52,9 @@ diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
 +#if defined(XNU_NATIVE_UFS_PROBE) && XNU_NATIVE_UFS_PROBE
 +    "   ,{"
 +    "     'IOClass'         = NativeUfsProbe;"
-+    "     'IOMatchCategory' = NativeUfsProbe;"
-+    "     'IOProviderClass' = IOPlatformExpertDevice;"
-+    "     'IOProbeScore'    = 400:32;"
++    "     'IOProviderClass' = IOPlatformDevice;"
++    "     'IONameMatch'     = 'qcom,ufshc';"
++    "     'IOProbeScore'    = 1000:32;"
 +    "   }"
 +#endif
      ")";
