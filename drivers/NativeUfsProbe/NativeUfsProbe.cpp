@@ -24,6 +24,20 @@
 #include <libkern/c++/OSNumber.h>
 #include <libkern/c++/OSString.h>
 
+extern "C" kern_return_t kernel_thread_start (void (*) (void *, wait_result_t),
+                                               void *, thread_t *);
+extern "C" void thread_deallocate (thread_t);
+
+static volatile uint64_t gUfsCommands;
+static volatile uint64_t gUfsInFlight;
+static volatile uint64_t gUfsLastLba;
+static volatile uint64_t gUfsLastBytes;
+static volatile uint64_t gWindowRequests;
+static volatile uint64_t gWindowBytes;
+static volatile uint64_t gWindowInFlight;
+static volatile uint64_t gWindowLastBlock;
+static volatile uint64_t gWindowLastCount;
+
 #define MSM8998_UFS_HC_BASE 0x1da4000ULL
 #define MSM8998_UFS_HC_SIZE 0x2500ULL
 #define MSM8998_GCC_BASE 0x100000ULL
@@ -416,6 +430,87 @@ dumpMediaServices (void)
 }
 
 static bool
+rootMediaRelevant (OSString *content, OSString *uuid, OSNumber *size)
+{
+  if (content) {
+    const char *value = content->getCStringNoCopy ();
+    if (value && (strcmp (value, "Apple_APFS") == 0 ||
+                  strcmp (value, "Apple_HFS") == 0)) {
+      return true;
+    }
+  }
+  if (uuid) {
+    const char *value = uuid->getCStringNoCopy ();
+    if (value && (strcmp (value, "04769D26-2CA0-4825-B443-E2E5F88300F2") == 0 ||
+                  strcmp (value, "8846FE78-2910-4297-AF97-D59BB6F8FC16") == 0)) {
+      return true;
+    }
+  }
+  if (size) {
+    uint64_t value = size->unsigned64BitValue ();
+    return value == 6077580800ULL || value == 3303014400ULL;
+  }
+  return false;
+}
+
+static void
+dumpRootMedia (void)
+{
+  OSDictionary *matching = IOService::serviceMatching ("IOMedia");
+  OSIterator *iterator = matching ? IOService::getMatchingServices (matching) : nullptr;
+  unsigned total = 0;
+  unsigned shown = 0;
+  while (iterator && total < 512) {
+    IOService *media = OSDynamicCast (IOService, iterator->getNextObject ());
+    if (!media) {
+      break;
+    }
+    total++;
+    OSString *content = OSDynamicCast (OSString, media->getProperty ("Content"));
+    OSString *bsd = OSDynamicCast (OSString, media->getProperty ("BSD Name"));
+    OSString *uuid = OSDynamicCast (OSString, media->getProperty ("UUID"));
+    OSNumber *size = OSDynamicCast (OSNumber, media->getProperty ("Size"));
+    OSNumber *base = OSDynamicCast (OSNumber, media->getProperty ("Base"));
+    if (shown < 32 && rootMediaRelevant (content, uuid, size)) {
+      IOLog ("NATIVE_UFS_ROOT_MEDIA: media[%u] content=%s bsd=%s size=%llx base=%llx uuid=%s\n",
+             shown,
+             content ? content->getCStringNoCopy () : "-",
+             bsd ? bsd->getCStringNoCopy () : "-",
+             size ? size->unsigned64BitValue () : 0ULL,
+             base ? base->unsigned64BitValue () : 0ULL,
+             uuid ? uuid->getCStringNoCopy () : "-");
+      shown++;
+    }
+  }
+  OSSafeReleaseNULL (iterator);
+  OSSafeReleaseNULL (matching);
+  IOLog ("NATIVE_UFS_ROOT_MEDIA: total=%u shown=%u\n", total, shown);
+}
+
+static void
+ufsHeartbeatThread (void *, wait_result_t)
+{
+  for (unsigned tick = 1; tick <= 18; tick++) {
+    IOSleep (5000);
+    IOLog ("NATIVE_UFS_HB: t=%us cmds=%llu inflight=%llu last=%llx/%llu "
+           "winReq=%llu winBytes=%llu winFlight=%llu winLast=%llx/%llu\n",
+           tick * 5,
+           (unsigned long long) gUfsCommands,
+           (unsigned long long) gUfsInFlight,
+           (unsigned long long) gUfsLastLba,
+           (unsigned long long) gUfsLastBytes,
+           (unsigned long long) gWindowRequests,
+           (unsigned long long) gWindowBytes,
+           (unsigned long long) gWindowInFlight,
+           (unsigned long long) gWindowLastBlock,
+           (unsigned long long) gWindowLastCount);
+    if (tick == 3 || tick == 6 || tick == 12 || tick == 18) {
+      dumpRootMedia ();
+    }
+  }
+}
+
+static bool
 ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes)
 {
   if (!q || q->poisoned || bytes > q->dataCapacity ||
@@ -449,6 +544,8 @@ ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes)
     prd[2] = 0;
     prd[3] = bytes - 1;
   }
+  gUfsCommands++;
+  gUfsInFlight = 1;
   cacheClean (q->list, 4096);
   cacheClean (q->ucd, UFS_FW_UCD_SIZE);
   static unsigned gCommandLogs;
@@ -465,15 +562,18 @@ ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes)
   uint32_t ocs = 0x0f;
   if (!waitForCompletion (q->list, &ocs)) {
     q->poisoned = true;
+    gUfsInFlight = 0;
     IOLog ("NATIVE_UFS_GPT: OCS timeout type=%08x ocs=%x\n", utrd[0], ocs);
     return false;
   }
   cacheInvalidate (q->list, 4096);
   cacheInvalidate (q->ucd, UFS_FW_UCD_SIZE);
   if (ocs) {
+    gUfsInFlight = 0;
     IOLog ("NATIVE_UFS_GPT: OCS=%x type=%08x\n", ocs, utrd[0]);
     return false;
   }
+  gUfsInFlight = 0;
   if (logCommand) {
     IOLog ("NATIVE_UFS_GPT: done type=%08x rsp=%02x/%02x tag=%u\n",
            utrd[0], ucd[UFS_RSP_OFFSET], ucd[UFS_RSP_OFFSET + 7],
@@ -559,6 +659,8 @@ NativeUfsProbe::readBlocks (uint8_t unit, uint64_t block, uint64_t count,
     cdb[7] = static_cast<uint8_t> (chunk >> 8);
     cdb[8] = static_cast<uint8_t> (chunk);
     unsigned bytes = chunk * blockSize;
+    gUfsLastLba = block;
+    gUfsLastBytes = bytes;
     if (!ufsCommand (&fQueue, unit, cdb, bytes, nullptr)) {
       ok = false;
       break;
@@ -590,6 +692,8 @@ NativeUfsProbe::readWindow4k (uint64_t lba, void *out)
   uint8_t cdb[16] = { 0x28 };
   putBe32 (cdb + 2, static_cast<uint32_t> (lba));
   cdb[8] = 1;
+  gUfsLastLba = lba;
+  gUfsLastBytes = 4096;
   bool ok = ufsCommand (&fQueue, 0, cdb, 4096, out);
   IOLockUnlock (fLock);
   return ok;
@@ -615,8 +719,6 @@ NativeUfsWindow::configure (NativeUfsProbe *parent, const char *name,
          bounce && lock;
 }
 
-static unsigned gWindowRequests;
-
 IOReturn
 NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
                                    UInt64 count, IOStorageAttributes *,
@@ -633,9 +735,13 @@ NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
   if (!online || !bounce || !lock) {
     return kIOReturnNotReady;
   }
-  unsigned request = gWindowRequests++;
+  uint64_t request = gWindowRequests++;
+  gWindowBytes += count * 512;
+  gWindowLastBlock = block;
+  gWindowLastCount = count;
+  gWindowInFlight = 1;
   if (request < 8 || (request & 255) == 0) {
-    IOLog ("NATIVE_UFS_WINDOW: %s req=%u block=%llx count=%llu\n",
+    IOLog ("NATIVE_UFS_WINDOW: %s req=%llu block=%llx count=%llu\n",
            label, request, block, count);
   }
   uint64_t cursor = absolute + block * 512;
@@ -659,6 +765,7 @@ NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
     done += wanted;
   }
   IOLockUnlock (lock);
+  gWindowInFlight = 0;
   completion->action (completion->target, completion->parameter,
                       ok ? kIOReturnSuccess : kIOReturnIOError, done);
   return kIOReturnSuccess;
@@ -1222,5 +1329,11 @@ NativeUfsProbe::start (IOService *provider)
   }
   IOLog ("NATIVE_UFS_GPT: start returning published=%u windows=%u\n",
          published ? 1 : 0, windowsPublished);
+  thread_t heartbeat = nullptr;
+  if (kernel_thread_start (ufsHeartbeatThread, nullptr, &heartbeat) == KERN_SUCCESS) {
+    thread_deallocate (heartbeat);
+  } else {
+    IOLog ("NATIVE_UFS_HB: cannot start heartbeat thread\n");
+  }
   return published;
 }
