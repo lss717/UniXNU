@@ -220,25 +220,83 @@ NativeUfsProbe::start (IOService *provider)
     panic ("NATIVE_UFS_GPT: firmware request outstanding db=%08x hcs=%08x",
            doorbell, hcs);
   }
-  IOLog ("NATIVE_UFS_GPT: fw_utrl=%llx using low window %llx\n",
-         utrlPhys, uint64_t (UFS_LOW_BASE));
-  OSSharedPtr<IOMemoryMap> lowMap;
-  uintptr_t lowVirt = mapPhysCacheable (UFS_LOW_BASE, UFS_DMA_SIZE, lowMap);
-  if (!lowVirt) {
-    panic ("NATIVE_UFS_GPT: low DMA window map failed");
+  OSSharedPtr<IOMemoryMap> fwMap;
+  uintptr_t fwVirt = mapPhysCacheable (utrlPhys, UFS_LIST_SIZE, fwMap);
+  if (!fwVirt) {
+    panic ("NATIVE_UFS_GPT: firmware list map failed base=%llx", utrlPhys);
   }
-  uint8_t *list = reinterpret_cast<uint8_t *> (lowVirt + UFS_LIST_OFFSET);
-  uint8_t *ucd = reinterpret_cast<uint8_t *> (lowVirt + UFS_UCD_OFFSET);
-  uint8_t *data = reinterpret_cast<uint8_t *> (lowVirt + UFS_DATA_OFFSET);
-  uint64_t listPhys = UFS_LOW_BASE + UFS_LIST_OFFSET;
-  uint64_t ucdPhys = UFS_LOW_BASE + UFS_UCD_OFFSET;
-  uint64_t dataPhys = UFS_LOW_BASE + UFS_DATA_OFFSET;
-  IOLog ("NATIVE_UFS_GPT: dma=%llx ucd=%llx data=%llx size=%x\n",
-         listPhys, ucdPhys, dataPhys, UFS_DMA_SIZE);
+  uint8_t *fwList = reinterpret_cast<uint8_t *> (fwVirt);
+  uint32_t fw[8];
+  for (unsigned index = 0; index < 8; index++) {
+    fw[index] = reinterpret_cast<volatile uint32_t *> (fwList)[index];
+  }
+  uint64_t fwUcd = (uint64_t (fw[5]) << 32) | fw[4];
+  uint32_t fwPrdtOff = (fw[7] >> 16) & 0xffff;
+  uint32_t fwPrdtCount = fw[7] & 0xffff;
+  IOLog ("NATIVE_UFS_GPT: fw_utrl=%llx utrd=%08x %08x %08x %08x ucd=%llx\n",
+         utrlPhys, fw[0], fw[1], fw[2], fw[3], fwUcd);
+  IOLog ("NATIVE_UFS_GPT: fw_utrd %08x %08x %08x %08x prdt=%x/%x\n",
+         fw[4], fw[5], fw[6], fw[7], fwPrdtOff, fwPrdtCount);
+
+  OSSharedPtr<IOMemoryMap> fwUcdMap, fwDataMap, lowMap;
+  uint8_t *fwUcdVirt = nullptr;
+  uint8_t *fwDataVirt = nullptr;
+  uint64_t fwData = 0;
+  uint32_t fwDataLen = 0;
+  if (fwUcd && fwPrdtCount && fwPrdtOff < UFS_LIST_SIZE / 4) {
+    uintptr_t ucdVirt = mapPhysCacheable (fwUcd, UFS_LIST_SIZE, fwUcdMap);
+    if (ucdVirt) {
+      fwUcdVirt = reinterpret_cast<uint8_t *> (ucdVirt);
+      uint32_t *prd = reinterpret_cast<uint32_t *> (fwUcdVirt + fwPrdtOff * 4);
+      fwData = (uint64_t (prd[1]) << 32) | prd[0];
+      fwDataLen = prd[3] + 1;
+      if (fwData) {
+        uintptr_t dataVirt = mapPhysCacheable (fwData, UFS_DATA_MAX, fwDataMap);
+        if (dataVirt) {
+          fwDataVirt = reinterpret_cast<uint8_t *> (dataVirt);
+        }
+      }
+      IOLog ("NATIVE_UFS_GPT: fw ucd/data=%llx/%llx len=%x\n",
+             fwUcd, fwData, fwDataLen);
+    }
+  }
+
+  uint8_t *list = nullptr;
+  uint8_t *ucd = nullptr;
+  uint8_t *data = nullptr;
+  uint64_t listPhys = 0, ucdPhys = 0, dataPhys = 0;
+  uint32_t dataCapacity = 0;
+  if (fwUcdVirt && fwDataVirt && fwDataLen >= 512) {
+    list = fwList;
+    listPhys = utrlPhys;
+    ucd = fwUcdVirt;
+    ucdPhys = fwUcd;
+    data = fwDataVirt;
+    dataPhys = fwData;
+    dataCapacity = fwDataLen > UFS_DATA_MAX ? UFS_DATA_MAX : fwDataLen;
+    IOLog ("NATIVE_UFS_GPT: using firmware DMA list/ucd/data\n");
+  } else {
+    IOLog ("NATIVE_UFS_GPT: firmware DMA metadata invalid, low window\n");
+    uintptr_t lowVirt = mapPhysCacheable (UFS_LOW_BASE, UFS_DMA_SIZE, lowMap);
+    if (!lowVirt) {
+      panic ("NATIVE_UFS_GPT: low DMA window map failed");
+    }
+    list = reinterpret_cast<uint8_t *> (lowVirt + UFS_LIST_OFFSET);
+    ucd = reinterpret_cast<uint8_t *> (lowVirt + UFS_UCD_OFFSET);
+    data = reinterpret_cast<uint8_t *> (lowVirt + UFS_DATA_OFFSET);
+    listPhys = UFS_LOW_BASE + UFS_LIST_OFFSET;
+    ucdPhys = UFS_LOW_BASE + UFS_UCD_OFFSET;
+    dataPhys = UFS_LOW_BASE + UFS_DATA_OFFSET;
+    dataCapacity = UFS_DATA_MAX;
+  }
+  IOLog ("NATIVE_UFS_GPT: dma=%llx ucd=%llx data=%llx cap=%x\n",
+         listPhys, ucdPhys, dataPhys, dataCapacity);
   zero32 (list, UFS_LIST_SIZE);
   zero32 (ucd, UFS_LIST_SIZE);
-  zero32 (data, UFS_DATA_MAX);
-  cacheClean (list, UFS_DMA_SIZE);
+  zero32 (data, dataCapacity);
+  cacheClean (list, UFS_LIST_SIZE);
+  cacheClean (ucd, UFS_LIST_SIZE);
+  cacheClean (data, dataCapacity);
 
   // Take over the queue with our own static UTRL list.  The firmware list lives
   // in reserved memory; writing it is not a safe early-boot assumption.  Do not
@@ -273,8 +331,9 @@ NativeUfsProbe::start (IOService *provider)
   uint8_t tag = 0;
   auto issue = [&] (uint8_t lun, const uint8_t *cdb, unsigned cdbLength,
                     uint32_t dataLength) -> ProbeResult {
-    if (dataLength > UFS_DATA_MAX) {
-      panic ("NATIVE_UFS_GPT: command data length %u exceeds buffer", dataLength);
+    if (dataLength > dataCapacity) {
+      panic ("NATIVE_UFS_GPT: command data length %u exceeds buffer %u",
+             dataLength, dataCapacity);
     }
     zero32 (list, 32);
     zero32 (ucd, UFS_LIST_SIZE);
@@ -442,7 +501,7 @@ NativeUfsProbe::start (IOService *provider)
 } while (0)
   ADD ("NATIVE_UFS_GPT handoff read-only\n");
   ADD ("hc=%p cap=%08x ver=%08x utrl=%llx\n", (void *) hc, cap, version, utrlPhys);
-  ADD ("smmu=direct (ufshc has no iommus) dma=%llx\n", listPhys);
+  ADD ("smmu=firmware/direct dma=%llx cap=%x\n", listPhys, dataCapacity);
   for (unsigned lun = 0; lun < maxLun; lun++) {
     ADD ("L%u last=%08x bs=%08x st=%06x\n", lun, lastLba[lun],
          blockSize[lun], lunStatus[lun]);
