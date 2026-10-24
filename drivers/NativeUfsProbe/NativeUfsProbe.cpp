@@ -381,6 +381,9 @@ mediaReportThread (void *, wait_result_t)
   IOLog ("NATIVE_UFS_MEDIA: report thread start\n");
   unsigned count = 0;
   for (unsigned tick = 0; tick < 200; tick++) {
+    if (tick < 3) {
+      IOLog ("NATIVE_UFS_MEDIA: tick=%u enter\n", tick);
+    }
     OSDictionary *matching = IOService::serviceMatching ("IOMedia");
     OSIterator *iterator = matching ? IOService::getMatchingServices (matching) : nullptr;
     count = 0;
@@ -389,13 +392,16 @@ mediaReportThread (void *, wait_result_t)
     }
     OSSafeReleaseNULL (iterator);
     OSSafeReleaseNULL (matching);
-    if (tick % 50 == 0 || count) {
+    if (tick < 3) {
       IOLog ("NATIVE_UFS_MEDIA: tick=%u media=%u\n", tick, count);
     }
     if (count) {
       break;
     }
     IOSleep (100);
+    if (tick < 3) {
+      IOLog ("NATIVE_UFS_MEDIA: tick=%u slept\n", tick);
+    }
   }
   IOSleep (500);
   dumpMediaServices ();
@@ -572,6 +578,8 @@ NativeUfsLun::configure (NativeUfsProbe *parent, uint8_t unit, uint64_t lastLba,
   return true;
 }
 
+static unsigned gIoRequestLog;
+
 IOReturn
 NativeUfsLun::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
                                 UInt64 count, IOStorageAttributes *,
@@ -585,9 +593,19 @@ NativeUfsLun::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
       buffer->getLength () != count * sector) {
     return kIOReturnBadArgument;
   }
+  if (gIoRequestLog < 16) {
+    IOLog ("NATIVE_UFS_IO: req block=%llx count=%llu sector=%x len=%llx\n",
+           block, count, sector, buffer->getLength ());
+    gIoRequestLog++;
+  }
   uint64_t done = 0;
   bool ok = host->readBlocks (lun, block, count, sector, buffer, &done);
   IOReturn status = ok ? kIOReturnSuccess : kIOReturnIOError;
+  if (gIoRequestLog < 32) {
+    IOLog ("NATIVE_UFS_IO: done block=%llx count=%llu ok=%u done=%llx status=%x\n",
+           block, count, ok ? 1 : 0, done, status);
+    gIoRequestLog++;
+  }
   if (completion && completion->action) {
     completion->action (completion->target, completion->parameter, status, done);
   }
