@@ -582,7 +582,7 @@ NativeUfsLun::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
     IOLog ("NATIVE_UFS_IO: timing block=%llx ufs_ticks=%llu total_ticks=%llu\n",
            block, finished - started, mach_absolute_time () - started);
   }
-  if (gIoRequests >= 8 && !gMediaDumped) {
+  if (gIoRequests >= 4 && !gMediaDumped) {
     gMediaDumped = true;
     IOLog ("NATIVE_UFS_IO: one-shot IOMedia snapshot before completion at request %u\n",
            gIoRequests);
