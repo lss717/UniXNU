@@ -18,6 +18,10 @@
 #include <kern/task.h>
 #include <libkern/libkern.h>
 #include <libkern/c++/OSData.h>
+#include <libkern/c++/OSDictionary.h>
+#include <libkern/c++/OSIterator.h>
+#include <libkern/c++/OSNumber.h>
+#include <libkern/c++/OSString.h>
 
 #define MSM8998_UFS_HC_BASE 0x1da4000ULL
 #define MSM8998_UFS_HC_SIZE 0x2500ULL
@@ -334,6 +338,36 @@ blockRange (uint64_t block, uint64_t count, uint64_t last, uint32_t blockSize)
   return count && blockSize >= 512 && blockSize <= 4096 &&
          (blockSize & (blockSize - 1)) == 0 && block <= last &&
          count - 1 <= last - block;
+}
+
+static void
+dumpMediaServices (void)
+{
+  OSDictionary *matching = IOService::serviceMatching ("IOMedia");
+  OSIterator *iterator = matching ? IOService::getMatchingServices (matching) : nullptr;
+  unsigned count = 0;
+  while (iterator && count < 16) {
+    IOService *media = OSDynamicCast (IOService, iterator->getNextObject ());
+    if (!media) {
+      break;
+    }
+    OSString *content = OSDynamicCast (OSString, media->getProperty ("Content"));
+    OSString *bsd = OSDynamicCast (OSString, media->getProperty ("BSD Name"));
+    OSString *uuid = OSDynamicCast (OSString, media->getProperty ("UUID"));
+    OSNumber *size = OSDynamicCast (OSNumber, media->getProperty ("Size"));
+    OSNumber *base = OSDynamicCast (OSNumber, media->getProperty ("Base"));
+    IOLog ("NATIVE_UFS_MEDIA: media[%u] content=%s bsd=%s size=%llx base=%llx uuid=%s\n",
+           count,
+           content ? content->getCStringNoCopy () : "-",
+           bsd ? bsd->getCStringNoCopy () : "-",
+           size ? size->unsigned64BitValue () : 0ULL,
+           base ? base->unsigned64BitValue () : 0ULL,
+           uuid ? uuid->getCStringNoCopy () : "-");
+    count++;
+  }
+  OSSafeReleaseNULL (iterator);
+  OSSafeReleaseNULL (matching);
+  IOLog ("NATIVE_UFS_MEDIA: total=%u\n", count);
 }
 
 static bool
@@ -940,6 +974,10 @@ NativeUfsProbe::start (IOService *provider)
            lastLba[0], blockSize[0]);
   } else {
     IOLog ("NATIVE_UFS_GPT: LUN0 publication failed\n");
+  }
+  if (published) {
+    IOSleep (2000);
+    dumpMediaServices ();
   }
   if (child) {
     child->release ();
