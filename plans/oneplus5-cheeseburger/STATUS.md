@@ -3,7 +3,7 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 最终目标：iPhone10,2 / iOS 16.7.16（20H392）
-- 当前阶段：**B3 完成；B5 只读 UFS/GPT 已打通，LUN0 只读 IOBlockStorageDevice 已发布并进入 IOStorageDriver 读盘路径；完整 root 仍需 APFS/userdata 写入**
+- 当前阶段：**B3 完成；B5 只读 UFS/GPT 里程碑已冻结（LUN0 只读读盘路径成立；IOMedia 未直接打印）；下一阶段 B5 root 为破坏性写入，需单独批准**
 - 当前 gate：**G1 通过（2026-10-22）**
 - 基线提交：UniXNU `e95b37d`（main）
 - 本地提交：UniXNU `c8a5eeb`（计划）、`18f3020`（package）、`270ea4b`（B1 记录）、`692d70f`（docs 记录）；本轮 B1 收尾见 `git log -- plans/oneplus5-cheeseburger`
@@ -534,10 +534,52 @@ NATIVE_UFS_GPT: done type=05000000 rsp=21/00 tag=1
 ```
 
 发布后 IOStorageDriver 已匹配并连续读取 4096 字节块，说明只读 block-device
-路径和 IOMedia 探测已经启动；没有新的 data abort 或 panic。日志中的
-root matcher 仍等待 `IOMedia Content=Apple_HFS`，尚未证明 APFS 根卷/IOMedia
-最终内容匹配。完整 B5 root 仍需后续只读 IORegistry/APFS 验证，以及单独批准
-的 userdata 写入；本阶段没有修改任何分区。
+路径已经成立；没有新的 data abort 或 panic。IOMedia 自动创建的日志没有直接
+打印出来（快照线程会被同步读盘饿死；第 4 次请求快照为 `total=0`），因此
+**IOMedia 存在性只算间接证据，不再继续为打印 IOMedia 反复构建**。
+
+### B5 只读收尾（A，2026-10-24）
+
+决定停止 IOMedia 日志验证循环，冻结 B5 只读里程碑：
+
+- **已验证**：UFS warm-link、NOP/CAP16/READ10、GPT header/entries、6 个 LUN
+  容量、LUN0 只读 `IOBlockStorageDevice` 发布、IOStorageDriver 连续 4 KiB
+  读、与主机备份的 GPT/容量逐项一致。
+- **未直接验证**：IOMedia 自动创建及其 `Content`；root matcher 仍等待
+  `IOMedia Content=Apple_HFS`。
+- **不视为失败**：当前 LUN0 的 `userdata` 是 Android 分区，不是 APFS/HFS
+  根卷；即使 IOMedia 出现，也不会凭空匹配 Apple 根卷。
+- **不再做**：为打印 `NATIVE_UFS_MEDIA` 继续构建/启动；继续调快照阈值或
+  registry 枚举。该验证投入产出比低，不改变 root 结论。
+- **边界**：本阶段全程只读，没有 WRITE/UNMAP/FORMAT，没有刷写、擦除或
+  修改任何分区。
+
+下一阶段 B5 root 必须写入 userdata/APFS 根卷，属于破坏性操作；在执行前需要
+单独批准、当前完整备份，以及可验证的 APFS 根卷输入。
+
+### B5 root（B：破坏性规划，未执行）
+
+前置条件（当前只完成第 1 项）：
+
+1. 当前系统完整备份存在且已校验：
+   `/home/ls/UniXNU/.cache/firmware/backups/20261024-125857/`。
+2. 明确批准写入 `userdata`；写入前不得有任何自动刷写/擦除。
+3. 有可验证的 APFS 根卷输入（根 UUID、卷结构、与目标 iOS 版本匹配）；
+   当前尚未确认这类输入存在。
+4. UFS 驱动需要增加受控 WRITE10 路径；现有探针/只读 block device 没有写
+   命令，不能直接复用。
+
+计划草案：
+
+1. 校验备份 SHA256，并记录 userdata 当前绝对范围
+   `0x14f40..0x1c627fa`、块大小 4096。
+2. 在离线环境构建/验证 APFS root 镜像与根 UUID；先做完整回读校验。
+3. 增加隔离的写入工具/测试，只允许写 userdata 窗口，禁止其他 LUN/分区。
+4. 执行前再次确认备份可恢复；写入后完整回读并比较哈希。
+5. 启动 XNU，验证 IOMedia/APFS 根卷匹配和后续 AMFI/Trust Cache。
+6. 失败时只使用已校验备份恢复；不重试盲写。
+
+**当前不执行第 2 步以后的任何写操作。** 先确认 APFS 输入与用户批准。
 
 ## 下一步
 
