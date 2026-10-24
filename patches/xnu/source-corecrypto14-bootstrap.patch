@@ -1,8 +1,6 @@
-diff --git a/osfmk/prng/prng_random.c b/osfmk/prng/prng_random.c
-index c52f0ab..412c167 100644
 --- a/osfmk/prng/prng_random.c
 +++ b/osfmk/prng/prng_random.c
-@@ -420,3 +420,35 @@ random_bool_gen_bits(struct bool_gen * bg, unsigned int * buffer, unsigned int c
+@@ -420,3 +420,39 @@
  	}
  	return rbits;
  }
@@ -20,6 +18,10 @@ index c52f0ab..412c167 100644
 +static void
 +source_corecrypto14_bootstrap(void)
 +{
++	if (prng_ready) {
++		return;
++	}
++
 +	static kmod_info_t info = {
 +		.info_version = KMOD_INFO_VERSION,
 +		.name = "source-corecrypto14-evaluation",
