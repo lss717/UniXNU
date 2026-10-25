@@ -1,6 +1,6 @@
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -8021,9 +8021,20 @@
+@@ -8021,9 +8021,26 @@
  	mach_vm_size_t map_page_size = vm_map_page_size(map);
  
  	(void) mach_vm_allocate_kernel(map, &scratch_addr, map_page_size, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE);
@@ -16,8 +16,14 @@
 +	int dyld_dir_err = vnode_lookup("/System/Library/dyld", 0,
 +	    &probe, vfs_context_kernel());
 +	if (probe) { vnode_put(probe); probe = NULLVP; }
-+	panic("NATIVE_SYSTEMOS: stage=%d status=%d union=%d dev=%s err=%d cacheDir=%d dyldDir=%d",
++	int arm64_err = vnode_lookup("/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64", 0,
++	    &probe, vfs_context_kernel());
++	if (probe) { vnode_put(probe); probe = NULLVP; }
++	int arm64e_err = vnode_lookup("/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64e", 0,
++	    &probe, vfs_context_kernel());
++	if (probe) { vnode_put(probe); probe = NULLVP; }
++	panic("NATIVE_SYSTEMOS: stage=%d status=%d union=%d dev=%s err=%d cacheDir=%d dyldDir=%d arm64=%d arm64e=%d",
 +	    native_owner_cache_stage, native_owner_cache_status,
 +	    native_owner_cache_native_union, native_owner_cache_device_path, cache_error,
-+	    cache_dir_err, dyld_dir_err);
++	    cache_dir_err, dyld_dir_err, arm64_err, arm64e_err);
  	if (cache_error) panic("offline owner SystemOS mount failed: %d", cache_error);
