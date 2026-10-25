@@ -13,9 +13,9 @@
 +		vnode_t probe = NULLVP;
 +		struct vnode_attr nva;
 +		uint64_t size = 0;
-+		uint8_t hdr[0x400] = {0};
-+		uint8_t subs[64 * 56] = {0};
-+		uint8_t shdr[0x100] = {0};
++		static uint8_t hdr[0x400];
++		static uint8_t subs[64 * 56];
++		static uint8_t shdr[0x100];
 +		uint32_t sub_off = 0, sub_cnt = 0;
 +		int lookup_err = -1, stat_err = -1, open_err = -1, read_err = -1, sub_err = -1;
 +		int ok = 0, miss = 0, first_missing_err = 0, uuid_match = -1;
