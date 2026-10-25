@@ -34,6 +34,9 @@ static volatile uint64_t gUfsLastLba;
 static volatile uint64_t gUfsLastBytes;
 static volatile uint64_t gUfsLastLoops;
 static volatile uint64_t gUfsLastTicks;
+static bool gNopActive;
+
+#define UFS_TIMEOUT_TICKS 100000000ULL   // about 5.2 s at the 19.2 MHz timebase
 static volatile uint64_t gWindowRequests;
 static volatile uint64_t gWindowBytes;
 static volatile uint64_t gWindowInFlight;
@@ -381,14 +384,21 @@ readCommandAllowed (unsigned opcode, unsigned direction, unsigned bytes)
 }
 
 static bool
-waitForCompletion (uint8_t *list, uint32_t *ocs, unsigned *loops)
+waitForCompletion (uint8_t *list, uint32_t *ocs, unsigned *loops,
+                   uint64_t timeoutTicks)
 {
+  uint64_t start = mach_absolute_time ();
   for (unsigned loop = 0; loop < 100000; loop++) {
     cacheInvalidate (list, 64);
     *ocs = read32 (reinterpret_cast<uintptr_t> (list), 8) & 0xff;
     if (*ocs != 0x0f) {
       *loops = loop;
       return true;
+    }
+    if (timeoutTicks && (loop & 63) == 0 &&
+        mach_absolute_time () - start > timeoutTicks) {
+      *loops = loop;
+      return false;
     }
     IODelay (2);
   }
@@ -517,7 +527,8 @@ ufsHeartbeatThread (void *, wait_result_t)
 }
 
 static bool
-ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes)
+ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes,
+           uint64_t timeoutTicks = UFS_TIMEOUT_TICKS)
 {
   if (!q || q->poisoned || bytes > q->dataCapacity ||
       read32 (q->hc, UFS_REG_UTRLDBR) ||
@@ -552,14 +563,36 @@ ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes)
   }
   gUfsCommands = gUfsCommands + 1;
   gUfsInFlight = 1;
+  if (gNopActive) {
+    IOLog ("NATIVE_UFS_NOP: submit before cacheClean is=%x hcs=%x db=%x\n",
+           read32 (q->hc, UFS_REG_IS), read32 (q->hc, UFS_REG_HCS),
+           read32 (q->hc, UFS_REG_UTRLDBR));
+  }
   cacheClean (q->list, 4096);
   cacheClean (q->ucd, UFS_FW_UCD_SIZE);
+  if (gNopActive) {
+    IOLog ("NATIVE_UFS_NOP: submit after cacheClean is=%x hcs=%x db=%x\n",
+           read32 (q->hc, UFS_REG_IS), read32 (q->hc, UFS_REG_HCS),
+           read32 (q->hc, UFS_REG_UTRLDBR));
+    IODelay (1000);
+    IOLog ("NATIVE_UFS_NOP: submit before doorbell\n");
+  }
   write32 (q->hc, UFS_REG_IS, 0xffffffffU);
   write32 (q->hc, UFS_REG_UTRLDBR, 1);
+  if (gNopActive) {
+    IOLog ("NATIVE_UFS_NOP: submit after doorbell is=%x hcs=%x db=%x\n",
+           read32 (q->hc, UFS_REG_IS), read32 (q->hc, UFS_REG_HCS),
+           read32 (q->hc, UFS_REG_UTRLDBR));
+    IODelay (1000);
+  }
   uint64_t commandStart = mach_absolute_time ();
   uint32_t ocs = 0x0f;
   unsigned loops = 0;
-  if (!waitForCompletion (q->list, &ocs, &loops)) {
+  if (gNopActive) {
+    IOLog ("NATIVE_UFS_NOP: waiting timeout=%llu\n",
+           (unsigned long long) timeoutTicks);
+  }
+  if (!waitForCompletion (q->list, &ocs, &loops, timeoutTicks)) {
     q->poisoned = true;
     gUfsInFlight = 0;
     gUfsLastLoops = loops;
@@ -635,12 +668,26 @@ ufsCommand (UfsQueue *q, uint8_t lun, const uint8_t *cdb, unsigned bytes, void *
 static bool
 ufsNop (UfsQueue *q)
 {
-  if (!q || q->poisoned || read32 (q->hc, UFS_REG_UTRLDBR)) {
+  IOLog ("NATIVE_UFS_NOP: enter\n");
+  if (!q) {
+    return false;
+  }
+  IOLog ("NATIVE_UFS_NOP: precheck\n");
+  uint32_t doorbell = read32 (q->hc, UFS_REG_UTRLDBR);
+  IOLog ("NATIVE_UFS_NOP: precheck poisoned=%u db=%x\n",
+         q->poisoned ? 1 : 0, doorbell);
+  if (q->poisoned || doorbell) {
     return false;
   }
   zero32 (q->ucd, UFS_FW_UCD_SIZE);
   q->ucd[3] = 1;
-  if (!ufsSubmit (q, 0, 0)) {
+  gNopActive = true;
+  IOLog ("NATIVE_UFS_NOP: before submit\n");
+  bool submitted = ufsSubmit (q, 0, 0, UFS_TIMEOUT_TICKS);
+  gNopActive = false;
+  IOLog ("NATIVE_UFS_NOP: after submit ok=%u poisoned=%u\n",
+         submitted ? 1 : 0, q->poisoned ? 1 : 0);
+  if (!submitted) {
     return false;
   }
   const uint8_t *response = q->ucd + UFS_RSP_OFFSET;
@@ -1124,6 +1171,9 @@ NativeUfsProbe::start (IOService *provider)
 
   UfsQueue queue = { hc, list, ucd, data, ucdPhys, dataPhys, dataCapacity, false };
 
+  IOLog ("NATIVE_UFS_NOP: settle 100ms before first command\n");
+  IODelay (100000);
+  IOLog ("NATIVE_UFS_NOP: settle complete\n");
   if (!ufsNop (&queue)) {
     panic ("NATIVE_UFS_GPT: firmware-page NOP failed; see OCS/type log");
   }
