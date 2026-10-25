@@ -1,6 +1,6 @@
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -8021,9 +8021,76 @@
+@@ -8021,9 +8021,77 @@
  	mach_vm_size_t map_page_size = vm_map_page_size(map);
  
  	(void) mach_vm_allocate_kernel(map, &scratch_addr, map_page_size, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE);
@@ -12,68 +12,69 @@
 +	vnode_t probe = NULLVP;
 +	struct vnode_attr nva;
 +	uint64_t arm64_size = 0, dyld_size = 0, libsys_size = 0;
-+	uint32_t cache_magic0 = 0, cache_magic1 = 0, dyld_magic = 0;
-+	int cache_dir_err = vnode_lookup("/System/Library/Caches/com.apple.dyld", 0,
++	int cache_dir_err, arm64_err, arm64e_err, split1_err, split2_err, symbols_err;
++	int dyld_err, libsys_err, dyld_dir_err;
++
++	boot_progress_stage("diag cache dir");
++	cache_dir_err = vnode_lookup("/System/Library/Caches/com.apple.dyld", 0,
 +	    &probe, vfs_context_kernel());
 +	if (probe) { vnode_put(probe); probe = NULLVP; }
-+	int arm64_err = vnode_lookup("/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64", 0,
++	boot_progress_stage("diag arm64 lookup");
++	arm64_err = vnode_lookup("/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64", 0,
 +	    &probe, vfs_context_kernel());
 +	if (probe) {
++		boot_progress_stage("diag arm64 stat");
 +		VATTR_INIT(&nva);
 +		if (vnode_getattr(probe, &nva, vfs_context_kernel()) == 0) arm64_size = nva.va_data_size;
-+		char mbuf[32] = {};
-+		uio_t uio = uio_create(1, 0, UIO_SYSSPACE, UIO_READ);
-+		if (uio) {
-+			uio_addiov(uio, (user_addr_t)(uintptr_t)mbuf, sizeof(mbuf));
-+			if (VNOP_READ(probe, uio, 0, vfs_context_kernel()) == 0) {
-+				memcpy(&cache_magic0, mbuf, 4);
-+				memcpy(&cache_magic1, mbuf + 4, 4);
-+			}
-+			uio_free(uio);
-+		}
++		boot_progress_stage("diag arm64 put");
 +		vnode_put(probe); probe = NULLVP;
 +	}
-+	int arm64e_err = vnode_lookup("/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64e", 0,
++	boot_progress_stage("diag arm64e lookup");
++	arm64e_err = vnode_lookup("/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64e", 0,
 +	    &probe, vfs_context_kernel());
 +	if (probe) { vnode_put(probe); probe = NULLVP; }
-+	int split1_err = vnode_lookup("/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.01", 0,
++	boot_progress_stage("diag split1 lookup");
++	split1_err = vnode_lookup("/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.01", 0,
 +	    &probe, vfs_context_kernel());
 +	if (probe) { vnode_put(probe); probe = NULLVP; }
-+	int split2_err = vnode_lookup("/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.02", 0,
++	boot_progress_stage("diag split2 lookup");
++	split2_err = vnode_lookup("/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.02", 0,
 +	    &probe, vfs_context_kernel());
 +	if (probe) { vnode_put(probe); probe = NULLVP; }
-+	int symbols_err = vnode_lookup("/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.symbols", 0,
++	boot_progress_stage("diag symbols lookup");
++	symbols_err = vnode_lookup("/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.symbols", 0,
 +	    &probe, vfs_context_kernel());
 +	if (probe) { vnode_put(probe); probe = NULLVP; }
-+	int dyld_err = vnode_lookup("/usr/lib/dyld", 0, &probe, vfs_context_kernel());
++	boot_progress_stage("diag dyld lookup");
++	dyld_err = vnode_lookup("/usr/lib/dyld", 0, &probe, vfs_context_kernel());
 +	if (probe) {
++		boot_progress_stage("diag dyld stat");
 +		VATTR_INIT(&nva);
 +		if (vnode_getattr(probe, &nva, vfs_context_kernel()) == 0) dyld_size = nva.va_data_size;
-+		char mbuf[8] = {};
-+		uio_t uio = uio_create(1, 0, UIO_SYSSPACE, UIO_READ);
-+		if (uio) {
-+			uio_addiov(uio, (user_addr_t)(uintptr_t)mbuf, sizeof(mbuf));
-+			if (VNOP_READ(probe, uio, 0, vfs_context_kernel()) == 0) memcpy(&dyld_magic, mbuf, 4);
-+			uio_free(uio);
-+		}
++		boot_progress_stage("diag dyld put");
 +		vnode_put(probe); probe = NULLVP;
 +	}
-+	int libsys_err = vnode_lookup("/usr/lib/libSystem.B.dylib", 0, &probe, vfs_context_kernel());
++	boot_progress_stage("diag libSystem lookup");
++	libsys_err = vnode_lookup("/usr/lib/libSystem.B.dylib", 0, &probe, vfs_context_kernel());
 +	if (probe) {
++		boot_progress_stage("diag libSystem stat");
 +		VATTR_INIT(&nva);
 +		if (vnode_getattr(probe, &nva, vfs_context_kernel()) == 0) libsys_size = nva.va_data_size;
++		boot_progress_stage("diag libSystem put");
 +		vnode_put(probe); probe = NULLVP;
 +	}
-+	int dyld_dir_err = vnode_lookup("/System/Library/dyld", 0, &probe, vfs_context_kernel());
++	boot_progress_stage("diag dyldDir lookup");
++	dyld_dir_err = vnode_lookup("/System/Library/dyld", 0, &probe, vfs_context_kernel());
 +	if (probe) { vnode_put(probe); probe = NULLVP; }
++	boot_progress_stage("diag panic");
 +	panic("NATIVE_SYSTEMOS: stage=%d status=%d union=%d dev=%s err=%d dyld=%llx "
-+	    "cacheDir=%d arm64=%d size=%llu magic=%08x%08x arm64e=%d split1=%d split2=%d syms=%d "
-+	    "dyldPath=%d size=%llu magic=%08x libSystem=%d size=%llu dyldDir=%d",
++	    "cacheDir=%d arm64=%d size=%llu arm64e=%d split1=%d split2=%d syms=%d "
++	    "dyldPath=%d size=%llu libSystem=%d size=%llu dyldDir=%d",
 +	    native_owner_cache_stage, native_owner_cache_status,
 +	    native_owner_cache_native_union, native_owner_cache_device_path, cache_error,
 +	    (unsigned long long) native_owner_cache_dyld_flags,
-+	    cache_dir_err, arm64_err, (unsigned long long) arm64_size, cache_magic0, cache_magic1,
++	    cache_dir_err, arm64_err, (unsigned long long) arm64_size,
 +	    arm64e_err, split1_err, split2_err, symbols_err,
-+	    dyld_err, (unsigned long long) dyld_size, dyld_magic,
++	    dyld_err, (unsigned long long) dyld_size,
 +	    libsys_err, (unsigned long long) libsys_size, dyld_dir_err);
  	if (cache_error) panic("offline owner SystemOS mount failed: %d", cache_error);
