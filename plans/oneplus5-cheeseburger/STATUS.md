@@ -3,7 +3,7 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 最终目标：iPhone10,2 / iOS 16.7.16（20H392）
-- 当前阶段：**B3 完成；B5 只读 UFS/GPT 里程碑已冻结（LUN0 只读读盘路径成立；IOMedia 未直接打印）；下一阶段 B5 root 为破坏性写入，需单独批准**
+- 当前阶段：**B5 root 已挂载成功（iPad7,1 / 17.7.11，APFS + UUID 匹配）；卡在未封印根卷的 root 认证；下一阶段临时旁路 root 认证做 bring-up，最终改 VerifiedRoot**
 - 当前 gate：**G1 通过（2026-10-22）**
 - 基线提交：UniXNU `e95b37d`（main）
 - 本地提交：UniXNU `c8a5eeb`（计划）、`18f3020`（package）、`270ea4b`（B1 记录）、`692d70f`（docs 记录）；本轮 B1 收尾见 `git log -- plans/oneplus5-cheeseburger`
@@ -610,6 +610,45 @@ B5 先用现有 **iPad7,1 / iPadOS 17.7.11（21H461）** fixture 跑通，之后
 但执行前仍应保留当前系统完整备份，并只写 userdata 分区，不碰其他 LUN/
 分区。
 
+### B5 root 挂载成功（2026-10-25）
+
+iPad7,1 / iPadOS 17.7.11 fixture 的 `userdata-root.img` 已写入并校验；XNU
+现在能完成 **UFS 窗口发布、APFS 容器挂载、根卷 UUID 匹配**。
+
+关键结果：
+
+- userdata 写入/回读：SHNGROOT `magic=474e4853/544f4f52`，OS/SystemOS
+  窗口偏移和 SHA256 全部匹配主机镜像。
+- `NativeUfsWindow` 以 512B 逻辑块发布 OS/SystemOS；UFS 侧最多 128 KiB
+  合并读。
+- 根 UUID 来自 OS APFS 卷：
+  `04769D26-2CA0-4825-B443-E2E5F88300F2`，通过 `/chosen/root-matching`
+  匹配成功。
+- APFS 已打印 `dev_init`/`nx_mount`；根卷挂载完成。
+- 最后停点：
+  ```text
+  rootvp not authenticated after mounting @bsd_init.c:1100
+  ```
+  这是未封印 restore OS 的 `FSIOC_KERNEL_ROOTAUTH` 拒绝，不是 mount
+  失败。
+
+重要回归修复：
+
+- `IODelay`/`IOSleep` 在此内核阶段会永久挂住；UFS NOP/心跳/超时已经全部
+  改为 `mach_absolute_time` 忙等或纯轮询。
+- 逐条 UFS 命令日志会严重拖慢 I/O；已关闭，仅保留进度/错误/窗口相位。
+
+当前测试镜像：
+
+- `out/cheeseburger/boot/boot-ufsH7-panic.img`
+- CI run `40155569182`，commit `drivers: remove timer waits from UFS probe`
+
+下一步（临时 bring-up，非最终安全形态）：
+
+1. 加 boot arg `native-skip-root-auth=1`，仅在 root auth 拒绝时继续；
+2. 目标进入 launchd/AMFI，记录下一批用户空间阻塞；
+3. 之后用 `VerifiedRoot` 替换旁路，恢复真实 root 认证。
+
 ## 下一步
 
 0. ~~先跑 PSCI 对照镜像~~（2026-10-23 已完成；8 s / 30 s / 20 s 三个对照都
@@ -930,6 +969,9 @@ Linux x86_64 / Ubuntu 24.04：
 | 2026-10-23 | B3 | DarwinBoot 大标题移除 | 删除 `AdtNode` 的 `UnicodeSPrint`/`DiagDraw`；保留小字 ADT 日志；新 FD `6da8ee30…`，无标题镜像 `1c25c29a…`；补丁已提交，子模块干净 |
 | 2026-10-23 | B3 | **普通控制台输出恢复** | `initialize_screen(kPEAcquireScreen)` 会 `gc_enable(FALSE)`；在 `console_init` 后调用 `gc_enable(TRUE)`，XNU 日志/panic 均上屏；测试镜像 `boot-console-fix.img` `8d08d3b6…` |
 | 2026-10-23 | B3 | **新阻塞：kmod start/stop 未 slide** | 日志显示 `Libm`/`corecrypto` start 指针在 `0xfffffff003…`，kext 在 `0xfffffff009…`；`emit_prelink.py` 只写 kmod address（+156），没有写 start/stop（+180/+188）；需修 prelink kit |
+| 2026-10-25 | B5 | **root 挂载成功** | 写入/校验 SHNGROOT userdata；OS/SystemOS 窗口发布；APFS `nx_mount`；根 UUID `04769D26-2CA0-4825-B443-E2E5F88300F2` 匹配；停在 `rootvp not authenticated after mounting @bsd_init.c:1100` |
+| 2026-10-25 | B5 | **修复 UFS 定时等待** | `IODelay`/`IOSleep` 会永久挂住；NOP/超时/轮询改为 `mach_absolute_time` 忙等；128 KiB 窗口合并读；镜像 `boot-ufsH7-panic.img`，CI `40155569182` |
+| 2026-10-25 | B5 | **root auth bring-up** | 增加 boot arg `native-skip-root-auth=1` 的临时旁路；仅用于继续到 launchd/AMFI，最终替换为 VerifiedRoot |
 
 ## 更新规则
 
