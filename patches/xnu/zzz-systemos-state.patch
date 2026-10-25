@@ -1,6 +1,6 @@
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -8021,9 +8021,35 @@
+@@ -8021,9 +8021,58 @@
  	mach_vm_size_t map_page_size = vm_map_page_size(map);
  
  	(void) mach_vm_allocate_kernel(map, &scratch_addr, map_page_size, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE);
@@ -9,30 +9,53 @@
  	boot_progress_stage("SystemOS mount enter");
  	int cache_error = native_owner_cache_prepare(p, (user_addr_t)scratch_addr, &init_envp);
  	boot_progress_stage("SystemOS mount returned");
-+	vnode_t probe = NULLVP;
-+	struct vnode_attr nva;
-+	uint64_t arm64_size = 0;
-+	uint32_t arm64_type = 0;
-+	int arm64_stat = -1;
-+	int arm64_err = vnode_lookup("/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64",
-+	    0, &probe, vfs_context_kernel());
-+	if (probe) {
-+		VATTR_INIT(&nva);
-+		VATTR_WANTED(&nva, va_data_size);
-+		VATTR_WANTED(&nva, va_type);
-+		arm64_stat = vnode_getattr(probe, &nva, vfs_context_kernel());
-+		if (arm64_stat == 0 && VATTR_IS_SUPPORTED(&nva, va_data_size)) {
-+			arm64_size = nva.va_data_size;
++	{
++		static const char *const paths[] = {
++		    "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64",
++		    "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.01",
++		    "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.02",
++		    "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.03",
++		    "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.04",
++		    "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.05",
++		    "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.06",
++		    "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.07",
++		    "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.08",
++		    "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.09",
++		    "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.symbols",
++		};
++		uint64_t main_size = 0;
++		int i;
++		for (i = 0; i < (int)(sizeof(paths) / sizeof(paths[0])); i++) {
++			vnode_t probe = NULLVP;
++			struct vnode_attr nva;
++			uint64_t size = 0;
++			uint32_t type = 0;
++			int stat_err = -1;
++			printf("NATIVE_DIAG: lookup %s\n", paths[i]);
++			int lookup_err = vnode_lookup(paths[i], 0, &probe, vfs_context_kernel());
++			if (probe) {
++				VATTR_INIT(&nva);
++				VATTR_WANTED(&nva, va_data_size);
++				VATTR_WANTED(&nva, va_type);
++				stat_err = vnode_getattr(probe, &nva, vfs_context_kernel());
++				if (stat_err == 0 && VATTR_IS_SUPPORTED(&nva, va_data_size)) {
++					size = nva.va_data_size;
++				}
++				if (stat_err == 0 && VATTR_IS_SUPPORTED(&nva, va_type)) {
++					type = (uint32_t)nva.va_type;
++				}
++				vnode_put(probe); probe = NULLVP;
++			}
++			if (i == 0) {
++				main_size = size;
++			}
++			printf("NATIVE_DIAG: %s err=%d stat=%d size=%llu type=%u\n",
++			    paths[i], lookup_err, stat_err, (unsigned long long)size, type);
 +		}
-+		if (arm64_stat == 0 && VATTR_IS_SUPPORTED(&nva, va_type)) {
-+			arm64_type = (uint32_t)nva.va_type;
-+		}
-+		vnode_put(probe); probe = NULLVP;
++		panic("NATIVE_SYSTEMOS: stage=%d status=%d union=%d dev=%s err=%d dyld=%llx main=%llu",
++		    native_owner_cache_stage, native_owner_cache_status,
++		    native_owner_cache_native_union, native_owner_cache_device_path, cache_error,
++		    (unsigned long long) native_owner_cache_dyld_flags,
++		    (unsigned long long) main_size);
 +	}
-+	panic("NATIVE_SYSTEMOS: stage=%d status=%d union=%d dev=%s err=%d dyld=%llx "
-+	    "arm64=%d stat=%d size=%llu type=%u",
-+	    native_owner_cache_stage, native_owner_cache_status,
-+	    native_owner_cache_native_union, native_owner_cache_device_path, cache_error,
-+	    (unsigned long long) native_owner_cache_dyld_flags,
-+	    arm64_err, arm64_stat, (unsigned long long) arm64_size, arm64_type);
  	if (cache_error) panic("offline owner SystemOS mount failed: %d", cache_error);
