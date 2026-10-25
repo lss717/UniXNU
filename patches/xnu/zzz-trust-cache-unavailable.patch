@@ -1,0 +1,87 @@
+--- a/bsd/kern/kern_trustcache.c
++++ b/bsd/kern/kern_trustcache.c
+@@ -448,6 +448,9 @@
+ TrustCacheMutableRuntime_t trust_cache_mut_rt_storage;
+ SECURITY_READ_ONLY_LATE(TrustCacheMutableRuntime_t*) trust_cache_mut_rt = &trust_cache_mut_rt_storage;
+ 
++/* Set only after trust_cache_runtime_init() has initialized the RW lock. */
++static bool trust_cache_ready;
++
+ void
+ trust_cache_runtime_init(void)
+ {
+@@ -467,15 +470,14 @@
+ 	allow_legacy_caches = true;
+ #endif
+ 
+-	/* Image4 interface needs to be available */
+-	if (img4if == NULL) {
+-		panic("image4 interface not available");
++	/* Image4/AMFI are absent in this native bring-up.  Do not initialize
++	 * trust_cache_rt_lock, and let query callers fail cleanly instead of
++	 * taking an uninitialized non-sleepable RW lock. */
++	if (img4if == NULL || amfi == NULL) {
++		printf("NATIVE: trust caches unavailable (Image4/AMFI not installed)\n");
++		return;
+ 	}
+-
+-	/* AMFI interface needs to be available */
+-	if (amfi == NULL) {
+-		panic("amfi interface not available");
+-	} else if (amfi->TrustCache.version < 2) {
++	if (amfi->TrustCache.version < 2) {
+ 		panic("amfi interface is stale: %u", amfi->TrustCache.version);
+ 	}
+ 
+@@ -489,6 +491,7 @@
+ 
+ 	/* Initialize the read-write lock */
+ 	lck_rw_init(&trust_cache_rt_lock, &trust_cache_lck_grp, 0);
++	trust_cache_ready = true;
+ }
+ 
+ static kern_return_t
+@@ -623,6 +626,9 @@
+ 		printf("unable to query trust cache: invalid query type: %u\n", query_type);
+ 		return KERN_INVALID_ARGUMENT;
+ 	}
++	if (!trust_cache_ready) {
++		return KERN_NOT_FOUND;
++	}
+ 
+ 	/* Lock the runtime as shared */
+ 	lck_rw_lock_shared(&trust_cache_rt_lock);
+@@ -655,6 +661,9 @@
+ {
+ 	kern_return_t ret = KERN_DENIED;
+ 
++	if (!trust_cache_ready) {
++		return KERN_NOT_FOUND;
++	}
+ 	if (amfi->TrustCache.version < 3) {
+ 		/* AMFI change hasn't landed in the build */
+ 		printf("unable to check for loaded trust cache: interface not supported\n");
+@@ -749,6 +758,10 @@
+ 	const uint8_t *img4_aux_manifest, const size_t img4_aux_manifest_len)
+ {
+ 	kern_return_t ret = KERN_DENIED;
++
++	if (!trust_cache_ready) {
++		return KERN_NOT_SUPPORTED;
++	}
+ 	uintptr_t length_check = 0;
+ 	const uint8_t *img4_payload = NULL;
+ 	size_t img4_payload_len = 0;
+@@ -925,6 +938,12 @@
+ 		return KERN_INVALID_ARGUMENT;
+ 	}
+ 
++#if !CONFIG_SPTM && !PMAP_CS_PPL_MONITOR
++	if (!trust_cache_ready) {
++		return KERN_NOT_FOUND;
++	}
++#endif
++
+ #if CONFIG_SPTM
+ 	ret = txm_query_trust_cache(query_type, cdhash, query_token);
+ #elif PMAP_CS_PPL_MONITOR
