@@ -459,14 +459,14 @@ if [ "$(cat "$OWNER_UNION_STAMP" 2>/dev/null || echo 0)" != "$OWNER_UNION_SYSTEM
   rm -f "$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/vfs_syscalls.o"
   printf '%s\n' "$OWNER_UNION_SYSTEMOS" > "$OWNER_UNION_STAMP"
 fi
-OWNER_UNION_CFLAGS=
 if [ "$OWNER_UNION_SYSTEMOS" = 1 ]; then
-  # Enable the original union lookup/composition implementation in the three
-  # translation units that own it; the bcm2837 DEVELOPMENT config leaves the
-  # option undefined, and CFLAGS_EXTRA is not consumed by this XNU makefile.
-  OWNER_UNION_CFLAGS="-DCONFIG_UNION_MOUNTS=1"
-  EXTRA_MAKE_ARGS+=("vfs_lookup.o_CFLAGS_ADD=$OWNER_UNION_CFLAGS")
-  EXTRA_MAKE_ARGS+=("vfs_syscalls.o_CFLAGS_ADD=$OWNER_UNION_CFLAGS")
+  # The bcm2837 machine config does not select the union option, so the
+  # generated platform header defines it as zero even when it is added to a
+  # translation unit's command line. Select it in the machine config instead.
+  UNION_CONFIG=.cache/xnu-work/config/MASTER.arm64.bcm2837
+  if ! grep -q '^options[[:space:]]*CONFIG_UNION_MOUNTS' "$UNION_CONFIG"; then
+    printf '\noptions   CONFIG_UNION_MOUNTS\n' >> "$UNION_CONFIG"
+  fi
 fi
 NATIVE_AIR_INIT=${XNU_NATIVE_AIR_INIT:-0}
 if [ "$NATIVE_AIR_INIT" != 0 ] && [ "$NATIVE_AIR_INIT" != 1 ]; then
@@ -482,7 +482,7 @@ if [ "$(cat "$NATIVE_AIR_STAMP" 2>/dev/null || echo 0)" != "$NATIVE_AIR_INIT" ];
   rm -f "$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/kern_exec.o"
   printf '%s\n' "$NATIVE_AIR_INIT" > "$NATIVE_AIR_STAMP"
 fi
-EXTRA_MAKE_ARGS+=("kern_exec.o_CFLAGS_ADD=-DXNU_NATIVE_AIR_INIT=$NATIVE_AIR_INIT -DXNU_OWNER_CACHE_MOUNT=$OWNER_CACHE_MOUNT -DXNU_OWNER_CACHE_STARTUP=$OWNER_CACHE_STARTUP -DXNU_OWNER_BOOT_MANIFEST=$OWNER_BOOT_MANIFEST -DXNU_OWNER_DATA_MOUNT=$OWNER_DATA_MOUNT -DXNU_NATIVE_RAM_BLOCK=$NATIVE_RAM_BLOCK -DXNU_OWNER_CRYPTEX_FILES=$OWNER_CRYPTEX_FILES -DXNU_OWNER_UNION_SYSTEMOS=$OWNER_UNION_SYSTEMOS $OWNER_UNION_CFLAGS -include $OWNER_DATA_HEADER")
+EXTRA_MAKE_ARGS+=("kern_exec.o_CFLAGS_ADD=-DXNU_NATIVE_AIR_INIT=$NATIVE_AIR_INIT -DXNU_OWNER_CACHE_MOUNT=$OWNER_CACHE_MOUNT -DXNU_OWNER_CACHE_STARTUP=$OWNER_CACHE_STARTUP -DXNU_OWNER_BOOT_MANIFEST=$OWNER_BOOT_MANIFEST -DXNU_OWNER_DATA_MOUNT=$OWNER_DATA_MOUNT -DXNU_NATIVE_RAM_BLOCK=$NATIVE_RAM_BLOCK -DXNU_OWNER_CRYPTEX_FILES=$OWNER_CRYPTEX_FILES -DXNU_OWNER_UNION_SYSTEMOS=$OWNER_UNION_SYSTEMOS -include $OWNER_DATA_HEADER")
 OWNER_CACHE_STAMP=$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/.owner-cache-mount-mode
 if [ "$(cat "$OWNER_CACHE_STAMP" 2>/dev/null || echo 0:0)" != "$OWNER_CACHE_MOUNT:$OWNER_CACHE_STARTUP" ]; then
   rm -f "$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/kern_exec.o"
