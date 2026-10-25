@@ -57,10 +57,10 @@
 +#endif
 +	const char *mountpoint = "/";
 +#else
-+	const char *mountpoint = "/System/Cryptexes/OS";
++	const char *mountpoint = "/System/Library/Caches/com.apple.dyld";
 +#endif
 +#if !defined(XNU_OWNER_UNION_SYSTEMOS) || !XNU_OWNER_UNION_SYSTEMOS
-+	const char *environment = "DYLD_SHARED_CACHE_DIR=/System/Cryptexes/OS/System/Library/Caches/com.apple.dyld";
++	const char *environment = "DYLD_SHARED_CACHE_DIR=/System/Library/Caches/com.apple.dyld/System/Library/Caches/com.apple.dyld";
 +#endif
 +	vnode_t original_os_root = rootvnode;
 +	native_owner_cache_original_root = (uintptr_t)original_os_root;
