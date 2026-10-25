@@ -1,6 +1,6 @@
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -8021,9 +8021,42 @@
+@@ -8021,9 +8021,53 @@
  	mach_vm_size_t map_page_size = vm_map_page_size(map);
  
  	(void) mach_vm_allocate_kernel(map, &scratch_addr, map_page_size, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE);
@@ -12,9 +12,11 @@
 +	{
 +		vnode_t probe = NULLVP;
 +		struct vnode_attr nva;
-+		uint64_t size = 0;
-+		uint8_t magic[16] = {0};
-+		uint32_t m0 = 0, m1 = 0, m2 = 0, m3 = 0;
++		uint64_t size = 0, cache_type = 0;
++		uint8_t hdr[0x100] = {0};
++		uint32_t mapping_off = 0, mapping_cnt = 0, images_off = 0, images_cnt = 0;
++		uint32_t uuid0 = 0, uuid1 = 0, uuid2 = 0, uuid3 = 0;
++		uint32_t platform = 0, fmt_flags = 0;
 +		int lookup_err = -1, stat_err = -1, open_err = -1, read_err = -1;
 +		lookup_err = vnode_lookup("/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64",
 +		    0, &probe, vfs_context_kernel());
@@ -27,19 +29,28 @@
 +			}
 +			open_err = VNOP_OPEN(probe, FREAD, vfs_context_kernel());
 +			if (open_err == 0) {
-+				read_err = vn_rdwr(UIO_READ, probe, (caddr_t)magic, sizeof(magic), 0,
++				read_err = vn_rdwr(UIO_READ, probe, (caddr_t)hdr, sizeof(hdr), 0,
 +				    UIO_SYSSPACE, IO_NOAUTH, NOCRED, NULL, current_proc());
 +				(void)VNOP_CLOSE(probe, 0, vfs_context_kernel());
 +			}
 +			vnode_put(probe); probe = NULLVP;
 +		}
-+		memcpy(&m0, magic, 4);
-+		memcpy(&m1, magic + 4, 4);
-+		memcpy(&m2, magic + 8, 4);
-+		memcpy(&m3, magic + 12, 4);
-+		panic("NATIVE_SYSTEMOS: main=%llu lookup=%d stat=%d open=%d read=%d "
-+		    "magic=%08x%08x%08x%08x",
++		memcpy(&mapping_off, hdr + 16, 4);
++		memcpy(&mapping_cnt, hdr + 20, 4);
++		memcpy(&images_off, hdr + 24, 4);
++		memcpy(&images_cnt, hdr + 28, 4);
++		memcpy(&uuid0, hdr + 88, 4);
++		memcpy(&uuid1, hdr + 92, 4);
++		memcpy(&uuid2, hdr + 96, 4);
++		memcpy(&uuid3, hdr + 100, 4);
++		memcpy(&cache_type, hdr + 104, 8);
++		memcpy(&platform, hdr + 216, 4);
++		memcpy(&fmt_flags, hdr + 220, 4);
++		panic("NATIVE_SYSTEMOS: size=%llu lookup=%d stat=%d open=%d read=%d "
++		    "map=%u/%u img=%u/%u uuid=%08x%08x%08x%08x ctype=%llu plat=%u fmt=%u",
 +		    (unsigned long long)size, lookup_err, stat_err, open_err, read_err,
-+		    m0, m1, m2, m3);
++		    mapping_off, mapping_cnt, images_off, images_cnt,
++		    uuid0, uuid1, uuid2, uuid3, (unsigned long long)cache_type,
++		    platform, fmt_flags & 0xff);
 +	}
  	if (cache_error) panic("offline owner SystemOS mount failed: %d", cache_error);
