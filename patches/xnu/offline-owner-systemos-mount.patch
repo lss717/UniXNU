@@ -57,10 +57,10 @@
 +#endif
 +	const char *mountpoint = "/";
 +#else
-+	const char *mountpoint = "/System/Volumes/Preboot/Cryptexes/OS";
++	const char *mountpoint = "/System/Cryptexes/OS";
 +#endif
 +#if !defined(XNU_OWNER_UNION_SYSTEMOS) || !XNU_OWNER_UNION_SYSTEMOS
-+	const char *environment = "DYLD_SHARED_CACHE_DIR=/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld";
++	const char *environment = "DYLD_SHARED_CACHE_DIR=/System/Cryptexes/OS/System/Library/dyld";
 +#endif
 +	vnode_t original_os_root = rootvnode;
 +	native_owner_cache_original_root = (uintptr_t)original_os_root;
@@ -79,7 +79,7 @@
 +	uint32_t anonymous_owner = 99;
 +#if !defined(XNU_OWNER_UNION_SYSTEMOS) || !XNU_OWNER_UNION_SYSTEMOS
 +#if defined(XNU_OWNER_CRYPTEX_FILES) && XNU_OWNER_CRYPTEX_FILES
-+	const char *fallback = "DYLD_FALLBACK_LIBRARY_PATH=/System/Volumes/Preboot/Cryptexes/OS/usr/lib";
++	const char *fallback = "DYLD_FALLBACK_LIBRARY_PATH=/System/Cryptexes/OS/usr/lib";
 +	user64_addr_t environment_vector[3] = {scratch + 0x400, scratch + 0x600, USER_ADDR_NULL};
 +#else
 +	user64_addr_t environment_vector[2] = {scratch + 0x400, USER_ADDR_NULL};
