@@ -1,6 +1,6 @@
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
-@@ -987,9 +987,48 @@
+@@ -987,9 +987,41 @@
  		if (require_rootauth) {
  			/* enforce sealedness */
  			int autherr = VNOP_IOCTL(rootvnode, FSIOC_KERNEL_ROOTAUTH, NULL, 0, vfs_context_kernel());
@@ -29,18 +29,9 @@
 +				native_owner_root_checkpoint(autherr, owner, device);
 +			}
 +#endif
--				panic("rootvp not authenticated after mounting");
--			}
 +			if (autherr && !owner_authorized) {
-+				int native_skip_root_auth = 0;
-+				PE_parse_boot_argn("native-skip-root-auth", &native_skip_root_auth,
-+				    sizeof(native_skip_root_auth));
-+				if (native_skip_root_auth) {
-+					printf("NATIVE_ROOT_AUTH_BYPASS: autherr=%d\n", autherr);
-+				} else {
-+					panic("rootvp not authenticated after mounting");
-+				}
-+			}
+ 				panic("rootvp not authenticated after mounting");
+ 			}
 +#if defined(XNU_OWNER_ROOT_TRUST) && XNU_OWNER_ROOT_TRUST
 +			{
 +				extern volatile int native_owner_root_accepted;
