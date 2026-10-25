@@ -1,0 +1,45 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -8021,9 +8021,42 @@
+ 	mach_vm_size_t map_page_size = vm_map_page_size(map);
+ 
+ 	(void) mach_vm_allocate_kernel(map, &scratch_addr, map_page_size, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE);
+ 	user_addr_t init_envp = USER_ADDR_NULL;
+ #if defined(XNU_OWNER_CACHE_MOUNT) && XNU_OWNER_CACHE_MOUNT
+ 	boot_progress_stage("SystemOS mount enter");
+ 	int cache_error = native_owner_cache_prepare(p, (user_addr_t)scratch_addr, &init_envp);
+ 	boot_progress_stage("SystemOS mount returned");
++	{
++		char envbuf[128] = {0};
++		user_addr_t env0 = USER_ADDR_NULL;
++		size_t envlen = 0;
++		uint64_t path_size = 0;
++		uint32_t path_type = 0;
++		int env_err = -1, path_err = -1, path_stat = -1;
++		vnode_t nvp = NULLVP;
++		struct vnode_attr nva;
++		if (init_envp) {
++			env_err = copyin(init_envp, &env0, sizeof(env0));
++			if (env_err == 0 && env0) {
++				env_err = copyinstr(env0, envbuf, sizeof(envbuf), &envlen);
++			}
++		}
++		path_err = vnode_lookup("/System/Library/Caches/System/Library/Caches/com.apple.dyld",
++		    0, &nvp, vfs_context_kernel());
++		if (nvp) {
++			VATTR_INIT(&nva);
++			VATTR_WANTED(&nva, va_data_size);
++			VATTR_WANTED(&nva, va_type);
++			path_stat = vnode_getattr(nvp, &nva, vfs_context_kernel());
++			if (path_stat == 0 && VATTR_IS_SUPPORTED(&nva, va_data_size)) path_size = nva.va_data_size;
++			if (path_stat == 0 && VATTR_IS_SUPPORTED(&nva, va_type)) path_type = (uint32_t)nva.va_type;
++			vnode_put(nvp); nvp = NULLVP;
++		}
++		panic("NATIVE_ENV: stage=%d status=%d union=%d dev=%s err=%d init_envp=%llx "
++		    "env_err=%d env='%s' path_err=%d path_stat=%d path_size=%llu path_type=%u",
++		    native_owner_cache_stage, native_owner_cache_status,
++		    native_owner_cache_native_union, native_owner_cache_device_path, cache_error,
++		    (unsigned long long)init_envp, env_err, envbuf, path_err, path_stat,
++		    (unsigned long long)path_size, path_type);
++	}
+ 	if (cache_error) panic("offline owner SystemOS mount failed: %d", cache_error);
