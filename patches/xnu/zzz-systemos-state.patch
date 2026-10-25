@@ -1,0 +1,12 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7397,6 +7397,9 @@
+ #if defined(XNU_OWNER_CACHE_MOUNT) && XNU_OWNER_CACHE_MOUNT
+ 	int cache_error = native_owner_cache_prepare(p, (user_addr_t)scratch_addr, &init_envp);
+ 	if (cache_error) panic("offline owner SystemOS mount failed: %d", cache_error);
++	panic("NATIVE_SYSTEMOS: stage=%d status=%d union=%d dev=%s err=%d",
++	    native_owner_cache_stage, native_owner_cache_status,
++	    native_owner_cache_native_union, native_owner_cache_device_path, cache_error);
+ #endif
+ #if defined(XNU_OWNER_DATA_MOUNT) && XNU_OWNER_DATA_MOUNT
+ 	int data_error = native_owner_data_prepare(p, (user_addr_t)scratch_addr);
