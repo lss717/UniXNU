@@ -96,6 +96,9 @@ jobs:
             curl -fL "$TRUST_CACHE_URL" -o "$RUNNER_TEMP/trustcache"
           fi
 
+      - name: Reset cached XNU worktree
+        run: rm -rf out/cheeseburger/tree/.cache/xnu-work
+
       - name: Build kernel
         env:
           IPSW_URL: ${{ inputs.ipsw_url }}
