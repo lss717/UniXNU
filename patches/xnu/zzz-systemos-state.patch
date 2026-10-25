@@ -1,6 +1,6 @@
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -8021,9 +8021,53 @@
+@@ -8021,9 +8021,42 @@
  	mach_vm_size_t map_page_size = vm_map_page_size(map);
  
  	(void) mach_vm_allocate_kernel(map, &scratch_addr, map_page_size, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE);
@@ -10,47 +10,36 @@
  	int cache_error = native_owner_cache_prepare(p, (user_addr_t)scratch_addr, &init_envp);
  	boot_progress_stage("SystemOS mount returned");
 +	{
-+		static const char *const paths[] = {
-+		    "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64",
-+		    "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.01",
-+		    "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.02",
-+		    "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.03",
-+		    "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.04",
-+		    "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.05",
-+		    "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.06",
-+		    "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.07",
-+		    "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.08",
-+		    "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.09",
-+		    "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64.symbols",
-+		};
-+		uint64_t size[11] = {0};
-+		int lookup_err[11] = {0};
-+		int i;
-+		for (i = 0; i < 11; i++) {
-+			vnode_t probe = NULLVP;
-+			struct vnode_attr nva;
-+			lookup_err[i] = vnode_lookup(paths[i], 0, &probe, vfs_context_kernel());
-+			if (probe) {
-+				VATTR_INIT(&nva);
-+				VATTR_WANTED(&nva, va_data_size);
-+				if (vnode_getattr(probe, &nva, vfs_context_kernel()) == 0 &&
-+				    VATTR_IS_SUPPORTED(&nva, va_data_size)) {
-+					size[i] = nva.va_data_size;
-+				}
-+				vnode_put(probe); probe = NULLVP;
++		vnode_t probe = NULLVP;
++		struct vnode_attr nva;
++		uint64_t size = 0;
++		uint8_t magic[16] = {0};
++		uint32_t m0 = 0, m1 = 0, m2 = 0, m3 = 0;
++		int lookup_err = -1, stat_err = -1, open_err = -1, read_err = -1;
++		lookup_err = vnode_lookup("/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64",
++		    0, &probe, vfs_context_kernel());
++		if (probe) {
++			VATTR_INIT(&nva);
++			VATTR_WANTED(&nva, va_data_size);
++			stat_err = vnode_getattr(probe, &nva, vfs_context_kernel());
++			if (stat_err == 0 && VATTR_IS_SUPPORTED(&nva, va_data_size)) {
++				size = nva.va_data_size;
 +			}
++			open_err = VNOP_OPEN(probe, FREAD, vfs_context_kernel());
++			if (open_err == 0) {
++				read_err = vn_rdwr(UIO_READ, probe, (caddr_t)magic, sizeof(magic), 0,
++				    UIO_SYSSPACE, IO_NOAUTH, NOCRED, NULL, current_proc());
++				(void)VNOP_CLOSE(probe, 0, vfs_context_kernel());
++			}
++			vnode_put(probe); probe = NULLVP;
 +		}
-+		panic("NATIVE_SYSTEMOS: main=%llu s1=%llu s2=%llu s3=%llu s4=%llu s5=%llu "
-+		    "s6=%llu s7=%llu s8=%llu s9=%llu sym=%llu e1=%d e2=%d e3=%d e4=%d "
-+		    "e5=%d e6=%d e7=%d e8=%d e9=%d esym=%d",
-+		    (unsigned long long)size[0], (unsigned long long)size[1],
-+		    (unsigned long long)size[2], (unsigned long long)size[3],
-+		    (unsigned long long)size[4], (unsigned long long)size[5],
-+		    (unsigned long long)size[6], (unsigned long long)size[7],
-+		    (unsigned long long)size[8], (unsigned long long)size[9],
-+		    (unsigned long long)size[10],
-+		    lookup_err[1], lookup_err[2], lookup_err[3], lookup_err[4],
-+		    lookup_err[5], lookup_err[6], lookup_err[7], lookup_err[8],
-+		    lookup_err[9], lookup_err[10]);
++		memcpy(&m0, magic, 4);
++		memcpy(&m1, magic + 4, 4);
++		memcpy(&m2, magic + 8, 4);
++		memcpy(&m3, magic + 12, 4);
++		panic("NATIVE_SYSTEMOS: main=%llu lookup=%d stat=%d open=%d read=%d "
++		    "magic=%08x%08x%08x%08x",
++		    (unsigned long long)size, lookup_err, stat_err, open_err, read_err,
++		    m0, m1, m2, m3);
 +	}
  	if (cache_error) panic("offline owner SystemOS mount failed: %d", cache_error);
