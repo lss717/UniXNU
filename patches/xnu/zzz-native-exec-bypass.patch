@@ -1,0 +1,28 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7627,6 +7627,25 @@
+ 	}
+ 
+ 	/*
++	 * Diagnostic bring-up escape hatch: AMFI/MACF may reject the stock
++	 * restore userland before launchd can run.  This never runs unless the
++	 * boot argument is explicitly present.
++	 */
++	int native_skip_exec_signature = 0;
++	if (PE_parse_boot_argn("native-skip-exec-signature",
++	    &native_skip_exec_signature, sizeof(native_skip_exec_signature)) &&
++	    native_skip_exec_signature) {
++		if (imgp->ip_mac_return != 0) {
++			printf("NATIVE_EXEC_BYPASS: mac_return=%d\n", imgp->ip_mac_return);
++			imgp->ip_mac_return = 0;
++		}
++		if (imgp->ip_cs_error != OS_REASON_NULL) {
++			printf("NATIVE_EXEC_BYPASS: code-signing reason cleared\n");
++			imgp->ip_cs_error = OS_REASON_NULL;
++		}
++	}
++
++	/*
+ 	 * image activation may be failed due to policy
+ 	 * which is unexpected but security framework does not
+ 	 * approve of exec, kill and return immediately.
