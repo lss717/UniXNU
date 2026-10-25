@@ -20,7 +20,7 @@
 +	    &probe, vfs_context_kernel());
 +	if (probe) {
 +		VATTR_INIT(&nva);
-+		if (vnode_getattr(probe, &nva, vfs_context_kernel()) == 0) arm64_size = nva.va_size;
++		if (vnode_getattr(probe, &nva, vfs_context_kernel()) == 0) arm64_size = nva.va_data_size;
 +		char mbuf[32] = {};
 +		uio_t uio = uio_create(1, 0, UIO_SYSSPACE, UIO_READ);
 +		if (uio) {
@@ -48,7 +48,7 @@
 +	int dyld_err = vnode_lookup("/usr/lib/dyld", 0, &probe, vfs_context_kernel());
 +	if (probe) {
 +		VATTR_INIT(&nva);
-+		if (vnode_getattr(probe, &nva, vfs_context_kernel()) == 0) dyld_size = nva.va_size;
++		if (vnode_getattr(probe, &nva, vfs_context_kernel()) == 0) dyld_size = nva.va_data_size;
 +		char mbuf[8] = {};
 +		uio_t uio = uio_create(1, 0, UIO_SYSSPACE, UIO_READ);
 +		if (uio) {
@@ -61,7 +61,7 @@
 +	int libsys_err = vnode_lookup("/usr/lib/libSystem.B.dylib", 0, &probe, vfs_context_kernel());
 +	if (probe) {
 +		VATTR_INIT(&nva);
-+		if (vnode_getattr(probe, &nva, vfs_context_kernel()) == 0) libsys_size = nva.va_size;
++		if (vnode_getattr(probe, &nva, vfs_context_kernel()) == 0) libsys_size = nva.va_data_size;
 +		vnode_put(probe); probe = NULLVP;
 +	}
 +	int dyld_dir_err = vnode_lookup("/System/Library/dyld", 0, &probe, vfs_context_kernel());
