@@ -1,0 +1,13 @@
+--- a/osfmk/kern/lock_rw.c
++++ b/osfmk/kern/lock_rw.c
+@@ -1397,7 +1397,9 @@
+ 	if (lock->lck_rw_can_sleep) {
+ 		lck_rw_lock_count_inc(thread, lock);
+ 	} else if (get_preemption_level() == 0) {
+-		panic("Taking non-sleepable RW lock with preemption enabled");
++		panic("Taking non-sleepable RW lock with preemption enabled caller=%p fp=%p lr1=%p lr2=%p",
++		    __builtin_return_address(0), __builtin_frame_address(0),
++		    __builtin_return_address(1), __builtin_return_address(2));
+ 	}
+ 
+ 	for (;;) {
