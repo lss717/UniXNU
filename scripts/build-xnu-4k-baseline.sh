@@ -59,6 +59,15 @@ if [ "$BOOTSTRAP" != 0 ] && [ "$BOOTSTRAP" != 1 ]; then
   echo 'XNU_BOOTSTRAP must be 0 or 1' >&2
   exit 1
 fi
+# The bootstrap pass links before the driver archives exist. Compile the owner
+# cache/source hooks out of kern_exec.o for that pass; the final pass sees a
+# different stamp and rebuilds the object against the real archives.
+if [ "$BOOTSTRAP" = 1 ]; then
+  XNU_OWNER_CACHE_MOUNT=0
+  XNU_OWNER_CACHE_STARTUP=0
+  XNU_OWNER_UNION_SYSTEMOS=0
+  XNU_OWNER_CRYPTEX_FILES=0
+fi
 BOOT_PROGRESS=${XNU_BOOT_PROGRESS:-0}
 if [ "$BOOT_PROGRESS" != 0 ] && [ "$BOOT_PROGRESS" != 1 ]; then
   echo 'XNU_BOOT_PROGRESS must be 0 or 1' >&2
