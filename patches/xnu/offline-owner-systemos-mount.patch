@@ -273,13 +273,16 @@
  
  	/*
  	 * So that init task is set with uid,gid 0 token
-@@ -7148,6 +7388,48 @@
+@@ -7148,6 +7388,50 @@
  	mach_vm_size_t map_page_size = vm_map_page_size(map);
  
  	(void) mach_vm_allocate_kernel(map, &scratch_addr, map_page_size, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE);
 +	user_addr_t init_envp = USER_ADDR_NULL;
 +#if defined(XNU_OWNER_CACHE_MOUNT) && XNU_OWNER_CACHE_MOUNT
 +	int cache_error = native_owner_cache_prepare(p, (user_addr_t)scratch_addr, &init_envp);
++	if (cache_error) panic("offline owner SystemOS mount failed: %d", cache_error);
++#endif
++#if defined(XNU_OWNER_CACHE_MOUNT) && XNU_OWNER_CACHE_MOUNT
 +	{
 +		char envbuf[128] = {0};
 +		user_addr_t env0 = USER_ADDR_NULL;
@@ -313,7 +316,6 @@
 +		    (unsigned long long)init_envp, env_err, envbuf, path_err, path_stat,
 +		    (unsigned long long)path_size, path_type);
 +	}
-+	if (cache_error) panic("offline owner SystemOS mount failed: %d", cache_error);
 +#endif
 +#if defined(XNU_OWNER_DATA_MOUNT) && XNU_OWNER_DATA_MOUNT
 +	int data_error = native_owner_data_prepare(p, (user_addr_t)scratch_addr);
