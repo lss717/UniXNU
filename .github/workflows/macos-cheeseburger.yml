@@ -112,6 +112,16 @@ jobs:
           if [ -n "$IPSW_URL" ]; then args+=(--ipsw "$IPSW_URL"); fi
           ./unixnu build kernel "${args[@]}" -D "$UNIXNU_DEVICE"
 
+      - name: Debug XNU patch source
+        if: always()
+        run: |
+          find out/cheeseburger/tree -path '*xnu-work/bsd/kern/kern_exec.c' -print
+          p=$(find out/cheeseburger/tree -path '*xnu-work/bsd/kern/kern_exec.c' -print -quit)
+          if [ -n "$p" ]; then
+            grep -n -A8 -B6 'native_owner_cache_prepare' "$p" | head -60
+            git -C "$(dirname "$p")" status --short 2>/dev/null | head -20 || true
+          fi
+
       - name: Build payload
         env:
           UNIQUE_CHIP_ID: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID }}
