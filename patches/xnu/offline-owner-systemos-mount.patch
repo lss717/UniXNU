@@ -267,12 +267,26 @@
  {
  	int retval[2];
  	int error;
-@@ -7086,7 +7326,7 @@
+@@ -7086,7 +7326,21 @@
  	 */
  	init_exec_args.fname = argv0;
  	init_exec_args.argp = scratch_addr;
 -	init_exec_args.envp = USER_ADDR_NULL;
 +	init_exec_args.envp = envp;
++	{
++		char envbuf[128] = {0};
++		user_addr_t env0 = USER_ADDR_NULL;
++		size_t envlen = 0;
++		int env_err = -1;
++		if (envp) {
++			env_err = copyin(envp, &env0, sizeof(env0));
++			if (env_err == 0 && env0) {
++				env_err = copyinstr(env0, envbuf, sizeof(envbuf), &envlen);
++			}
++		}
++		panic("NATIVE_EXEC_ENV: envp=%llx err=%d env0=%llx env='%s'",
++		    (unsigned long long)envp, env_err, (unsigned long long)env0, envbuf);
++	}
  
  	/*
  	 * So that init task is set with uid,gid 0 token
