@@ -1,6 +1,6 @@
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -8021,9 +8021,59 @@
+@@ -8021,9 +8021,89 @@
  	mach_vm_size_t map_page_size = vm_map_page_size(map);
  
  	(void) mach_vm_allocate_kernel(map, &scratch_addr, map_page_size, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE);
@@ -14,11 +14,12 @@
 +		struct vnode_attr nva;
 +		uint64_t size = 0;
 +		uint8_t hdr[0x400] = {0};
-+		uint8_t subs[16 * 56] = {0};
-+		uint32_t sub_off = 0, sub_cnt = 0, img_off = 0, img_cnt = 0, subtype = 0;
-+		uint32_t su0 = 0, su1 = 0, su2 = 0, su3 = 0;
-+		char suffix[33] = {0};
++		uint8_t subs[64 * 56] = {0};
++		uint8_t shdr[0x100] = {0};
++		uint32_t sub_off = 0, sub_cnt = 0;
 +		int lookup_err = -1, stat_err = -1, open_err = -1, read_err = -1, sub_err = -1;
++		int ok = 0, miss = 0, first_missing_err = 0, uuid_match = -1;
++		char sfx0[33] = {0}, sfx1[33] = {0}, sfxlast[33] = {0}, first_missing[33] = {0};
 +		lookup_err = vnode_lookup("/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64",
 +		    0, &probe, vfs_context_kernel());
 +		if (probe) {
@@ -34,29 +35,58 @@
 +				    UIO_SYSSPACE, IO_NOAUTH, NOCRED, NULL, current_proc());
 +				memcpy(&sub_off, hdr + 392, 4);
 +				memcpy(&sub_cnt, hdr + 396, 4);
-+				memcpy(&img_off, hdr + 448, 4);
-+				memcpy(&img_cnt, hdr + 452, 4);
-+				memcpy(&subtype, hdr + 456, 4);
-+				if (sub_cnt > 0 && sub_cnt <= 16 && sub_off < size) {
-+					sub_err = vn_rdwr(UIO_READ, probe, (caddr_t)subs, sizeof(subs),
-+					    (off_t)sub_off, UIO_SYSSPACE, IO_NOAUTH, NOCRED, NULL,
-+					    current_proc());
-+					if (sub_err == 0) {
-+						memcpy(&su0, subs, 4);
-+						memcpy(&su1, subs + 4, 4);
-+						memcpy(&su2, subs + 8, 4);
-+						memcpy(&su3, subs + 12, 4);
-+						memcpy(suffix, subs + 24, 32);
-+					}
++				if (sub_cnt > 0 && sub_cnt <= 64 && sub_off < size &&
++				    (uint64_t)sub_off + (uint64_t)sub_cnt * 56 <= size) {
++					sub_err = vn_rdwr(UIO_READ, probe, (caddr_t)subs,
++					    (int)(sub_cnt * 56), (off_t)sub_off, UIO_SYSSPACE,
++					    IO_NOAUTH, NOCRED, NULL, current_proc());
 +				}
 +				(void)VNOP_CLOSE(probe, 0, vfs_context_kernel());
 +			}
 +			vnode_put(probe); probe = NULLVP;
 +		}
++		if (sub_err == 0) {
++			int i;
++			memcpy(sfx0, subs + 24, 32);
++			memcpy(sfx1, subs + 56 + 24, 32);
++			memcpy(sfxlast, subs + (sub_cnt - 1) * 56 + 24, 32);
++			for (i = 0; i < (int)sub_cnt; i++) {
++				char sfx[33] = {0};
++				char path[160];
++				vnode_t subvp = NULLVP;
++				int e;
++				memcpy(sfx, subs + i * 56 + 24, 32);
++				strlcpy(path, "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64",
++				    sizeof(path));
++				strlcat(path, sfx, sizeof(path));
++				e = vnode_lookup(path, 0, &subvp, vfs_context_kernel());
++				if (e) {
++					miss++;
++					if (first_missing[0] == 0) {
++						strlcpy(first_missing, sfx, sizeof(first_missing));
++						first_missing_err = e;
++					}
++				} else {
++					ok++;
++					if (i == 0) {
++						int oe = VNOP_OPEN(subvp, FREAD, vfs_context_kernel());
++						if (oe == 0) {
++							if (vn_rdwr(UIO_READ, subvp, (caddr_t)shdr,
++							    sizeof(shdr), 0, UIO_SYSSPACE, IO_NOAUTH,
++							    NOCRED, NULL, current_proc()) == 0) {
++								uuid_match = memcmp(subs, shdr + 88, 16) == 0;
++							}
++							(void)VNOP_CLOSE(subvp, 0, vfs_context_kernel());
++						}
++					}
++					vnode_put(subvp); subvp = NULLVP;
++				}
++			}
++		}
 +		panic("NATIVE_SYSTEMOS: size=%llu lookup=%d stat=%d open=%d read=%d "
-+		    "sub=%u/%u read2=%d img2=%u/%u subtype=%u suuid=%08x%08x%08x%08x sfx=%s",
++		    "sub=%u/%u read2=%d ok=%d miss=%d miss0=%s e0=%d sfx0=%s sfx1=%s last=%s umatch=%d",
 +		    (unsigned long long)size, lookup_err, stat_err, open_err, read_err,
-+		    sub_off, sub_cnt, sub_err, img_off, img_cnt, subtype,
-+		    su0, su1, su2, su3, suffix);
++		    sub_off, sub_cnt, sub_err, ok, miss, first_missing, first_missing_err,
++		    sfx0, sfx1, sfxlast, uuid_match);
 +	}
  	if (cache_error) panic("offline owner SystemOS mount failed: %d", cache_error);
