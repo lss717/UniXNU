@@ -1,6 +1,6 @@
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -8021,9 +8021,12 @@
+@@ -8021,9 +8021,20 @@
  	mach_vm_size_t map_page_size = vm_map_page_size(map);
  
  	(void) mach_vm_allocate_kernel(map, &scratch_addr, map_page_size, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE);
@@ -9,7 +9,15 @@
  	boot_progress_stage("SystemOS mount enter");
  	int cache_error = native_owner_cache_prepare(p, (user_addr_t)scratch_addr, &init_envp);
  	boot_progress_stage("SystemOS mount returned");
-+	panic("NATIVE_SYSTEMOS: stage=%d status=%d union=%d dev=%s err=%d",
++	vnode_t probe = NULLVP;
++	int cache_dir_err = vnode_lookup("/System/Library/Caches/com.apple.dyld", 0,
++	    &probe, vfs_context_kernel());
++	if (probe) { vnode_put(probe); probe = NULLVP; }
++	int dyld_dir_err = vnode_lookup("/System/Library/dyld", 0,
++	    &probe, vfs_context_kernel());
++	if (probe) { vnode_put(probe); probe = NULLVP; }
++	panic("NATIVE_SYSTEMOS: stage=%d status=%d union=%d dev=%s err=%d cacheDir=%d dyldDir=%d",
 +	    native_owner_cache_stage, native_owner_cache_status,
-+	    native_owner_cache_native_union, native_owner_cache_device_path, cache_error);
++	    native_owner_cache_native_union, native_owner_cache_device_path, cache_error,
++	    cache_dir_err, dyld_dir_err);
  	if (cache_error) panic("offline owner SystemOS mount failed: %d", cache_error);
