@@ -1,6 +1,6 @@
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -8021,9 +8021,53 @@
+@@ -8021,9 +8021,59 @@
  	mach_vm_size_t map_page_size = vm_map_page_size(map);
  
  	(void) mach_vm_allocate_kernel(map, &scratch_addr, map_page_size, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE);
@@ -12,12 +12,13 @@
 +	{
 +		vnode_t probe = NULLVP;
 +		struct vnode_attr nva;
-+		uint64_t size = 0, cache_type = 0;
-+		uint8_t hdr[0x100] = {0};
-+		uint32_t mapping_off = 0, mapping_cnt = 0, images_off = 0, images_cnt = 0;
-+		uint32_t uuid0 = 0, uuid1 = 0, uuid2 = 0, uuid3 = 0;
-+		uint32_t platform = 0, fmt_flags = 0;
-+		int lookup_err = -1, stat_err = -1, open_err = -1, read_err = -1;
++		uint64_t size = 0;
++		uint8_t hdr[0x400] = {0};
++		uint8_t subs[16 * 56] = {0};
++		uint32_t sub_off = 0, sub_cnt = 0, img_off = 0, img_cnt = 0, subtype = 0;
++		uint32_t su0 = 0, su1 = 0, su2 = 0, su3 = 0;
++		char suffix[33] = {0};
++		int lookup_err = -1, stat_err = -1, open_err = -1, read_err = -1, sub_err = -1;
 +		lookup_err = vnode_lookup("/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64",
 +		    0, &probe, vfs_context_kernel());
 +		if (probe) {
@@ -31,26 +32,31 @@
 +			if (open_err == 0) {
 +				read_err = vn_rdwr(UIO_READ, probe, (caddr_t)hdr, sizeof(hdr), 0,
 +				    UIO_SYSSPACE, IO_NOAUTH, NOCRED, NULL, current_proc());
++				memcpy(&sub_off, hdr + 392, 4);
++				memcpy(&sub_cnt, hdr + 396, 4);
++				memcpy(&img_off, hdr + 448, 4);
++				memcpy(&img_cnt, hdr + 452, 4);
++				memcpy(&subtype, hdr + 456, 4);
++				if (sub_cnt > 0 && sub_cnt <= 16 && sub_off < size) {
++					sub_err = vn_rdwr(UIO_READ, probe, (caddr_t)subs, sizeof(subs),
++					    (off_t)sub_off, UIO_SYSSPACE, IO_NOAUTH, NOCRED, NULL,
++					    current_proc());
++					if (sub_err == 0) {
++						memcpy(&su0, subs, 4);
++						memcpy(&su1, subs + 4, 4);
++						memcpy(&su2, subs + 8, 4);
++						memcpy(&su3, subs + 12, 4);
++						memcpy(suffix, subs + 24, 32);
++					}
++				}
 +				(void)VNOP_CLOSE(probe, 0, vfs_context_kernel());
 +			}
 +			vnode_put(probe); probe = NULLVP;
 +		}
-+		memcpy(&mapping_off, hdr + 16, 4);
-+		memcpy(&mapping_cnt, hdr + 20, 4);
-+		memcpy(&images_off, hdr + 24, 4);
-+		memcpy(&images_cnt, hdr + 28, 4);
-+		memcpy(&uuid0, hdr + 88, 4);
-+		memcpy(&uuid1, hdr + 92, 4);
-+		memcpy(&uuid2, hdr + 96, 4);
-+		memcpy(&uuid3, hdr + 100, 4);
-+		memcpy(&cache_type, hdr + 104, 8);
-+		memcpy(&platform, hdr + 216, 4);
-+		memcpy(&fmt_flags, hdr + 220, 4);
 +		panic("NATIVE_SYSTEMOS: size=%llu lookup=%d stat=%d open=%d read=%d "
-+		    "map=%u/%u img=%u/%u uuid=%08x%08x%08x%08x ctype=%llu plat=%u fmt=%u",
++		    "sub=%u/%u read2=%d img2=%u/%u subtype=%u suuid=%08x%08x%08x%08x sfx=%s",
 +		    (unsigned long long)size, lookup_err, stat_err, open_err, read_err,
-+		    mapping_off, mapping_cnt, images_off, images_cnt,
-+		    uuid0, uuid1, uuid2, uuid3, (unsigned long long)cache_type,
-+		    platform, fmt_flags & 0xff);
++		    sub_off, sub_cnt, sub_err, img_off, img_cnt, subtype,
++		    su0, su1, su2, su3, suffix);
 +	}
  	if (cache_error) panic("offline owner SystemOS mount failed: %d", cache_error);
