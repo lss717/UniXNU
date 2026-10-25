@@ -24,10 +24,6 @@
 #include <libkern/c++/OSNumber.h>
 #include <libkern/c++/OSString.h>
 
-extern "C" kern_return_t kernel_thread_start (void (*) (void *, wait_result_t),
-                                               void *, thread_t *);
-extern "C" void thread_deallocate (thread_t);
-
 static volatile uint64_t gUfsCommands;
 static volatile uint64_t gUfsInFlight;
 static volatile uint64_t gUfsLastLba;
@@ -335,15 +331,25 @@ uicCommand (uintptr_t hc, uint32_t opcode, uint32_t arg1, uint32_t arg2,
   return (status & UFS_IS_UEE) == 0;
 }
 
+static void
+spinTicks (uint64_t ticks)
+{
+  uint64_t start = mach_absolute_time ();
+  while (mach_absolute_time () - start < ticks) {
+    __asm__ volatile ("yield" ::: "memory");
+  }
+}
+
 static bool
 waitRegister (uintptr_t base, unsigned offset, uint32_t mask, uint32_t expected,
               unsigned microseconds)
 {
-  for (unsigned index = 0; index < microseconds / 10; index++) {
+  uint64_t deadline = mach_absolute_time () + uint64_t (microseconds) * 20ULL;
+  while (mach_absolute_time () < deadline) {
     if ((read32 (base, offset) & mask) == expected) {
       return true;
     }
-    IODelay (10);
+    __asm__ volatile ("yield" ::: "memory");
   }
   return false;
 }
@@ -388,22 +394,24 @@ waitForCompletion (uint8_t *list, uint32_t *ocs, unsigned *loops,
                    uint64_t timeoutTicks)
 {
   uint64_t start = mach_absolute_time ();
-  for (unsigned loop = 0; loop < 100000; loop++) {
+  unsigned loop = 0;
+  for (;;) {
     cacheInvalidate (list, 64);
     *ocs = read32 (reinterpret_cast<uintptr_t> (list), 8) & 0xff;
     if (*ocs != 0x0f) {
       *loops = loop;
       return true;
     }
-    if (timeoutTicks && (loop & 63) == 0 &&
-        mach_absolute_time () - start > timeoutTicks) {
+    if (timeoutTicks && mach_absolute_time () - start > timeoutTicks) {
       *loops = loop;
       return false;
     }
-    IODelay (2);
+    if (loop++ > 100000000U) {
+      *loops = loop;
+      return false;
+    }
+    __asm__ volatile ("yield" ::: "memory");
   }
-  *loops = 100000;
-  return false;
 }
 
 static bool
@@ -502,30 +510,6 @@ dumpRootMedia (void)
   IOLog ("NATIVE_UFS_ROOT_MEDIA: total=%u shown=%u\n", total, shown);
 }
 
-static void
-ufsHeartbeatThread (void *, wait_result_t)
-{
-  IOLog ("NATIVE_UFS_HB: thread started\n");
-  for (unsigned tick = 1; tick <= 18; tick++) {
-    IOSleep (5000);
-    IOLog ("NATIVE_UFS_HB: t=%us cmds=%llu inflight=%llu last=%llx/%llu "
-           "winReq=%llu winBytes=%llu winFlight=%llu winLast=%llx/%llu\n",
-           tick * 5,
-           (unsigned long long) gUfsCommands,
-           (unsigned long long) gUfsInFlight,
-           (unsigned long long) gUfsLastLba,
-           (unsigned long long) gUfsLastBytes,
-           (unsigned long long) gWindowRequests,
-           (unsigned long long) gWindowBytes,
-           (unsigned long long) gWindowInFlight,
-           (unsigned long long) gWindowLastBlock,
-           (unsigned long long) gWindowLastCount);
-    if (tick == 3 || tick == 6 || tick == 12 || tick == 18) {
-      dumpRootMedia ();
-    }
-  }
-}
-
 static bool
 ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes,
            uint64_t timeoutTicks = UFS_TIMEOUT_TICKS)
@@ -574,7 +558,7 @@ ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes,
     IOLog ("NATIVE_UFS_NOP: submit after cacheClean is=%x hcs=%x db=%x\n",
            read32 (q->hc, UFS_REG_IS), read32 (q->hc, UFS_REG_HCS),
            read32 (q->hc, UFS_REG_UTRLDBR));
-    IODelay (1000);
+    spinTicks (19200);
     IOLog ("NATIVE_UFS_NOP: submit before doorbell\n");
   }
   write32 (q->hc, UFS_REG_IS, 0xffffffffU);
@@ -583,7 +567,7 @@ ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes,
     IOLog ("NATIVE_UFS_NOP: submit after doorbell is=%x hcs=%x db=%x\n",
            read32 (q->hc, UFS_REG_IS), read32 (q->hc, UFS_REG_HCS),
            read32 (q->hc, UFS_REG_UTRLDBR));
-    IODelay (1000);
+    spinTicks (19200);
   }
   uint64_t commandStart = mach_absolute_time ();
   uint32_t ocs = 0x0f;
@@ -1171,8 +1155,8 @@ NativeUfsProbe::start (IOService *provider)
 
   UfsQueue queue = { hc, list, ucd, data, ucdPhys, dataPhys, dataCapacity, false };
 
-  IOLog ("NATIVE_UFS_NOP: settle 100ms before first command\n");
-  IODelay (100000);
+  IOLog ("NATIVE_UFS_NOP: settle spin before first command\n");
+  spinTicks (192000);
   IOLog ("NATIVE_UFS_NOP: settle complete\n");
   if (!ufsNop (&queue)) {
     panic ("NATIVE_UFS_GPT: firmware-page NOP failed; see OCS/type log");
@@ -1411,13 +1395,6 @@ NativeUfsProbe::start (IOService *provider)
       IOLog ("NATIVE_UFS_ROOT: userdata first-block READ10 failed\n");
     }
   }
-  IOLog ("NATIVE_UFS_HB: starting before publication\n");
-  thread_t heartbeat = nullptr;
-  if (kernel_thread_start (ufsHeartbeatThread, nullptr, &heartbeat) == KERN_SUCCESS) {
-    thread_deallocate (heartbeat);
-  } else {
-    IOLog ("NATIVE_UFS_HB: cannot start heartbeat thread\n");
-  }
   IOLog ("NATIVE_UFS_GPT: read DMA phys=%llx size=%x; publishing LUN0\n",
          readPhys, UFS_DATA_MAX);
 
@@ -1467,6 +1444,8 @@ NativeUfsProbe::start (IOService *provider)
       }
     }
   }
+  IOLog ("NATIVE_UFS_ROOT_MEDIA: post-publication snapshot\n");
+  dumpRootMedia ();
   IOLog ("NATIVE_UFS_GPT: start returning published=%u windows=%u\n",
          published ? 1 : 0, windowsPublished);
   return published;
