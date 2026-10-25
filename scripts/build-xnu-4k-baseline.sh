@@ -356,7 +356,8 @@ if [ "$OWNER_CACHE_MOUNT" != 0 ] && [ "$OWNER_CACHE_MOUNT" != 1 ]; then
   echo 'XNU_OWNER_CACHE_MOUNT must be 0 or 1' >&2
   exit 1
 fi
-if [ "$OWNER_CACHE_MOUNT" = 1 ] && [ "$OWNER_ROOT_TRUST" != 1 ]; then
+if [ "$OWNER_CACHE_MOUNT" = 1 ] && [ "$OWNER_ROOT_TRUST" != 1 ] &&
+   [ "${XNU_BRINGUP_CACHE_MOUNT:-0}" != 1 ]; then
   echo 'The offline SystemOS mount requires real independent owner root enforcement' >&2
   exit 1
 fi

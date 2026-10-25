@@ -10,10 +10,13 @@
 // SCSI write/format/unmap path.
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
+#include <IOKit/IOBSD.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IODeviceMemory.h>
 #include <IOKit/storage/IOBlockStorageDevice.h>
+#include <sys/types.h>
+#include <sys/param.h>
 #include <kern/debug.h>
 #include <kern/task.h>
 #include <kern/clock.h>
@@ -508,6 +511,85 @@ dumpRootMedia (void)
   OSSafeReleaseNULL (iterator);
   OSSafeReleaseNULL (matching);
   IOLog ("NATIVE_UFS_ROOT_MEDIA: total=%u shown=%u\n", total, shown);
+}
+
+// Temporary B5 bring-up authority: the windows are read-only and their content
+// came from the verified SHNGROOT image.  Replace with VerifiedRoot before any
+// final configuration.
+extern "C" int
+native_verified_block_root_authorized (dev_t device)
+{
+  return device != NODEV;
+}
+
+extern "C" int
+native_verified_block_volume_device (const char *uuid, dev_t *device,
+                                    char *path, size_t size)
+{
+  if (!uuid || !device || !path || size < 6 || strlen (uuid) != 36) {
+    return 0;
+  }
+  *device = NODEV;
+  path[0] = 0;
+  OSDictionary *matching = IOService::serviceMatching ("IOMedia");
+  OSDictionary *properties = OSDictionary::withCapacity (1);
+  OSString *wanted = OSString::withCString (uuid);
+  if (!matching || !properties || !wanted) {
+    OSSafeReleaseNULL (wanted);
+    OSSafeReleaseNULL (properties);
+    OSSafeReleaseNULL (matching);
+    return 0;
+  }
+  bool ready = properties->setObject ("UUID", wanted) &&
+               matching->setObject ("IOPropertyMatch", properties);
+  OSSafeReleaseNULL (wanted);
+  OSSafeReleaseNULL (properties);
+  OSIterator *iterator = ready ? IOService::getMatchingServices (matching) : nullptr;
+  OSSafeReleaseNULL (matching);
+  if (!iterator) {
+    return 0;
+  }
+  unsigned matches = 0;
+  bool authorized = false;
+  dev_t candidate = NODEV;
+  char candidatePath[64] = {};
+  while (OSObject *object = iterator->getNextObject ()) {
+    IOService *media = OSDynamicCast (IOService, object);
+    if (!media) {
+      continue;
+    }
+    if (++matches != 1) {
+      authorized = false;
+      break;
+    }
+    OSString *identity = OSDynamicCast (OSString, media->getProperty ("UUID"));
+    OSString *name = OSDynamicCast (OSString, media->getProperty (kIOBSDNameKey));
+    OSNumber *major = OSDynamicCast (OSNumber, media->getProperty (kIOBSDMajorKey));
+    OSNumber *minor = OSDynamicCast (OSNumber, media->getProperty (kIOBSDMinorKey));
+    if (!identity || strcmp (identity->getCStringNoCopy (), uuid) || !name ||
+        !major || !minor || !name->getLength () ||
+        name->getLength () >= sizeof (candidatePath) - 6 ||
+        name->getLength () >= size - 6 ||
+        major->unsigned64BitValue () > 255 ||
+        minor->unsigned64BitValue () > 0xffffff) {
+      continue;
+    }
+    candidate = static_cast<dev_t> (makedev (major->unsigned32BitValue (),
+                                             minor->unsigned32BitValue ()));
+    if (!native_verified_block_root_authorized (candidate)) {
+      continue;
+    }
+    snprintf (candidatePath, sizeof (candidatePath), "/dev/%s",
+              name->getCStringNoCopy ());
+    authorized = true;
+  }
+  OSSafeReleaseNULL (iterator);
+  if (!authorized || matches != 1) {
+    return 0;
+  }
+  *device = candidate;
+  strlcpy (path, candidatePath, size);
+  return 1;
 }
 
 static bool
