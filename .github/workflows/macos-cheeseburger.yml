@@ -99,8 +99,10 @@ jobs:
       - name: Build kernel
         env:
           IPSW_URL: ${{ inputs.ipsw_url }}
-          # Temporary B5 bring-up: mount SystemOS so dyld finds its shared cache.
+          # Temporary B5 bring-up: union SystemOS at / so dyld finds its cache.
           XNU_OWNER_CACHE_MOUNT: 1
+          XNU_OWNER_CACHE_STARTUP: 1
+          XNU_OWNER_UNION_SYSTEMOS: 1
           XNU_BRINGUP_CACHE_MOUNT: 1
         run: |
           args=()
