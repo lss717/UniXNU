@@ -457,6 +457,11 @@ if [ "$(cat "$OWNER_UNION_STAMP" 2>/dev/null || echo 0)" != "$OWNER_UNION_SYSTEM
   rm -f "$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/kern_exec.o"
   printf '%s\n' "$OWNER_UNION_SYSTEMOS" > "$OWNER_UNION_STAMP"
 fi
+if [ "$OWNER_UNION_SYSTEMOS" = 1 ]; then
+  # The bcm2837 DEVELOPMENT config does not define the union option on its own.
+  # Enable the original union lookup/composition implementation for this mode.
+  EXTRA_CFLAGS="$EXTRA_CFLAGS -DCONFIG_UNION_MOUNTS=1"
+fi
 NATIVE_AIR_INIT=${XNU_NATIVE_AIR_INIT:-0}
 if [ "$NATIVE_AIR_INIT" != 0 ] && [ "$NATIVE_AIR_INIT" != 1 ]; then
   echo 'XNU_NATIVE_AIR_INIT must be 0 or 1' >&2
