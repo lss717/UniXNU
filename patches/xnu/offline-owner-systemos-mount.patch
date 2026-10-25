@@ -17,7 +17,7 @@
 +#if !DEVELOPMENT && !DEBUG
 +#error The offline owner cache mount is a development instrument
 +#endif
-+extern int native_verified_block_volume_device(const char *, dev_t *, char *, size_t) __attribute__((weak));
++extern int native_verified_block_volume_device(const char *, dev_t *, char *, size_t) __attribute__((weak_import));
 +#if defined(XNU_OWNER_BOOT_MANIFEST) && XNU_OWNER_BOOT_MANIFEST
 +extern int native_owner_publish_boot_manifest(dev_t, const char *, dev_t, const char *);
 +#endif
@@ -25,7 +25,7 @@
 +extern void commpage_update_dyld_flags(uint64_t);
 +volatile uint64_t native_owner_cache_dyld_flags = 0;
 +#endif
-+extern int native_verified_block_root_authorized(dev_t) __attribute__((weak));
++extern int native_verified_block_root_authorized(dev_t) __attribute__((weak_import));
 +volatile int native_owner_cache_stage = 0;
 +volatile int native_owner_cache_status = -1;
 +volatile int native_owner_cache_mount_status = -1;
