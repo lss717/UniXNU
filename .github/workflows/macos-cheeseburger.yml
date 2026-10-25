@@ -97,7 +97,7 @@ jobs:
           fi
 
       - name: Reset cached XNU worktree
-        run: rm -rf out/cheeseburger/tree/.cache/xnu-work
+        run: rm -rf out/cheeseburger/tree
 
       - name: Build kernel
         env:
