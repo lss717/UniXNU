@@ -459,14 +459,13 @@ if [ "$(cat "$OWNER_UNION_STAMP" 2>/dev/null || echo 0)" != "$OWNER_UNION_SYSTEM
   rm -f "$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/vfs_syscalls.o"
   printf '%s\n' "$OWNER_UNION_SYSTEMOS" > "$OWNER_UNION_STAMP"
 fi
-if [ "$OWNER_UNION_SYSTEMOS" = 1 ]; then
-  # The bcm2837 machine config does not select the union option, so the
-  # generated platform header defines it as zero even when it is added to a
-  # translation unit's command line. Select it in the machine config instead.
-  UNION_CONFIG=.cache/xnu-work/config/MASTER.arm64.bcm2837
-  if ! grep -q '^options[[:space:]]*CONFIG_UNION_MOUNTS' "$UNION_CONFIG"; then
-    printf '\noptions   CONFIG_UNION_MOUNTS\n' >> "$UNION_CONFIG"
-  fi
+# Select the union implementation in the machine config, not through per-file
+# CFLAGS: the config generator turns unselected options into a zero-valued
+# platform header macro that overrides command-line defines.  Keep this on for
+# both the bootstrap and final passes so all objects agree on the ABI.
+UNION_CONFIG=.cache/xnu-work/config/MASTER.arm64.bcm2837
+if ! grep -q '^options[[:space:]]*CONFIG_UNION_MOUNTS' "$UNION_CONFIG"; then
+  printf '\noptions   CONFIG_UNION_MOUNTS\n' >> "$UNION_CONFIG"
 fi
 NATIVE_AIR_INIT=${XNU_NATIVE_AIR_INIT:-0}
 if [ "$NATIVE_AIR_INIT" != 0 ] && [ "$NATIVE_AIR_INIT" != 1 ]; then

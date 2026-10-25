@@ -121,6 +121,13 @@ jobs:
             grep -n -A8 -B6 'native_owner_cache_prepare' "$p" | head -60
             git -C "$(dirname "$p")" status --short 2>/dev/null | head -20 || true
           fi
+          for log in out/cheeseburger/logs/kernel.log out/cheeseburger/logs/kernel-bootstrap.log; do
+            if [ -f "$log" ]; then
+              echo "== $log"
+              grep -nE 'error:|#error|Undefined symbols|ld: |redefined' "$log" | tail -40 || true
+            fi
+          done
+          grep -R '^options.*CONFIG_UNION_MOUNTS' out/cheeseburger/tree/.cache/xnu-work/config 2>/dev/null || true
 
       - name: Build payload
         env:
