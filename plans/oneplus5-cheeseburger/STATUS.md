@@ -3,7 +3,7 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 最终目标：iPhone10,2 / iOS 16.7.16（20H392）
-- 当前阶段：**B5 root 已挂载成功（iPad7,1 / 17.7.11，APFS + UUID 匹配）；卡在未封印根卷的 root 认证；下一阶段临时旁路 root 认证做 bring-up，最终改 VerifiedRoot**
+- 当前阶段：**B5 root 已挂载；root auth 临时旁路后进入 launchd，但 dyld 仍报 `no dyld cache`。已确认 iPad7,1 的 52 个 split cache 文件/签名范围/主头/mapping 全部有效；H46/H47 证明 exec env 和嵌套 cache 目录都正确。当前卡在 dyld 打开/使用 cache 之前的路径或 dyld 版本/命令差异；下一步 H48 让 launchd 实跑并抓 dyld/shared_region 日志**
 - 当前 gate：**G1 通过（2026-10-22）**
 - 基线提交：UniXNU `e95b37d`（main）
 - 本地提交：UniXNU `c8a5eeb`（计划）、`18f3020`（package）、`270ea4b`（B1 记录）、`692d70f`（docs 记录）；本轮 B1 收尾见 `git log -- plans/oneplus5-cheeseburger`
@@ -12,7 +12,7 @@
   - UEFI fork `https://github.com/lss717/edk2-msm8998`（分支 `unixnu-cheeseburger`）
   - 设备仓库 `https://github.com/lss717/UniXNU-cheeseburger`（`main`，`22742e3`）
 - UEFI 分支：`edk2-msm8998` 的 `unixnu-cheeseburger`，提交 `0471194`、`708fa06`、`7f34479`、`91e17a8`、`8ef28f1`、`1ffb934`
-- 最近更新：2026-10-24
+- 最近更新：2026-10-26
 
 > 本文件是 B 线（UniXNU / 4K）唯一的计划与状态记录。A 线（在 OP5 上用
 > 自建 shim 引导 16K XNU）是另一个独立项目，与本线没有代码依赖。
@@ -972,6 +972,13 @@ Linux x86_64 / Ubuntu 24.04：
 | 2026-10-25 | B5 | **root 挂载成功** | 写入/校验 SHNGROOT userdata；OS/SystemOS 窗口发布；APFS `nx_mount`；根 UUID `04769D26-2CA0-4825-B443-E2E5F88300F2` 匹配；停在 `rootvp not authenticated after mounting @bsd_init.c:1100` |
 | 2026-10-25 | B5 | **修复 UFS 定时等待** | `IODelay`/`IOSleep` 会永久挂住；NOP/超时/轮询改为 `mach_absolute_time` 忙等；128 KiB 窗口合并读；镜像 `boot-ufsH7-panic.img`，CI `40155569182` |
 | 2026-10-25 | B5 | **root auth bring-up** | 增加 boot arg `native-skip-root-auth=1` 的临时旁路；仅用于继续到 launchd/AMFI，最终替换为 VerifiedRoot |
+| 2026-10-25 19:37 | B5 | **修正 boot 镜像打包** | `payload.img` 是 64 MiB FAT，不是 boot image；正确格式必须是 `make-bootimg.py` 生成的 68,564,992 B Android bootimg（UEFI kernel + payload + tags）。H23/H47 均为此格式；直接把 payload 当 bootimg 会停在 OnePlus logo/fastboot |
+| 2026-10-25 | B5 | **SystemOS state / 主 cache** | H26：`stage=6 status=0 union=1 dev=/dev/disk4s1 err=0 dyld=8`；H27：主 cache `size=491520 lookup=0 stat=0`，magic `dyld_v1   arm64` |
+| 2026-10-25 | B5 | **split cache 完整** | H29/H34：main 491520；`.01`–`.09` 分别 114720768/49152/114229248/229376/115458048/327680/75857920/245760/112934912；`.symbols` 68517856；主头 `cacheType=2 subCacheArrayCount=52 img=624/3354 subtype=1` |
+| 2026-10-25 | B5 | **52 个 subcache 预检通过** | H37：使用 arm64 三空格 magic 和每文件 16 KiB pread，`ok=52 fail=0`；H35：主头 `cs=475136+16384==size=491520`、`prot=5/5`、`os=0x110700`、mapping 有效 |
+| 2026-10-25 | B5 | **mount / env / ADT 诊断** | H39 `/System/Cryptexes/OS` 与 H40 `.../Caches/com.apple.dyld` 均 ENOENT；H41/H42 改挂 `/System/Library/Caches` 成功。ADT 增加 `/chosen/asmb`（`lp-sip0=0x6f` u64，`lp-sip1=1` u32）；H45 union + asmb 仍未改变 `no dyld cache`，且无 `shared_region`/trust-cache 报错 |
+| 2026-10-26 00:18 | B5 | **env / 路径已证实** | H46：`envp=1500 err=0 env0=1400 env='DYLD_SHARED_CACHE_DIR=/System/Library/Caches/System/Library/Caches/com.apple.dyld'`；H47：`eperr=0 estat=0 esize=1792 etype=2`，c0–c4 全部 0 → 嵌套目录及父目录都存在，但尚未验证 `com.apple.dyld/dyld_shared_cache_arm64` 文件本身 |
+| 2026-10-26 | B5 | **H48 启动** | 移除 H47 `NATIVE_PATH` panic，保留 `DYLD_PRINT_SEGMENTS=1`，让 launchd 实跑抓 dyld/shared_region 日志；CI run `40262171826`。下一步 H48 结果决定：若 dyld 忽略 env，改用 union `/`；若仍无日志，先查嵌套 cache 文件与 `/usr/lib/dyld` 版本/签名命令 |
 
 ## 更新规则
 
