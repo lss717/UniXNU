@@ -50,7 +50,7 @@ env:
 
 jobs:
   build:
-    runs-on: macos-26
+    runs-on: macos-15-intel
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
@@ -102,6 +102,7 @@ jobs:
       - name: Build kernel
         env:
           IPSW_URL: ${{ inputs.ipsw_url }}
+          DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
           # Temporary B5 bring-up: SystemOS at /private/preboot with the owner
           # dyld cache carrier enabled.
           XNU_OWNER_CACHE_MOUNT: 1

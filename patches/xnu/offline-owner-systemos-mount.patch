@@ -9,7 +9,7 @@
  
  #include <mach/exclaves.h>
  
-@@ -7013,8 +7013,350 @@
+@@ -7013,8 +7013,309 @@
   *		word width of the kernel. Once the self-exec completes, the
   *		initproc might be different.
   */
@@ -223,47 +223,6 @@
 +			    dl, dop, dmode, fl, fop, fmode, (unsigned long long)fsize);
 +		}
 +		printf("NATIVE_H62: preboot cache path ok size=%llu\n", (unsigned long long)fsize);
-+	}
-+#endif
-+#if !defined(XNU_OWNER_UNION_SYSTEMOS) || !XNU_OWNER_UNION_SYSTEMOS
-+	{
-+		static uint8_t h66_buf[1 << 20];
-+		vnode_t vp = NULLVP;
-+		struct vnode_attr va;
-+		uint64_t h66_size = 0;
-+		size_t h66_read = 0;
-+		int h66_lookup = -1, h66_open = -1, h66_rdwr = -1;
-+		int h66_cache = 0, h66_amfi = 0, h66_print = 0;
-+		h66_lookup = vnode_lookup("/usr/lib/dyld", 0, &vp, vfs_context_kernel());
-+		if (vp) {
-+			VATTR_INIT(&va);
-+			VATTR_WANTED(&va, va_data_size);
-+			(void)vnode_getattr(vp, &va, vfs_context_kernel());
-+			if (VATTR_IS_SUPPORTED(&va, va_data_size)) h66_size = va.va_data_size;
-+			h66_open = VNOP_OPEN(vp, FREAD, vfs_context_kernel());
-+			if (h66_open == 0) {
-+				h66_read = (h66_size > sizeof(h66_buf)) ? sizeof(h66_buf) : (size_t)h66_size;
-+				h66_rdwr = vn_rdwr(UIO_READ, vp, (caddr_t)h66_buf, (int)h66_read, 0,
-+				    UIO_SYSSPACE, IO_NOAUTH, NOCRED, NULL, current_proc());
-+				(void)VNOP_CLOSE(vp, 0, vfs_context_kernel());
-+			}
-+			vnode_put(vp);
-+		}
-+		if (h66_lookup || h66_open || h66_rdwr) {
-+			panic("NATIVE_H66_DYLD: lookup=%d open=%d read=%d size=%llu",
-+			    h66_lookup, h66_open, h66_rdwr, (unsigned long long)h66_size);
-+		}
-+		for (size_t i = 0; i + 21 <= h66_read; i++) {
-+			if (!h66_cache && memcmp(h66_buf + i, "DYLD_SHARED_CACHE_DIR", 21) == 0) h66_cache = 1;
-+			if (!h66_amfi && memcmp(h66_buf + i, "DYLD_AMFI_FAKE", 14) == 0) h66_amfi = 1;
-+			if (!h66_print && memcmp(h66_buf + i, "DYLD_PRINT_ENV", 14) == 0) h66_print = 1;
-+		}
-+		if (!h66_cache) {
-+			panic("NATIVE_H66_DYLD: no cache env size=%llu amfi=%d print=%d",
-+			    (unsigned long long)h66_size, h66_amfi, h66_print);
-+		}
-+		printf("NATIVE_H66_DYLD: size=%llu cache=1 amfi=%d print=%d\n",
-+		    (unsigned long long)h66_size, h66_amfi, h66_print);
 +	}
 +#endif
 +	native_owner_cache_checkpoint(error, cache_authorized);
