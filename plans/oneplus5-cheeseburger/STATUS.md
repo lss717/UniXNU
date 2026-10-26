@@ -963,7 +963,8 @@ Linux x86_64 / Ubuntu 24.04：
 | 2026-10-26 12:22 | B5 | **H50 private region 试验** | `boot-ufsH50-dyldlog.img`：加 `DYLD_SHARED_REGION=private`/额外打印 env；SystemOS mount 失败 `14 @kern_exec.c:8040`，没有拿到 dyld 日志 |
 | 2026-10-26 12:42 | B5 | **H51 修 env 槽位** | `boot-ufsH51-private.img`：修正 private-region 的 env 向量槽位；launchd 仍 `no dyld cache` |
 | 2026-10-26 13:27 | B5 | **H52 dyld 身份** | `boot-ufsH52-dyldver.img`：`/usr/lib/dyld` `magic=feedfacf`、`cputype=0x0100000c`（arm64）、`platform=2`、`minos/sdk=0x110700`、UUID `3b1e2a…`；架构/构建版本基本排除 |
-| 2026-10-26 13:49 | B5 | **H53 16K 预读诊断** | `boot-ufsH53-16k.img`（SHA `fad6304c…`）：读取 cache 首 16 KiB 并检查 `resid`/文件模式/目录模式；镜像已构建，**尚未上机** |
+| 2026-10-26 13:49 | B5 | **H53 16K 预读诊断** | `boot-ufsH53-16k.img`（SHA `fad6304c…`）：已上机，`cerr=0 cstat=0 copen=0 cread=0 resid=0 size=491520`；16 KiB pread 正常，数据读取层排除；`mode`/`dirmode` 因 panic 格式 `%o` 未显示 |
+| 2026-10-26 | B5 | **当前剩余问题** | cache 文件、16 KiB pread、主头、52 个 subcache、dyld 版本/架构都正常；H51 仍无 dyld 日志/NATIVE_CACHE_SIG。剩余候选：dyld 实际 env 被过滤/未使用、userland open 与 kernel lookup 差异、AMFI 自定义 cache flag。下一步 H54：`DYLD_AMFI_FAKE`/testMode 或直接验证 dyld env/open |
 
 ## 更新规则
 
