@@ -1,6 +1,6 @@
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -1818,6 +1818,29 @@
+@@ -1818,6 +1818,30 @@
  			}
  			goto badtoolate;
  		}
@@ -27,6 +27,7 @@
 +			}
 +		}
 +#endif
++		panic("NATIVE_H56: env stop");
  		/* Set the stack */
  		thread_setuserstack(thread, ap);
  	}
