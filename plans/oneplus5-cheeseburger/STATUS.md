@@ -965,7 +965,9 @@ Linux x86_64 / Ubuntu 24.04：
 | 2026-10-26 13:27 | B5 | **H52 dyld 身份** | `boot-ufsH52-dyldver.img`：`/usr/lib/dyld` `magic=feedfacf`、`cputype=0x0100000c`（arm64）、`platform=2`、`minos/sdk=0x110700`、UUID `3b1e2a…`；架构/构建版本基本排除 |
 | 2026-10-26 13:49 | B5 | **H53 16K 预读诊断** | `boot-ufsH53-16k.img`（SHA `fad6304c…`）：已上机，`cerr=0 cstat=0 copen=0 cread=0 resid=0 size=491520`；16 KiB pread 正常，数据读取层排除；`mode`/`dirmode` 因 panic 格式 `%o` 未显示 |
 | 2026-10-26 | B5 | **H54 全 mapping 预检** | `boot-ufsH54-map.img`：`NATIVE_H54: ok=52 fail=0 main=512/1/491520 mc34=2 lmax34=1 mc52=2 lmax52=1`；52 个 subcache 的 mapping、连续性、重叠、TEXT/LINKEDIT 权限全部符合 dyld `preflightCacheFile`，mapping 候选排除 |
-| 2026-10-26 | B5 | **H55 env/AMFI 验证** | 移除 H54 panic；临时置 iOS `os_variant_has_internal_diagnostics=true`，使 `DYLD_AMFI_FAKE=0xffffffff` 生效；`dyld_flags=0xA`（testMode+skipIgnition），保留 `DYLD_SHARED_CACHE_DIR`/`DYLD_PRINT_*`/`private`，并加 `DYLD_PRINT_TO_FILE=/dev/console`。目标：确认 dyld 是否看到 env、是否打开 nested cache |
+| 2026-10-26 | B5 | **H55 env/AMFI 首次验证** | `dyld_flags=0xA` + `DYLD_AMFI_FAKE=0xffffffff` + `DYLD_PRINT_TO_FILE=/dev/console`；仍无 dyld 日志、无 `NATIVE_CACHE_SIG`，final error 不变 |
+| 2026-10-26 | B5 | **H58 env 栈证据** | `NATIVE_H58: argc=1 envc=8 cache=1 amfi=1 print=1 env=/System/Library/Caches/System/Library/Caches/com.apple.dyld`；env 确实进入新进程栈，排除“dyld 没拿到 env” |
+| 2026-10-26 | B5 | **H59 devfirm/internalInstall** | dyld 的 iOS `internalInstall()` 读 commpage `_COMM_PAGE_DEV_FIRM`，不是 `os_variant`。H59 强制该位为 1，使 `DYLD_AMFI_FAKE`/testMode 真正生效；移除 H58 panic 和 os_variant 补丁 |
 
 ## 更新规则
 
