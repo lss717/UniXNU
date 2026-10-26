@@ -9,7 +9,7 @@
  
  #include <mach/exclaves.h>
  
-@@ -7013,8 +7013,283 @@
+@@ -7013,8 +7013,286 @@
   *		word width of the kernel. Once the self-exec completes, the
   *		initproc might be different.
   */
@@ -26,6 +26,7 @@
 +volatile uint64_t native_owner_cache_dyld_flags = 0;
 +#endif
 +extern int native_verified_block_root_authorized(dev_t);
++extern volatile int native_bindfs_boot_mount;
 +volatile int native_owner_cache_stage = 0;
 +volatile int native_owner_cache_status = -1;
 +volatile int native_owner_cache_mount_status = -1;
@@ -194,7 +195,9 @@
 +		error = copyout("bindfs", bind_request.type, 7);
 +		if (!error) error = copyout(bind_target, bind_request.path, strlen(bind_target) + 1);
 +		if (!error) error = copyout(bind_source, bind_request.data, strlen(bind_source) + 1);
++		native_bindfs_boot_mount = 1;
 +		if (!error) error = mount(p, &bind_request, &bind_result);
++		native_bindfs_boot_mount = 0;
 +		printf("NATIVE_H61: bindfs=%d result=%d\n", error, bind_result);
 +		if (error) panic("NATIVE_H61: bindfs mount failed: %d", error);
 +	}
