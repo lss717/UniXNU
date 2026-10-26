@@ -275,12 +275,66 @@
  {
  	int retval[2];
  	int error;
-@@ -7086,7 +7326,7 @@
+@@ -7086,7 +7326,61 @@
  	 */
  	init_exec_args.fname = argv0;
  	init_exec_args.argp = scratch_addr;
 -	init_exec_args.envp = USER_ADDR_NULL;
 +	init_exec_args.envp = envp;
++	{
++		static uint8_t dyldbuf[0x1000];
++		uint64_t dsize = 0;
++		uint32_t dmagic = 0, dncmds = 0, dsizeofcmds = 0;
++		uint32_t minos = 0, sdk = 0, build_platform = 0;
++		uint32_t uuid0 = 0, uuid1 = 0, uuid2 = 0, uuid3 = 0;
++		int derr = -1, dstat = -1, dopen = -1, dread = -1;
++		vnode_t vp = NULLVP;
++		struct vnode_attr va;
++		uint32_t i;
++		derr = vnode_lookup("/usr/lib/dyld", 0, &vp, vfs_context_kernel());
++		if (vp) {
++			VATTR_INIT(&va);
++			VATTR_WANTED(&va, va_data_size);
++			dstat = vnode_getattr(vp, &va, vfs_context_kernel());
++			if (dstat == 0 && VATTR_IS_SUPPORTED(&va, va_data_size)) dsize = va.va_data_size;
++			dopen = VNOP_OPEN(vp, FREAD, vfs_context_kernel());
++			if (dopen == 0) {
++				dread = vn_rdwr(UIO_READ, vp, (caddr_t)dyldbuf, sizeof(dyldbuf), 0,
++				    UIO_SYSSPACE, IO_NOAUTH, NOCRED, NULL, current_proc());
++				(void)VNOP_CLOSE(vp, 0, vfs_context_kernel());
++			}
++			vnode_put(vp); vp = NULLVP;
++		}
++		memcpy(&dmagic, dyldbuf, 4);
++		memcpy(&dncmds, dyldbuf + 16, 4);
++		memcpy(&dsizeofcmds, dyldbuf + 20, 4);
++		{
++			uint8_t *p = dyldbuf + 32;
++			uint8_t *end = p + dsizeofcmds;
++			for (i = 0; i < dncmds && p + 8 <= end; i++) {
++				uint32_t cmd, cmdsize;
++				memcpy(&cmd, p, 4);
++				memcpy(&cmdsize, p + 4, 4);
++				if (cmdsize < 8 || p + cmdsize > end) break;
++				if (cmd == 0x32 && cmdsize >= 20) {
++					memcpy(&build_platform, p + 8, 4);
++					memcpy(&minos, p + 12, 4);
++					memcpy(&sdk, p + 16, 4);
++				} else if (cmd == 0x25 && cmdsize >= 16) {
++					memcpy(&minos, p + 8, 4);
++					memcpy(&sdk, p + 12, 4);
++				} else if (cmd == 0x1b && cmdsize >= 24) {
++					memcpy(&uuid0, p + 8, 4); memcpy(&uuid1, p + 12, 4);
++					memcpy(&uuid2, p + 16, 4); memcpy(&uuid3, p + 20, 4);
++				}
++				p += cmdsize;
++			}
++		}
++		panic("NATIVE_H52: dyld err=%d stat=%d open=%d read=%d size=%llu magic=%08x "
++		    "ncmds=%u sizeofcmds=%u platform=%u minos=%x sdk=%x uuid=%08x%08x%08x%08x",
++		    derr, dstat, dopen, dread, (unsigned long long)dsize, dmagic,
++		    dncmds, dsizeofcmds, build_platform, minos, sdk, uuid0, uuid1, uuid2, uuid3);
++	}
  
  	/*
  	 * So that init task is set with uid,gid 0 token
