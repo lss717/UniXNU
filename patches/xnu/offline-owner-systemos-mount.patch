@@ -9,7 +9,7 @@
  
  #include <mach/exclaves.h>
  
-@@ -7013,8 +7013,286 @@
+@@ -7013,8 +7013,309 @@
   *		word width of the kernel. Once the self-exec completes, the
   *		initproc might be different.
   */
@@ -26,7 +26,6 @@
 +volatile uint64_t native_owner_cache_dyld_flags = 0;
 +#endif
 +extern int native_verified_block_root_authorized(dev_t);
-+extern volatile int native_bindfs_boot_mount;
 +volatile int native_owner_cache_stage = 0;
 +volatile int native_owner_cache_status = -1;
 +volatile int native_owner_cache_mount_status = -1;
@@ -58,10 +57,10 @@
 +#endif
 +	const char *mountpoint = "/";
 +#else
-+	const char *mountpoint = "/System/Library/Caches";
++	const char *mountpoint = "/private/preboot";
 +#endif
 +#if !defined(XNU_OWNER_UNION_SYSTEMOS) || !XNU_OWNER_UNION_SYSTEMOS
-+	const char *environment = "DYLD_SHARED_CACHE_DIR=/System/Library/Caches/com.apple.dyld";
++	const char *environment = "DYLD_SHARED_CACHE_DIR=/private/preboot/System/Library/Caches/com.apple.dyld";
 +	const char *printsegments = "DYLD_PRINT_SEGMENTS=1";
 +	const char *printsearch = "DYLD_PRINT_SEARCHING=1";
 +	const char *printlibs = "DYLD_PRINT_LIBRARIES=1";
@@ -186,20 +185,44 @@
 +	native_owner_cache_authorized = cache_authorized;
 +	native_owner_cache_status = error;
 +#if !defined(XNU_OWNER_UNION_SYSTEMOS) || !XNU_OWNER_UNION_SYSTEMOS
-+	if (error == 0 && cache_authorized && root_recheck) {
-+		struct mount_args bind_request = {.type = scratch + 0x100, .path = scratch + 0x120,
-+		    .flags = MNT_RDONLY, .data = scratch + 0x200};
-+		const char *bind_source = "/System/Library/Caches/System/Library/Caches";
-+		const char *bind_target = "/System/Library/Caches";
-+		int32_t bind_result = 0;
-+		error = copyout("bindfs", bind_request.type, 7);
-+		if (!error) error = copyout(bind_target, bind_request.path, strlen(bind_target) + 1);
-+		if (!error) error = copyout(bind_source, bind_request.data, strlen(bind_source) + 1);
-+		native_bindfs_boot_mount = 1;
-+		if (!error) error = mount(p, &bind_request, &bind_result);
-+		native_bindfs_boot_mount = 0;
-+		printf("NATIVE_H61: bindfs=%d result=%d\n", error, bind_result);
-+		if (error) panic("NATIVE_H61: bindfs mount failed: %d", error);
++	{
++		const char *h62_dir = "/private/preboot/System/Library/Caches/com.apple.dyld";
++		const char *h62_file = "/private/preboot/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64";
++		vfs_context_t pctx = vfs_context_create_with_proc(p);
++		vnode_t dvp = NULLVP, fvp = NULLVP;
++		struct vnode_attr dva, fva;
++		uint64_t fsize = 0;
++		uint32_t dmode = 0, fmode = 0;
++		int dl = -1, dop = -1, fl = -1, fop = -1;
++		if (pctx == NULL) panic("NATIVE_H62: no pctx");
++		dl = vnode_lookup(h62_dir, 0, &dvp, pctx);
++		if (dvp) {
++			VATTR_INIT(&dva);
++			VATTR_WANTED(&dva, va_mode);
++			(void)vnode_getattr(dvp, &dva, pctx);
++			if (VATTR_IS_SUPPORTED(&dva, va_mode)) dmode = (uint32_t)dva.va_mode;
++			dop = VNOP_OPEN(dvp, FREAD, pctx);
++			if (dop == 0) (void)VNOP_CLOSE(dvp, 0, pctx);
++			vnode_put(dvp);
++		}
++		fl = vnode_lookup(h62_file, 0, &fvp, pctx);
++		if (fvp) {
++			VATTR_INIT(&fva);
++			VATTR_WANTED(&fva, va_mode);
++			VATTR_WANTED(&fva, va_data_size);
++			(void)vnode_getattr(fvp, &fva, pctx);
++			if (VATTR_IS_SUPPORTED(&fva, va_mode)) fmode = (uint32_t)fva.va_mode;
++			if (VATTR_IS_SUPPORTED(&fva, va_data_size)) fsize = fva.va_data_size;
++			fop = VNOP_OPEN(fvp, FREAD, pctx);
++			if (fop == 0) (void)VNOP_CLOSE(fvp, 0, pctx);
++			vnode_put(fvp);
++		}
++		vfs_context_rele(pctx);
++		if (dl || dop || fl || fop) {
++			panic("NATIVE_H62: dir=%d/%d dmode=%x file=%d/%d fmode=%x size=%llu",
++			    dl, dop, dmode, fl, fop, fmode, (unsigned long long)fsize);
++		}
++		printf("NATIVE_H62: preboot cache path ok size=%llu\n", (unsigned long long)fsize);
 +	}
 +#endif
 +	native_owner_cache_checkpoint(error, cache_authorized);

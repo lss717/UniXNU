@@ -102,9 +102,11 @@ jobs:
       - name: Build kernel
         env:
           IPSW_URL: ${{ inputs.ipsw_url }}
-          # Temporary B5 bring-up: non-union SystemOS at /System/Cryptexes/OS.
+          # Temporary B5 bring-up: SystemOS at /private/preboot with the owner
+          # dyld cache carrier enabled.
           XNU_OWNER_CACHE_MOUNT: 1
           XNU_OWNER_CACHE_STARTUP: 1
+          XNU_OWNER_CACHE_CARRIER: 1
           XNU_OWNER_UNION_SYSTEMOS: 0
           XNU_BRINGUP_CACHE_MOUNT: 1
         run: |
