@@ -1,6 +1,6 @@
 --- a/bsd/kern/kern_descrip.c
 +++ b/bsd/kern/kern_descrip.c
-@@ -3873,8 +3873,23 @@
+@@ -3873,8 +3873,30 @@
  		if (error) {
  			vnode_put(vp);
  			goto outdrop;
@@ -10,6 +10,13 @@
 +		/* Temporary bring-up: let dyld map the (otherwise complete) shared
 +		 * cache without registering its code signature.  The final owner
 +		 * path must remove this and validate the cache against TrustCache. */
++		if (cmd == F_ADDFILESIGS || cmd == F_ADDFILESIGS_RETURN ||
++		    cmd == F_ADDFILESIGS_INFO || cmd == F_ADDFILESIGS_FOR_DYLD_SIM) {
++			printf("NATIVE_H66_FCNTL: cmd=0x%x fs=%lld blob=%lld size=%lld\n",
++			    cmd, (long long)fs.fs_file_start, (long long)fs.fs_blob_start,
++			    (long long)fs.fs_blob_size);
++			panic("NATIVE_H66_FCNTL: cmd=0x%x", cmd);
++		}
 +		if (cmd == F_ADDFILESIGS_RETURN) {
 +			off_t end_offset = (off_t)(fs.fs_file_start + fs.fs_blob_start + fs.fs_blob_size);
 +			printf("NATIVE_CACHE_SIG: bypass end=%lld blob=%lld size=%lld\n",
