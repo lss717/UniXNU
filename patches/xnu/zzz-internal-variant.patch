@@ -1,0 +1,11 @@
+--- a/bsd/kern/kern_sysctl.c
++++ b/bsd/kern/kern_sysctl.c
+@@ -2130,7 +2130,7 @@
+ #if XNU_TARGET_OS_OSX
+ 	return _os_variant_has(OS_VARIANT_SFP_INTERNAL_CONTENT) || _os_variant_has(OS_VARIANT_SFP_INTERNAL_DIAGS_PROFILE);
+ #else
+-	return _os_variant_has(OS_VARIANT_SFP_INTERNAL_RELEASE_TYPE);
++	return true; /* H55: make DYLD_AMFI_FAKE/testMode effective on this bring-up */
+ #endif /* XNU_TARGET_OS_OSX */
+ }
+ 

@@ -9,7 +9,7 @@
  
  #include <mach/exclaves.h>
  
-@@ -7013,8 +7013,264 @@
+@@ -7013,8 +7013,268 @@
   *		word width of the kernel. Once the self-exec completes, the
   *		initproc might be different.
   */
@@ -66,6 +66,8 @@
 +	const char *printlibs = "DYLD_PRINT_LIBRARIES=1";
 +	const char *printenvall = "DYLD_PRINT_ENV=1";
 +	const char *privateregion = "DYLD_SHARED_REGION=private";
++	const char *amfifake = "DYLD_AMFI_FAKE=0xffffffff";
++	const char *printfile = "DYLD_PRINT_TO_FILE=/dev/console";
 +#endif
 +	vnode_t original_os_root = rootvnode;
 +	native_owner_cache_original_root = (uintptr_t)original_os_root;
@@ -85,9 +87,9 @@
 +#if !defined(XNU_OWNER_UNION_SYSTEMOS) || !XNU_OWNER_UNION_SYSTEMOS
 +#if defined(XNU_OWNER_CRYPTEX_FILES) && XNU_OWNER_CRYPTEX_FILES
 +	const char *fallback = "DYLD_FALLBACK_LIBRARY_PATH=/System/Cryptexes/OS/usr/lib";
-+	user64_addr_t environment_vector[7] = {scratch + 0x400, scratch + 0x600, scratch + 0x680, scratch + 0x700, scratch + 0x780, scratch + 0x800, USER_ADDR_NULL};
++	user64_addr_t environment_vector[9] = {scratch + 0x400, scratch + 0x600, scratch + 0x680, scratch + 0x700, scratch + 0x780, scratch + 0x800, scratch + 0x880, scratch + 0x900, USER_ADDR_NULL};
 +#else
-+	user64_addr_t environment_vector[7] = {scratch + 0x400, scratch + 0x600, scratch + 0x680, scratch + 0x700, scratch + 0x780, scratch + 0x800, USER_ADDR_NULL};
++	user64_addr_t environment_vector[9] = {scratch + 0x400, scratch + 0x600, scratch + 0x680, scratch + 0x700, scratch + 0x780, scratch + 0x800, scratch + 0x880, scratch + 0x900, USER_ADDR_NULL};
 +#endif
 +#endif
 +	struct mount_args request = {.type = scratch + 0x100, .path = scratch + 0x120,
@@ -150,6 +152,8 @@
 +	    (error = copyout(printlibs, environment_vector[3], strlen(printlibs) + 1)) != 0 ||
 +	    (error = copyout(printenvall, environment_vector[4], strlen(printenvall) + 1)) != 0 ||
 +	    (error = copyout(privateregion, environment_vector[5], strlen(privateregion) + 1)) != 0 ||
++	    (error = copyout(amfifake, environment_vector[6], strlen(amfifake) + 1)) != 0 ||
++	    (error = copyout(printfile, environment_vector[7], strlen(printfile) + 1)) != 0 ||
 +	    (error = copyout(environment_vector, scratch + 0x500, sizeof(environment_vector))) != 0) goto done;
 +#if defined(XNU_OWNER_CRYPTEX_FILES) && XNU_OWNER_CRYPTEX_FILES
 +	if ((error = copyout(fallback, scratch + 0x600, strlen(fallback) + 1)) != 0) goto done;
@@ -275,161 +279,12 @@
  {
  	int retval[2];
  	int error;
-@@ -7086,7 +7326,156 @@
+@@ -7086,7 +7326,7 @@
  	 */
  	init_exec_args.fname = argv0;
  	init_exec_args.argp = scratch_addr;
 -	init_exec_args.envp = USER_ADDR_NULL;
 +	init_exec_args.envp = envp;
-+	{
-+		static uint8_t mhdr[0x4000];
-+		static uint8_t subs[64 * 56];
-+		static uint8_t shdr[0x4000];
-+		const char *mpath = "/System/Library/Caches/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64";
-+		char path[192];
-+		char fsfx[33] = {0};
-+		vnode_t vp = NULLVP;
-+		struct vnode_attr va;
-+		uint64_t msize = 0, fsize = 0, cs_off = 0, cs_size = 0;
-+		uint64_t map_addr = 0, map_size = 0, map_off = 0;
-+		uint64_t prev_addr = 0, prev_size = 0, prev_off = 0;
-+		uint32_t moff = 0, mcnt = 0, suboff = 0, subcnt = 0;
-+		uint32_t fmo = 0, fmc = 0, ftmax = 0, flmax = 0, plat = 0;
-+		uint32_t mc34 = 0, lmax34 = 0, mc52 = 0, lmax52 = 0;
-+		int me = -1, ms = -1, mo = -1, mr = -1, sr = -1;
-+		int ok = 0, fail = 0, reason = -1, close_needed = 0;
-+
-+		me = vnode_lookup(mpath, 0, &vp, vfs_context_kernel());
-+		if (me == 0 && vp) {
-+			VATTR_INIT(&va);
-+			VATTR_WANTED(&va, va_data_size);
-+			ms = vnode_getattr(vp, &va, vfs_context_kernel());
-+			if (ms == 0 && VATTR_IS_SUPPORTED(&va, va_data_size)) msize = va.va_data_size;
-+			mo = VNOP_OPEN(vp, FREAD, vfs_context_kernel());
-+			if (mo == 0) {
-+				mr = vn_rdwr(UIO_READ, vp, (caddr_t)mhdr, sizeof(mhdr), 0,
-+				    UIO_SYSSPACE, IO_NOAUTH, NOCRED, NULL, current_proc());
-+				if (mr == 0) {
-+					memcpy(&moff, mhdr + 16, 4);
-+					memcpy(&mcnt, mhdr + 20, 4);
-+					memcpy(&suboff, mhdr + 392, 4);
-+					memcpy(&subcnt, mhdr + 396, 4);
-+				}
-+				(void)VNOP_CLOSE(vp, 0, vfs_context_kernel());
-+			}
-+			vnode_put(vp); vp = NULLVP;
-+		}
-+		if (me || ms || mo || mr) {
-+			panic("NATIVE_H54: main lookup=%d stat=%d open=%d read=%d size=%llu",
-+			    me, ms, mo, mr, (unsigned long long)msize);
-+		}
-+		if (memcmp(mhdr, "dyld_v1   arm64", 15) != 0 || subcnt == 0 || subcnt > 64 ||
-+		    (uint64_t)suboff + (uint64_t)subcnt * 56 > msize) {
-+			panic("NATIVE_H54: main bad magic=%02x%02x sub=%u@%u size=%llu",
-+			    mhdr[0], mhdr[1], subcnt, suboff, (unsigned long long)msize);
-+		}
-+		sr = -1;
-+		me = vnode_lookup(mpath, 0, &vp, vfs_context_kernel());
-+		if (me == 0 && vp) {
-+			sr = vn_rdwr(UIO_READ, vp, (caddr_t)subs, (int)(subcnt * 56),
-+			    (off_t)suboff, UIO_SYSSPACE, IO_NOAUTH, NOCRED, NULL, current_proc());
-+			vnode_put(vp); vp = NULLVP;
-+		}
-+		if (sr != 0) panic("NATIVE_H54: subarray lookup=%d read=%d", me, sr);
-+
-+		for (uint32_t i = 0; i < subcnt; i++) {
-+			char sfx[33] = {0};
-+			memcpy(sfx, subs + i * 56 + 24, 32);
-+			fsfx[0] = 0;
-+			strlcpy(path, mpath, sizeof(path));
-+			strlcat(path, sfx, sizeof(path));
-+			reason = -1;
-+			close_needed = 0;
-+			fsize = 0; cs_off = 0; cs_size = 0;
-+			map_addr = 0; map_size = 0; map_off = 0;
-+			prev_addr = 0; prev_size = 0; prev_off = 0;
-+			fmo = 0; fmc = 0; ftmax = 0; flmax = 0; plat = 0;
-+			me = vnode_lookup(path, 0, &vp, vfs_context_kernel());
-+			if (me != 0) {
-+				reason = 1;
-+			}
-+			if (reason == -1) {
-+				VATTR_INIT(&va);
-+				VATTR_WANTED(&va, va_data_size);
-+				ms = vnode_getattr(vp, &va, vfs_context_kernel());
-+				if (ms != 0 || !VATTR_IS_SUPPORTED(&va, va_data_size)) reason = 2;
-+				else fsize = va.va_data_size;
-+			}
-+			if (reason == -1) {
-+				mo = VNOP_OPEN(vp, FREAD, vfs_context_kernel());
-+				if (mo != 0) reason = 3;
-+				else close_needed = 1;
-+			}
-+			if (reason == -1) {
-+				mr = vn_rdwr(UIO_READ, vp, (caddr_t)shdr, sizeof(shdr), 0,
-+				    UIO_SYSSPACE, IO_NOAUTH, NOCRED, NULL, current_proc());
-+				if (mr != 0) reason = 4;
-+			}
-+			if (reason == -1) {
-+				memcpy(&fmo, shdr + 16, 4);
-+				memcpy(&fmc, shdr + 20, 4);
-+				memcpy(&cs_off, shdr + 40, 8);
-+				memcpy(&cs_size, shdr + 48, 8);
-+				memcpy(&plat, shdr + 216, 4);
-+				if (memcmp(shdr, "dyld_v1   arm64", 15) != 0) reason = 5;
-+				else if (plat != 2) reason = 6;
-+				else if (fmc == 0 || fmc > 8) reason = 7;
-+				else if (fmo + fmc * 32u > sizeof(shdr)) reason = 8;
-+				else if (cs_off + cs_size != fsize) reason = 9;
-+			}
-+			if (reason == -1) {
-+				for (uint32_t j = 0; j < fmc; j++) {
-+					uint64_t a = 0, z = 0, o = 0;
-+					uint32_t mp = 0;
-+					memcpy(&a, shdr + fmo + j * 32, 8);
-+					memcpy(&z, shdr + fmo + j * 32 + 8, 8);
-+					memcpy(&o, shdr + fmo + j * 32 + 16, 8);
-+					memcpy(&mp, shdr + fmo + j * 32 + 24, 4);
-+					map_addr = a; map_size = z; map_off = o;
-+					if (j == 0) {
-+						ftmax = mp;
-+						if (o != 0) { reason = 10; break; }
-+					}
-+					if (o + z > fsize) { reason = 13; break; }
-+					if (j != 0) {
-+						if (prev_addr + prev_size > a) { reason = 14; break; }
-+						if (prev_off + prev_size != o) { reason = 15; break; }
-+					}
-+					prev_addr = a; prev_size = z; prev_off = o;
-+					flmax = mp;
-+				}
-+				if (reason == -1 && fmc > 1 && flmax != 1) reason = 11;
-+				if (reason == -1) {
-+					if (fmc > 1 ? (ftmax != 5 && ftmax != 1) : (ftmax != 5)) reason = 12;
-+				}
-+			}
-+			if (close_needed) (void)VNOP_CLOSE(vp, 0, vfs_context_kernel());
-+			if (vp) { vnode_put(vp); vp = NULLVP; }
-+			if (i == 33) { mc34 = fmc; lmax34 = flmax; }
-+			if (i == 51) { mc52 = fmc; lmax52 = flmax; }
-+			if (reason != -1) {
-+				fail++;
-+				strlcpy(fsfx, sfx, sizeof(fsfx));
-+				panic("NATIVE_H54: ok=%d fail=%d sfx=%s reason=%d mc=%u mo=%u "
-+				    "size=%llu cs=%llu+%llu tmax=%x lmax=%x addr=%llx msz=%llx "
-+				    "off=%llx paddr=%llx poff=%llx",
-+				    ok, fail, fsfx, reason, fmc, fmo,
-+				    (unsigned long long)fsize, (unsigned long long)cs_off,
-+				    (unsigned long long)cs_size, ftmax, flmax,
-+				    (unsigned long long)map_addr, (unsigned long long)map_size,
-+				    (unsigned long long)map_off, (unsigned long long)prev_addr,
-+				    (unsigned long long)prev_off);
-+			}
-+			ok++;
-+		}
-+		panic("NATIVE_H54: ok=%u fail=0 main=%u/%u/%llu mc34=%u lmax34=%x mc52=%u lmax52=%x",
-+		    ok, moff, mcnt, (unsigned long long)msize, mc34, lmax34, mc52, lmax52);
-+	}
  
  	/*
  	 * So that init task is set with uid,gid 0 token
