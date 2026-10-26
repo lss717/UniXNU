@@ -267,64 +267,12 @@
  {
  	int retval[2];
  	int error;
-@@ -7086,7 +7326,59 @@
+@@ -7086,7 +7326,7 @@
  	 */
  	init_exec_args.fname = argv0;
  	init_exec_args.argp = scratch_addr;
 -	init_exec_args.envp = USER_ADDR_NULL;
 +	init_exec_args.envp = envp;
-+	{
-+		char envbuf[128] = {0};
-+		user_addr_t env0 = USER_ADDR_NULL;
-+		size_t envlen = 0;
-+		int env_err = -1;
-+		int envpath_err = -1, envpath_stat = -1;
-+		uint64_t envpath_size = 0;
-+		uint32_t envpath_type = 0;
-+		vnode_t nvp = NULLVP;
-+		struct vnode_attr nva;
-+		static const char *const cand[] = {
-+			"/System/Library/Caches",
-+			"/System/Library/Caches/System",
-+			"/System/Library/Caches/System/Library",
-+			"/System/Library/Caches/System/Library/Caches",
-+			"/System/Library/Caches/System/Library/Caches/com.apple.dyld",
-+		};
-+		int cand_err[5] = {-1, -1, -1, -1, -1};
-+		const char *envpath = "";
-+		int i;
-+		if (envp) {
-+			env_err = copyin(envp, &env0, sizeof(env0));
-+			if (env_err == 0 && env0) {
-+				env_err = copyinstr(env0, envbuf, sizeof(envbuf), &envlen);
-+			}
-+		}
-+		if (env_err == 0) {
-+			char *eq = strchr(envbuf, '=');
-+			if (eq) envpath = eq + 1;
-+		}
-+		if (envpath[0]) {
-+			envpath_err = vnode_lookup(envpath, 0, &nvp, vfs_context_kernel());
-+			if (nvp) {
-+				VATTR_INIT(&nva);
-+				VATTR_WANTED(&nva, va_data_size);
-+				VATTR_WANTED(&nva, va_type);
-+				envpath_stat = vnode_getattr(nvp, &nva, vfs_context_kernel());
-+				if (envpath_stat == 0 && VATTR_IS_SUPPORTED(&nva, va_data_size)) envpath_size = nva.va_data_size;
-+				if (envpath_stat == 0 && VATTR_IS_SUPPORTED(&nva, va_type)) envpath_type = (uint32_t)nva.va_type;
-+				vnode_put(nvp); nvp = NULLVP;
-+			}
-+		}
-+		for (i = 0; i < 5; i++) {
-+			cand_err[i] = vnode_lookup(cand[i], 0, &nvp, vfs_context_kernel());
-+			if (nvp) { vnode_put(nvp); nvp = NULLVP; }
-+		}
-+		panic("NATIVE_PATH: envp=%llx err=%d env0=%llx env='%s' envpath='%s' "
-+		    "eperr=%d estat=%d esize=%llu etype=%u c0=%d c1=%d c2=%d c3=%d c4=%d",
-+		    (unsigned long long)envp, env_err, (unsigned long long)env0, envbuf, envpath,
-+		    envpath_err, envpath_stat, (unsigned long long)envpath_size, envpath_type,
-+		    cand_err[0], cand_err[1], cand_err[2], cand_err[3], cand_err[4]);
-+	}
  
  	/*
  	 * So that init task is set with uid,gid 0 token
