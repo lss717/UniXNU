@@ -85,9 +85,9 @@
 +#if !defined(XNU_OWNER_UNION_SYSTEMOS) || !XNU_OWNER_UNION_SYSTEMOS
 +#if defined(XNU_OWNER_CRYPTEX_FILES) && XNU_OWNER_CRYPTEX_FILES
 +	const char *fallback = "DYLD_FALLBACK_LIBRARY_PATH=/System/Cryptexes/OS/usr/lib";
-+	user64_addr_t environment_vector[6] = {scratch + 0x400, scratch + 0x600, scratch + 0x680, scratch + 0x700, scratch + 0x780, USER_ADDR_NULL};
++	user64_addr_t environment_vector[7] = {scratch + 0x400, scratch + 0x600, scratch + 0x680, scratch + 0x700, scratch + 0x780, scratch + 0x800, USER_ADDR_NULL};
 +#else
-+	user64_addr_t environment_vector[6] = {scratch + 0x400, scratch + 0x600, scratch + 0x680, scratch + 0x700, scratch + 0x780, USER_ADDR_NULL};
++	user64_addr_t environment_vector[7] = {scratch + 0x400, scratch + 0x600, scratch + 0x680, scratch + 0x700, scratch + 0x780, scratch + 0x800, USER_ADDR_NULL};
 +#endif
 +#endif
 +	struct mount_args request = {.type = scratch + 0x100, .path = scratch + 0x120,
