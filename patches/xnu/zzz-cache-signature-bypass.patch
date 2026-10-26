@@ -15,7 +15,6 @@
 +			printf("NATIVE_H66_FCNTL: cmd=0x%x fs=%lld blob=%lld size=%lld\n",
 +			    cmd, (long long)fs.fs_file_start, (long long)fs.fs_blob_start,
 +			    (long long)fs.fs_blob_size);
-+			panic("NATIVE_H66_FCNTL: cmd=0x%x", cmd);
 +		}
 +		if (cmd == F_ADDFILESIGS_RETURN) {
 +			off_t end_offset = (off_t)(fs.fs_file_start + fs.fs_blob_start + fs.fs_blob_size);
