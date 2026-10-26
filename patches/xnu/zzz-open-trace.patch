@@ -1,0 +1,26 @@
+--- a/bsd/vfs/vfs_syscalls.c
++++ b/bsd/vfs/vfs_syscalls.c
+@@ -5114,6 +5114,23 @@
+ 	NDINIT(ndp, LOOKUP, OP_OPEN, FOLLOW | AUDITVNPATH1,
+ 	    segflg, path, ctx);
+ 
++#if defined(XNU_OWNER_CACHE_MOUNT) && XNU_OWNER_CACHE_MOUNT
++	{
++		char h67_path[160];
++		size_t h67_len = 0;
++		proc_t h67_p = vfs_context_proc(ctx);
++		if (h67_p != NULL && proc_getpid(h67_p) == 1 &&
++		    copyinstr(path, h67_path, sizeof(h67_path), &h67_len) == 0 &&
++		    (strstr(h67_path, "com.apple.dyld") != NULL ||
++		    strstr(h67_path, "dyld_shared_cache") != NULL ||
++		    strstr(h67_path, "private/preboot") != NULL)) {
++			error = open1at(ctx, ndp, flags, vap, NULL, NULL, retval, fd, AUTH_OPEN_NOAUTHFD);
++			printf("NATIVE_H67_OPEN: dir=%d path=%s -> %d\n", fd, h67_path, error);
++			kfree_type(typeof(*__open_data), __open_data);
++			return error;
++		}
++	}
++#endif
+ 	error = open1at(ctx, ndp, flags, vap, NULL, NULL, retval, fd, AUTH_OPEN_NOAUTHFD);
+ 
+ 	kfree_type(typeof(*__open_data), __open_data);
