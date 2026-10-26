@@ -9,7 +9,7 @@
  
  #include <mach/exclaves.h>
  
-@@ -7013,8 +7013,256 @@
+@@ -7013,8 +7013,264 @@
   *		word width of the kernel. Once the self-exec completes, the
   *		initproc might be different.
   */
@@ -61,7 +61,11 @@
 +#endif
 +#if !defined(XNU_OWNER_UNION_SYSTEMOS) || !XNU_OWNER_UNION_SYSTEMOS
 +	const char *environment = "DYLD_SHARED_CACHE_DIR=/System/Library/Caches/System/Library/Caches/com.apple.dyld";
-+	const char *printenv = "DYLD_PRINT_SEGMENTS=1";
++	const char *printsegments = "DYLD_PRINT_SEGMENTS=1";
++	const char *printsearch = "DYLD_PRINT_SEARCHING=1";
++	const char *printlibs = "DYLD_PRINT_LIBRARIES=1";
++	const char *printenvall = "DYLD_PRINT_ENV=1";
++	const char *privateregion = "DYLD_SHARED_REGION=private";
 +#endif
 +	vnode_t original_os_root = rootvnode;
 +	native_owner_cache_original_root = (uintptr_t)original_os_root;
@@ -81,9 +85,9 @@
 +#if !defined(XNU_OWNER_UNION_SYSTEMOS) || !XNU_OWNER_UNION_SYSTEMOS
 +#if defined(XNU_OWNER_CRYPTEX_FILES) && XNU_OWNER_CRYPTEX_FILES
 +	const char *fallback = "DYLD_FALLBACK_LIBRARY_PATH=/System/Cryptexes/OS/usr/lib";
-+	user64_addr_t environment_vector[3] = {scratch + 0x400, scratch + 0x600, USER_ADDR_NULL};
++	user64_addr_t environment_vector[6] = {scratch + 0x400, scratch + 0x600, scratch + 0x680, scratch + 0x700, scratch + 0x780, USER_ADDR_NULL};
 +#else
-+	user64_addr_t environment_vector[3] = {scratch + 0x400, scratch + 0x600, USER_ADDR_NULL};
++	user64_addr_t environment_vector[6] = {scratch + 0x400, scratch + 0x600, scratch + 0x680, scratch + 0x700, scratch + 0x780, USER_ADDR_NULL};
 +#endif
 +#endif
 +	struct mount_args request = {.type = scratch + 0x100, .path = scratch + 0x120,
@@ -141,7 +145,11 @@
 +#if !defined(XNU_OWNER_UNION_SYSTEMOS) || !XNU_OWNER_UNION_SYSTEMOS
 +	printf("NATIVE_ENV: %s\n", environment);
 +	if ((error = copyout(environment, environment_vector[0], strlen(environment) + 1)) != 0 ||
-+	    (error = copyout(printenv, environment_vector[1], strlen(printenv) + 1)) != 0 ||
++	    (error = copyout(printsegments, environment_vector[1], strlen(printsegments) + 1)) != 0 ||
++	    (error = copyout(printsearch, environment_vector[2], strlen(printsearch) + 1)) != 0 ||
++	    (error = copyout(printlibs, environment_vector[3], strlen(printlibs) + 1)) != 0 ||
++	    (error = copyout(printenvall, environment_vector[4], strlen(printenvall) + 1)) != 0 ||
++	    (error = copyout(privateregion, environment_vector[5], strlen(privateregion) + 1)) != 0 ||
 +	    (error = copyout(environment_vector, scratch + 0x500, sizeof(environment_vector))) != 0) goto done;
 +#if defined(XNU_OWNER_CRYPTEX_FILES) && XNU_OWNER_CRYPTEX_FILES
 +	if ((error = copyout(fallback, scratch + 0x600, strlen(fallback) + 1)) != 0) goto done;
@@ -267,68 +275,12 @@
  {
  	int retval[2];
  	int error;
-@@ -7086,7 +7326,63 @@
+@@ -7086,7 +7326,7 @@
  	 */
  	init_exec_args.fname = argv0;
  	init_exec_args.argp = scratch_addr;
 -	init_exec_args.envp = USER_ADDR_NULL;
 +	init_exec_args.envp = envp;
-+	{
-+		char cachepath[192];
-+		uint8_t chdr[0x20] = {0};
-+		uint8_t dhdr[0x20] = {0};
-+		uint64_t csize = 0, dsize = 0;
-+		uint32_t ctype = 0, dtype = 0;
-+		uint32_t cm0 = 0, cm1 = 0, cm2 = 0, cm3 = 0;
-+		uint32_t dmagic = 0, dcputype = 0, dfiletype = 0, dncmds = 0;
-+		int cerr = -1, cstat = -1, copen = -1, cread = -1;
-+		int derr = -1, dstat = -1, dopen = -1, dread = -1;
-+		vnode_t vp = NULLVP;
-+		struct vnode_attr va;
-+		strlcpy(cachepath, "/System/Library/Caches/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64", sizeof(cachepath));
-+		cerr = vnode_lookup(cachepath, 0, &vp, vfs_context_kernel());
-+		if (vp) {
-+			VATTR_INIT(&va);
-+			VATTR_WANTED(&va, va_data_size);
-+			VATTR_WANTED(&va, va_type);
-+			cstat = vnode_getattr(vp, &va, vfs_context_kernel());
-+			if (cstat == 0 && VATTR_IS_SUPPORTED(&va, va_data_size)) csize = va.va_data_size;
-+			if (cstat == 0 && VATTR_IS_SUPPORTED(&va, va_type)) ctype = (uint32_t)va.va_type;
-+			copen = VNOP_OPEN(vp, FREAD, vfs_context_kernel());
-+			if (copen == 0) {
-+				cread = vn_rdwr(UIO_READ, vp, (caddr_t)chdr, sizeof(chdr), 0,
-+				    UIO_SYSSPACE, IO_NOAUTH, NOCRED, NULL, current_proc());
-+				(void)VNOP_CLOSE(vp, 0, vfs_context_kernel());
-+			}
-+			vnode_put(vp); vp = NULLVP;
-+		}
-+		memcpy(&cm0, chdr, 4); memcpy(&cm1, chdr + 4, 4);
-+		memcpy(&cm2, chdr + 8, 4); memcpy(&cm3, chdr + 12, 4);
-+		derr = vnode_lookup("/usr/lib/dyld", 0, &vp, vfs_context_kernel());
-+		if (vp) {
-+			VATTR_INIT(&va);
-+			VATTR_WANTED(&va, va_data_size);
-+			VATTR_WANTED(&va, va_type);
-+			dstat = vnode_getattr(vp, &va, vfs_context_kernel());
-+			if (dstat == 0 && VATTR_IS_SUPPORTED(&va, va_data_size)) dsize = va.va_data_size;
-+			if (dstat == 0 && VATTR_IS_SUPPORTED(&va, va_type)) dtype = (uint32_t)va.va_type;
-+			dopen = VNOP_OPEN(vp, FREAD, vfs_context_kernel());
-+			if (dopen == 0) {
-+				dread = vn_rdwr(UIO_READ, vp, (caddr_t)dhdr, sizeof(dhdr), 0,
-+				    UIO_SYSSPACE, IO_NOAUTH, NOCRED, NULL, current_proc());
-+				(void)VNOP_CLOSE(vp, 0, vfs_context_kernel());
-+			}
-+			vnode_put(vp); vp = NULLVP;
-+		}
-+		memcpy(&dmagic, dhdr, 4); memcpy(&dcputype, dhdr + 4, 4);
-+		memcpy(&dfiletype, dhdr + 12, 4); memcpy(&dncmds, dhdr + 16, 4);
-+		panic("NATIVE_H49: cache=%s cerr=%d cstat=%d copen=%d cread=%d csize=%llu ctype=%u "
-+		    "cmagic=%08x%08x%08x%08x dyld=%d/%d/%d/%d size=%llu type=%u "
-+		    "dmagic=%08x cputype=%08x filetype=%08x ncmds=%u",
-+		    cachepath, cerr, cstat, copen, cread, (unsigned long long)csize, ctype,
-+		    cm0, cm1, cm2, cm3, derr, dstat, dopen, dread,
-+		    (unsigned long long)dsize, dtype, dmagic, dcputype, dfiletype, dncmds);
-+	}
  
  	/*
  	 * So that init task is set with uid,gid 0 token
