@@ -19,6 +19,12 @@
 
 # UniXNU
 
+> **OnePlus 5 移植分支。** 本仓库基于
+> [UniXNU/UniXNU](https://github.com/UniXNU/UniXNU) 修改，用于适配
+> OnePlus 5（cheeseburger，MSM8998 / Snapdragon 835）。当前路线为
+> iPad7,1 / iPadOS 17.7.11（21H461）；设备仓库为
+> [lss717/UniXNU-cheeseburger](https://github.com/lss717/UniXNU-cheeseburger)。
+
 🎉 **News:** 原生 Metal GPU 驱动已完全工作在小米平板 6S Pro（sheng）上。render server 通过 Adreno 740 合成系统界面，列入白名单的进程会获得各自的 Metal 设备。详见 [Adreno 740 驱动文档](https://unixnu.com/zh/drivers/native-adreno)。
 
 一个独立项目，通过 UEFI 在非 Apple ARM64 硬件上运行 iOS 与 macOS。
@@ -41,6 +47,8 @@
 | 仓库 | 内容 |
 | --- | --- |
 | [UniXNU](https://github.com/UniXNU/UniXNU) | 构建驱动、UEFI 启动管理器、模块子模块和补丁 |
+| [lss717/UniXNU](https://github.com/lss717/UniXNU) | 本分支：基于 UniXNU/UniXNU 的 OnePlus 5 移植 |
+| [lss717/UniXNU-cheeseburger](https://github.com/lss717/UniXNU-cheeseburger) | OnePlus 5 移植的设备仓库 |
 | [UniXNU-sheng](https://github.com/UniXNU/UniXNU-sheng) | 小米平板 6S Pro 的设备仓库 |
 | [uefi-sheng](https://github.com/UniXNU/uefi-sheng) | 小米平板 6S Pro 的 UEFI 固件移植 |
 

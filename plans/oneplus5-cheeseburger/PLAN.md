@@ -2,10 +2,10 @@
 
 > 线路：**B — UniXNU / 4K**
 > 设备：OnePlus 5（cheeseburger，MSM8998 / Snapdragon 835）
-> 最终目标：**iPhone10,2 / iOS 16.7.16（20H392）手机形态**
-> 临时基线：iPad7,1 / iPadOS 17.7.11（21H461），只用于隔离变量，**不是交付形态**
+> 路线/目标：**iPad7,1 / iPadOS 17.7.11（21H461）**
 > 计划建立：2026-10-22
 > 基线提交：UniXNU `e95b37d`（main）
+> 当前代码提交：UniXNU `479e2ea`；设备仓库 `a18192e`
 > 进度文件：`plans/oneplus5-cheeseburger/STATUS.md`
 
 ---
@@ -21,17 +21,17 @@ Android ABL
   -> BootShim + UEFI 固件卷
      -> UniXNU 菜单
         -> DarwinBoot
-           -> XNU 4K（xnu-8796 / iOS 16 目标）
-              -> UFS 2.1 -> APFS root -> launchd -> SpringBoard
+           -> XNU 4K（UniXNU 4K 基线）
+              -> UFS 2.1 -> APFS root（iPad7,1 17.7.11）-> launchd -> SpringBoard
 ```
 
 关键判断：
 
-- **iPhone10,2 是最终身份**：1080×1920、Home 键、手机 UI，和 OnePlus 5 匹配。
-- **iPad7,1 只是 B3 的临时测试夹具**：复用 sheng 已验证的 prelink/4K 基线，先把 MSM8998 平台和引导链跑通；B6 必须切到 iPhone10,2，不能把 iPad 形态当交付。
+- **路线身份固定为 iPad7,1 / iPadOS 17.7.11（21H461）**：OS、SystemOS、dyld cache 和用户态都来自这一份 IPSW，不再维护第二套身份。
+- **复用 sheng 已验证的 prelink/4K 基线**：先把 MSM8998 平台和引导链跑通，再在同一 identity 下修 launchd/dyld/SpringBoard。
 - **UFS 2.1 是关键路径**：显示和触摸可以后做，没有 UFS 就没有 root/userland。
 - **首期不做 GPU**：Adreno 540 与 sheng 的 Adreno 740 差距太大；先 CPU 渲染。
-- **不混用 IPSW**：kernelcache、DeviceTree、trust cache、OS/SystemOS/AppOS、dyld cache 必须来自同一份 IPSW。
+- **不混用 IPSW**：kernelcache、DeviceTree、trust cache、OS/SystemOS、dyld cache 必须来自同一份 IPSW。
 
 ---
 
@@ -44,8 +44,8 @@ Android ABL
 3. DarwinBoot 校验 kernel/ADT/trust cache 并跳入 XNU。
 4. XNU 4K 在 MSM8998 上到达平台专家，CPU/GIC/timer 工作。
 5. UFS 2.1 发布 userdata，XNU 挂载 root 并启动 `launchd`。
-6. 切到 iPhone10,2 / iOS 16.7.16，进入锁屏/桌面。
-7. 触摸、Home/音量键、基础电源工作，CPU 渲染 UI。
+6. 在 iPad7,1 / iPadOS 17.7.11 身份下进入锁屏/桌面。
+7. 触摸、电源/音量键、基础电源工作，CPU 渲染 UI。
 8. 文档、设备页、构建/启动命令、已知问题完善。
 
 ### 1.2 非目标（首期）
@@ -63,9 +63,9 @@ Android ABL
 | ID | 决策 | 理由 |
 | --- | --- | --- |
 | D1 | 选择 B 线（UniXNU / 4K） | 保持 UniXNU 的模块化设备仓库、UEFI 引导器、DarwinBoot、APFS/trust cache 模型 |
-| D2 | 最终身份 iPhone10,2 / iOS 16.7.16（20H392） | 1080×1920 与 OnePlus 5 完全一致，手机 UI + Home 键 |
-| D3 | iPad7,1 17.7.11 只作 B3 临时基线 | 复用 sheng 已验证的 prelink/4K，先隔离 MSM8998 平台问题 |
-| D4 | 不混用 IPSW | kernelcache/ADT/trust cache/OS/AppOS/dyld cache 必须同源 |
+| D2 | 路线身份固定为 iPad7,1 / iPadOS 17.7.11（21H461） | 当前 port 直接复用该 IPSW 的 OS/SystemOS/dyld cache；不再维护第二套身份 |
+| D3 | 以 iPad7,1 / 17.7.11 作为唯一路线 | 复用 sheng 已验证的 prelink/4K 与 iPadOS 用户态，避免第二套内核/缓存切换 |
+| D4 | 不混用 IPSW | kernelcache/ADT/trust cache/OS/SystemOS/dyld cache 必须同源 |
 | D5 | UEFI 基于 `edk2-msm8998` 的 `cheeseburger` target | 已有 OnePlus 5 UEFI 端口、ACPI、GOP、UFS 块设备 |
 | D6 | 固件先用 `edk2-msm8998/build.sh`，不强接 `unixnu build firmware` | 它使用 GCC5 + 自有 DSC/FDF；直接套 CLANGPDB/Mu-Silicium 布局风险高 |
 | D7 | boot image 用设备仓库的 `make-bootimg.py` 打包 | `unixnu bootimg` 假设 BootShim + 无头 FV，和 edk2-msm8998 的 FD 布局不同 |
@@ -138,17 +138,15 @@ fastboot getvar all
 ```text
 UniXNU-cheeseburger/
   board.toml
-  board.iphone10-2.toml          # B6 目标 profile；先保留，不直接使用
   configs/
     cheeseburger_defconfig
   scripts/
-    make-cheeseburger-adt.py     # 支持 --identity ipad7,1|iphone10,2
+    make-cheeseburger-adt.py     # 生成 iPad7,1 / 17.7.11 身份的 ADT
     make-bootimg.py              # 包装 edk2-msm8998 的 mkbootimg
     check-cheeseburger.py        # 固件/DTB/payload 预检
-    select-target.py             # 切换 board.toml profile（可选）
   package/                       # 设备 kit，首期可为空
   drivers/                       # B5/B7 再添加
-  patches/                       # B6 再添加
+  patches/                       # 后续用户态/驱动阶段再添加
   .cache/firmware/               # 私有输入，不提交
 ```
 
@@ -174,56 +172,46 @@ uefi-cheeseburger/
 
 ## 5. 目标 profile
 
-### 5.1 最终目标：iPhone10,2 / 16.7.16
+### 5.1 路线 profile：iPad7,1 / 17.7.11
 
 ```toml
 [ipsw]
-product = "iPhone10,2"
-version = "16.7.16"
-build = "20H392"
-device_class = "d21ap"
-chip_id = 0x8015
-board_id = 4
-url = "https://updates.cdn-apple.com/2025FallFCS/fullrestores/122-76738/B6C604B4-548E-401F-BBFF-916E3FFDF235/iPhone_5.5_P3_16.7.16_20H392_Restore.ipsw"
-# sha256: b3882291a92ecf8763239a026813b3bafae66b7e317dee67011d90c202ccafef
+product = "iPad7,1"
+version = "17.7.11"
+build = "21H461"
+device_class = "j120ap"
+chip_id = 0x8011
+board_id = 12
+url = "https://updates.cdn-apple.com/2025SpringFCS/fullrestores/122-77166/DCA6CFE8-90E9-4B92-880D-3DE171798E40/iPad_Pro_HFR_17.7.11_21H461_Restore.ipsw"
 fetch = ["KernelCache", "DeviceTree", "StaticTrustCache", "Cryptex1,SystemTrustCache"]
 
 [userdata]
-first_lba = 0x000000       # B0 填充
-last_lba  = 0x000000       # B0 填充
-lba_bytes = 4096           # B0 确认
+first_lba = 0x14f40
+last_lba = 0x1c627fa
+lba_bytes = 4096
 windows = [
   { name = "OS", component = "OS" },
   { name = "SystemOS", component = "Cryptex1,SystemOS" },
-  { name = "AppOS", component = "Cryptex1,AppOS" },   # iOS 16 可能需要，先用 `ipsw info` 确认
 ]
 ```
 
 ADT 身份：
 
 ```text
-compatible = "D21AP\0iPhone10,2\0oneplus,cheeseburger\0qcom,msm8998\0AppleARM\0"
-model = "iPhone10,2"
-target-type = "D21"
-target-sub-type = "D21AP"
-chip-id = 0x8015
+compatible = "oneplus,cheeseburger\0qcom,msm8998\0"
+model = "iPad7,1"
+target-type = "J120"
+chip-id = 0x8011
 ```
 
-`/product` 和 `/buttons` 不从 sheng 的 iPad 模板抄，**从真实 iPhone10,2（D21AP）DeviceTree 复制**，再按 OnePlus 5 的按键集调整。
+`/product`、`/buttons` 和 `artwork-*` 按 iPad7,1 身份生成；OnePlus 5 的屏幕/按键差异由 ADT 覆盖。prelink 的 `slide`、`roots`、trust cache 哈希继续使用 sheng 的值，后续用户态阶段再按实测调整。
 
-### 5.2 临时基线：iPad7,1 / 17.7.11
+### 5.2 OnePlus 5 硬件覆盖
 
-B3 使用 sheng 的 `board.toml` 作为参考：
-
-- `product = "iPad7,1"`
-- `version = "17.7.11"`
-- `build = "21H461"`
-- `device_class = "j120ap"`
-- `chip_id = 0x8011`
-- `board_id = 12`
-- prelink 的 `slide`、`early_security_init`、`roots`、trust cache 哈希先用 sheng 的值。
-
-**注意**：B3 只验证引导链和 MSM8998 平台，不做设备页、不写“支持 iPadOS”的结论。
+- UFS 2.1：`NativeUfs` 发布 userdata 的 OS/SystemOS 窗口。
+- 输入：电源/音量键沿用 Qualcomm `ButtonsDxe`；触摸 B7 再做。
+- 显示：B7 先走 GOP/legacy display，再做 DSI/面板。
+- 电源/PMIC：首期保持 UEFI 电源轨，不实现 suspend/充电。
 
 ---
 
@@ -231,7 +219,7 @@ B3 使用 sheng 的 `board.toml` 作为参考：
 
 ### B0 准备与基线冻结（预计 2–3 天）
 
-**目标**：设备可恢复、硬件事实齐全、构建环境可用、两套 IPSW 就位。
+**目标**：设备可恢复、硬件事实齐全、构建环境可用、iPad7,1 17.7.11 IPSW 就位。
 
 任务：
 
@@ -243,7 +231,7 @@ B3 使用 sheng 的 `board.toml` 作为参考：
 - [ ] macOS + Xcode 或 GitHub Actions 可用；Linux 侧安装 Python 3.11+、git、make、dtc、mtools、LLVM/lld。
 - [x] `git submodule update --init --recursive` 初始化 UniXNU 子模块。
 - [x] clone `edk2-msm8998` 到 `/home/ls/edk2-msm8998`（upstream shallow；`uefi-cheeseburger` fork 待建）。
-- [x] 取 iPad7,1 17.7.11 的 `DeviceTree` 与 `StaticTrustCache`（range 请求，未下载整个 IPSW）；iPhone10,2 16.7.16 与 `KernelCache` 待 macOS。
+- [x] 取 iPad7,1 17.7.11 的 `DeviceTree` 与 `StaticTrustCache`（range 请求，未下载整个 IPSW）；`KernelCache` 待 macOS。
 - [ ] 提取并缓存 `KernelCache`、`DeviceTree`、`StaticTrustCache`、`Cryptex1,SystemTrustCache`；放在 `.cache/firmware/`，不提交。
 - [ ] 记录基线提交、工具版本、IPSW 哈希到 `STATUS.md`。
 
@@ -251,7 +239,7 @@ B3 使用 sheng 的 `board.toml` 作为参考：
 
 - `fastboot devices` 正常。
 - GPT/RAM/UFS 值写入本计划第 3 节。
-- 两份 IPSW 的 SHA-256 校验通过。
+- iPad7,1 17.7.11 IPSW 的 SHA-256 校验通过。
 - `edk2-msm8998/build.sh --help` 正常，UniXNU 子模块已初始化。
 
 风险：
@@ -328,7 +316,7 @@ fastboot boot /home/ls/UniXNU/out/cheeseburger/b1b/boot-op5-b1b-safe.img
 任务：
 
 - [x] 创建 `UniXNU-cheeseburger` 骨架（本地 `/home/ls/UniXNU-cheeseburger`，`a67972c`）。
-- [x] 写 `board.toml`（iPad7,1 fixture + 实测值）和 `board.iphone10-2.toml`（B6 占位）。
+- [x] 写 `board.toml`（iPad7,1 路线 + 实测值）。
 - [x] 写 `configs/cheeseburger_defconfig`，首期最小集：
   - `CONFIG_XNU_BUILD_ARCHIVES=y`
   - `CONFIG_XNU_SOURCE_CORECRYPTO14=y`
@@ -343,12 +331,11 @@ fastboot boot /home/ls/UniXNU/out/cheeseburger/b1b/boot-op5-b1b-safe.img
   - `CONFIG_XNU_SOURCE_MOCKFS=y`
   - `CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"`
   - 暂不打开：UFS、Adreno、PMGR、PAN、MobileDisplay。
-- [x] 从 `make-sheng-adt.py` 改出 `make-cheeseburger-adt.py`（已生成并通过 `check-adt.py`；`--identity iphone10,2` 的真实 D21AP `/product`、`/buttons` 留到 B6）：
+- [x] 从 `make-sheng-adt.py` 改出 `make-cheeseburger-adt.py`（已生成并通过 `check-adt.py`）：
   - MSM8998 常量：GICD `0x17a00000`，GICR `0x17b00000`，stride `0x20000`，timebase `19200000`；
   - CPU regs `0,1,2,3,0x100..0x103`；
   - UFS 节点 `qcom,msm8998-ufshc`（首版只用于匹配，地址用驱动常量）；
-  - 支持 `--identity ipad7,1` 和 `--identity iphone10,2`；
-  - iPhone 模式下复制真实 D21AP `/product`、`/buttons`。
+  - 按 iPad7,1 路线生成 `/product`、`/buttons` 和 `artwork-*`。
 - [x] 写 `scripts/make-bootimg.py`（已用当前固件生成并预检通过）：
   - 输入：`workspace/uefi-cheeseburger.img.gz-dtb`、`payload.img`；
   - 调用 edk2-msm8998 的 `mkbootimg.py`；
@@ -387,22 +374,22 @@ python3 package/Scripts/qemu-run.py out/esp \
 
 风险：
 
-- iOS 16 的 `AppOS` 组件名/窗口要先用 `unixnu ipsw info` 确认。
+- iPadOS 17.7.11 的 `OS`/`SystemOS` 窗口名要先用 `unixnu ipsw info` 确认。
 - ADT 的 `dram-size` 先按固件可见上限，不要直接写 6/8 GB。
 - `unixnu bootimg` 不能直接用，必须走设备脚本。
 
 ---
 
-### B3 4K XNU 引导链验证（iPad7,1 临时基线，预计 1–2 周，硬性 time-box）
+### B3 4K XNU 引导链验证（iPad7,1 路线，预计 1–2 周，硬性 time-box）
 
-**目标**：在 MSM8998 上验证 UniXNU -> DarwinBoot -> XNU 4K 的完整跳转；不追求 iPhone 形态。
+**目标**：在 MSM8998 上验证 UniXNU -> DarwinBoot -> XNU 4K 的完整跳转；不追求完整 UI。
 
 任务：
 
 - [ ] 以 sheng 的 iPad7,1 17.7.11 prelink 为基线，构建最小内核：
   - archives 只保留 `ArmDTPlatform`、`ArmCpu`、corecrypto、pthread、boot-progress、NativeLegacyDisplay、mockfs；
   - 不包含 NativeUfs、NativeAdreno、NativeMobileDisplay、sheng PMGR。
-- [ ] `payload.adt` 用 iPad 临时 profile；`ipad_identity=true` 只用于让 MobileGestalt 走通，B3 不做 UI。
+- [ ] `payload.adt` 用 iPad7,1 路线 profile；`ipad_identity=true` 只用于让 MobileGestalt 走通，B3 不做 UI。
 - [ ] 内核参数最小化：`-v`、`debug=0x14e`、`boot-progress=2`、`offline-legacy-gop=1`、`offline-legacy-unit-scale=1`。
 - [ ] 启动，确认 `DARWINBOOT:` 日志、XNU 版本、framebuffer 输出。
 - [ ] 记录 panic：如果 panic 点名缺失的 provider，这是 B3 的成功信号，不是失败。
@@ -461,7 +448,7 @@ python3 package/Scripts/qemu-run.py out/esp \
   - SMMU：MMU-500，4K；先试 `ArmSmmu4K`，不匹配就新写 context bank。
 - [ ] 第一版用“handoff 模式”：UEFI 已初始化 HC/PHY/时钟，XNU 只接管命令提交；SMMU 先旁路/复用 UEFI 映射。
 - [x] `userdata` 的 GPT LBAs 与 `lba_bytes`：`0x14F40`–`0x1C627FA`，4096 B（2026-10-22 实测）。
-- [ ] 用 B3 的 iPad 临时 root 先验证 OS/SystemOS 窗口和 root UUID。
+- [ ] 用 iPad7,1 的只读 root 先验证 OS/SystemOS 窗口和 root UUID。
 - [ ] 备份后 flash userdata；确认 `OS`/`SystemOS` 媒体出现。
 - [ ] 确认 root UUID 匹配，`launchd` 启动。
 
@@ -481,49 +468,31 @@ python3 package/Scripts/qemu-run.py out/esp \
 
 ---
 
-### B6 切换 iPhone10,2 / iOS 16.7.16（预计 3–5 周）
+### B6 iPad7,1 用户态收尾（预计 3–5 周）
 
-**目标**：从 iPad 临时基线切到最终 iPhone10,2 手机形态。
+**目标**：在 iPad7,1 / iPadOS 17.7.11 身份下让 `launchd`、dyld shared cache、AMFI/VerifiedRoot 和 SpringBoard 走通。
 
 任务：
 
 - [ ] 冻结 B3–B5 的可用结果，打 tag/记录。
-- [ ] 把 UniXNU 4K 补丁回移到 xnu-8796（iOS 16）：
-  - 逐条 `git apply --check`；
-  - 列出不能直接应用的补丁，按 4K 页表、代码签名、平台、存储分类重写；
-  - 先只保留“能 boot 到平台专家”的最小补丁集，逐步加回。
-- [ ] 用 iPhone10,2 20H392 的 kernelcache 重新 prelink：
-  - 计算 `kernelcache_sha256`；
-  - 确定 `slide`、`roots`、`early_security_init`；
-  - 重新计算 trust cache 哈希；
-  - 不能复用 sheng/iPad 的任何地址或哈希。
-- [ ] 更新 ADT：
-  - `model=iPhone10,2`，`target-type=D21`，`target-sub-type=D21AP`；
-  - 从真实 D21AP DeviceTree 复制 `/product`、`/buttons`；
-  - `chip-id=0x8015`；
-  - 显示 1080×1920，逻辑 414×736@3x，按真机 downsample；
-  - Home 键类型用 D21AP 真实值，不要用 sheng 的 2。
-- [ ] 更新 userdata：
-  - 加 `AppOS` 窗口（如 `ipsw info` 确认需要）；
-  - 重新读取 iPhone10,2 的 root volume UUID；
-  - 重新构建 userdata 镜像。
-- [ ] 切 `board.toml` 到 iPhone10,2 profile，重建 payload/boot image。
-- [ ] 启动到锁屏；先不要追求 App Store/Apple ID。
-- [ ] 决策门：如果 4K 回移成本超出预算，回退为“iPad7,1 17.7.11 的 UniXNU 端口”，把 iPhone10,2 作为后续独立项目；不要中途混用 IPSW。
+- [ ] 完成 launchd/dyld 诊断：H53 先验证 16 KiB cache 预读；若仍 `no dyld cache`，优先把 SystemOS 以标准路径/union mount 暴露给 dyld，或做 kernel-side bind。
+- [ ] 核对 cache 的 mapping/slide 是否能由 4 KiB 页表直接表示；不能表示时在 `shared_region` 里拆分或重映射，不要改 cache 文件。
+- [ ] 恢复真实 root auth/AMFI/trust cache，移除 bring-up 旁路（`native-skip-root-auth`、`amfi_get_out_of_my_way`、`launchd_unsecure_cache`、`dyld_flags`）。
+- [ ] 让 `launchd` 稳定运行后继续到 `configd`/SpringBoard，记录第一个用户态阻塞。
+- [ ] 保持 iPad7,1 身份：`/product`、`/buttons`、`artwork-*` 不再切换 profile。
 
 验收（G5）：
 
-- iPhone10,2 身份被 MobileGestalt 识别为手机。
-- 1080×1920 锁屏出现。
-- `launchd`/SpringBoard 运行。
-- 无 iPad 形态残留（product/artwork/idiom 正确）。
+- `launchd` 能加载 `libSystem`，不再出现 `(no dyld cache)`。
+- `launchd` 连续运行，`configd` 等基础 daemon 能启动。
+- SpringBoard/锁屏出现；先不追求 App Store/Apple ID。
+- 启动参数里没有 root auth/AMFI 临时旁路。
 
 风险：
 
-- 4K 补丁回移到 8796 是本阶段最大风险；需要逐条适配，不是改版本号。
-- iPhone10,2 kernelcache 的 prelink 元数据与 iPad 不同；`early_security_init` 要重新定位。
-- iOS 16 可能需要 `AppOS` 窗口；先用 `unixnu ipsw info` 确认。
-- 如果 4K 路线成本过高，考虑 B6 的 fallback 或另开 A 线，不要硬拼。
+- dyld cache 按 16 KiB 构建，4 KiB 内核的 mapping/slide 是当前最大变量。
+- AMFI/VerifiedRoot 恢复后可能重新拒绝未封印的 restore root；需要单独设计测试镜像。
+- 没有 GPU，SpringBoard 只能 CPU 渲染，首期不追求动画性能。
 
 ---
 
@@ -545,7 +514,7 @@ python3 package/Scripts/qemu-run.py out/esp \
 
 - 锁屏出现，能解锁。
 - 桌面出现，能打开 Settings。
-- 触摸和 Home/音量键工作。
+- 触摸和电源/音量键工作。
 - 连续运行 10 分钟不 watchdog/panic。
 
 风险：
@@ -582,14 +551,14 @@ python3 package/Scripts/qemu-run.py out/esp \
 | B0 | 准备与基线 | 2–3 天 | 0.5 周 |
 | B1 | UEFI + UniXNU | 1–2 周 | 2.5 周 |
 | B2 | 设备仓库 + ADT | 1–2 周 | 4.5 周 |
-| B3 | 4K 引导链（iPad 临时） | 1–2 周 | 6.5 周 |
+| B3 | 4K 引导链（iPad7,1 路线） | 1–2 周 | 6.5 周 |
 | B4 | 平台专家 | 3–5 天 | 7.5 周 |
 | B5 | UFS + root | 4–8 周 | 15.5 周 |
-| B6 | iPhone10,2 切换 | 3–5 周 | 20.5 周 |
+| B6 | iPad7,1 用户态收尾 | 3–5 周 | 20.5 周 |
 | B7 | 显示/触摸/UI | 4–8 周 | 28.5 周 |
 | B8 | 文档/收尾 | 1 周 | 29.5 周 |
 
-**结论**：到 XNU 控制台约 6–8 周；到 iPhone10,2 锁屏约 5 个月；到可用 UI 约 6–7 个月。UFS 和 4K 回移是最大变量。
+**结论**：到 XNU 控制台约 6–8 周；到 iPad7,1 锁屏约 5 个月；到可用 UI 约 6–7 个月。UFS 和 dyld cache 的 4K/16K 映射是最大变量。
 
 ---
 
@@ -598,12 +567,12 @@ python3 package/Scripts/qemu-run.py out/esp \
 | 风险 | 概率 | 影响 | 对策 |
 | --- | --- | --- | --- |
 | UFS 2.1 驱动移植 | 高 | 高 | handoff 模式、先 mockfs、参考 mainline/ios-sweet、先旁路 SMMU |
-| 4K 补丁回移 xnu-8796 | 高 | 高 | 逐条 apply/重写；最小补丁集；B6 设决策门 |
+| dyld cache 4K/16K 映射 | 高 | 高 | H53 预检；union/标准路径；必要时在 `shared_region` 拆分或重映射 |
+| AMFI/VerifiedRoot 恢复 | 高 | 高 | 先用 bring-up 旁路定位用户态，再单独做认证镜像；不要长期关闭 |
 | 没有 UART | 高 | 中 | framebuffer 日志、panic screen、boot-progress；UEFI GOP log |
 | edk2-msm8998 只映射 4 GB | 中 | 高 | 先用 `dram_size=0xF0000000`、2 GB 窗口；稳定后改 MemoryInitPei |
 | GCC5 vs CLANGPDB | 中 | 中 | 先用 GCC5；UniXNU/DarwinBoot 单独 CLANGPDB 出 EFI 再塞 FV |
-| prelink ABI/kext 不匹配 | 中 | 高 | B3 用 sheng 已验证基线；B6 重新鉴定；逐个裁剪 roots |
-| iPhone10,2 的 `/product`/`/buttons` 不匹配 | 中 | 中 | 从真实 D21AP DeviceTree 复制，不手写 |
+| prelink ABI/kext 不匹配 | 中 | 高 | B3 用 sheng 已验证基线；B6 逐项核对；逐个裁剪 roots |
 | 触摸/面板驱动 | 中 | 中 | 首期 GOP console；UI 阶段再做；参考 mainline |
 | bootloader 清盘/变砖 | 低 | 高 | 备份；只 `fastboot boot`；保留 stock boot |
 | 私有 blob 入 git | 低 | 中 | `.cache/firmware/` + `.gitignore`；提交前检查 |
@@ -638,13 +607,11 @@ python3 package/Scripts/qemu-run.py out/esp \
 
 ---
 
-## 11. 下一步（B0）
+## 11. 下一步（B5/B6）
 
-1. 确认机型（5 / 5T）并备份。
-2. dump GPT，记录 userdata LBA 和逻辑块大小。
-3. 确认 RAM 容量。
-4. 初始化 UniXNU 子模块，构建 `edk2-msm8998` 的 `cheeseburger`。
-5. 下载并校验两份 IPSW，提取 kernelcache/DeviceTree/trust cache。
+1. 上机 H53，确认 16 KiB cache 预读和目录模式。
+2. 若 dyld 仍报 `no dyld cache`，把 SystemOS 以标准路径/union mount 暴露给 dyld，或做 kernel-side bind。
+3. 核对 cache mapping/slide 的 4 KiB 可表示性；必要时在 `shared_region` 里拆分或重映射。
+4. 让 `launchd` 稳定运行，再恢复 root auth/AMFI/trust cache。
+5. 继续到 `configd`/SpringBoard，并记录第一个用户态阻塞。
 6. 把结果填入本计划第 3 节和 `STATUS.md`。
-
-完成 B0 后进入 B1：UEFI + UniXNU 集成。

@@ -19,6 +19,12 @@
 
 # UniXNU
 
+> **OnePlus 5 port fork.** This tree is based on
+> [UniXNU/UniXNU](https://github.com/UniXNU/UniXNU) and is modified for the
+> OnePlus 5 (cheeseburger, MSM8998 / Snapdragon 835). The current route is
+> iPad7,1 / iPadOS 17.7.11 (21H461); the device repository is
+> [lss717/UniXNU-cheeseburger](https://github.com/lss717/UniXNU-cheeseburger).
+
 🎉 **News:** The native Metal GPU driver is now fully working on the Xiaomi Pad 6S Pro (sheng). The render server composites the system UI through the Adreno 740, and listed processes get their own Metal devices. See the [Adreno 740 driver documentation](https://unixnu.com/drivers/native-adreno).
 
 An independent project to run iOS and macOS on non-Apple ARM64 hardware through UEFI.
@@ -41,6 +47,8 @@ The documentation is at [unixnu.com](https://unixnu.com). It covers the boot cha
 | Repository | Contents |
 | --- | --- |
 | [UniXNU](https://github.com/UniXNU/UniXNU) | Build driver, UEFI boot manager, module submodules and patches |
+| [lss717/UniXNU](https://github.com/lss717/UniXNU) | This fork: OnePlus 5 port, based on UniXNU/UniXNU |
+| [lss717/UniXNU-cheeseburger](https://github.com/lss717/UniXNU-cheeseburger) | Device repository for the OnePlus 5 port |
 | [UniXNU-sheng](https://github.com/UniXNU/UniXNU-sheng) | Device repository for the Xiaomi Pad 6S Pro |
 | [uefi-sheng](https://github.com/UniXNU/uefi-sheng) | UEFI firmware port for the Xiaomi Pad 6S Pro |
 

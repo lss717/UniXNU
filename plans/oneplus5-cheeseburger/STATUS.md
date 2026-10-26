@@ -2,15 +2,15 @@
 
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
-- 最终目标：iPhone10,2 / iOS 16.7.16（20H392）
-- 当前阶段：**B5 root 已挂载；root auth 临时旁路后进入 launchd，但 dyld 仍报 `no dyld cache`。已确认 iPad7,1 的 52 个 split cache 文件/签名范围/主头/mapping 全部有效；H46/H47 证明 exec env 和嵌套 cache 目录都正确。当前卡在 dyld 打开/使用 cache 之前的路径或 dyld 版本/命令差异；下一步 H48 让 launchd 实跑并抓 dyld/shared_region 日志**
-- 当前 gate：**G1 通过（2026-10-22）**
+- 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
+- 当前阶段：**B5 用户态入口。UFS/APFS root 已挂载，launchd 已 exec；dyld 仍报 `no dyld cache`。H49/H52 已排除 cache 文件缺失、嵌套路径错误、`/usr/lib/dyld` 架构/构建版本错误；H53 是 16 KiB 预读诊断，已构建待上机。**
+- 当前 gate：**G1 通过（2026-10-22）；B3 已到 BSD/IOKit；B5 root 已挂载（bring-up）**
 - 基线提交：UniXNU `e95b37d`（main）
-- 本地提交：UniXNU `c8a5eeb`（计划）、`18f3020`（package）、`270ea4b`（B1 记录）、`692d70f`（docs 记录）；本轮 B1 收尾见 `git log -- plans/oneplus5-cheeseburger`
+- 当前代码提交：UniXNU `479e2ea`；设备仓库 `a18192e`
 - 远程仓库：
-  - UniXNU `https://github.com/lss717/UniXNU`（`main`，`8193701`）
+  - UniXNU `https://github.com/lss717/UniXNU`（`main`）
   - UEFI fork `https://github.com/lss717/edk2-msm8998`（分支 `unixnu-cheeseburger`）
-  - 设备仓库 `https://github.com/lss717/UniXNU-cheeseburger`（`main`，`22742e3`）
+  - 设备仓库 `https://github.com/lss717/UniXNU-cheeseburger`（`main`，`a18192e`）
 - UEFI 分支：`edk2-msm8998` 的 `unixnu-cheeseburger`，提交 `0471194`、`708fa06`、`7f34479`、`91e17a8`、`8ef28f1`、`1ffb934`
 - 最近更新：2026-10-26
 
@@ -57,10 +57,9 @@ G1 现场照片在 `assets/`：`g1-b1c-info-scrolled.jpg`（首版滚屏）、`g
 
 ## B2 进展（2026-10-22）
 
-本地仓库 `/home/ls/UniXNU-cheeseburger`（`main`，提交 `a67972c`，尚未推送）：
+本地仓库 `/home/ls/UniXNU-cheeseburger`（`main`，当前提交 `a18192e`）：
 
-- `board.toml`：B3 的 iPad7,1 17.7.11 fixture、实测 userdata/RAM/GOP 值、`[payload]`；
-- `board.iphone10-2.toml`：B6 目标 profile 的占位；
+- `board.toml`：iPad7,1 / 17.7.11 路线、实测 userdata/RAM/GOP 值、`[payload]`；
 - `configs/cheeseburger_defconfig`：计划里的最小内核配置；
 - `scripts/make-bootimg.py`：调 edk2-msm8998 的 `mkbootimg.py`，地址 `0x10000000/0x12000000/0x14000000`，输出 JSON 报告；已用当前固件实测生成并预检通过；
 - `scripts/check-cheeseburger.py`：B1 预检工具的仓库版本，默认读 edk2 构建产物；
@@ -584,8 +583,8 @@ NATIVE_UFS_GPT: done type=05000000 rsp=21/00 tag=1
 ### B5 root 可行性检查（B，2026-10-24）
 
 用户确认：Android 系统是初始状态、没有个人数据，**不需要个人数据备份**；
-B5 先用现有 **iPad7,1 / iPadOS 17.7.11（21H461）** fixture 跑通，之后再
-切 iPhone10,2 / 16.7.16。当前系统完整备份仍保留，作为误写/回滚保护。
+B5 使用 **iPad7,1 / iPadOS 17.7.11（21H461）** 作为唯一路线。当前系统完整
+备份仍保留，作为误写/回滚保护。
 
 只读检查结果：
 
@@ -593,8 +592,8 @@ B5 先用现有 **iPad7,1 / iPadOS 17.7.11（21H461）** fixture 跑通，之后
 - 实机 userdata 几何与 `board.toml` 一致：
   `first_lba=0x14f40`、`last_lba=0x1c627fa`、`lba_bytes=4096`。
 - 仓库内没有现成的 `userdata-root.img`、APFS 根卷或 SHNGROOT 镜像。
-- 第一轮 B5 使用 `board.toml` 的 iPad7,1 / 17.7.11 fixture；iPhone10,2
-  profile 的 IPSW/哈希/prelink/ADT 仍留到后续。
+- B5 使用 `board.toml` 的 iPad7,1 / 17.7.11 profile；IPSW/哈希/prelink/ADT
+  都以这一份 fixture 为准。
 - `NativeUfsProbe`/`NativeUfsLun` 只有 READ10；没有 WRITE10、UNMAP、
   FORMAT 或任何写工具。
 - XNU 侧还缺 SHNGROOT 窗口发布/APFS root UUID 匹配；仅写入镜像不会让
@@ -651,39 +650,21 @@ iPad7,1 / iPadOS 17.7.11 fixture 的 `userdata-root.img` 已写入并校验；XN
 
 ## 下一步
 
-0. ~~先跑 PSCI 对照镜像~~（2026-10-23 已完成；8 s / 30 s / 20 s 三个对照都
-   按预期复位，复位路径可信）。
-1. ~~上机验证 `boot-physbase.img`~~（2026-10-23 已完成；stage 3 与 20 s
-   对照的 kernel_start 只差 0.52 s，**MMU 已过**）。
-2. ~~上机跑 panic 内核~~（2026-10-23 已完成：停在 stage 1/2 色带，没有
-   panic；现已由 stage 4 二分解释为 `arm_vm_prot_init` 的未映射 prelink 段）。
-3. ~~改 prelink 布局并重建内核~~（2026-10-23 已完成：CI run
-   `39951630215`，`slide=0x4100000`；`prot4`、`_arm_vm_init` 均已 PASS）。
-4. ~~测试控制台窗口~~（2026-10-23 已完成：`PE_init_printf`、PE1、
-   `machine_startup`、`_kernel_bootstrap`、`_kernel_thread_create`、
-   `_bsd_init`、`_IOKitBSDInit` 全部 PASS）。
-5. **B5：UFS/root**（下一阶段关键路径）：XNU 已在 BSD/IOKit 初始化里等待
-   root device；需要 NativeUfs/APFS/root UUID。没有 UFS 就不会继续到
-   launchd。
-6. ~~普通控制台输出~~（2026-10-23 已完成：`console_init` 后
-   `gc_enable(TRUE)`，`boot-console-fix.img` 日志上屏）。
-7. **修 prelink kext 范围**（当前动作）：
-   `emit_prelink.py` 已补 start/stop slide 和 size；真正根因是
-   `vm_kernel_slid_top` 仍取 `vm_prelink_einfo`，而 slide 后的
-   prelink text/data 在它上面，`ml_static_slide()` 把组件段清 0。
-   已提交 `native-prelink-slid-top.patch`（`707fde9`），待 CI/上机。
-8. **重新启用 trust cache runtime**：等 `AppleImage4`/AMFI 的初始化顺序
-   在 prelink 里确定后再打开；当前 B3 先关闭。
-9. 解释 DarwinBoot 日志里的 `owned=0`（ADT 的 `darwinboot-memory-size`
-   解析正确，诊断固件已编译）。
-10. B6 时再实现 `--identity iphone10,2` 的真实 `/product`、`/buttons` 复制。
+当前（2026-10-26）：
 
-（1-5 的旧项——推仓库、dispatch workflow、TWRP 备份——已于 2026-10-22
-完成，见下方日志。）
+1. **H53 上机**：确认 16 KiB cache 预读 `resid=0`，文件/目录模式正常。
+2. 若仍 `no dyld cache`：优先把 SystemOS union mount 到标准路径
+   `/System/Library/Caches/com.apple.dyld`，或做 kernel-side bind；
+   不要先换 root/cache。
+3. 核对 cache mapping/slide 的 4 KiB 可表示性；必要时在 `shared_region`
+   里拆分或重映射。
+4. `launchd` 稳定后恢复 root auth/AMFI/trust cache，移除 bring-up 旁路。
+5. 继续到 `configd`/SpringBoard，记录第一个用户态阻塞。
+6. 更新 `STATUS.md` 并提交文档。
 
 ## 已完成
 
-- [x] 选定 B 线（UniXNU / 4K），最终身份 iPhone10,2。
+- [x] 选定 B 线（UniXNU / 4K），路线固定为 iPad7,1 / iPadOS 17.7.11。
 - [x] 计划与状态文件落盘并提交（`c8a5eeb`）。
 - [x] 主机工具安装：clang-20/lld-20、dtc、mtools、acpica-tools、nasm、bison、flex、uuid-dev、python3-pil、python3-git、gettext、abootimg。
 - [x] 初始化 UniXNU 21 个子模块。
@@ -891,16 +872,15 @@ Linux x86_64 / Ubuntu 24.04：
 
 ## 阻塞
 
-- 设备已接入（2026-10-23，adb/fastboot 可用）。
-- **MMU 已过**：20 s stage 3 与 20 s pre-MMU 对照的 kernel_start 相差
-  0.52 s；4 KiB 页表、TCR/TTBR、SCTLR 切换均已通过。
-- 当前卡点：`emit_prelink.py` 没有把 `kmod_info` 的 start/stop（+180/+188）
-  随 slide 写入；`com.apple.kec.Libm`/`corecrypto` 的 start 指针仍在
-  slide 前地址，OSKext 范围校验失败。
-- 普通控制台输出已解决：`console_init` 后调用 `gc_enable(TRUE)`；
-  panic screen 和普通 `kprintf` 都能上屏。
-- trust cache runtime 暂时关闭（img4if/amfi 未注册）；B5/B6 再补。
-- 下一阶段是 B5 的 UFS/root；没有 root device 时内核会停在 BSD 初始化。
+- **当前卡点**：`launchd` 已 exec，但 dyld 不使用 shared cache，报
+  `Library not loaded: /usr/lib/libSystem.B.dylib (no such file, no dyld cache)`。
+- 已排除：cache 文件缺失、嵌套路径错误、`/usr/lib/dyld` 架构/版本错误。
+  H49 读到 `491520 B` 的主 cache（magic `dyld`）；H52 读到
+  `/usr/lib/dyld` 为 arm64，`platform=2`，`minos/sdk=0x110700`。
+- 仍待确认：dyld 是否忽略 `DYLD_SHARED_CACHE_DIR`、4K 内核能否映射
+  16K 构建的 cache、以及 cache signature/AMFI 的影响。
+- H53 已构建 16 KiB 预读诊断，尚未上机。
+- trust cache runtime 仍关闭；root auth/AMFI 仍是 bring-up 旁路。
 - DarwinBoot 的 `owned=0` 未解释，暂不影响 BSD/IOKit 阶段。
 
 ## 工作日志
@@ -978,7 +958,12 @@ Linux x86_64 / Ubuntu 24.04：
 | 2026-10-25 | B5 | **52 个 subcache 预检通过** | H37：使用 arm64 三空格 magic 和每文件 16 KiB pread，`ok=52 fail=0`；H35：主头 `cs=475136+16384==size=491520`、`prot=5/5`、`os=0x110700`、mapping 有效 |
 | 2026-10-25 | B5 | **mount / env / ADT 诊断** | H39 `/System/Cryptexes/OS` 与 H40 `.../Caches/com.apple.dyld` 均 ENOENT；H41/H42 改挂 `/System/Library/Caches` 成功。ADT 增加 `/chosen/asmb`（`lp-sip0=0x6f` u64，`lp-sip1=1` u32）；H45 union + asmb 仍未改变 `no dyld cache`，且无 `shared_region`/trust-cache 报错 |
 | 2026-10-26 00:18 | B5 | **env / 路径已证实** | H46：`envp=1500 err=0 env0=1400 env='DYLD_SHARED_CACHE_DIR=/System/Library/Caches/System/Library/Caches/com.apple.dyld'`；H47：`eperr=0 estat=0 esize=1792 etype=2`，c0–c4 全部 0 → 嵌套目录及父目录都存在，但尚未验证 `com.apple.dyld/dyld_shared_cache_arm64` 文件本身 |
-| 2026-10-26 | B5 | **H48 启动** | 移除 H47 `NATIVE_PATH` panic，保留 `DYLD_PRINT_SEGMENTS=1`，让 launchd 实跑抓 dyld/shared_region 日志；CI run `40262171826`。下一步 H48 结果决定：若 dyld 忽略 env，改用 union `/`；若仍无日志，先查嵌套 cache 文件与 `/usr/lib/dyld` 版本/签名命令 |
+| 2026-10-26 11:12 | B5 | **H48 launchd 实跑** | 移除 H47 `NATIVE_PATH` panic，保留 `DYLD_PRINT_SEGMENTS=1`；launchd 仍报 `Library not loaded: /usr/lib/libSystem.B.dylib (no dyld cache)`；CI run `40262171826` |
+| 2026-10-26 12:09 | B5 | **H49 cache/dyld 文件确认** | `boot-ufsH49-file.img`：嵌套 cache 文件存在，`copen=0`、`csize=491520`、`ctype=1`、magic `dyld`；`/usr/lib/dyld` 存在，`size=937056`、arm64、`ncmds=18`。路径和文件层排除 |
+| 2026-10-26 12:22 | B5 | **H50 private region 试验** | `boot-ufsH50-dyldlog.img`：加 `DYLD_SHARED_REGION=private`/额外打印 env；SystemOS mount 失败 `14 @kern_exec.c:8040`，没有拿到 dyld 日志 |
+| 2026-10-26 12:42 | B5 | **H51 修 env 槽位** | `boot-ufsH51-private.img`：修正 private-region 的 env 向量槽位；launchd 仍 `no dyld cache` |
+| 2026-10-26 13:27 | B5 | **H52 dyld 身份** | `boot-ufsH52-dyldver.img`：`/usr/lib/dyld` `magic=feedfacf`、`cputype=0x0100000c`（arm64）、`platform=2`、`minos/sdk=0x110700`、UUID `3b1e2a…`；架构/构建版本基本排除 |
+| 2026-10-26 13:49 | B5 | **H53 16K 预读诊断** | `boot-ufsH53-16k.img`（SHA `fad6304c…`）：读取 cache 首 16 KiB 并检查 `resid`/文件模式/目录模式；镜像已构建，**尚未上机** |
 
 ## 更新规则
 
