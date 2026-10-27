@@ -36,7 +36,7 @@
 +		/* Temporary bring-up: keep the structurally valid Apple cache blob so
 +		 * mmap() can succeed; restore real AMFI/CT policy for the final image. */
 +		error = 0;
-+		tmp_blob.csb_flags |= CS_VALID | CS_SIGNED;
++		tmp_blob.csb_flags |= CS_VALID | CS_SIGNED | CS_PLATFORM_BINARY;
 +#else
  		goto out;
 +#endif
