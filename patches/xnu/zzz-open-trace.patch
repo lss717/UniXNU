@@ -1,10 +1,9 @@
 --- a/bsd/vfs/vfs_syscalls.c
 +++ b/bsd/vfs/vfs_syscalls.c
-@@ -5114,6 +5114,23 @@
+@@ -5114,6 +5114,22 @@
  	NDINIT(ndp, LOOKUP, OP_OPEN, FOLLOW | AUDITVNPATH1,
  	    segflg, path, ctx);
  
-+#if defined(XNU_OWNER_CACHE_MOUNT) && XNU_OWNER_CACHE_MOUNT
 +	{
 +		char h67_path[160];
 +		size_t h67_len = 0;
