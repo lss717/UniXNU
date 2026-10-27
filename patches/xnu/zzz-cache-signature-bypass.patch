@@ -1,6 +1,6 @@
 --- a/bsd/kern/kern_descrip.c
 +++ b/bsd/kern/kern_descrip.c
-@@ -3873,8 +3873,29 @@
+@@ -3873,8 +3873,28 @@
  		if (error) {
  			vnode_put(vp);
  			goto outdrop;
@@ -17,13 +17,12 @@
 +			    (long long)fs.fs_blob_size);
 +		}
 +		if (cmd == F_ADDFILESIGS_RETURN) {
-+			off_t end_offset = (off_t)(fs.fs_file_start + fs.fs_blob_start + fs.fs_blob_size);
-+			printf("NATIVE_CACHE_SIG: bypass end=%lld blob=%lld size=%lld\n",
-+			    (long long)end_offset, (long long)fs.fs_blob_start,
++			/* Keep the real blob registration, but let AMFI validate this
++			 * Apple adhoc cache through its dyld_sim policy. */
++			blob_add_flags |= MAC_VNODE_CHECK_DYLD_SIM;
++			printf("NATIVE_CACHE_SIG: dyld_sim register fs=%lld blob=%lld size=%lld\n",
++			    (long long)fs.fs_file_start, (long long)fs.fs_blob_start,
 +			    (long long)fs.fs_blob_size);
-+			error = copyout(&end_offset, argp, sizeof(end_offset));
-+			vnode_put(vp);
-+			goto outdrop;
 +		}
 +#endif
 +
