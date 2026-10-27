@@ -1,6 +1,6 @@
 --- a/bsd/kern/kern_descrip.c
 +++ b/bsd/kern/kern_descrip.c
-@@ -3873,9 +3873,26 @@
+@@ -3873,8 +3873,25 @@
  		if (error) {
  			vnode_put(vp);
  			goto outdrop;
