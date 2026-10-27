@@ -3,16 +3,16 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
-- 当前阶段：**B5 用户态入口。UFS/APFS root 已挂载，launchd 已 exec；dyld 仍报 `no dyld cache`。H49/H52 已排除 cache 文件缺失、嵌套路径错误、`/usr/lib/dyld` 架构/构建版本错误；H53 是 16 KiB 预读诊断，已构建待上机。**
+- 当前阶段：**B5 用户态入口。shared cache 已成功打开、注册 4K 哈希并映射；H76/H77 已看到 libSystem/swift 从 cache 映射。H77/H78 launchd 被 `JETSAM_REASON_MEMORY_PERPROCESSLIMIT` 杀掉；H79 改用 `DYLD_SHARED_REGION=system`，结果待确认。**
 - 当前 gate：**G1 通过（2026-10-22）；B3 已到 BSD/IOKit；B5 root 已挂载（bring-up）**
 - 基线提交：UniXNU `e95b37d`（main）
-- 当前代码提交：UniXNU `479e2ea`；设备仓库 `a18192e`
+- 当前代码提交：UniXNU `949d1a0`；设备仓库 `67dda64`
 - 远程仓库：
   - UniXNU `https://github.com/lss717/UniXNU`（`main`）
   - UEFI fork `https://github.com/lss717/edk2-msm8998`（分支 `unixnu-cheeseburger`）
   - 设备仓库 `https://github.com/lss717/UniXNU-cheeseburger`（`main`，`a18192e`）
 - UEFI 分支：`edk2-msm8998` 的 `unixnu-cheeseburger`，提交 `0471194`、`708fa06`、`7f34479`、`91e17a8`、`8ef28f1`、`1ffb934`
-- 最近更新：2026-10-26
+- 最近更新：2026-10-27
 
 > 本文件是 B 线（UniXNU / 4K）唯一的计划与状态记录。A 线（在 OP5 上用
 > 自建 shim 引导 16K XNU）是另一个独立项目，与本线没有代码依赖。
@@ -968,6 +968,52 @@ Linux x86_64 / Ubuntu 24.04：
 | 2026-10-26 | B5 | **H55 env/AMFI 首次验证** | `dyld_flags=0xA` + `DYLD_AMFI_FAKE=0xffffffff` + `DYLD_PRINT_TO_FILE=/dev/console`；仍无 dyld 日志、无 `NATIVE_CACHE_SIG`，final error 不变 |
 | 2026-10-26 | B5 | **H58 env 栈证据** | `NATIVE_H58: argc=1 envc=8 cache=1 amfi=1 print=1 env=/System/Library/Caches/System/Library/Caches/com.apple.dyld`；env 确实进入新进程栈，排除“dyld 没拿到 env” |
 | 2026-10-26 | B5 | **H59 devfirm/internalInstall** | dyld 的 iOS `internalInstall()` 读 commpage `_COMM_PAGE_DEV_FIRM`，不是 `os_variant`。H59 强制该位为 1，使 `DYLD_AMFI_FAKE`/testMode 真正生效；移除 H58 panic 和 os_variant 补丁 |
+
+## H60–H79 用户态突破记录（2026-10-26/27）
+
+| 阶段 | 结果 |
+| --- | --- |
+| **H60** | 用 launchd 进程的 `vfs_context` 直接 lookup/open nested cache：`dir=0/0 dmode=0x41ed file=0/0 fmode=0x81ed size=491520`。证明路径和权限层正常。 |
+| **H61** | 用 bindfs 把 `SystemOS/System/Library/Caches` 叠到 `/System/Library/Caches`；仍未加载 cache。bindfs 不是最终方案。 |
+| **H62** | 改挂 SystemOS 到 `/private/preboot`，启用 `XNU_OWNER_CACHE_CARRIER=1`；路径符合 `offline-owner-cache-carrier` 的 canonical 目录，但仍无 cache。 |
+| **H63** | 加 `early_security_init=com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4ae0`；prelink 接受，AMFI early init 运行，但仍无 cache。 |
+| **H64** | 试 `amfi_get_out_of_my_way=0x1`、`amfi=0x80`、`DYLD_AMFI_FAKE=0x7f`；仍无。 |
+| **H65** | `platform=2 min=110700 sdk=110700`，`argc=1 envc=8 cache=1 amfi=1 print=1 env=/private/preboot/System/Library/Caches/com.apple.dyld`；平台/env 排除。 |
+| **H66/H67** | 主机确认实际 `/usr/lib/dyld` 含 `DYLD_SHARED_CACHE_DIR`/`DYLD_AMFI_FAKE`/`DYLD_PRINT_ENV`，937056 B；launchd 也是 platform 2。H67 open trace：`dir=-2 path=/private/preboot/... ->0`、`dir=1 path=dyld_shared_cache_arm64 ->0`、`F_ADDFILESIGS_RETURN cmd=0x61`；cache 已真正打开并进入 preflight。 |
+| **H68/H69/H70** | 真实 fcntl 被 AMFI 拒绝：`cache ... is adhoc signed`、`unsuitable CT policy 0`。H69 恢复 `amfi=0x94` 无效；H70 的 `MAC_VNODE_CHECK_DYLD_SIM` 也无效。 |
+| **H71/H72/H73** | H71 忽略 MACF 拒绝继续 attach blob，但报 `disallowing unsupported code signature page shift: 14`（4 KiB 内核 vs 16 KiB cache 签名）。H72 启用 `XNU_NATIVE_CS_HASH_CACHE=1` 未生效，因为 `ubc_subr.o` 的 CFLAGS 被重复覆盖；H73 合并 `-DXNU_NATIVE_CS_HASH_CACHE` + `-DXNU_NATIVE_CACHE_SIGNATURE_BYPASS` 后 page-shift 消失。 |
+| **H74/H75** | H74 去掉 dyld_sim flag，仍 `first page not mmap()able`；H75 加 `CS_PLATFORM_BINARY`，mmap 仍被 AMFI 拒绝。 |
+| **H76** | 在 `kern_mman.c` 忽略 `mac_file_check_mmap` 的 MACF 错误；**shared cache 首次成功映射**：dyld 日志出现 `Using mapping in dyld cache for /usr/lib/swift/libswiftDarwin.dylib` 等；随后 `Setting up kernel page-in linking for /sbin/launchd` 并出现 `userspace stack not initialized` panic。 |
+| **H77** | `dyld_flags=0x8A`（加 0x80 disablePageInLinking）；page-in linking panic 消失，但 launchd 退出：`pid 1 exited -- exit reason namespace 1 subcode 0x7`。namespace 1 = JETSAM，subcode 7 = `JETSAM_REASON_MEMORY_PERPROCESSLIMIT`。 |
+| **H78** | 把 `owned_memory_size` 从 2 GiB 提到 4 GiB；仍是同一个 per-process jetsam，不是物理内存总量。 |
+| **H79（待确认）** | 把 `DYLD_SHARED_REGION=private` 改为 `system`，避免 1.5 GB cache 计入 launchd 的单进程内存上限；CI `40517795790` 成功，镜像 `boot-ufsH79-system.img` 已生成/启动，**结果尚未确认**。 |
+
+### 当前生效的临时 bring-up 配置
+
+- 主仓：UniXNU `949d1a0`；设备仓：UniXNU-cheeseburger `67dda64`。
+- SystemOS 挂载点：`/private/preboot`。
+- `XNU_OWNER_CACHE_CARRIER=1`、`XNU_NATIVE_CS_HASH_CACHE=1`、`XNU_OWNER_CACHE_STARTUP=1`。
+- `DYLD_SHARED_CACHE_DIR=/private/preboot/System/Library/Caches/com.apple.dyld`。
+- `dyld_flags=0x0000008A`（testMode + skipIgnition + disablePageInLinking）。
+- `DYLD_SHARED_REGION=system`（H79 起；H77/H78 是 private）。
+- `DYLD_AMFI_FAKE=0x7f`；`amfi_get_out_of_my_way=1`、`amfi=0x94`、`amfi_allow_any_signature=1`、`cs_enforcement_disable=1`、`native-skip-root-auth=1`、`native-skip-exec-signature=1`、`launchd_unsecure_cache=1`。
+- 临时签名/mmap bypass：`zzz-cache-signature-bypass.patch` 忽略 MACF signature/mmap，设置 `CS_VALID|CS_SIGNED|CS_PLATFORM_BINARY`；最终必须移除。
+- `panic_screen=false`：新增诊断代码占用了 `patch-xnu-entry-probe.py` 的固定 panic cave；H77–H79 用普通内核控制台输出。最终要恢复。
+- CI 临时改用 `macos-15-intel` + Xcode 26.3 + `-Wno-unknown-warning-option`，因为 macOS 26 runner 容量长期排队；最终要恢复 `macos-latest`/Xcode 26.6。
+
+### 主机侧只读确认
+
+- OS APFS 窗口已只读挂载于 `/tmp/opencode/mnt-os`。
+- `/usr/lib/dyld` 实际 937056 B，包含 `DYLD_SHARED_CACHE_DIR`、`DYLD_AMFI_FAKE`、`DYLD_PRINT_ENV`。
+- `/sbin/launchd` `LC_BUILD_VERSION platform=2 minos/sdk=0x110700`。
+- `/private/preboot` 和 `/System/Library/Caches` 在 OS root 存在；`/System/Library/Caches/com.apple.dyld` 在挂载前不存在。
+
+### 下一步
+
+1. **确认 H79 是否仍被 `JETSAM_REASON_MEMORY_PERPROCESSLIMIT` 杀掉**。若 launchd 继续运行，转入 Data `/private/var`、watchdog/tzinit、launchd job 阶段。
+2. 若仍 per-process jetsam：检查 `DYLD_SHARED_REGION=system` 是否真的走了系统共享区；必要时禁用/调整 memorystatus jetsam 或让 cache 使用真正的 system-wide shared region。
+3. 最终恢复 VerifiedRoot/AMFI/TrustCache，移除 `zzz-cache-signature-bypass`、AMFI/root/exec boot args、4K/mmap bypass；恢复 panic screen 和 macOS 26 CI。
+4. 不要删除 `lock_rw.c` 的 panic assertion；修 caller。
 
 ## 更新规则
 
