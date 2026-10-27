@@ -108,6 +108,7 @@ jobs:
           XNU_OWNER_CACHE_MOUNT: 1
           XNU_OWNER_CACHE_STARTUP: 1
           XNU_OWNER_CACHE_CARRIER: 1
+          XNU_NATIVE_CS_HASH_CACHE: 1
           XNU_OWNER_UNION_SYSTEMOS: 0
           XNU_BRINGUP_CACHE_MOUNT: 1
         run: |
