@@ -1,6 +1,6 @@
 --- a/bsd/kern/kern_descrip.c
 +++ b/bsd/kern/kern_descrip.c
-@@ -3873,8 +3873,28 @@
+@@ -3873,9 +3873,26 @@
  		if (error) {
  			vnode_put(vp);
  			goto outdrop;
@@ -17,10 +17,7 @@
 +			    (long long)fs.fs_blob_size);
 +		}
 +		if (cmd == F_ADDFILESIGS_RETURN) {
-+			/* Keep the real blob registration, but let AMFI validate this
-+			 * Apple adhoc cache through its dyld_sim policy. */
-+			blob_add_flags |= MAC_VNODE_CHECK_DYLD_SIM;
-+			printf("NATIVE_CACHE_SIG: dyld_sim register fs=%lld blob=%lld size=%lld\n",
++			printf("NATIVE_CACHE_SIG: register fs=%lld blob=%lld size=%lld\n",
 +			    (long long)fs.fs_file_start, (long long)fs.fs_blob_start,
 +			    (long long)fs.fs_blob_size);
 +		}
