@@ -225,12 +225,12 @@
 +		printf("NATIVE_H62: preboot cache path ok size=%llu\n", (unsigned long long)fsize);
 +	}
 +#endif
-++#if !defined(XNU_OWNER_UNION_SYSTEMOS) || !XNU_OWNER_UNION_SYSTEMOS
-++	{
-++		int h80_limit = task_set_phys_footprint_limit_internal(proc_task(p), -1, NULL, TRUE, FALSE);
-++		printf("NATIVE_H80: tasklimit=%d\n", h80_limit);
-++	}
-++#endif
++#if !defined(XNU_OWNER_UNION_SYSTEMOS) || !XNU_OWNER_UNION_SYSTEMOS
++	{
++		int h80_limit = task_set_phys_footprint_limit_internal(proc_task(p), -1, NULL, TRUE, FALSE);
++		printf("NATIVE_H80: tasklimit=%d\n", h80_limit);
++	}
++#endif
 +	native_owner_cache_checkpoint(error, cache_authorized);
 +	return error;
 +}
