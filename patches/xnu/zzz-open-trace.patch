@@ -1,6 +1,6 @@
 --- a/bsd/vfs/vfs_syscalls.c
 +++ b/bsd/vfs/vfs_syscalls.c
-@@ -5114,6 +5114,22 @@
+@@ -5114,6 +5114,21 @@
  	NDINIT(ndp, LOOKUP, OP_OPEN, FOLLOW | AUDITVNPATH1,
  	    segflg, path, ctx);
  
@@ -19,7 +19,6 @@
 +			return error;
 +		}
 +	}
-+#endif
  	error = open1at(ctx, ndp, flags, vap, NULL, NULL, retval, fd, AUTH_OPEN_NOAUTHFD);
  
  	kfree_type(typeof(*__open_data), __open_data);
