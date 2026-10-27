@@ -29,3 +29,20 @@
  		/*
  		 * First check if we have something loaded a this offset
  		 */
+--- a/bsd/kern/ubc_subr.c
++++ b/bsd/kern/ubc_subr.c
+@@ -4764,7 +4764,14 @@
+ 
+ 	if (error != 0) {
+ 		printf("validation of code signature failed through MACF policy: %d\n", error);
++#if defined(XNU_NATIVE_CACHE_SIGNATURE_BYPASS) && XNU_NATIVE_CACHE_SIGNATURE_BYPASS
++		/* Temporary bring-up: keep the structurally valid Apple cache blob so
++		 * mmap() can succeed; restore real AMFI/CT policy for the final image. */
++		error = 0;
++		tmp_blob.csb_flags |= CS_VALID | CS_SIGNED;
++#else
+ 		goto out;
++#endif
+ 	}
+ 
+ #if HAS_APPLE_PAC
