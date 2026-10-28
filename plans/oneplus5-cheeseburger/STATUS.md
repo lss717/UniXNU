@@ -6,11 +6,13 @@
 - 当前阶段：**B5 用户态入口。H81 已让 system-wide shared cache 映射成功并越过 per-process jetsam；launchd 现在停在 `OS_REASON_LIBXPC` assertion（`namespace 7 subcode 0x1`）。H82 正在补 64 MiB writable Data skeleton（`/private/var`），尚未成功构建/上机。**
 - 当前 gate：**G1 通过（2026-10-22）；B3 已到 BSD/IOKit；B5 root 已挂载（bring-up）**
 - 基线提交：UniXNU `e95b37d`（main）
-- 当前代码提交：UniXNU `3cc67fd`；设备仓库 `f09609c`
+- 当前代码提交：UniXNU `6d16183`；设备仓库 `f09609c`
 - 远程仓库：
   - UniXNU `https://github.com/lss717/UniXNU`（`main`）
   - UEFI fork `https://github.com/lss717/edk2-msm8998`（分支 `unixnu-cheeseburger`）
   - 设备仓库 `https://github.com/lss717/UniXNU-cheeseburger`（`main`，`f09609c`）
+  - NativeRamBlock fork `https://github.com/lss717/RamBlock`（submodule 路径仍为
+    `drivers/NativeRamBlock`，fork 提交 `bc079a5`；`upstream` 指回 `UniXNU/RamBlock`）
 - UEFI 分支：`edk2-msm8998` 的 `unixnu-cheeseburger`，提交 `0471194`、`708fa06`、`7f34479`、`91e17a8`、`8ef28f1`、`1ffb934`
 - 最近更新：2026-10-28
 
@@ -1069,8 +1071,9 @@ Linux x86_64 / Ubuntu 24.04：
      挡住。已在 bootstrap pass 关闭 `XNU_NATIVE_RAM_BLOCK`，并给 volatile Data
      加临时豁免。
   2. `40695589323`：最终链接缺 `native_ufs_store_*` 和
-     `native_verified_block_manifest_sha384`。已临时关闭 boot manifest，并在
-     `kern_exec.c` 里给 RAM block 提供 weak no-op store 符号。
+     `native_verified_block_manifest_sha384`。已临时关闭 boot manifest；store
+     符号改为在 fork 的 `RamBlock` 子模块里提供 weak no-op fallback，不再放进
+     XNU `kern_exec.c`。
   3. `40699122544`：CI fetch XNU 网络超时，与代码无关。
   4. `40701763118`：owner patch 插入 weak stubs 后 hunk 行数未更新，
      `corrupt patch at ...:345`。本地已重算 hunk 计数并提交，**尚未重新构建**。
@@ -1081,7 +1084,9 @@ Linux x86_64 / Ubuntu 24.04：
 
 - `DYLD_SHARED_REGION=system`。
 - `XNU_OWNER_DATA_MOUNT=1`；64 MiB APFS Data skeleton；`/private/var` 可写。
-- `XNU_NATIVE_RAM_BLOCK=1`，无 NativeUfs 持久化；store fallback 为 weak no-op。
+- `XNU_NATIVE_RAM_BLOCK=1`，无 NativeUfs 持久化；store fallback 为 fork
+  `lss717/RamBlock`（submodule `drivers/NativeRamBlock`，提交 `bc079a5`）里的
+  weak no-op。
 - `XNU_OWNER_BOOT_MANIFEST=0`：**当前 Data 未经过 authenticated owner boot manifest**。
 - `max_task_pmem=0`：全局 task footprint 上限临时移除。
 - `zzz-cache-signature-bypass.patch` + `zzz-shared-region-cache-bypass.patch`：
@@ -1097,8 +1102,9 @@ Linux x86_64 / Ubuntu 24.04：
 3. 若 Data mount 失败，先看 panic `offline scratch Data mount failed: <errno>`；
    优先检查 seed UUID、`NativeRamBlock` 的 RAMDisk handoff、APFS 容器大小。
 4. 若 launchd 继续，进入 watchdog/tzinit、launchd job、`/private/var/db` 初始化。
-5. 最终恢复 `XNU_OWNER_BOOT_MANIFEST=1`、VerifiedRoot/AMFI/TrustCache，
-   移除 weak UFS stubs、Data skeleton、AMFI/CS/mmap bypass、`panic_screen=false`。
+5. 最终恢复 `XNU_OWNER_BOOT_MANIFEST=1`、VerifiedRoot/AMFI/TrustCache；
+   用 qualified NativeUfs/AES store 替换 fork 里的 weak no-op fallback，并移除
+   Data skeleton、AMFI/CS/mmap bypass、`panic_screen=false`。
 
 ## 更新规则
 
