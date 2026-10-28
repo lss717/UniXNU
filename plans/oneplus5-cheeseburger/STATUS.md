@@ -6,7 +6,7 @@
 - 当前阶段：**B5 用户态入口。H81 已让 system-wide shared cache 映射成功并越过 per-process jetsam；launchd 现在停在 `OS_REASON_LIBXPC` assertion（`namespace 7 subcode 0x1`）。H82 正在补 64 MiB writable Data skeleton（`/private/var`），尚未成功构建/上机。**
 - 当前 gate：**G1 通过（2026-10-22）；B3 已到 BSD/IOKit；B5 root 已挂载（bring-up）**
 - 基线提交：UniXNU `e95b37d`（main）
-- 当前代码提交：UniXNU `725c5de`（另有 H82 hunk 计数修复未提交）；设备仓库 `f09609c`
+- 当前代码提交：UniXNU `3cc67fd`；设备仓库 `f09609c`
 - 远程仓库：
   - UniXNU `https://github.com/lss717/UniXNU`（`main`）
   - UEFI fork `https://github.com/lss717/edk2-msm8998`（分支 `unixnu-cheeseburger`）
@@ -1026,6 +1026,8 @@ Linux x86_64 / Ubuntu 24.04：
   `JETSAM_REASON_MEMORY_PERPROCESSLIMIT`。
 - 结论：private cache 把约 1.5 GB cache 计入 launchd 的 per-process footprint，
   单靠 PID1 的 task limit 清理没有解决。
+- H80 镜像：`boot-ufsH80-tasklimit.img`，CI `40526638185`，sha256
+  `c6d32463b84d05392325b61c3bb92e1a2d5fd0a1ffca832710a74d96dd9920de`。
 
 ### H81：system-wide shared cache 成功
 
@@ -1038,6 +1040,8 @@ Linux x86_64 / Ubuntu 24.04：
   - 打印 `NATIVE_H81_SR: setup/root check/preboot/map_file` 诊断。
 - `vm_unix.o` 增加 `-DXNU_NATIVE_CACHE_SIGNATURE_BYPASS=1`。
 - **H81 上机结果：system-wide cache 映射成功，launchd 不再被 jetsam 杀掉。**
+- H81 镜像：`boot-ufsH81-shared-region.img`，CI `40688172208`，sha256
+  `4fdf7e8baf2986e61e2f64345172916d27313b6adda7e7d0609c7799cb85317d`。
 - 但 launchd 很快以
   `pid 1 exited -- exit reason namespace 7 subcode 0x1`
   退出；namespace 7 = `OS_REASON_LIBXPC`，描述为
