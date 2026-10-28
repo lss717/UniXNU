@@ -409,7 +409,12 @@ if [ "$OWNER_DATA_MOUNT" != 0 ] && [ "$OWNER_DATA_MOUNT" != 1 ]; then
   echo 'XNU_OWNER_DATA_MOUNT must be 0 or 1' >&2
   exit 1
 fi
-if [ "$OWNER_DATA_MOUNT" = 1 ] && [ "$OWNER_BOOT_MANIFEST" != 1 ]; then
+OWNER_DATA_VOLATILE=${XNU_OWNER_DATA_VOLATILE:-0}
+if [ "$OWNER_DATA_VOLATILE" != 0 ] && [ "$OWNER_DATA_VOLATILE" != 1 ]; then
+  echo 'XNU_OWNER_DATA_VOLATILE must be 0 or 1' >&2
+  exit 1
+fi
+if [ "$OWNER_DATA_MOUNT" = 1 ] && [ "$OWNER_BOOT_MANIFEST" != 1 ] && [ "$OWNER_DATA_VOLATILE" != 1 ]; then
   echo 'Scratch Data requires authenticated original OS/owner metadata startup' >&2
   exit 1
 fi

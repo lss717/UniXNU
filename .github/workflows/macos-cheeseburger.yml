@@ -124,6 +124,7 @@ jobs:
           # Temporary volatile Data bring-up; restore the authenticated owner
           # boot manifest together with VerifiedRoot/TrustCache.
           XNU_OWNER_BOOT_MANIFEST: 0
+          XNU_OWNER_DATA_VOLATILE: 1
           XNU_NATIVE_RAM_BLOCK: 1
         run: |
           args=()
