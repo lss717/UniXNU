@@ -96,6 +96,14 @@ jobs:
             curl -fL "$TRUST_CACHE_URL" -o "$RUNNER_TEMP/trustcache"
           fi
 
+      - name: Prepare Data skeleton
+        run: |
+          set -euo pipefail
+          python3 scripts/prepare-owner-data-fixture.py --skeleton --size-mib 64 --output build/owner-data-fixture
+          uuid="$(python3 -c 'import json; print(json.load(open("build/owner-data-fixture/seed.json"))["volume_uuid"])')"
+          test -n "$uuid"
+          echo "XNU_OWNER_DATA_VOLUME_UUID=$uuid" >> "$GITHUB_ENV"
+
       - name: Reset cached XNU worktree
         run: rm -rf out/cheeseburger/tree
 
@@ -111,6 +119,10 @@ jobs:
           XNU_NATIVE_CS_HASH_CACHE: 1
           XNU_OWNER_UNION_SYSTEMOS: 0
           XNU_BRINGUP_CACHE_MOUNT: 1
+          # H82: writable Data skeleton at /private/var for launchd.
+          XNU_OWNER_DATA_MOUNT: 1
+          XNU_OWNER_BOOT_MANIFEST: 1
+          XNU_NATIVE_RAM_BLOCK: 1
         run: |
           args=()
           if [ -n "$IPSW_URL" ]; then args+=(--ipsw "$IPSW_URL"); fi
@@ -140,6 +152,9 @@ jobs:
           args=()
           if [ -f "$RUNNER_TEMP/trustcache" ]; then args+=(--trust-cache "$RUNNER_TEMP/trustcache"); fi
           if [ -n "$UNIQUE_CHIP_ID" ]; then args+=(--unique-chip-id "$UNIQUE_CHIP_ID"); fi
+          data="$GITHUB_WORKSPACE/build/owner-data-fixture/owner-data-32.cdr"
+          test -f "$data"
+          args+=(--data-ramdisk "$data")
           ./unixnu build payload "${args[@]}" -D "$UNIXNU_DEVICE"
 
       - name: Build userdata
@@ -180,6 +195,8 @@ jobs:
             out/cheeseburger/kernel/**
             out/cheeseburger/payload/**
             out/cheeseburger/logs/**
+            build/owner-data-fixture/owner-data-32.cdr
+            build/owner-data-fixture/seed.json
           if-no-files-found: error
           retention-days: 7
 
