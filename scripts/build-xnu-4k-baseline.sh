@@ -70,6 +70,7 @@ if [ "$BOOTSTRAP" = 1 ]; then
   XNU_OWNER_CRYPTEX_FILES=0
   XNU_OWNER_DATA_MOUNT=0
   XNU_OWNER_BOOT_MANIFEST=0
+  XNU_NATIVE_RAM_BLOCK=0
 fi
 BOOT_PROGRESS=${XNU_BOOT_PROGRESS:-0}
 if [ "$BOOT_PROGRESS" != 0 ] && [ "$BOOT_PROGRESS" != 1 ]; then
@@ -195,7 +196,10 @@ if [ "$NATIVE_RAM_BLOCK" != 0 ] && [ "$NATIVE_RAM_BLOCK" != 1 ]; then
   exit 1
 fi
 if [ "$NATIVE_RAM_BLOCK" = 1 ]; then
-  if [ "${XNU_NATIVE_AES:-0}" != 1 ]; then
+  # The volatile Data skeleton uses no persistent store. The final owner image
+  # still requires the qualified NativeAES/original-storage closure; this
+  # temporary branch only keeps the bring-up Data volume writable.
+  if [ "${XNU_NATIVE_AES:-0}" != 1 ] && [ "${XNU_OWNER_DATA_MOUNT:-0}" != 1 ]; then
     echo 'NativeRamBlock requires the qualified original storage/AES prelink closure' >&2
     exit 1
   fi
