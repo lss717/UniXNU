@@ -121,7 +121,9 @@ jobs:
           XNU_BRINGUP_CACHE_MOUNT: 1
           # H82: writable Data skeleton at /private/var for launchd.
           XNU_OWNER_DATA_MOUNT: 1
-          XNU_OWNER_BOOT_MANIFEST: 1
+          # Temporary volatile Data bring-up; restore the authenticated owner
+          # boot manifest together with VerifiedRoot/TrustCache.
+          XNU_OWNER_BOOT_MANIFEST: 0
           XNU_NATIVE_RAM_BLOCK: 1
         run: |
           args=()

@@ -237,9 +237,8 @@
 +#endif
 +
 +#if defined(XNU_OWNER_DATA_MOUNT) && XNU_OWNER_DATA_MOUNT
-+#if !defined(XNU_OWNER_BOOT_MANIFEST) || !XNU_OWNER_BOOT_MANIFEST
-+#error Scratch Data mounting requires the authenticated original OS startup path
-+#endif
++/* Temporary volatile Data bring-up: the final owner image must also publish the
++ * authenticated boot manifest before this volume is considered verified. */
 +#if defined(XNU_NATIVE_RAM_BLOCK) && XNU_NATIVE_RAM_BLOCK
 +#ifndef XNU_OWNER_DATA_VOLUME_UUID
 +#error Supply the observed scratch volume UUID for the IOKit backend
@@ -248,6 +247,23 @@
 +#endif
 +extern dev_t mdevlookup(int);
 +extern int mdevgetrange(int, uint64_t *, uint64_t *);
++#if defined(XNU_NATIVE_RAM_BLOCK) && XNU_NATIVE_RAM_BLOCK
++/* Temporary volatile Data bring-up: NativeUfs is not linked, so the RAM block's
++ * persistence hooks resolve to these weak no-ops. The final owner image must
++ * link the qualified UFS/AES store implementation instead. */
++unsigned native_ufs_store_mode(void) __attribute__((weak));
++int native_ufs_store_open(uint64_t, uint64_t *, const char **) __attribute__((weak));
++int native_ufs_store_read(uint64_t, uint32_t, void *) __attribute__((weak));
++int native_ufs_store_write(uint64_t, uint32_t, const void *) __attribute__((weak));
++int native_ufs_store_sync(void) __attribute__((weak));
++unsigned native_ufs_store_gpt_check(void) __attribute__((weak));
++unsigned native_ufs_store_mode(void) { return 0; }
++int native_ufs_store_open(uint64_t a, uint64_t *b, const char **c) { (void)a; (void)b; (void)c; return 0; }
++int native_ufs_store_read(uint64_t a, uint32_t b, void *c) { (void)a; (void)b; (void)c; return 0; }
++int native_ufs_store_write(uint64_t a, uint32_t b, const void *c) { (void)a; (void)b; (void)c; return 0; }
++int native_ufs_store_sync(void) { return 0; }
++unsigned native_ufs_store_gpt_check(void) { return 0; }
++#endif
 +volatile int native_owner_data_status = -1;
 +volatile int native_owner_data_stage = 0;
 +volatile int native_owner_data_readonly = -1;
