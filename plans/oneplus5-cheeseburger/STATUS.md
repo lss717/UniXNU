@@ -1070,7 +1070,7 @@ Linux x86_64 / Ubuntu 24.04：
      `kern_exec.c` 里给 RAM block 提供 weak no-op store 符号。
   3. `40699122544`：CI fetch XNU 网络超时，与代码无关。
   4. `40701763118`：owner patch 插入 weak stubs 后 hunk 行数未更新，
-     `corrupt patch at ...:345`。本地已重算 hunk 计数，**尚未提交/重新构建**。
+     `corrupt patch at ...:345`。本地已重算 hunk 计数并提交，**尚未重新构建**。
 - **当前状态：H82 镜像未成功构建，也未上机。** 设备应仍停在 H81 的 launchd
   assertion 屏；需要时用 Power 15–20 s + Volume Up + Power 回 fastboot。
 
