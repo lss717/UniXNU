@@ -9,7 +9,7 @@
  
  #include <mach/exclaves.h>
  
-@@ -7013,8 +7013,315 @@
+@@ -7013,8 +7013,331 @@
   *		word width of the kernel. Once the self-exec completes, the
   *		initproc might be different.
   */
