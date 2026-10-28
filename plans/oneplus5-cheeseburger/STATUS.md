@@ -3,10 +3,10 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
-- 当前阶段：**B5 用户态入口。H81 已让 system-wide shared cache 映射成功并越过 per-process jetsam；launchd 现在停在 `OS_REASON_LIBXPC` assertion（`namespace 7 subcode 0x1`）。H82 正在补 64 MiB writable Data skeleton（`/private/var`），尚未成功构建/上机。**
+- 当前阶段：**B5 用户态入口。H81 已让 system-wide shared cache 映射成功并越过 per-process jetsam；launchd 停在 `OS_REASON_LIBXPC` assertion（`namespace 7 subcode 0x1`）。H82 已成功构建（Data skeleton + fork RamBlock），但临时启动后设备返回 fastboot，尚未确认 Data/launchd 结果。**
 - 当前 gate：**G1 通过（2026-10-22）；B3 已到 BSD/IOKit；B5 root 已挂载（bring-up）**
 - 基线提交：UniXNU `e95b37d`（main）
-- 当前代码提交：UniXNU `6d16183`；设备仓库 `f09609c`
+- 当前代码提交：UniXNU `582206d`；设备仓库 `27a6e70`；fork 子模块 `lss717/RamBlock` `bc079a5`
 - 远程仓库：
   - UniXNU `https://github.com/lss717/UniXNU`（`main`）
   - UEFI fork `https://github.com/lss717/edk2-msm8998`（分支 `unixnu-cheeseburger`）
@@ -1050,7 +1050,7 @@ Linux x86_64 / Ubuntu 24.04：
 - 结合 launchd 依赖 `/private/var/db/com.apple.xpc.launchd`、`/private/var/tmp`、
   `/private/var/run`，判断为 **没有可写 Data 卷 `/private/var`**，进入 H82。
 
-### H82：Data skeleton（构建中，未上机）
+### H82：Data skeleton + fork RamBlock（已构建，启动返回 fastboot）
 
 - 新增 `prepare-owner-data-fixture.py --skeleton --size-mib 64`：
   - CI 上用 `hdiutil` 创建 64 MiB APFS Data skeleton；
@@ -1077,8 +1077,14 @@ Linux x86_64 / Ubuntu 24.04：
   3. `40699122544`：CI fetch XNU 网络超时，与代码无关。
   4. `40701763118`：owner patch 插入 weak stubs 后 hunk 行数未更新，
      `corrupt patch at ...:345`。本地已重算 hunk 计数并提交，**尚未重新构建**。
-- **当前状态：H82 镜像未成功构建，也未上机。** 设备应仍停在 H81 的 launchd
-  assertion 屏；需要时用 Power 15–20 s + Volume Up + Power 回 fastboot。
+- **H82 构建成功：** CI `40712047295`，payload 160 MiB，镜像
+  `boot-ufsH82-data.img`，sha256
+  `5069bad1f910d753e3b8c6bd8220ce29e5a7c445ddf58f475cdcd5f4320d00a1`。
+- **H82 启动结果：** `fastboot boot` 接受并显示 `Booting OKAY`，但 30 秒后设备
+  又回到 fastboot；尚未看到 UEFI/内核屏幕。可能是 160 MiB ramdisk 与 Android
+  tags 的布局问题，或 UEFI/DarwinBoot 对 tags 地址的假设；Data/launchd 尚未验证。
+- 为避开 160 MiB payload 与 `tags_offset=0x08000000` 重叠，本次镜像把 tags
+  移到 `0x0c000000`（绝对地址 `0x1c000000`）；这本身也可能是启动失败原因。
 
 ### 当前临时配置（H81/H82）
 
@@ -1087,6 +1093,9 @@ Linux x86_64 / Ubuntu 24.04：
 - `XNU_NATIVE_RAM_BLOCK=1`，无 NativeUfs 持久化；store fallback 为 fork
   `lss717/RamBlock`（submodule `drivers/NativeRamBlock`，提交 `bc079a5`）里的
   weak no-op。
+- 主仓 `.gitmodules` 的 `drivers/NativeRamBlock` 已改指
+  `https://github.com/lss717/RamBlock.git`；submodule 本地 `origin` 指 fork，
+  `upstream` 指 `UniXNU/RamBlock`。
 - `XNU_OWNER_BOOT_MANIFEST=0`：**当前 Data 未经过 authenticated owner boot manifest**。
 - `max_task_pmem=0`：全局 task footprint 上限临时移除。
 - `zzz-cache-signature-bypass.patch` + `zzz-shared-region-cache-bypass.patch`：
@@ -1096,11 +1105,13 @@ Linux x86_64 / Ubuntu 24.04：
 
 ### 下一步（按顺序）
 
-1. 提交 H82 hunk 计数修复，重新触发 CI（避免网络超时）。
-2. 构建成功后打包 `boot-ufsH82-data.img`，临时 `fastboot boot`；
-   观察 Data mount 是否通过、launchd 的 `namespace 7 subcode 0x1` 是否消失。
-3. 若 Data mount 失败，先看 panic `offline scratch Data mount failed: <errno>`；
-   优先检查 seed UUID、`NativeRamBlock` 的 RAMDisk handoff、APFS 容器大小。
+1. 确认 H82 启动失败发生在哪一层：先看屏幕/UEFI 日志；若仍回 fastboot，
+   优先怀疑 tags 地址或 160 MiB ramdisk 的装载布局。
+2. 回退到 H81 镜像验证设备仍可进入内核；再试更小的 32/64 MiB Data seed，
+   保持默认 `tags_offset=0x08000000`，或修正 UEFI/DarwinBoot 的 tags 处理。
+3. 启动成功后观察 Data mount 是否通过、launchd 的 `namespace 7 subcode 0x1`
+   是否消失；若 Data mount 失败，看
+   `offline scratch Data mount failed: <errno>`、seed UUID、RAMDisk handoff。
 4. 若 launchd 继续，进入 watchdog/tzinit、launchd job、`/private/var/db` 初始化。
 5. 最终恢复 `XNU_OWNER_BOOT_MANIFEST=1`、VerifiedRoot/AMFI/TrustCache；
    用 qualified NativeUfs/AES store 替换 fork 里的 weak no-op fallback，并移除
