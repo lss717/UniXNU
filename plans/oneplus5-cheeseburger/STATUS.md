@@ -1008,12 +1008,11 @@ Linux x86_64 / Ubuntu 24.04：
 - `/sbin/launchd` `LC_BUILD_VERSION platform=2 minos/sdk=0x110700`。
 - `/private/preboot` 和 `/System/Library/Caches` 在 OS root 存在；`/System/Library/Caches/com.apple.dyld` 在挂载前不存在。
 
-### 下一步
+### 下一步（历史 H79 条目，已被下方 H80–H82 记录取代）
 
-1. **确认 H79 是否仍被 `JETSAM_REASON_MEMORY_PERPROCESSLIMIT` 杀掉**。若 launchd 继续运行，转入 Data `/private/var`、watchdog/tzinit、launchd job 阶段。
-2. 若仍 per-process jetsam：检查 `DYLD_SHARED_REGION=system` 是否真的走了系统共享区；必要时禁用/调整 memorystatus jetsam 或让 cache 使用真正的 system-wide shared region。
-3. 最终恢复 VerifiedRoot/AMFI/TrustCache，移除 `zzz-cache-signature-bypass`、AMFI/root/exec boot args、4K/mmap bypass；恢复 panic screen 和 macOS 26 CI。
-4. 不要删除 `lock_rw.c` 的 panic assertion；修 caller。
+- H79 的 per-process jetsam 已在 H81 通过 system-wide shared region 绕过；
+  当前问题已变成 H81 的 `OS_REASON_LIBXPC` assertion 和 H82 的 Data skeleton 构建。
+- 详细顺序见“H80–H82 记录”末尾。不要删除 `lock_rw.c` 的 panic assertion；修 caller。
 
 ## H80–H82 记录（2026-10-28）
 
