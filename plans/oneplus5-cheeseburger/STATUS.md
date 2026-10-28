@@ -3,16 +3,16 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
-- 当前阶段：**B5 用户态入口。shared cache 已成功打开、注册 4K 哈希并映射；H76/H77 已看到 libSystem/swift 从 cache 映射。H77/H78 launchd 被 `JETSAM_REASON_MEMORY_PERPROCESSLIMIT` 杀掉；H79 改用 `DYLD_SHARED_REGION=system`，结果待确认。**
+- 当前阶段：**B5 用户态入口。H81 已让 system-wide shared cache 映射成功并越过 per-process jetsam；launchd 现在停在 `OS_REASON_LIBXPC` assertion（`namespace 7 subcode 0x1`）。H82 正在补 64 MiB writable Data skeleton（`/private/var`），尚未成功构建/上机。**
 - 当前 gate：**G1 通过（2026-10-22）；B3 已到 BSD/IOKit；B5 root 已挂载（bring-up）**
 - 基线提交：UniXNU `e95b37d`（main）
-- 当前代码提交：UniXNU `949d1a0`；设备仓库 `67dda64`
+- 当前代码提交：UniXNU `725c5de`（另有 H82 hunk 计数修复未提交）；设备仓库 `f09609c`
 - 远程仓库：
   - UniXNU `https://github.com/lss717/UniXNU`（`main`）
   - UEFI fork `https://github.com/lss717/edk2-msm8998`（分支 `unixnu-cheeseburger`）
-  - 设备仓库 `https://github.com/lss717/UniXNU-cheeseburger`（`main`，`a18192e`）
+  - 设备仓库 `https://github.com/lss717/UniXNU-cheeseburger`（`main`，`f09609c`）
 - UEFI 分支：`edk2-msm8998` 的 `unixnu-cheeseburger`，提交 `0471194`、`708fa06`、`7f34479`、`91e17a8`、`8ef28f1`、`1ffb934`
-- 最近更新：2026-10-27
+- 最近更新：2026-10-28
 
 > 本文件是 B 线（UniXNU / 4K）唯一的计划与状态记录。A 线（在 OP5 上用
 > 自建 shim 引导 16K XNU）是另一个独立项目，与本线没有代码依赖。
@@ -1014,6 +1014,88 @@ Linux x86_64 / Ubuntu 24.04：
 2. 若仍 per-process jetsam：检查 `DYLD_SHARED_REGION=system` 是否真的走了系统共享区；必要时禁用/调整 memorystatus jetsam 或让 cache 使用真正的 system-wide shared region。
 3. 最终恢复 VerifiedRoot/AMFI/TrustCache，移除 `zzz-cache-signature-bypass`、AMFI/root/exec boot args、4K/mmap bypass；恢复 panic screen 和 macOS 26 CI。
 4. 不要删除 `lock_rw.c` 的 panic assertion；修 caller。
+
+## H80–H82 记录（2026-10-28）
+
+### H80：private cache + PID1 footprint
+
+- 回到 `DYLD_SHARED_REGION=private`，在 `native_owner_cache_prepare()` 里调用
+  `task_set_phys_footprint_limit_internal(proc_task(p), -1, ...)`。
+- `-1` 实际会回落到 `max_task_footprint`，不是无限；H80 仍出现
+  `pid 1 exited -- exit reason namespace 1 subcode 0x7`，即
+  `JETSAM_REASON_MEMORY_PERPROCESSLIMIT`。
+- 结论：private cache 把约 1.5 GB cache 计入 launchd 的 per-process footprint，
+  单靠 PID1 的 task limit 清理没有解决。
+
+### H81：system-wide shared cache 成功
+
+- 改回 `DYLD_SHARED_REGION=system`。
+- `vm_shared_region_start_address()` 的 “failed” 只是共享区为空时的正常提示；
+  真正失败点是 `shared_region_map_and_slide_np()` 的 AMFI/CS 检查。
+- 新增 `zzz-shared-region-cache-bypass.patch`：
+  - 在 `bsd/vm/vm_unix.c` 的 `mac_file_check_mmap()` 上临时忽略 AMFI；
+  - 对共享区映射的 `ubc_cs_is_range_codesigned()` 检查临时放过；
+  - 打印 `NATIVE_H81_SR: setup/root check/preboot/map_file` 诊断。
+- `vm_unix.o` 增加 `-DXNU_NATIVE_CACHE_SIGNATURE_BYPASS=1`。
+- **H81 上机结果：system-wide cache 映射成功，launchd 不再被 jetsam 杀掉。**
+- 但 launchd 很快以
+  `pid 1 exited -- exit reason namespace 7 subcode 0x1`
+  退出；namespace 7 = `OS_REASON_LIBXPC`，描述为
+  `assertion failed: 992399: launchd + 338744 [48525932-8C69-315E-A51A-CC943E4E5051]: 0x1`。
+- 结合 launchd 依赖 `/private/var/db/com.apple.xpc.launchd`、`/private/var/tmp`、
+  `/private/var/run`，判断为 **没有可写 Data 卷 `/private/var`**，进入 H82。
+
+### H82：Data skeleton（构建中，未上机）
+
+- 新增 `prepare-owner-data-fixture.py --skeleton --size-mib 64`：
+  - CI 上用 `hdiutil` 创建 64 MiB APFS Data skeleton；
+  - 只创建 `/private/var` 所需目录（`db`、`db/com.apple.xpc.launchd`、`log`、
+    `run`、`tmp`、`keybags`、`mobile/*`、`containers` 等），不复制 OS 的 400+ MB var；
+  - 输出 `build/owner-data-fixture/seed.json` 和 `owner-data-32.cdr`；
+  - workflow 从 `seed.json` 取 `volume_uuid`，写入 `XNU_OWNER_DATA_VOLUME_UUID`。
+- board payload 从 64 MiB 提到 160 MiB；payload 加 `--data-ramdisk`。
+- 临时内核配置：
+  - `XNU_OWNER_DATA_MOUNT=1`
+  - `XNU_NATIVE_RAM_BLOCK=1`
+  - `XNU_OWNER_BOOT_MANIFEST=0`（仅为当前 volatile Data bring-up）
+  - `XNU_OWNER_CACHE_MOUNT=1`、`XNU_OWNER_CACHE_STARTUP=1`、
+    `XNU_OWNER_CACHE_CARRIER=1`、`XNU_NATIVE_CS_HASH_CACHE=1`
+- 构建失败与修复：
+  1. `40693595648`：bootstrap pass 被
+     `NativeRamBlock requires the qualified original storage/AES prelink closure`
+     挡住。已在 bootstrap pass 关闭 `XNU_NATIVE_RAM_BLOCK`，并给 volatile Data
+     加临时豁免。
+  2. `40695589323`：最终链接缺 `native_ufs_store_*` 和
+     `native_verified_block_manifest_sha384`。已临时关闭 boot manifest，并在
+     `kern_exec.c` 里给 RAM block 提供 weak no-op store 符号。
+  3. `40699122544`：CI fetch XNU 网络超时，与代码无关。
+  4. `40701763118`：owner patch 插入 weak stubs 后 hunk 行数未更新，
+     `corrupt patch at ...:345`。本地已重算 hunk 计数，**尚未提交/重新构建**。
+- **当前状态：H82 镜像未成功构建，也未上机。** 设备应仍停在 H81 的 launchd
+  assertion 屏；需要时用 Power 15–20 s + Volume Up + Power 回 fastboot。
+
+### 当前临时配置（H81/H82）
+
+- `DYLD_SHARED_REGION=system`。
+- `XNU_OWNER_DATA_MOUNT=1`；64 MiB APFS Data skeleton；`/private/var` 可写。
+- `XNU_NATIVE_RAM_BLOCK=1`，无 NativeUfs 持久化；store fallback 为 weak no-op。
+- `XNU_OWNER_BOOT_MANIFEST=0`：**当前 Data 未经过 authenticated owner boot manifest**。
+- `max_task_pmem=0`：全局 task footprint 上限临时移除。
+- `zzz-cache-signature-bypass.patch` + `zzz-shared-region-cache-bypass.patch`：
+  AMFI/cache/CS/mmap 的临时 bring-up bypass；最终必须移除。
+- `panic_screen=false`：固定 panic cave 被诊断代码占用；最终恢复。
+- CI 仍为 `macos-15-intel` + Xcode 26.3；最终恢复 macOS 26 / 正常 runner。
+
+### 下一步（按顺序）
+
+1. 提交 H82 hunk 计数修复，重新触发 CI（避免网络超时）。
+2. 构建成功后打包 `boot-ufsH82-data.img`，临时 `fastboot boot`；
+   观察 Data mount 是否通过、launchd 的 `namespace 7 subcode 0x1` 是否消失。
+3. 若 Data mount 失败，先看 panic `offline scratch Data mount failed: <errno>`；
+   优先检查 seed UUID、`NativeRamBlock` 的 RAMDisk handoff、APFS 容器大小。
+4. 若 launchd 继续，进入 watchdog/tzinit、launchd job、`/private/var/db` 初始化。
+5. 最终恢复 `XNU_OWNER_BOOT_MANIFEST=1`、VerifiedRoot/AMFI/TrustCache，
+   移除 weak UFS stubs、Data skeleton、AMFI/CS/mmap bypass、`panic_screen=false`。
 
 ## 更新规则
 
