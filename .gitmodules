@@ -33,7 +33,7 @@
 	url = https://github.com/UniXNU/NativeMobileDisplay.git
 [submodule "drivers/NativeRamBlock"]
 	path = drivers/NativeRamBlock
-	url = https://github.com/UniXNU/NativeRamBlock.git
+	url = https://github.com/lss717/RamBlock.git
 [submodule "drivers/NativeUfs"]
 	path = drivers/NativeUfs
 	url = https://github.com/lss717/NativeUfs.git
