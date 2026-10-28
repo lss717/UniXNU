@@ -65,7 +65,7 @@
 +	const char *printsearch = "DYLD_PRINT_SEARCHING=1";
 +	const char *printlibs = "DYLD_PRINT_LIBRARIES=1";
 +	const char *printenvall = "DYLD_PRINT_ENV=1";
-+	const char *privateregion = "DYLD_SHARED_REGION=private";
++	const char *privateregion = "DYLD_SHARED_REGION=system";
 +	const char *amfifake = "DYLD_AMFI_FAKE=0x7f";
 +	const char *printfile = "DYLD_PRINT_TO_FILE=/dev/console";
 +#endif
