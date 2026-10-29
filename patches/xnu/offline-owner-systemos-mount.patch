@@ -9,7 +9,7 @@
  
  #include <mach/exclaves.h>
  
-@@ -7013,8 +7013,314 @@
+@@ -7013,8 +7013,317 @@
   *		word width of the kernel. Once the self-exec completes, the
   *		initproc might be different.
   */
@@ -316,6 +316,9 @@
 +done:
 +	if (data_root) vnode_put(data_root);
 +	native_owner_data_status = error;
++	printf("NATIVE_H82_DATA: status=%d stage=%d ro=%d dev=%d size=%llu\n",
++	    error, native_owner_data_stage, native_owner_data_readonly,
++	    (int)device, (unsigned long long)size);
 +	return error;
 +}
 +#endif

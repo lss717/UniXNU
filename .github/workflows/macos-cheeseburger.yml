@@ -99,7 +99,7 @@ jobs:
       - name: Prepare Data skeleton
         run: |
           set -euo pipefail
-          python3 scripts/prepare-owner-data-fixture.py --skeleton --size-mib 8 --output build/owner-data-fixture
+          python3 scripts/prepare-owner-data-fixture.py --skeleton --size-mib 16 --output build/owner-data-fixture
           uuid="$(python3 -c 'import json; print(json.load(open("build/owner-data-fixture/seed.json"))["volume_uuid"])')"
           test -n "$uuid"
           echo "XNU_OWNER_DATA_VOLUME_UUID=$uuid" >> "$GITHUB_ENV"

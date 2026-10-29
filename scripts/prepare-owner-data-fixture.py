@@ -46,7 +46,7 @@ if args.skeleton:
                      'mobile/Documents', 'mobile/Library', 'mobile/Library/Caches',
                      'mobile/Library/Logs', 'mobile/Library/Preferences', 'mobile/Media',
                      'mobile/tmp', 'networkd', 'preferences', 'preferences/Logging',
-                     'preboot', 'root', 'run', 'tmp', 'containers', 'containers/Data',
+                     'preboot', 'root', 'run', 'tmp', 'cores', 'containers', 'containers/Data',
                      'containers/Data/Application', 'containers/Data/System',
                      'containers/Shared', 'containers/Shared/SystemGroup', 'PersonaVolumes'):
             (target / name).mkdir(parents=True, exist_ok=True)
