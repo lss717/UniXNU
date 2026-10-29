@@ -382,11 +382,11 @@
 +		return;
 +	}
 +	printf("NATIVE_LAUNCHD_EXIT_REGS: pc=%llx lr=%llx sp=%llx fp=%llx x0=%llx x1=%llx x2=%llx x3=%llx\n",
-+	    (unsigned long long)st.__pc, (unsigned long long)st.__lr,
-+	    (unsigned long long)st.__sp, (unsigned long long)st.__fp,
-+	    (unsigned long long)st.__x[0], (unsigned long long)st.__x[1],
-+	    (unsigned long long)st.__x[2], (unsigned long long)st.__x[3]);
-+	fp = st.__fp;
++	    (unsigned long long)st.pc, (unsigned long long)st.lr,
++	    (unsigned long long)st.sp, (unsigned long long)st.fp,
++	    (unsigned long long)st.x[0], (unsigned long long)st.x[1],
++	    (unsigned long long)st.x[2], (unsigned long long)st.x[3]);
++	fp = st.fp;
 +	for (i = 0; i < 16 && fp != 0; i++) {
 +		uint64_t frame[2];
 +		if (copyin((user_addr_t)fp, frame, sizeof(frame)) != 0) {
