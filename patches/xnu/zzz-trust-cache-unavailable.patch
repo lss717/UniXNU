@@ -32,7 +32,7 @@
  		panic("amfi interface is stale: %u", amfi->TrustCache.version);
  	}
  
-@@ -489,6 +491,7 @@
+@@ -489,6 +490,7 @@
  
  	/* Initialize the read-write lock */
  	lck_rw_init(&trust_cache_rt_lock, &trust_cache_lck_grp, 0);
@@ -40,7 +40,7 @@
  }
  
  static kern_return_t
-@@ -623,6 +626,9 @@
+@@ -623,6 +625,9 @@
  		printf("unable to query trust cache: invalid query type: %u\n", query_type);
  		return KERN_INVALID_ARGUMENT;
  	}
@@ -50,7 +50,7 @@
  
  	/* Lock the runtime as shared */
  	lck_rw_lock_shared(&trust_cache_rt_lock);
-@@ -655,6 +661,9 @@
+@@ -655,6 +660,9 @@
  {
  	kern_return_t ret = KERN_DENIED;
  
@@ -60,7 +60,7 @@
  	if (amfi->TrustCache.version < 3) {
  		/* AMFI change hasn't landed in the build */
  		printf("unable to check for loaded trust cache: interface not supported\n");
-@@ -749,6 +758,10 @@
+@@ -749,6 +757,10 @@
  	const uint8_t *img4_aux_manifest, const size_t img4_aux_manifest_len)
  {
  	kern_return_t ret = KERN_DENIED;
@@ -71,7 +71,7 @@
  	uintptr_t length_check = 0;
  	const uint8_t *img4_payload = NULL;
  	size_t img4_payload_len = 0;
-@@ -925,6 +938,12 @@
+@@ -925,6 +937,12 @@
  		return KERN_INVALID_ARGUMENT;
  	}
  
@@ -84,3 +84,22 @@
  #if CONFIG_SPTM
  	ret = txm_query_trust_cache(query_type, cdhash, query_token);
  #elif PMAP_CS_PPL_MONITOR
+@@ -1033,7 +1051,8 @@
+ 		}
+ 
+ 		printf("no external trust caches found (segment length is zero)\n");
+-		return;
++		panic("NATIVE_TRUSTCACHE: missing external trust caches range=%p property_length=%u amfi_version=%u",
++		    tc_range, tc_dt_prop_length, amfi->TrustCache.version);
+ 	} else if (tc_offsets->num_caches == 0) {
+ 		panic("trust cache segment isn't zero but no trust caches available: %lu",
+ 		    (unsigned long)tc_segment_length);
+@@ -1052,6 +1071,8 @@
+ 	}
+ 	const uintptr_t tc_region_end = (uintptr_t)tc_offsets + tc_segment_length;
+ 
++	printf("NATIVE_TRUSTCACHE: range=%p length=%zu modules=%u amfi_version=%u\n",
++	    tc_range, tc_segment_length, tc_offsets->num_caches, amfi->TrustCache.version);
+ 	printf("attempting to load %u external trust cache modules\n", tc_offsets->num_caches);
+ 
+ 	for (uint32_t i = 0; i < tc_offsets->num_caches; i++) {
