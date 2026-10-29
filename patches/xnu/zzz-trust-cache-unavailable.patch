@@ -21,8 +21,7 @@
 +	 * trust_cache_rt_lock, and let query callers fail cleanly instead of
 +	 * taking an uninitialized non-sleepable RW lock. */
 +	if (img4if == NULL || amfi == NULL) {
-+		printf("NATIVE: trust caches unavailable (Image4/AMFI not installed)\n");
-+		return;
++		panic("NATIVE_TRUSTCACHE: img4=%p amfi=%p", img4if, amfi);
  	}
 -
 -	/* AMFI interface needs to be available */
