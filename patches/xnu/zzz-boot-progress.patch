@@ -362,10 +362,45 @@
  
  	if (internal_flags & OS_REASON_IFLAG_USER_FAULT) {
  		uint32_t old_value = atomic_load_explicit(&p->p_user_faults,
-@@ -1816,6 +1833,41 @@
+@@ -1816,6 +1833,77 @@
  #endif /* (DEVELOPMENT || DEBUG) && CONFIG_COREDUMP */
  }
  
++
++extern void task_act_iterate_wth_args(task_t, void (*)(thread_t, void *), void *);
++
++static void
++native_launchd_thread_diag(thread_t th, void *arg)
++{
++	arm_thread_state64_t st;
++	mach_msg_type_number_t count = ARM_THREAD_STATE64_COUNT;
++	uint64_t fp;
++	int i;
++
++	if (thread_getstatus(th, ARM_THREAD_STATE64, (thread_state_t)&st, &count) != KERN_SUCCESS) {
++		printf("NATIVE_LAUNCHD_THREAD: tid=%llu regs-unavailable\n",
++		    (unsigned long long)thread_tid(th));
++		return;
++	}
++	printf("NATIVE_LAUNCHD_THREAD: tid=%llu pc=%llx lr=%llx sp=%llx fp=%llx\n",
++	    (unsigned long long)thread_tid(th), (unsigned long long)st.pc,
++	    (unsigned long long)st.lr, (unsigned long long)st.sp,
++	    (unsigned long long)st.fp);
++	fp = st.fp;
++	for (i = 0; i < 12 && fp != 0; i++) {
++		uint64_t frame[2];
++		if (copyin((user_addr_t)fp, frame, sizeof(frame)) != 0) {
++			break;
++		}
++		printf("NATIVE_LAUNCHD_THREAD_FRAME: tid=%llu %d fp=%llx lr=%llx\n",
++		    (unsigned long long)thread_tid(th), i,
++		    (unsigned long long)fp, (unsigned long long)frame[1]);
++		if (frame[0] <= fp || frame[0] - fp > 0x100000) {
++			break;
++		}
++		fp = frame[0];
++	}
++}
 +
 +static void
 +native_launchd_exit_diag(proc_t p)
@@ -399,12 +434,13 @@
 +		}
 +		fp = frame[0];
 +	}
++	task_act_iterate_wth_args(proc_task(p), native_launchd_thread_diag, NULL);
 +}
 +
  static void
  proc_handle_critical_exit(proc_t p, int rv)
  {
-@@ -1844,8 +1896,14 @@
+@@ -1844,8 +1932,14 @@
  		    exit_reason_desc : "none");
  	}
  
@@ -419,7 +455,7 @@
  
  	if (p == initproc) {
  		if (strnstr(p->p_name, "preinit", sizeof(p->p_name))) {
-@@ -1858,10 +1916,17 @@
+@@ -1858,10 +1952,17 @@
  	} else {
  		/* For processes that aren't launchd, just use the process name and pid */
  		snprintf(prefix_str_buf, sizeof(prefix_str_buf), "%s[%d] exited", p->p_name, proc_getpid(p));
@@ -438,7 +474,7 @@
  
  	sync(p, (void *)NULL, (int *)NULL);
  
-@@ -1892,6 +1957,10 @@
+@@ -1892,6 +1993,10 @@
  	task_t task = proc_task(p);
  
  
