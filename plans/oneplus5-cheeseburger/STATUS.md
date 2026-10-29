@@ -3,10 +3,10 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
-- 当前阶段：**B5 用户态入口。H81 已让 system-wide shared cache 映射成功并越过 per-process jetsam；launchd 停在 `OS_REASON_LIBXPC` assertion（`namespace 7 subcode 0x1`）。H82 已成功构建（Data skeleton + fork RamBlock），但临时启动后设备返回 fastboot，尚未确认 Data/launchd 结果。**
+- 当前阶段：**B5 用户态入口。H81 已让 system-wide shared cache 映射成功并越过 per-process jetsam；launchd 停在 `OS_REASON_LIBXPC` assertion（`namespace 7 subcode 0x1`）。H82f 已用 16 MiB Data skeleton / 76 MiB payload 构建并启动，当前未回 fastboot；等待 `NATIVE_H82_DATA` 屏幕确认 Data mount 状态。**
 - 当前 gate：**G1 通过（2026-10-22）；B3 已到 BSD/IOKit；B5 root 已挂载（bring-up）**
 - 基线提交：UniXNU `e95b37d`（main）
-- 当前代码提交：UniXNU `582206d`；设备仓库 `27a6e70`；fork 子模块 `lss717/RamBlock` `bc079a5`
+- 当前代码提交：UniXNU `810ac08`；设备仓库 `dcff488`；fork 子模块 `lss717/RamBlock` `bc079a5`
 - 远程仓库：
   - UniXNU `https://github.com/lss717/UniXNU`（`main`）
   - UEFI fork `https://github.com/lss717/edk2-msm8998`（分支 `unixnu-cheeseburger`）
@@ -1058,7 +1058,7 @@ Linux x86_64 / Ubuntu 24.04：
     `run`、`tmp`、`keybags`、`mobile/*`、`containers` 等），不复制 OS 的 400+ MB var；
   - 输出 `build/owner-data-fixture/seed.json` 和 `owner-data-32.cdr`；
   - workflow 从 `seed.json` 取 `volume_uuid`，写入 `XNU_OWNER_DATA_VOLUME_UUID`。
-- board payload 从 64 MiB 提到 160 MiB；payload 加 `--data-ramdisk`。
+- board payload 当前为 76 MiB；payload 加 `--data-ramdisk`。
 - 临时内核配置：
   - `XNU_OWNER_DATA_MOUNT=1`
   - `XNU_NATIVE_RAM_BLOCK=1`
@@ -1089,7 +1089,7 @@ Linux x86_64 / Ubuntu 24.04：
 ### 当前临时配置（H81/H82）
 
 - `DYLD_SHARED_REGION=system`。
-- `XNU_OWNER_DATA_MOUNT=1`；64 MiB APFS Data skeleton；`/private/var` 可写。
+- `XNU_OWNER_DATA_MOUNT=1`；当前 16 MiB APFS Data skeleton；`/private/var` 可写。
 - `XNU_NATIVE_RAM_BLOCK=1`，无 NativeUfs 持久化；store fallback 为 fork
   `lss717/RamBlock`（submodule `drivers/NativeRamBlock`，提交 `bc079a5`）里的
   weak no-op。
@@ -1116,6 +1116,59 @@ Linux x86_64 / Ubuntu 24.04：
 5. 最终恢复 `XNU_OWNER_BOOT_MANIFEST=1`、VerifiedRoot/AMFI/TrustCache；
    用 qualified NativeUfs/AES store 替换 fork 里的 weak no-op fallback，并移除
    Data skeleton、AMFI/CS/mmap bypass、`panic_screen=false`。
+
+### H82b–H82f 结果（2026-10-29）
+
+| 镜像 | 配置 | 大小 | 结果 |
+| --- | --- | --- | --- |
+| `H82b` | 32 MiB seed / 96 MiB payload / 默认 tags | 102,119,424 B | fastboot，未进 UEFI |
+| `H82c` | 同 payload / tags=`0x1c000000` | 102,119,424 B | 曾到 OnePlus 第一屏，UEFI 未起；重试不稳定 |
+| `H82d` | 手工 90 MiB payload（32 MiB seed）/ 默认 tags | 95,827,968 B | fastboot |
+| `H82-kernelonly-64` | H82 内核、无 Data seed、64 MiB payload | 68,564,992 B | **进入内核**，panic `offline scratch Data mount failed: 2` |
+| `H82e` | 8 MiB seed / 64 MiB payload | 68,564,992 B | **进入内核**；launchd 仍 `namespace 7 subcode 0x1`；Data 状态未知 |
+| `H82f` | 16 MiB seed / 76 MiB payload | 81,147,904 B | 已启动，未回 fastboot；等待屏幕 |
+
+结论：
+
+- H82 内核、fork RamBlock、UEFI/ADT 都能工作；`kernelonly-64` 已证明。
+- 98 MiB / 95.8 MiB boot image 不能稳定启动；68.56 MiB 可以。77.4 MiB 正在验证，
+  bootloader 上限大致在这两者之间。
+- `H82e` 的 launchd assertion 与 H81 完全相同；8 MiB Data 可能未成功挂载，或
+  容量/骨架不足，需要在 H82f 看新增的 `NATIVE_H82_DATA`。
+- `H82f` 的状态行会打印：
+  `NATIVE_H82_DATA: status=<errno> stage=<n> ro=<0/1> dev=<dev> size=<bytes>`。
+  `status=0, stage=4, ro=0` 才表示 Data 挂载成功。
+
+镜像：
+
+- H82e：`boot-ufsH82e-8m.img`，sha256
+  `5a83b98c565826912e9d92bf61256cbf06f89b07824608c72f5d6b97e100a8cc`
+- H82f：`boot-ufsH82f-16m.img`，sha256
+  `e636336d8e7cb9aec9ab6fbc5ce1ebfeaf757f0d5cff227e8ee143ecba300038`
+- H82f CI：`40797926609`；Artifact `12864254042`。
+
+### fork 接入
+
+- 上游实际仓库：`UniXNU/RamBlock`（旧 `NativeRamBlock` URL 重定向）。
+- fork：`lss717/RamBlock`，提交 `bc079a5`
+  （`ram: provide weak volatile-store fallbacks`）。
+- 主仓路径保持 `drivers/NativeRamBlock`；`.gitmodules` URL 改为
+  `https://github.com/lss717/RamBlock.git`。
+- 子模块 `origin` 指 fork，`upstream` 指 `UniXNU/RamBlock`。
+- `NativeRamBlock` 的 weak no-op store fallback 已在 fork 中，不再放在 XNU
+  `kern_exec.c`。
+- device 仓库补了 base `IOBlockStorageDevice` 绑定：
+  `27a6e70 storage: bind base IOBlockStorageDevice metadata`。
+
+### H82f 之后
+
+1. 等 H82f 屏幕，读取 `NATIVE_H82_DATA`。
+2. 若 `status=0 stage=4`，launchd assertion 就不是 Data 挂载本身；继续查
+   `/private/var/db`、bootstrap、libxpc。
+3. 若 Data mount 失败，优先看 errno、seed UUID、16 MiB APFS 容量。
+4. 若 77.4 MiB 启动不稳定，回退 68.56 MiB 尺寸，另找 Data 持久化/外置方案。
+5. 最终恢复 `XNU_OWNER_BOOT_MANIFEST=1`、VerifiedRoot/AMFI/TrustCache，
+   替换 weak UFS fallback，移除 bypass。
 
 ## 更新规则
 
