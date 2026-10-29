@@ -1,6 +1,14 @@
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -183,7 +183,7 @@
+@@ -96,6 +96,7 @@
+ #include <sys/vnode_internal.h>
+ #include <sys/file_internal.h>
+ #include <sys/stat.h>
++#include <sys/fcntl.h>
+ #include <sys/uio_internal.h>
+ #include <sys/acct.h>
+ #include <sys/exec.h>
+@@ -183,7 +184,7 @@
  
  #include "kern_exec_internal.h"
  
@@ -9,7 +17,7 @@
  
  #include <mach/exclaves.h>
  
-@@ -7013,8 +7013,317 @@
+@@ -7013,8 +7014,493 @@
   *		word width of the kernel. Once the self-exec completes, the
   *		initproc might be different.
   */
@@ -46,8 +54,7 @@
 +	__asm__ volatile("" : : "r"(status), "r"(authorized) : "memory");
 +}
 +
- static int
--load_init_program_at_path(proc_t p, user_addr_t scratch_addr, const char* path)
++static int
 +native_owner_cache_prepare(proc_t p, user_addr_t scratch, user_addr_t *envp)
 +{
 +	const char *volume = "8846FE78-2910-4297-AF97-D59BB6F8FC16";
@@ -255,7 +262,8 @@
 +uint8_t native_owner_data_seed_sha256[32];
 +char native_owner_data_device_path[64];
 +
-+static int
+ static int
+-load_init_program_at_path(proc_t p, user_addr_t scratch_addr, const char* path)
 +native_owner_data_prepare(proc_t p, user_addr_t scratch)
 +{
 +	uint64_t base = 0, size = 0;
@@ -323,12 +331,188 @@
 +}
 +#endif
 +
++
++/*
++ * Temporary launchd bring-up policy, ported from UniXNU-sheng.
++ * It runs after the writable scratch Data mount and before launchd exec.
++ * sheng-disable-watchdogd=1 disables watchdogd; sheng-lite=1 disables jobs
++ * that otherwise enter synchronous XPC waits or known crash loops.
++ */
++static const char policy_head[] =
++ "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
++ "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
++ "<plist version=\"1.0\"><dict>";
++static const char policy_watchdogd[] = "<key>com.apple.watchdogd</key><true/>";
++static const char policy_tail[] = "</dict></plist>\n";
++static const char lite_jobs[] =
++ "com.apple.identityservicesd,com.apple.locationd,com.apple.CommCenter,com.apple.bluetoothd,"
++ "com.apple.photoanalysisd,com.apple.mediaanalysisd,com.apple.mediastream.mstreamd,com.apple.icloud.searchpartyd,"
++ "com.apple.findmy.findmybeaconingd,com.apple.familycircled,com.apple.financed,com.apple.softwareupdateservicesd,"
++ "com.apple.ndoagent,com.apple.biomesyncd,com.apple.email.maild,com.apple.amsengagementd,com.apple.adid,com.apple.eyereliefd,"
++ "com.apple.fairplayd.A2,com.apple.passd,com.apple.mobile.obliteration,com.apple.coreduetd";
++static char policy[2048], jobs[200];
++
++static int
++append_job(const char **cursor)
++{
++	const char *c = *cursor, *e = c;
++	while (*e && *e != ',') {
++		e++;
++	}
++	if (e > c) {
++		if (strlcat(policy, "<key>", sizeof(policy)) >= sizeof(policy)) {
++			return EINVAL;
++		}
++		size_t at = strlen(policy);
++		if (at + (size_t)(e - c) + 1 >= sizeof(policy)) {
++			return EINVAL;
++		}
++		memcpy(policy + at, c, (size_t)(e - c));
++		policy[at + (size_t)(e - c)] = 0;
++		if (strlcat(policy, "</key><true/>", sizeof(policy)) >= sizeof(policy)) {
++			return EINVAL;
++		}
++	}
++	*cursor = *e ? e + 1 : e;
++	return 0;
++}
++
++int
++sheng_boot_watchdog_policy(void *process, uint64_t scratch)
++{
++	proc_t p = (proc_t)process;
++	int enabled = 0, error = 0, fd = -1, lite = 0;
++	int32_t result = 0;
++	PE_parse_boot_argn("sheng-disable-watchdogd", &enabled, sizeof(enabled));
++	if (!PE_parse_boot_argn("sheng-disable-jobs", jobs, sizeof(jobs))) {
++		jobs[0] = 0;
++	}
++	jobs[sizeof(jobs) - 1] = 0;
++	PE_parse_boot_argn("sheng-lite", &lite, sizeof(lite));
++	if (lite != 1) {
++		lite = 0;
++	}
++	if (enabled != 1) {
++		enabled = 0;
++	}
++	for (const char *c = jobs; *c; ++c) {
++		if (!((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') ||
++		    (*c >= '0' && *c <= '9') || *c == '.' || *c == '-' || *c == ',')) {
++			return EINVAL;
++		}
++	}
++	if (!enabled && !jobs[0] && !lite) {
++		return 0;
++	}
++	policy[0] = 0;
++	strlcat(policy, policy_head, sizeof(policy));
++	if (enabled) {
++		strlcat(policy, policy_watchdogd, sizeof(policy));
++	}
++	if (lite) {
++		for (const char *c = lite_jobs; *c;) {
++			if ((error = append_job(&c))) {
++				return error;
++			}
++		}
++	}
++	for (const char *c = jobs; *c;) {
++		if ((error = append_job(&c))) {
++			return error;
++		}
++	}
++	strlcat(policy, policy_tail, sizeof(policy));
++
++	const char *directory = "/private/var/db/com.apple.xpc.launchd";
++	const char *path = "/private/var/db/com.apple.xpc.launchd/disabled.plist";
++	if ((error = copyout(directory, (user_addr_t)scratch, strlen(directory) + 1))) {
++		goto done;
++	}
++	struct mkdir_args md = {.path = (user_addr_t)scratch, .mode = 0755};
++	error = mkdir(p, &md, &result);
++	if (error && error != EEXIST) {
++		goto done;
++	}
++	if ((error = copyout(path, (user_addr_t)scratch, strlen(path) + 1))) {
++		goto done;
++	}
++	struct open_args op = {.path = (user_addr_t)scratch,
++	    .flags = O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, .mode = 0644};
++	if ((error = open(p, &op, &result))) {
++		goto done;
++	}
++	fd = result;
++	for (size_t sent = 0, total = strlen(policy); sent < total;) {
++		size_t piece = total - sent < 0x1f0 ? total - sent : 0x1f0;
++		if ((error = copyout(policy + sent, (user_addr_t)(scratch + 0x200), piece))) {
++			goto done;
++		}
++		struct write_args wr = {.fd = fd, .cbuf = (user_addr_t)(scratch + 0x200), .nbyte = piece};
++		user_ssize_t written = 0;
++		if ((error = write(p, &wr, &written))) {
++			goto done;
++		}
++		if (written != (user_ssize_t)piece) {
++			error = EIO;
++			goto done;
++		}
++		sent += piece;
++	}
++	struct fchown_args owner = {.fd = fd, .uid = 0, .gid = 0};
++	if ((error = fchown(p, &owner, &result))) {
++		goto done;
++	}
++	struct fchmod_args mode = {.fd = fd, .mode = 0644};
++	if ((error = fchmod(p, &mode, &result))) {
++		goto done;
++	}
++	struct fsync_args sync = {.fd = fd};
++	if ((error = fsync(p, &sync, &result))) {
++		goto done;
++	}
++	struct fstat64_args sa = {.fd = fd, .ub = (user_addr_t)(scratch + 0xA00)};
++	struct stat64 st = {0};
++	if ((error = sys_fstat64(p, &sa, &result)) ||
++	    (error = copyin((user_addr_t)(scratch + 0xA00), &st, sizeof(st)))) {
++		goto done;
++	}
++	if (st.st_uid != 0 || st.st_gid != 0 || !S_ISREG(st.st_mode) ||
++	    (st.st_mode & 0777) != 0644 || st.st_size != (off_t)strlen(policy)) {
++		error = EINVAL;
++	}
++done:
++	if (fd >= 0) {
++		struct close_args cl = {.fd = fd};
++		int close_error = sys_close(p, &cl, &result);
++		if (!error) {
++			error = close_error;
++		}
++	}
++	if (!error) {
++		const char *marker = "/private/var/db/com.apple.xpc.launchd/disabled.migrated";
++		error = copyout(marker, (user_addr_t)scratch, strlen(marker) + 1);
++		if (!error) {
++			struct open_args mark = {.path = (user_addr_t)scratch,
++			    .flags = O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, .mode = 0644};
++			error = open(p, &mark, &result);
++			if (!error) {
++				struct close_args cl = {.fd = result};
++				error = sys_close(p, &cl, &result);
++			} else if (error == EEXIST) {
++				error = 0;
++			}
++		}
++	}
++	printf("NATIVE_LAUNCHD_POLICY: %d\n", error);
++	return error;
++}
++
 +static int
 +load_init_program_at_path(proc_t p, user_addr_t scratch_addr, const char* path, user_addr_t envp)
  {
  	int retval[2];
  	int error;
-@@ -7086,7 +7326,7 @@
+@@ -7086,7 +7572,7 @@
  	 */
  	init_exec_args.fname = argv0;
  	init_exec_args.argp = scratch_addr;
@@ -337,7 +521,7 @@
  
  	/*
  	 * So that init task is set with uid,gid 0 token
-@@ -7148,6 +7388,15 @@
+@@ -7148,6 +7634,17 @@
  	mach_vm_size_t map_page_size = vm_map_page_size(map);
  
  	(void) mach_vm_allocate_kernel(map, &scratch_addr, map_page_size, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE);
@@ -349,11 +533,13 @@
 +#if defined(XNU_OWNER_DATA_MOUNT) && XNU_OWNER_DATA_MOUNT
 +	int data_error = native_owner_data_prepare(p, (user_addr_t)scratch_addr);
 +	if (data_error) panic("offline scratch Data mount failed: %d", data_error);
++	int policy_error = sheng_boot_watchdog_policy(p, (uint64_t)scratch_addr);
++	if (policy_error) panic("launchd bring-up policy failed: %d", policy_error);
 +#endif
  #if CONFIG_MEMORYSTATUS
  	(void) memorystatus_init_at_boot_snapshot();
  #endif /* CONFIG_MEMORYSTATUS */
-@@ -7162,7 +7411,7 @@
+@@ -7162,7 +7659,7 @@
  
  		if (is_release_suffix) {
  			printf("load_init_program: attempting to load /sbin/launchd\n");
@@ -362,7 +548,7 @@
  			if (!error) {
  				return;
  			}
-@@ -7173,7 +7422,7 @@
+@@ -7173,7 +7670,7 @@
  			strlcat(launchd_path, launchd_suffix, sizeof(launchd_path));
  
  			printf("load_init_program: attempting to load %s\n", launchd_path);
@@ -371,7 +557,7 @@
  			if (!error) {
  				return;
  			} else if (error != ENOENT) {
-@@ -7186,7 +7435,7 @@
+@@ -7186,7 +7683,7 @@
  	error = ENOENT;
  	for (i = 0; i < sizeof(init_programs) / sizeof(init_programs[0]); i++) {
  		printf("load_init_program: attempting to load %s\n", init_programs[i]);
