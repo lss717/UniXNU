@@ -10,7 +10,7 @@
  void
  trust_cache_runtime_init(void)
  {
-@@ -467,15 +470,14 @@
+@@ -467,15 +470,13 @@
  	allow_legacy_caches = true;
  #endif
  
