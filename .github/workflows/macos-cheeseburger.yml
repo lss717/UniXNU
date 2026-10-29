@@ -99,7 +99,7 @@ jobs:
       - name: Prepare Data skeleton
         run: |
           set -euo pipefail
-          python3 scripts/prepare-owner-data-fixture.py --skeleton --size-mib 16 --output build/owner-data-fixture
+          python3 scripts/prepare-owner-data-fixture.py --skeleton --size-mib 512 --packed --output build/owner-data-fixture
           uuid="$(python3 -c 'import json; print(json.load(open("build/owner-data-fixture/seed.json"))["volume_uuid"])')"
           test -n "$uuid"
           echo "XNU_OWNER_DATA_VOLUME_UUID=$uuid" >> "$GITHUB_ENV"
@@ -155,7 +155,7 @@ jobs:
           args=()
           if [ -f "$RUNNER_TEMP/trustcache" ]; then args+=(--trust-cache "$RUNNER_TEMP/trustcache"); fi
           if [ -n "$UNIQUE_CHIP_ID" ]; then args+=(--unique-chip-id "$UNIQUE_CHIP_ID"); fi
-          data="$GITHUB_WORKSPACE/build/owner-data-fixture/owner-data-32.cdr"
+          data="$GITHUB_WORKSPACE/build/owner-data-fixture/owner-data.dbr"
           test -f "$data"
           args+=(--data-ramdisk "$data")
           ./unixnu build payload "${args[@]}" -D "$UNIXNU_DEVICE"
@@ -198,7 +198,7 @@ jobs:
             out/cheeseburger/kernel/**
             out/cheeseburger/payload/**
             out/cheeseburger/logs/**
-            build/owner-data-fixture/owner-data-32.cdr
+            build/owner-data-fixture/owner-data.dbr
             build/owner-data-fixture/seed.json
           if-no-files-found: error
           retention-days: 7

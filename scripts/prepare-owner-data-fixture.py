@@ -9,12 +9,16 @@ import plistlib
 import shutil
 import stat
 import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'drivers/DarwinBoot/Test'))
+import packed_ramdisk
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--output', type=Path, default=ROOT / 'build/owner-data-fixture')
 parser.add_argument('--skeleton', action='store_true', help='Create an empty APFS Data skeleton (CI bring-up; no OS var copy)')
 parser.add_argument('--size-mib', type=int, default=96, help='Skeleton APFS container size in MiB')
+parser.add_argument('--packed', action='store_true', help='Write a DBRDISK1 packed seed (owner-data.dbr) in addition to the raw skeleton')
 args = parser.parse_args()
 fixture = args.output.resolve()
 image = fixture / 'owner-data-32.cdr'
@@ -59,7 +63,16 @@ if args.skeleton:
         raise SystemExit('Host formatting did not produce an APFS container')
     report = dict(volume_uuid=volume_uuid, bytes=len(data), sha256=hashlib.sha256(data).hexdigest(),
                   seed='Empty APFS Data skeleton for launchd bring-up; directories only',
-                  owner_keybag_created=False, os_inputs_modified=False, production_storage_qualified=False)
+                  owner_keybag_created=False, os_inputs_modified=False, production_storage_qualified=False,
+                  packed=False, seed_file=image.name)
+    if args.packed:
+        packed_image = fixture / 'owner-data.dbr'
+        if packed_image.exists():
+            raise SystemExit('Refuse to overwrite an existing packed Data seed')
+        meta = packed_ramdisk.pack(image, packed_image)
+        report.update(packed=True, packed_bytes=meta['encoded_bytes'], packed_sha256=meta['encoded_sha256'],
+                      seed_file=packed_image.name)
+        image.unlink()
     (fixture / 'seed.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps(report, indent=2))
     raise SystemExit(0)
