@@ -333,7 +333,36 @@
  
  #include <kern/exc_resource.h>
  #include <kern/kern_types.h>
-@@ -1816,6 +1818,41 @@
+@@ -1358,6 +1360,8 @@
+ 
+ #define OS_REASON_TOTAL_USER_FAULTS_PER_PROC  5
+ 
++static void native_launchd_exit_diag(proc_t p);
++
+ static int
+ abort_with_payload_internal(proc_t p,
+     uint32_t reason_namespace, uint64_t reason_code,
+@@ -1367,6 +1371,19 @@
+ {
+ 	os_reason_t exit_reason = OS_REASON_NULL;
+ 	kern_return_t kr = KERN_SUCCESS;
++	char native_abort_desc[256] = {0};
++
++	if (proc_getpid(p) == 1) {
++		native_launchd_exit_diag(p);
++		if (reason_string != USER_ADDR_NULL &&
++		    copyin(reason_string, native_abort_desc, sizeof(native_abort_desc) - 1) == 0) {
++			native_abort_desc[sizeof(native_abort_desc) - 1] = 0;
++			printf("NATIVE_LAUNCHD_ABORT_DESC: %s\n", native_abort_desc);
++		}
++		printf("NATIVE_LAUNCHD_ABORT: ns=%u code=0x%llx flags=0x%llx\n",
++		    reason_namespace, (unsigned long long)reason_code,
++		    (unsigned long long)reason_flags);
++	}
+ 
+ 	if (internal_flags & OS_REASON_IFLAG_USER_FAULT) {
+ 		uint32_t old_value = atomic_load_explicit(&p->p_user_faults,
+@@ -1816,6 +1833,41 @@
  #endif /* (DEVELOPMENT || DEBUG) && CONFIG_COREDUMP */
  }
  
@@ -353,11 +382,11 @@
 +		return;
 +	}
 +	printf("NATIVE_LAUNCHD_EXIT_REGS: pc=%llx lr=%llx sp=%llx fp=%llx x0=%llx x1=%llx x2=%llx x3=%llx\n",
-+	    (unsigned long long)st.pc, (unsigned long long)st.lr,
-+	    (unsigned long long)st.sp, (unsigned long long)st.fp,
-+	    (unsigned long long)st.x[0], (unsigned long long)st.x[1],
-+	    (unsigned long long)st.x[2], (unsigned long long)st.x[3]);
-+	fp = st.fp;
++	    (unsigned long long)st.__pc, (unsigned long long)st.__lr,
++	    (unsigned long long)st.__sp, (unsigned long long)st.__fp,
++	    (unsigned long long)st.__x[0], (unsigned long long)st.__x[1],
++	    (unsigned long long)st.__x[2], (unsigned long long)st.__x[3]);
++	fp = st.__fp;
 +	for (i = 0; i < 16 && fp != 0; i++) {
 +		uint64_t frame[2];
 +		if (copyin((user_addr_t)fp, frame, sizeof(frame)) != 0) {
@@ -375,7 +404,7 @@
  static void
  proc_handle_critical_exit(proc_t p, int rv)
  {
-@@ -1844,8 +1881,14 @@
+@@ -1844,8 +1896,14 @@
  		    exit_reason_desc : "none");
  	}
  
@@ -390,7 +419,7 @@
  
  	if (p == initproc) {
  		if (strnstr(p->p_name, "preinit", sizeof(p->p_name))) {
-@@ -1858,10 +1901,17 @@
+@@ -1858,10 +1916,17 @@
  	} else {
  		/* For processes that aren't launchd, just use the process name and pid */
  		snprintf(prefix_str_buf, sizeof(prefix_str_buf), "%s[%d] exited", p->p_name, proc_getpid(p));
@@ -409,7 +438,7 @@
  
  	sync(p, (void *)NULL, (int *)NULL);
  
-@@ -1892,6 +1942,10 @@
+@@ -1892,6 +1957,10 @@
  	task_t task = proc_task(p);
  
  
