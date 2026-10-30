@@ -1254,10 +1254,12 @@ Linux x86_64 / Ubuntu 24.04：
 | H83k | `54ba38bb291cb1637c8da702ade288696ea4c1afddea008f192be1f66a1771f3` | 补 timezone；tzinit 通过；UFS 读停住 |
 | H84a | `d922af097dd71250adfe6522c4cfcc5edda3688ef69052084ba80a353e786254` | + NativeMobileDisplay；UFS 读停住 |
 | H84b | `a811fec2fc9c6c56759c8eaae55803c0a4206269a38012cc96c69a6884c1ac20` | + cpus=8；UFS 读停住 |
+| H85c | `6a7e83ac9554e5c486c85ac4f656f60ab974cbda8860af2bbb90ade6ffb55296` | 完整 NativeUfs/Virtio/AES；仍停在 OS/SystemOS 大读，`winFlight=1` |
 
-下一步：不要继续换 boot args。优先处理 `NativeUfsProbe` 的读窗口/超时和
-SystemOS/OS 大读；可试完整 `NativeUfs` 驱动，或在 probe 的 `waitForCompletion`
-加超时/错误日志定位最后一个未完成请求。display/backboardd 尚未真正到达。
+下一步：不要继续换 boot args。H85c 已证明完整 NativeUfs/Virtio/AES 也停在
+同一个 OS/SystemOS 大读，因此问题在 UFS/SMMU/读窗口完成路径，而不是 Probe
+用户态或 display。优先在 UFS `waitForCompletion`/SMMU fault 处加超时和错误
+日志，必要时比较 DinnerABC 的 UFS 读窗口/缓存维护。display/backboardd 尚未到达。
 最终恢复真实 owner boot manifest、VerifiedRoot/AMFI/TrustCache，移除 ADT 占位。
 
 ## 更新规则
