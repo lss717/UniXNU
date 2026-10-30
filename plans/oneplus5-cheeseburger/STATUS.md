@@ -1170,6 +1170,57 @@ Linux x86_64 / Ubuntu 24.04：
 5. 最终恢复 `XNU_OWNER_BOOT_MANIFEST=1`、VerifiedRoot/AMFI/TrustCache，
    替换 weak UFS fallback，移除 bypass。
 
+
+### H82g–H83c：launchd `namespace 7` 逐项排除（2026-10-29/30）
+
+已用临时 `fastboot boot` 验证，均未写分区：
+
+| 候选 | 配置 | 结果 |
+| --- | --- | --- |
+| H82j | 256 MiB packed Data | core dump ENOSPC，launchd 仍 `namespace 7 subcode 0x1` |
+| H82k | sheng watchdog/job policy | 同 |
+| H82l | `cpus=1` + 关闭 core + launchd 退出寄存器 | 同；`cpus=1` 无效 |
+| H82m | 只加 StaticTrustCache | AMFI 仍报 adhoc，launchd/dyld 被 SIGKILL |
+| H82n | `UNION_SYSTEMOS=1` | 同 |
+| H82o | abort 入口打印描述/栈 | `assertion failed: 992999: launchd + 338744 [4B525992-...]: 0x1`，ns=7 code=0x1 |
+| H82q | Static+System 完整 trust bundle | AMFI 仍 adhoc/CT policy 0 |
+| H82r | 全线程 PC/帧 | abort 线程 tid=243，245 已 `pc=0`，主线程现场丢失 |
+| H82s | 去 `launchd_unsecure_cache`/`dyld_flags`/lite | 同 |
+| H82v | 1 GiB Data + 1 GiB window | 同 |
+| H82w | 最小 AMFI 绕过 | 同 |
+| H82x | `XNU_OWNER_DATA_MOUNT=0`、无 NativeRamBlock/Data | 同，Data 不是原因 |
+| H83a | `XNU_TRUST_CACHE_RUNTIME=1` + 完整 trust | 未触发 AMFI/Image4 缺失 panic |
+| H83b | `load_static_trust_cache` 缺 range 即 panic | 未触发，旧固件确实交付了 TrustCache range；但 AMFI 仍 adhoc |
+| H83c | H83b + `amfi=0x94` | 同 |
+
+关键文件/事实：
+
+- 原始 `/sbin/launchd` 已从 21H461 OS DMG 提取，sha256
+  `8cec9a3c44a443b08e977ccc5d577850316ad428c575dc01f09b018dbd5b6a25`，
+  UUID `4B525992-8C69-315E-A51A-CC9433E45B51`，与 panic 描述一致。
+- 完整 static+system trust bundle sha256
+  `7416ca4f8377146626bb284e2133c76bee6cb4e3ee0af5d648b186235a7323a7`，
+  与 DinnerABC 原始 bundle 一致；`audit-target-userspace.py` 可验证 launchd/dyld
+  cdhash 在 StaticTrustCache 中。
+- H82r 的 launchd 栈只含 libxpc/exit；主线程在 abort 前已退出。
+  `launchd + 338744` 是 Swift error thunk，单独不能定位原始 XPC 调用。
+- 新固件（当前 `drivers/DarwinBoot` 重新构建）不可用：RELEASE 报
+  `Out of Resources`，随后 `Synchronous Exception at 0x...17A0B1258`；旧固件
+  已恢复为测试基线。旧固件能给 kernel 提供 TrustCache range，但 AMFI 仍把
+  launchd/dyld 判为 adhoc；不要重复把新固件当作已验证候选。
+- 已排除：`cpus=1`、SystemOS union、Data mount、1 GiB Data/内存窗口、
+  `launchd_unsecure_cache`、`dyld_flags`、AMFI 参数组合、lite policy。
+
+下一步（仅剩高价值方向）：
+
+1. 对照 DinnerABC 的 `patches/p10` AMFI/Image4/TrustCache 与 `amfi.c`/
+   `interface.c` 注册路径，确认我们的 AMFI 是否真正把 loaded TrustCache 用于
+   cdhash 查询；当前 `amfi`/`img4` 非空、range 存在，但 AMFI 仍拒绝。
+2. 修复新固件 FV/UniXNU 的 `Out of Resources`/UEFI exception，才能重测
+   TrustCache 侧车；旧固件只可作为绕过基线。
+3. launchd Swift 主线程在 abort 前退出的现场仍缺失；在拿到真实 AMFI trust
+   路径前，继续加 boot args 不会改变 `namespace 7`。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。
