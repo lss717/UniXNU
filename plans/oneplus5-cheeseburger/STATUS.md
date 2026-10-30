@@ -1456,6 +1456,31 @@ mount-phase-1 但在重读阶段停住。下一步要么给 Probe 加 transport
 watchdog/reset，要么用串口/panic-screen 捕获停住原因。boot-manifest-hash
 和 8 字节 policy digest 都是临时占位，最终恢复真实 owner manifest / 32 字节。
 
+### H90a–H90d：参考 warm-link NativeUfs 移植
+
+- 参考 `package/BoardRuntime/NativeUfs.cpp` 已移植为
+  `scripts/NativeUfsWarm.cpp`，并随 runtime archive 编译。
+- 必须使用 late object：
+  `llvm-objcopy --remove-section=__DATA,__mod_init_func
+  --globalize-symbol=__GLOBAL__sub_I_NativeUfs.cpp`，否则链接器报
+  `__GLOBAL__sub_I_NativeUfs.cpp` 未定义。
+- late 对象不会自动注册 class；H90b 出现
+  `Couldn't alloc class "NativeUfs"`。H90c 在 `sheng_pmgr_run()` 里先调用
+  `cheeseburger_ufs_register()`，class 注册成功，控制台出现
+  `P11 UFS: original storage ABI matched; entering read-only warm-link driver`。
+- H90d 放宽 compatible 为列表搜索后，仍反复出现
+  `P8 UFS refused: missing verified MSM8998 profile`；同时出现
+  `P8 UFS warm state CAP=... HCE=1 HCS=10`，说明部分 provider 已进入
+  transport，但被 `(HCS&3)==3` 的 idle/live 检查拒绝（当前 HCS=0x10）。
+  这是参考驱动对 firmware 控制器状态的假设不一致，不是 ABI/class 问题。
+
+当前最佳可用镜像仍是 H89b：Probe + 真实 PMGR + auth blob + 48 字节
+`boot-manifest-hash`，已过 mount-phase-1，到 FileSet KC/driverkitd，
+随后在重读阶段停住。
+
+下一步只剩三条：放宽 warm 驱动 `HCS` 状态检查并承担重编程风险；给 Probe
+加 transport watchdog/reset；或接串口捕获停住原因。完整 `startRoot()` 仍黑屏。
+
 最终恢复真实 owner boot manifest、VerifiedRoot/AMFI/TrustCache，移除 ADT 占位。
 
 ## 更新规则
