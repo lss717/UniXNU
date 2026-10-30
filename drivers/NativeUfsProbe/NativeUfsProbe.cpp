@@ -132,6 +132,9 @@ class NativeUfsWindow : public IOBlockStorageDevice {
   uint64_t absolute = 0;
   uint64_t bytes = 0;
   uint8_t *bounce = nullptr;
+  uint8_t *readAhead = nullptr;
+  uint64_t readAheadLba = 0;
+  uint64_t readAheadBytes = 0;
   IOLock *lock = nullptr;
   char label[32] = {};
   bool online = false;
@@ -140,6 +143,10 @@ public:
   bool configure (NativeUfsProbe *parent, const char *name, uint64_t absoluteByte,
                   uint64_t length);
   bool start (IOService *) override { online = true; return true; }
+  void free () override {
+    if (readAhead) { IOFree (readAhead, UFS_DATA_MAX); readAhead = nullptr; }
+    IOBlockStorageDevice::free ();
+  }
   IOReturn doEjectMedia () override { return kIOReturnUnsupported; }
   IOReturn doFormatMedia (UInt64) override { return kIOReturnNotWritable; }
   UInt32 doGetFormatCapacities (UInt64 *, UInt32) const override { return 0; }
@@ -889,6 +896,9 @@ NativeUfsWindow::configure (NativeUfsProbe *parent, const char *name,
   absolute = absoluteByte;
   bytes = length;
   bounce = static_cast<uint8_t *> (IOMalloc (UFS_DATA_MAX));
+  readAhead = static_cast<uint8_t *> (IOMalloc (UFS_DATA_MAX));
+  readAheadLba = 0;
+  readAheadBytes = 0;
   lock = IOLockAlloc ();
   if (name) {
     strlcpy (label, name, sizeof (label));
@@ -897,8 +907,11 @@ NativeUfsWindow::configure (NativeUfsProbe *parent, const char *name,
   setProperty ("B5Offset", absolute, 64);
   setProperty ("B5Bytes", bytes, 64);
   setProperty ("B5ReadOnly", true);
+  if (readAhead) {
+    IOLog ("NATIVE_UFS_CACHE: %s read-ahead=%u bytes\n", label, UFS_DATA_MAX);
+  }
   return host && absolute && bytes && !(absolute & 4095) && !(bytes & 511) &&
-         bounce && lock;
+         bounce && readAhead && lock;
 }
 
 IOReturn
@@ -914,7 +927,7 @@ NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
   if (buffer->getDirection () != kIODirectionIn) {
     return kIOReturnNotWritable;
   }
-  if (!online || !bounce || !lock) {
+  if (!online || !bounce || !readAhead || !lock) {
     return kIOReturnNotReady;
   }
   uint64_t request = gWindowRequests;
@@ -923,7 +936,7 @@ NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
   gWindowLastBlock = block;
   gWindowLastCount = count;
   gWindowInFlight = 1;
-  if (request < 8 || (request & 31) == 0) {
+  if (request < 8 || (request & 1023) == 0) {
     IOLog ("NATIVE_UFS_WINDOW: %s req=%llu block=%llx count=%llu\n",
            label, request, block, count);
   }
@@ -940,28 +953,56 @@ NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
   while (cursor < end) {
     uint64_t page = cursor & ~4095ULL;
     unsigned inPage = static_cast<unsigned> (cursor - page);
-    uint64_t available = end - page;
+    // APFS issues many sequential 4 KiB reads. Serve them from a page-aligned
+    // 128 KiB read-ahead window so one UFS command covers up to 32 requests.
+    if (readAheadBytes && page >= readAheadLba &&
+        page + 4096 <= readAheadLba + readAheadBytes) {
+      uint64_t offset = cursor - readAheadLba;
+      uint64_t available = readAheadBytes - offset;
+      unsigned wanted = static_cast<unsigned> (end - cursor);
+      if (wanted > available) {
+        wanted = static_cast<unsigned> (available);
+      }
+      uint64_t phase = mach_absolute_time ();
+      IOByteCount copied = buffer->writeBytes (done, readAhead + offset, wanted);
+      writeTicks += mach_absolute_time () - phase;
+      if (copied != wanted) {
+        ok = false;
+        break;
+      }
+      cursor += wanted;
+      done += wanted;
+      continue;
+    }
+    uint64_t windowEnd = absolute + bytes;
+    uint64_t available = windowEnd > page ? windowEnd - page : 0;
     if (available > UFS_DATA_MAX) {
       available = UFS_DATA_MAX;
     }
     uint32_t blocks = static_cast<uint32_t> ((available + 4095) / 4096);
+    if (!blocks) {
+      blocks = 1;
+    }
     if (blocks > UFS_DATA_MAX / 4096) {
       blocks = UFS_DATA_MAX / 4096;
     }
-    unsigned readLength = blocks * 4096;
-    unsigned wanted = static_cast<unsigned> (end - cursor);
-    if (wanted > readLength - inPage) {
-      wanted = readLength - inPage;
-    }
     uint64_t phase = mach_absolute_time ();
-    bool readOk = host->readWindowBulk (page / 4096, blocks, bounce);
+    bool readOk = host->readWindowBulk (page / 4096, blocks, readAhead);
     readTicks += mach_absolute_time () - phase;
     if (!readOk) {
       ok = false;
+      readAheadBytes = 0;
       break;
     }
+    readAheadLba = page;
+    readAheadBytes = static_cast<uint64_t> (blocks) * 4096;
+    unsigned wanted = static_cast<unsigned> (end - cursor);
+    uint64_t cached = readAheadBytes - inPage;
+    if (wanted > cached) {
+      wanted = static_cast<unsigned> (cached);
+    }
     phase = mach_absolute_time ();
-    IOByteCount copied = buffer->writeBytes (done, bounce + inPage, wanted);
+    IOByteCount copied = buffer->writeBytes (done, readAhead + inPage, wanted);
     writeTicks += mach_absolute_time () - phase;
     if (copied != wanted) {
       ok = false;
@@ -975,7 +1016,7 @@ NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
   uint64_t unlockTicks = mach_absolute_time () - unlockStart;
   gWindowInFlight = 0;
   uint64_t requestTicks = mach_absolute_time () - requestStart;
-  if (request < 8 || (request & 31) == 0 || requestTicks > 19200000ULL) {
+  if (request < 8 || (request & 1023) == 0 || requestTicks > 19200000ULL) {
     IOLog ("NATIVE_UFS_WINDOW: %s req=%llu done=%llu ok=%u ticks=%llu "
            "read=%llu write=%llu\n",
            label, request, done, ok ? 1 : 0,
