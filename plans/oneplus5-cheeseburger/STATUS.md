@@ -1423,6 +1423,39 @@ display/backboardd 仍未到达；当前只是内核控制台。
 
 最终恢复真实 owner boot manifest、VerifiedRoot/AMFI/TrustCache，移除 ADT 占位。
 
+### H88a–H89b：真实 PMGR、board-id、auth blob、mount-phase-1
+
+- H88a：完整 NativeUfs root + 真实 PMGR，TrustCache 加载完成后
+  `No POST boot-arg set.` 后黑屏。
+- H88b：只保留 PMGR、不启用 `native-ufs-root`，出现
+  `panic: P11 PMGR: device provider refused`。原因是 PMGR `start()` 要求
+  platform provider 上有 17 字节（含 NUL）的
+  `unixnu,board-id="oneplus,cheeseburger"`；ADT 没有，回退到 `model=iPad7,1`
+  后拒绝。
+- H88d：ADT 根节点补 `unixnu,board-id` 后，PMGR panic 消失，但完整
+  `native-ufs-root=1` 仍然黑屏，说明黑屏来自 `startRoot()`，不是 PMGR。
+- H88e：PMGR + board-id、不启用 root，PMGR 正常注册：
+  `P11 PMGR: original ApplePMGRNub registered`、`AMFI: PMGRIDN linked`；
+  NativeRamBlock/APFS/Data 都工作。该次 auth blob 因生成器被覆盖而丢失。
+- H89a：Probe + 真实 PMGR + auth blob，launchd 走到
+  `mount-phase-1`，`mount` 因缺少 `boot-manifest-hash` exit 66。
+- H89b：ADT `/chosen` 补 48 字节 `boot-manifest-hash` 占位后，
+  `mount-phase-1` 通过，继续到 `FileSet KC` / `driverkitd`，随后又停在一次
+  SystemOS/OS UFS 读，且无 `NATIVE_UFS_ALIVE` heartbeat。
+
+H89b：
+
+| 项 | sha256 |
+| --- | --- |
+| boot | `d2a9d62bf464a1e6408e9c7a611b929fcd8fb1cc76d684fb69a6637c25cb619a` |
+| kernel | `df4ff6e769f5b03e774b3a76ee25af5ee796606144efd08493da2f857303aa3f` |
+| payload | `28409665c1fc1fb9ce4a9cc3e8edfabec4f0ae8565c3bdd0b655a77bceb4ebb0` |
+
+结论：真实 PMGR 集成可用；完整 `startRoot()` 仍黑屏；Probe 路径能过
+mount-phase-1 但在重读阶段停住。下一步要么给 Probe 加 transport
+watchdog/reset，要么用串口/panic-screen 捕获停住原因。boot-manifest-hash
+和 8 字节 policy digest 都是临时占位，最终恢复真实 owner manifest / 32 字节。
+
 最终恢复真实 owner boot manifest、VerifiedRoot/AMFI/TrustCache，移除 ADT 占位。
 
 ## 更新规则
