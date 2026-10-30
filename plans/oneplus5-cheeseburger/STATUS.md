@@ -1307,6 +1307,94 @@ H85g 的 `KernelConfigTables` 已经显示 `IOClass = NativeUfs`，但 `nm kerne
    上跑 `build-owner-os-policy.py` 生成 `build/verified-root-*`，再启用完整
    NativeUfs + VerifiedRoot。
 
+### H86a–H86i：Probe read-ahead，然后切到完整 NativeUfs + VerifiedRoot
+
+Probe 路线：
+
+- H86a/H86b 给 `NativeUfsProbe` 加 128 KiB read-ahead；顺序 4 KiB 读命中
+  cache 时约 80–106 ticks（之前约 2100），并已进入用户态
+  `exfild` / `distnoted` / `MobileGestaltHelper`。
+- 但最终仍会停在一个窗口请求（例如 `req=a3d50/64`），且 H86c 的独立
+  `NATIVE_UFS_HEARTBEAT` 也没有打印，说明 warm-link/MMIO 已经整体停住，
+  不是单纯的慢。本轮不再继续这条路径。
+
+完整 NativeUfs/VerifiedRoot 路线：
+
+- 从原始 iPad7,1 17.7.11 IPSW 提取 OS/SystemOS：
+  `044-76040-038.dmg` sha256 `3f99b859...`，`044-76034-038.dmg`
+  sha256 `b4908cde...`。
+- 用 `kits/VerifiedRoot/tools/manifest.py` + host C/RSA verifier 生成自签
+  owner policies；两份都通过真实 C/RSA 全块校验（OS 1,483,785 块，
+  SystemOS 806,400 块）。
+- 新增 `build-native-ufs-runtime.py`，把 `NativeUfs`、`RootAuth.cpp`、
+  `verified_root.c`、`xnu_crypto.c`、policy `inputs.o` 和原始
+  IOStorageFamily bindings 打进 `libNativeUfs.a`。
+- 32 字节 hash 时 policy 约 73 MB，kernel 120 MB，boot image 135 MB；
+  H86f 停在 OnePlus logo，UEFI 根本没起来，确认是镜像过大。
+- 把 per-block digest 临时截断到 8 字节（`VR_HASH_BYTES=8`，最终恢复 32 字节），
+  policy 降到约 17 MB，kernel 67 MB，boot image 回到 81,147,904 字节。
+- H86g（slide `0x8000000`）UEFI 菜单卡住；H86h（slide `0x5000000`）
+  进入内核但 APFS 后 instruction fetch abort。
+- H86i 把 `IOStorageFamily-bindings.json` 的所有绝对地址按
+  `0x5000000 - 0x4100000 = 0xF00000` 修正后，完整 UFS 真正跑通：
+  `NativeRamBlock` 注册、APFS 加载、`disk0` checkpoint 搜索成功。
+
+H86i 镜像/内核：
+
+| 项 | sha256 |
+| --- | --- |
+| boot | `07ac9dc46b8b7dea0310f111d4b00c66be88d584ee3e66cd03180d420201c350` |
+| kernel | `2df14e024c4d9860f691cbdaa680b56a22ceed025da15dd98e5cb1c85afe3694` |
+| payload | `f1db5c2a4b5b0fcc7eb4cab4985c2a390177205430af7d13616e53b6f47cac07` |
+
+最后停在：
+
+```text
+apfs_extract_root_hash_arn: could not retrieve system-volume-auth-block from device tree
+import_lboot_forwarded_roothash: apfs_extract_root_hash_and_manifest failed with error: No such file or directory (2)
+```
+
+这不是 UFS、Probe 或 Data seed 问题，而是 ADT 缺少真实的
+`system-volume-auth-block`（owner/Apple root auth block）。最终必须提供真实的
+owner boot manifest/VerifiedRoot；8 字节 digest 和自签 policy 都是临时 bring-up。
+
+下一步二选一：
+
+1. 先做临时 APFS root-auth bypass，跳过 `system-volume-auth-block` 到达
+   launchd/UI；之后再补真实 Apple/owner root。
+2. 直接补真实 `system-volume-auth-block`（需要 personalized IM4M/Apple root
+   输入），同时把 policy digest 恢复为 32 字节。
+
+### H86j–H87a：auth blob 放行，APFS root 挂载，进入 FileSet KC/driverkitd
+
+- H86k：把 IPSW 的 `SystemVolume` root-hash IM4P（229 字节，
+  `Firmware/044-76040-038.dmg.root_hash`）作为
+  `/chosen/system-volume-auth-blob` 注入 ADT。APFS 不再报
+  `could not retrieve system-volume-auth-blob`，改为停在
+  `import_lboot_forwarded_roothash: importing root hash`。
+- H86l/H86m：完整 NativeUfs 的 `start()` 只有 `native-ufs-root=1` 才调用
+  `startRoot()`；之前没加这个 boot arg，OS/SystemOS 窗口根本没发布，APFS
+  一直在等 `04769D26...`。加 `sheng-pmgr=2` 的空 stub 后 H86m 黑屏，
+  说明完整 root 路径确实依赖真实 PMGR，stub 不够。
+- H87a：回到 Probe 内核 + 真实 auth blob + `allow-root-hash-mismatch=1`，
+  不带 `native-ufs-root`/PMGR。结果 APFS root 成功挂载，并进入用户态：
+  `NATIVE_CACHE_SIG`/`NATIVE_H66_FCNTL`、`KextLog: Loading FileSet KC(s)`、
+  `KextLog: driverkitd is active`。最后停在这里，但 UFS 仍在完成
+  `SystemOS` 4 KiB 读（cache hit ticks 约 87），已不是 root auth 问题。
+
+H87a 镜像/内核：
+
+| 项 | sha256 |
+| --- | --- |
+| boot | `bd17e843e173e1c6188fca59eaa61d8dfe43820a4da5ba1ffb62af674365b0cd` |
+| kernel | `dd275f7473783ec03a7e45dbe7585026be29950505755c6ca3c5ec0b72bb00a4` |
+| payload | `cf7796371587f275a20f5a1721db76472057126ec6da36580e5dc25eaf53fc27` |
+
+下一步：确认 `driverkitd is active` 是慢还是挂住；若是挂住，需要在
+FileSet KC / driverkitd 的等待点加日志。之后才是 display/backboardd。
+真实 PMGR（DinnerABC `CheeseburgerPlatformPower` + PMGR bindings）仍是完整
+NativeUfs root 的最终依赖；当前 Probe 路径用 firmware warm-link 绕开了它。
+
 最终恢复真实 owner boot manifest、VerifiedRoot/AMFI/TrustCache，移除 ADT 占位。
 
 ## 更新规则
