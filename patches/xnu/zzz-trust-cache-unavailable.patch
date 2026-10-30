@@ -84,17 +84,51 @@
  #if CONFIG_SPTM
  	ret = txm_query_trust_cache(query_type, cdhash, query_token);
  #elif PMAP_CS_PPL_MONITOR
-@@ -1033,7 +1051,8 @@
+@@ -996,16 +1014,17 @@
+ 
+ 	/* Mark this function as having been called */
+ 	trust_cache_static_init = true;
++	printf("NATIVE_TRUSTCACHE_LOAD_START: rt=%p amfi=%p version=%u\n",
++	    trust_cache_rt, amfi, amfi ? amfi->TrustCache.version : 0);
+ 
+ 	/* Nothing to do when the runtime isn't set */
+ 	if (trust_cache_rt == NULL) {
+-		return;
++		panic("NATIVE_TRUSTCACHE: runtime is NULL");
+ 	}
+ 
+ 	if (amfi->TrustCache.version < 1) {
+ 		/* AMFI change hasn't landed in the build */
+-		printf("unable to load static trust cache: interface not supported\n");
+-		return;
++		panic("NATIVE_TRUSTCACHE: AMFI interface version %u", amfi->TrustCache.version);
+ 	}
+ 
+ 	int err = SecureDTLookupEntry(NULL, "chosen/memory-map", &memory_map);
+@@ -1015,6 +1034,10 @@
+ 	}
+ 
+ 	err = SecureDTGetProperty(memory_map, "TrustCache", (const void **)&tc_range, &tc_dt_prop_length);
++	printf("NATIVE_TRUSTCACHE_PROP: err=%d range=%p length=%u\n", err, tc_range, tc_dt_prop_length);
++	if (err != kSuccess) {
++		panic("NATIVE_TRUSTCACHE: property lookup failed %d", err);
++	}
+ 	if (err == kSuccess) {
+ 		if (tc_dt_prop_length != sizeof(DTTrustCacheRange)) {
+ 			panic("unexpected size for TrustCache property: %u != %zu",
+@@ -1032,8 +1055,9 @@
+ 			    tc_offsets->num_caches);
  		}
  
- 		printf("no external trust caches found (segment length is zero)\n");
+-		printf("no external trust caches found (segment length is zero)\n");
 -		return;
++		printf("NATIVE_TRUSTCACHE_NONE: segment length zero range=%p\n", tc_range);
 +		panic("NATIVE_TRUSTCACHE: missing external trust caches range=%p property_length=%u amfi_version=%u",
 +		    tc_range, tc_dt_prop_length, amfi->TrustCache.version);
  	} else if (tc_offsets->num_caches == 0) {
  		panic("trust cache segment isn't zero but no trust caches available: %lu",
  		    (unsigned long)tc_segment_length);
-@@ -1052,6 +1071,8 @@
+@@ -1052,6 +1076,8 @@
  	}
  	const uintptr_t tc_region_end = (uintptr_t)tc_offsets + tc_segment_length;
  
