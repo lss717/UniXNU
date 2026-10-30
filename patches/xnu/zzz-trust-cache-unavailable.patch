@@ -84,12 +84,10 @@
  #if CONFIG_SPTM
  	ret = txm_query_trust_cache(query_type, cdhash, query_token);
  #elif PMAP_CS_PPL_MONITOR
-@@ -996,16 +1014,19 @@
+@@ -996,16 +1014,17 @@
  
  	/* Mark this function as having been called */
  	trust_cache_static_init = true;
-+	panic("NATIVE_TRUSTCACHE_ENTRY: rt=%p amfi=%p version=%u",
-+	    trust_cache_rt, amfi, amfi ? amfi->TrustCache.version : 0);
 +	printf("NATIVE_TRUSTCACHE_LOAD_START: rt=%p amfi=%p version=%u\n",
 +	    trust_cache_rt, amfi, amfi ? amfi->TrustCache.version : 0);
  
@@ -107,7 +105,7 @@
  	}
  
  	int err = SecureDTLookupEntry(NULL, "chosen/memory-map", &memory_map);
-@@ -1015,6 +1036,10 @@
+@@ -1015,6 +1034,10 @@
  	}
  
  	err = SecureDTGetProperty(memory_map, "TrustCache", (const void **)&tc_range, &tc_dt_prop_length);
@@ -118,7 +116,7 @@
  	if (err == kSuccess) {
  		if (tc_dt_prop_length != sizeof(DTTrustCacheRange)) {
  			panic("unexpected size for TrustCache property: %u != %zu",
-@@ -1032,8 +1057,9 @@
+@@ -1032,8 +1055,9 @@
  			    tc_offsets->num_caches);
  		}
  
@@ -130,7 +128,7 @@
  	} else if (tc_offsets->num_caches == 0) {
  		panic("trust cache segment isn't zero but no trust caches available: %lu",
  		    (unsigned long)tc_segment_length);
-@@ -1052,6 +1078,8 @@
+@@ -1052,6 +1076,8 @@
  	}
  	const uintptr_t tc_region_end = (uintptr_t)tc_offsets + tc_segment_length;
  
