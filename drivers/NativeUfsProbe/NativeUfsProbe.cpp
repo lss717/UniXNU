@@ -44,6 +44,7 @@ static volatile uint64_t gWindowLastBlock;
 static volatile uint64_t gWindowLastCount;
 static volatile uint64_t gWindowLastReqBlock;
 static volatile uint64_t gWindowLastReqCount;
+static volatile uint64_t gWindowStartTicks;
 
 // Independent liveness proof: if a window request is stuck, this thread keeps
 // printing the exact in-flight request and queue counters from another CPU.
@@ -64,6 +65,18 @@ heartbeatThread (void *, wait_result_t)
            (unsigned long long) gUfsLastBytes,
            (unsigned long long) gWindowLastReqBlock,
            (unsigned long long) gWindowLastReqCount);
+    uint64_t start = gWindowStartTicks;
+    if (gWindowInFlight && start && mach_absolute_time () - start > 10 * 19200000ULL) {
+      panic ("NATIVE_UFS_STALL: req=%llx/%llu cmds=%llu winBytes=%llu "
+             "lastCmd=%llx/%llu ufsFlight=%llu",
+             (unsigned long long) gWindowLastReqBlock,
+             (unsigned long long) gWindowLastReqCount,
+             (unsigned long long) gUfsCommands,
+             (unsigned long long) gWindowBytes,
+             (unsigned long long) gUfsLastLba,
+             (unsigned long long) gUfsLastBytes,
+             (unsigned long long) gUfsInFlight);
+    }
   }
 }
 
@@ -965,6 +978,7 @@ NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
   gWindowLastCount = count;
   gWindowLastReqBlock = block;
   gWindowLastReqCount = count;
+  gWindowStartTicks = mach_absolute_time ();
   gWindowInFlight = 1;
   if (request < 8 || (request & 1023) == 0) {
     IOLog ("NATIVE_UFS_WINDOW: %s req=%llu block=%llx count=%llu\n",
@@ -1050,6 +1064,7 @@ NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
   IOLockUnlock (lock);
   uint64_t unlockTicks = mach_absolute_time () - unlockStart;
   gWindowInFlight = 0;
+  gWindowStartTicks = 0;
   uint64_t requestTicks = mach_absolute_time () - requestStart;
   if (request < 8 || (request & 1023) == 0 || requestTicks > 19200000ULL) {
     IOLog ("NATIVE_UFS_WINDOW: %s req=%llu done=%llu ok=%u ticks=%llu "
