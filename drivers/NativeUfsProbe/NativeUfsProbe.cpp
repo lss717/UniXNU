@@ -417,6 +417,23 @@ waitForCompletion (uint8_t *list, uint32_t *ocs, unsigned *loops,
   }
 }
 
+// Bounded lock acquisition: a stuck holder must not turn a diagnostic read into
+// an unobservable hang. 19.2 MHz timebase, so 38400000 ticks is two seconds.
+static bool
+lockWithTimeout (IOLock *lock, const char *who, uint64_t timeoutTicks)
+{
+  uint64_t start = mach_absolute_time ();
+  while (!IOLockTryLock (lock)) {
+    if (mach_absolute_time () - start > timeoutTicks) {
+      IOLog ("NATIVE_UFS_LOCK: %s timeout ticks=%llu\n", who,
+             (unsigned long long) (mach_absolute_time () - start));
+      return false;
+    }
+    __asm__ volatile ("yield" ::: "memory");
+  }
+  return true;
+}
+
 static bool
 blockRange (uint64_t block, uint64_t count, uint64_t last, uint32_t blockSize)
 {
@@ -663,8 +680,13 @@ ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes,
     gUfsInFlight = 0;
     gUfsLastLoops = loops;
     gUfsLastTicks = mach_absolute_time () - commandStart;
-    IOLog ("NATIVE_UFS_GPT: OCS timeout type=%08x ocs=%x loops=%u\n",
-           utrd[0], ocs, loops);
+    IOLog ("NATIVE_UFS_GPT: OCS timeout type=%08x ocs=%x loops=%u "
+           "db=%x is=%x hcs=%x hce=%x ucd0=%x cdb=%02x%02x%02x%02x%02x%02x\n",
+           utrd[0], ocs, loops,
+           read32 (q->hc, UFS_REG_UTRLDBR), read32 (q->hc, UFS_REG_IS),
+           read32 (q->hc, UFS_REG_HCS), read32 (q->hc, UFS_REG_HCE),
+           q->ucd[0], q->ucd[16], q->ucd[17], q->ucd[18], q->ucd[19],
+           q->ucd[20], q->ucd[21]);
     return false;
   }
   cacheInvalidate (q->list, 4096);
@@ -769,7 +791,11 @@ NativeUfsProbe::readBlocks (uint8_t unit, uint64_t block, uint64_t count,
       !blockSize || block > 0xffffffffULL) {
     return false;
   }
-  IOLockLock (fLock);
+  if (!lockWithTimeout (fLock, "readBlocks", 38400000ULL)) {
+    IOLog ("NATIVE_UFS_LOCK: readBlocks blocked block=%llx count=%llu\n",
+           block, count);
+    return false;
+  }
   uint64_t total = 0;
   bool ok = true;
   while (count) {
@@ -819,7 +845,11 @@ NativeUfsProbe::readWindowBulk (uint64_t lba, uint32_t blocks, void *out)
     return false;
   }
   uint64_t lockStart = mach_absolute_time ();
-  IOLockLock (fLock);
+  if (!lockWithTimeout (fLock, "readWindowBulk", 38400000ULL)) {
+    IOLog ("NATIVE_UFS_LOCK: readWindowBulk blocked lba=%llx blocks=%u wait=%llu\n",
+           lba, blocks, (unsigned long long) (mach_absolute_time () - lockStart));
+    return false;
+  }
   uint64_t lockTicks = mach_absolute_time () - lockStart;
   uint8_t cdb[16] = { 0x28 };
   putBe32 (cdb + 2, static_cast<uint32_t> (lba));
@@ -836,7 +866,7 @@ NativeUfsProbe::readWindowBulk (uint64_t lba, uint32_t blocks, void *out)
   uint64_t unlockTicks = mach_absolute_time () - unlockStart;
   static unsigned gBulkPhases;
   unsigned call = gBulkPhases++;
-  if (call < 8) {
+  if (call < 8 || commandTicks > 19200000ULL || lockTicks > 19200000ULL) {
     IOLog ("NATIVE_UFS_BULK: lba=%llx blocks=%u lock=%llu cmd=%llu unlock=%llu ok=%u\n",
            lba, blocks, (unsigned long long) lockTicks,
            (unsigned long long) commandTicks,
@@ -893,7 +923,7 @@ NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
   gWindowLastBlock = block;
   gWindowLastCount = count;
   gWindowInFlight = 1;
-  if (request < 8 || (request & 127) == 0) {
+  if (request < 8 || (request & 31) == 0) {
     IOLog ("NATIVE_UFS_WINDOW: %s req=%llu block=%llx count=%llu\n",
            label, request, block, count);
   }
@@ -945,10 +975,13 @@ NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
   uint64_t unlockTicks = mach_absolute_time () - unlockStart;
   gWindowInFlight = 0;
   uint64_t requestTicks = mach_absolute_time () - requestStart;
-  if (request < 8 || (request & 63) == 0 || requestTicks > 19200000ULL) {
-    IOLog ("NATIVE_UFS_WINDOW: %s req=%llu done=%llu ok=%u ticks=%llu\n",
+  if (request < 8 || (request & 31) == 0 || requestTicks > 19200000ULL) {
+    IOLog ("NATIVE_UFS_WINDOW: %s req=%llu done=%llu ok=%u ticks=%llu "
+           "read=%llu write=%llu\n",
            label, request, done, ok ? 1 : 0,
-           (unsigned long long) requestTicks);
+           (unsigned long long) requestTicks,
+           (unsigned long long) readTicks,
+           (unsigned long long) writeTicks);
   }
   if (request < 4) {
     IOLog ("NATIVE_UFS_PHASE: %s req=%llu lock=%llu read=%llu write=%llu unlock=%llu\n",
