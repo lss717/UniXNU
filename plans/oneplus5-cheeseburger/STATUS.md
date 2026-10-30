@@ -1254,12 +1254,30 @@ Linux x86_64 / Ubuntu 24.04：
 | H83k | `54ba38bb291cb1637c8da702ade288696ea4c1afddea008f192be1f66a1771f3` | 补 timezone；tzinit 通过；UFS 读停住 |
 | H84a | `d922af097dd71250adfe6522c4cfcc5edda3688ef69052084ba80a353e786254` | + NativeMobileDisplay；UFS 读停住 |
 | H84b | `a811fec2fc9c6c56759c8eaae55803c0a4206269a38012cc96c69a6884c1ac20` | + cpus=8；UFS 读停住 |
-| H85c | `6a7e83ac9554e5c486c85ac4f656f60ab974cbda8860af2bbb90ade6ffb55296` | 完整 NativeUfs/Virtio/AES；仍停在 OS/SystemOS 大读，`winFlight=1` |
+| H85c | `6a7e83ac9554e5c486c85ac4f656f60ab974cbda8860af2bbb90ade6ffb55296` | 实际仍是 NativeUfsProbe；UFS 大读停住 |
+| H85g | `c21a87c58fc9d1ed51643795d37023548a3593893702c58f23a005e3b2dbdfab` | personality 写成 NativeUfs，但 class 未链接；启动报 `Couldn't alloc class "NativeUfs"` |
+| H85h | 无最终镜像 | 清 `build/xnu` 后 bootstrap 正常产出记录，但外层误带 `XNU_BOOTSTRAP=1`，最终链接仍按 bootstrap 模式失败 |
 
-下一步：不要继续换 boot args。H85c 已证明完整 NativeUfs/Virtio/AES 也停在
-同一个 OS/SystemOS 大读，因此问题在 UFS/SMMU/读窗口完成路径，而不是 Probe
-用户态或 display。优先在 UFS `waitForCompletion`/SMMU fault 处加超时和错误
-日志，必要时比较 DinnerABC 的 UFS 读窗口/缓存维护。display/backboardd 尚未到达。
+### H85g–H85h 根因：`.config` 陈旧，配置从未生效
+
+H85g 的 `KernelConfigTables` 已经显示 `IOClass = NativeUfs`，但 `nm kernel.macho`
+只有 `NativeUfsProbe` 的 class 符号，没有 `NativeUfs`。根因不是补丁，也不是 archive：
+
+- `unixnu` 构建时读取的是 `out/cheeseburger/.config`，不是
+  `configs/cheeseburger_defconfig`；该 `.config` 停留在 10 月 29 日。
+- 因此 `xnu_env()` 实际导出 `XNU_NATIVE_UFS=0`、`XNU_NATIVE_UFS_PROBE=1`，
+  覆盖了 `run-h82-build.sh` 里的同名 export。
+- 结果：personality 被临时补丁强制为 `NativeUfs`，但链接器只 force-load 了
+  `libNativeUfsProbe.a`，`libNativeUfs.a` 从未进入内核，启动即
+  `Couldn't alloc class "NativeUfs"`。
+- H85h 另外把 `XNU_BOOTSTRAP=1` 带进了最终 pass，导致最终链接仍跳过 archive。
+
+修复（H85i 起点）：先执行 `./unixnu defconfig cheeseburger_defconfig` 重新生成
+`.config`，再清 `build/xnu` 与 `KernelConfigTables.cpo` 做干净构建。已删除临时
+`zzz-force-native-ufs.patch`，personality 回到由配置驱动。
+
+下一步：H85i 先验证 `nm kernel.macho` 同时有 `NativeUfs`/`NativeUfsBlock`、且
+没有 `NativeUfsProbe`，再发包。之后才继续 UFS/SMMU 读窗口完成路径与 display。
 最终恢复真实 owner boot manifest、VerifiedRoot/AMFI/TrustCache，移除 ADT 占位。
 
 ## 更新规则
