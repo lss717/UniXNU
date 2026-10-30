@@ -5,7 +5,7 @@
  #endif
  
 -#ifndef BCM2837
-+#if !defined(BCM2837) || (defined(XNU_NATIVE_TRUST_CACHE) && XNU_NATIVE_TRUST_CACHE)
++#if 1 /* BCM2837 bring-up: trust cache runtime is required for the supplied sidecar */
  	kernel_bootstrap_log("trust_cache_init");
  
  	/* Initialize the runtime for the trust cache interface */
