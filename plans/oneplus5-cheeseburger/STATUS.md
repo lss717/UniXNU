@@ -1192,6 +1192,7 @@ Linux x86_64 / Ubuntu 24.04：
 | H83a | `XNU_TRUST_CACHE_RUNTIME=1` + 完整 trust | 未触发 AMFI/Image4 缺失 panic |
 | H83b | `load_static_trust_cache` 缺 range 即 panic | 未触发，旧固件确实交付了 TrustCache range；但 AMFI 仍 adhoc |
 | H83c | H83b + `amfi=0x94` | 同 |
+| H83d | H83b + ADT `amfi-only-platform-code=0` | 同；AMFI 仍 adhoc/CT policy 0 |
 
 关键文件/事实：
 
@@ -1209,7 +1210,8 @@ Linux x86_64 / Ubuntu 24.04：
   已恢复为测试基线。旧固件能给 kernel 提供 TrustCache range，但 AMFI 仍把
   launchd/dyld 判为 adhoc；不要重复把新固件当作已验证候选。
 - 已排除：`cpus=1`、SystemOS union、Data mount、1 GiB Data/内存窗口、
-  `launchd_unsecure_cache`、`dyld_flags`、AMFI 参数组合、lite policy。
+  `launchd_unsecure_cache`、`dyld_flags`、AMFI 参数组合、lite policy；
+  H83d 也排除了 `amfi-only-platform-code=0`。
 
 下一步（仅剩高价值方向）：
 
