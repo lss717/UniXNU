@@ -1223,6 +1223,43 @@ Linux x86_64 / Ubuntu 24.04：
 3. launchd Swift 主线程在 abort 前退出的现场仍缺失；在拿到真实 AMFI trust
    路径前，继续加 boot args 不会改变 `namespace 7`。
 
+
+### H83g–H84b：launchd 突破与新的 UFS 读阻塞（2026-10-30）
+
+关键突破：`namespace 7 subcode 0x1` 不是 Data/CPU/union/AMFI 参数导致的，而是
+`startup.c` 里的 TrustCache 初始化被 `XNU_NATIVE_TRUST_CACHE` 条件编译掉了；
+`load_static_trust_cache()` 从未执行。
+
+- `patches/xnu/native-trust-cache-runtime.patch` 已改为无条件执行
+  `trust_cache_runtime_init()` + `load_static_trust_cache()`。
+- H83g 在入口 panic 证明函数执行：`amfi` 非空、`TrustCache.version=53`。
+- H83h 放开入口后，launchd 真正运行并打印
+  `com.apple.xpc.launchd ... Doing boot task`，`namespace 7` 消失。
+- H83j 在 ADT `/chosen` 加入 48 字节 `boot-manifest-hash` 占位后，
+  `mount-phase-1/2`、`data-protection`、`keybag`、`usermanagerd` 等 boot task 通过。
+- H83j 新首错是 `tzinit` 找不到 `/private/var/db/timezone`（exit 22）。
+- H83k 把原 OS 的 `/private/var/db/timezone` 注入 256 MiB packed seed
+  （UUID 不变，encoded sha256 `e94a0683...`）；`tzinit` 不再 panic。
+- H84a 启用 `XNU_NATIVE_MOBILE_DISPLAY=1`；H84b 仅把 payload 改成 `cpus=8`。
+  两者都停在 `NativeUfsProbe` 的 UFS 读进度：最后一条 `OS req=...` 没有 `done`，
+  `winBytes` 约 3.1 GiB，`winFlight=1`。这不是“写盘”，是 launchd/用户态读取
+  SystemOS/OS 时的一个 UFS 请求没有返回；display 尚未真正执行。
+
+当前可用镜像/哈希：
+
+| 镜像 | sha256 | 说明 |
+| --- | --- | --- |
+| H83h | `de61bce881d355bcb0ed68b6363f20887b17726708c46e59e2f16d58b499f6d9` | launchd 首次越过 namespace7；无 Data |
+| H83j | `5086999bb9dcf6489b65c6f863e5660097dad9568e39a1ef642ec7038ee47207` | mount/manifest 占位通过；tzinit exit22 |
+| H83k | `54ba38bb291cb1637c8da702ade288696ea4c1afddea008f192be1f66a1771f3` | 补 timezone；tzinit 通过；UFS 读停住 |
+| H84a | `d922af097dd71250adfe6522c4cfcc5edda3688ef69052084ba80a353e786254` | + NativeMobileDisplay；UFS 读停住 |
+| H84b | `a811fec2fc9c6c56759c8eaae55803c0a4206269a38012cc96c69a6884c1ac20` | + cpus=8；UFS 读停住 |
+
+下一步：不要继续换 boot args。优先处理 `NativeUfsProbe` 的读窗口/超时和
+SystemOS/OS 大读；可试完整 `NativeUfs` 驱动，或在 probe 的 `waitForCompletion`
+加超时/错误日志定位最后一个未完成请求。display/backboardd 尚未真正到达。
+最终恢复真实 owner boot manifest、VerifiedRoot/AMFI/TrustCache，移除 ADT 占位。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。
