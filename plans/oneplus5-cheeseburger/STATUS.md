@@ -1478,8 +1478,14 @@ watchdog/reset，要么用串口/panic-screen 捕获停住原因。boot-manifest
 `boot-manifest-hash`，已过 mount-phase-1，到 FileSet KC/driverkitd，
 随后在重读阶段停住。
 
-下一步只剩三条：放宽 warm 驱动 `HCS` 状态检查并承担重编程风险；给 Probe
-加 transport watchdog/reset；或接串口捕获停住原因。完整 `startRoot()` 仍黑屏。
+H90e 放宽 `(HCS&3)==3` 后，结果没有实质变化：多数 provider 仍打印
+`P8 UFS refused: missing verified MSM8998 profile`，进入 transport 的那个也在
+`P8 UFS warm state ... HCS=10` 后停住，OS/SystemOS 没有发布，APFS 仍停在
+`importing root hash`。参考 warm-link 驱动在当前 firmware/控制器状态下也无法
+建立可用队列。
+
+下一步只剩三条：给 Probe 加 transport watchdog/reset；接串口捕获停住原因；
+或继续反向参考驱动的 provider/profile 匹配。完整 `startRoot()` 仍黑屏。
 
 最终恢复真实 owner boot manifest、VerifiedRoot/AMFI/TrustCache，移除 ADT 占位。
 
