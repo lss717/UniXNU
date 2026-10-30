@@ -19,6 +19,7 @@
 #include <sys/param.h>
 #include <kern/debug.h>
 #include <kern/task.h>
+#include <kern/thread.h>
 #include <kern/clock.h>
 #include <libkern/libkern.h>
 #include <libkern/c++/OSData.h>
@@ -41,6 +42,33 @@ static volatile uint64_t gWindowBytes;
 static volatile uint64_t gWindowInFlight;
 static volatile uint64_t gWindowLastBlock;
 static volatile uint64_t gWindowLastCount;
+static volatile uint64_t gWindowLastReqBlock;
+static volatile uint64_t gWindowLastReqCount;
+
+// Independent liveness proof: if a window request is stuck, this thread keeps
+// printing the exact in-flight request and queue counters from another CPU.
+static void
+heartbeatThread (void *, wait_result_t)
+{
+  for (;;) {
+    IOSleep (5000);
+    uint64_t winFlight = gWindowInFlight;
+    uint64_t ufsFlight = gUfsInFlight;
+    if (!winFlight && !ufsFlight) {
+      continue;
+    }
+    IOLog ("NATIVE_UFS_HEARTBEAT: winFlight=%llu ufsFlight=%llu cmds=%llu "
+           "winReq=%llu winBytes=%llu lastCmd=%llx/%llu req=%llx/%llu\n",
+           (unsigned long long) winFlight, (unsigned long long) ufsFlight,
+           (unsigned long long) gUfsCommands,
+           (unsigned long long) gWindowRequests,
+           (unsigned long long) gWindowBytes,
+           (unsigned long long) gUfsLastLba,
+           (unsigned long long) gUfsLastBytes,
+           (unsigned long long) gWindowLastReqBlock,
+           (unsigned long long) gWindowLastReqCount);
+  }
+}
 
 #define MSM8998_UFS_HC_BASE 0x1da4000ULL
 #define MSM8998_UFS_HC_SIZE 0x2500ULL
@@ -710,7 +738,8 @@ ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes,
   gUfsLastTicks = mach_absolute_time () - commandStart;
   if ((gUfsCommands & 63) == 0) {
     IOLog ("NATIVE_UFS_PROGRESS: cmds=%llu last=%llx/%llu loops=%llu ticks=%llu "
-           "winReq=%llu winBytes=%llu winFlight=%llu lastWin=%llx/%llu\n",
+           "winReq=%llu winBytes=%llu winFlight=%llu lastWin=%llx/%llu "
+           "req=%llx/%llu\n",
            (unsigned long long) gUfsCommands,
            (unsigned long long) gUfsLastLba,
            (unsigned long long) gUfsLastBytes,
@@ -720,7 +749,9 @@ ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes,
            (unsigned long long) gWindowBytes,
            (unsigned long long) gWindowInFlight,
            (unsigned long long) gWindowLastBlock,
-           (unsigned long long) gWindowLastCount);
+           (unsigned long long) gWindowLastCount,
+           (unsigned long long) gWindowLastReqBlock,
+           (unsigned long long) gWindowLastReqCount);
   }
   return true;
 }
@@ -935,6 +966,8 @@ NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
   gWindowBytes = gWindowBytes + count * 512;
   gWindowLastBlock = block;
   gWindowLastCount = count;
+  gWindowLastReqBlock = block;
+  gWindowLastReqCount = count;
   gWindowInFlight = 1;
   if (request < 8 || (request & 1023) == 0) {
     IOLog ("NATIVE_UFS_WINDOW: %s req=%llu block=%llx count=%llu\n",
@@ -948,7 +981,12 @@ NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
   uint64_t writeTicks = 0;
   bool ok = true;
   uint64_t lockStart = mach_absolute_time ();
-  IOLockLock (lock);
+  if (!lockWithTimeout (lock, label, 38400000ULL)) {
+    IOLog ("NATIVE_UFS_LOCK: window %s blocked req=%llu block=%llx count=%llu\n",
+           label, request, block, count);
+    gWindowInFlight = 0;
+    return kIOReturnTimeout;
+  }
   uint64_t lockTicks = mach_absolute_time () - lockStart;
   while (cursor < end) {
     uint64_t page = cursor & ~4095ULL;
@@ -1604,5 +1642,9 @@ NativeUfsProbe::start (IOService *provider)
   dumpRootMedia ();
   IOLog ("NATIVE_UFS_GPT: start returning published=%u windows=%u\n",
          published ? 1 : 0, windowsPublished);
+  thread_t heartbeat = nullptr;
+  if (kernel_thread_start (heartbeatThread, nullptr, &heartbeat) == KERN_SUCCESS) {
+    thread_deallocate (heartbeat);
+  }
   return published;
 }
