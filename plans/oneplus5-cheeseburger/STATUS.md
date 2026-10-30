@@ -1257,6 +1257,7 @@ Linux x86_64 / Ubuntu 24.04：
 | H85c | `6a7e83ac9554e5c486c85ac4f656f60ab974cbda8860af2bbb90ade6ffb55296` | 实际仍是 NativeUfsProbe；UFS 大读停住 |
 | H85g | `c21a87c58fc9d1ed51643795d37023548a3593893702c58f23a005e3b2dbdfab` | personality 写成 NativeUfs，但 class 未链接；启动报 `Couldn't alloc class "NativeUfs"` |
 | H85h | 无最终镜像 | 清 `build/xnu` 后 bootstrap 正常产出记录，但外层误带 `XNU_BOOTSTRAP=1`，最终链接仍按 bootstrap 模式失败 |
+| H85i | 无最终镜像 | `.config` 修好后首次真正链接 `libNativeUfs.a`；暴露 VerifiedRoot/IOStorageFamily 依赖 |
 
 ### H85g–H85h 根因：`.config` 陈旧，配置从未生效
 
@@ -1276,8 +1277,36 @@ H85g 的 `KernelConfigTables` 已经显示 `IOClass = NativeUfs`，但 `nm kerne
 `.config`，再清 `build/xnu` 与 `KernelConfigTables.cpo` 做干净构建。已删除临时
 `zzz-force-native-ufs.patch`，personality 回到由配置驱动。
 
-下一步：H85i 先验证 `nm kernel.macho` 同时有 `NativeUfs`/`NativeUfsBlock`、且
-没有 `NativeUfsProbe`，再发包。之后才继续 UFS/SMMU 读窗口完成路径与 display。
+### H85i：完整 NativeUfs 不是 bring-up 捷径，而是 VerifiedRoot 终态
+
+重新生成 `.config` 后，链接器第一次真正把 `libNativeUfs.a` 拉进来，随即暴露：
+
+- `NativeUfsBlock : IOBlockStorageDevice` 需要原始 IOStorageFamily ABI 的 11 个
+  alias；这些 alias 目前只由 `NativeUfsProbe` 的
+  `NativeUfsLun-original-bindings.o` 生成。
+- 驱动强制 `-DNATIVE_VERIFIED_BLOCK=1`，需要 `vr_open`/`vr_verify_block`/
+  `vr_xnu_crypto` 与 `verified_root_policies`/`verified_root_key`，即完整的
+  VerifiedRoot owner policy bundle；远端没有 `build/verified-root-*` 和
+  `target-volumes` 原始 OS 镜像。
+- 更关键：`NativeUfs::validate()` 在未启用 `NATIVE_VERIFIED_BLOCK` 时直接
+  `return false`，注释明确写着 “Root publication requires owner verification in
+  every build”。因此不能靠关掉校验让完整驱动先跑起来。
+- 完整驱动还需要 `native_verified_block_root_authorized` /
+  `native_verified_block_volume_device`，这两个 hook 在 probe 或
+  NativeVirtioBlock 里，而不在 NativeUfs 里。
+
+结论：完整 NativeUfs 只能和真实 owner manifest/VerifiedRoot 一起上线；它不能
+替代 probe 做 bring-up。当前 UFS 大读阻塞仍只能在 `NativeUfsProbe` 的
+`waitForCompletion`/SMMU fault 路径上查，或先补真实 owner policy bundle。
+
+下一步二选一：
+
+1. 回到 H83k/H84b 的 Probe 基线，在 probe 的读窗口完成等待处加超时、命令
+   tag/中断状态和 SMMU fault 日志，定位 3.1 GiB 处 `winFlight=1` 不返回。
+2. 先做真实 owner policy：用精确的 iPad7,1 17.7.11 OS/SystemOS DMG 在 macOS
+   上跑 `build-owner-os-policy.py` 生成 `build/verified-root-*`，再启用完整
+   NativeUfs + VerifiedRoot。
+
 最终恢复真实 owner boot manifest、VerifiedRoot/AMFI/TrustCache，移除 ADT 占位。
 
 ## 更新规则
