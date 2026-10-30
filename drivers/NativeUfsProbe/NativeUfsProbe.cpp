@@ -51,13 +51,10 @@ static void
 heartbeatThread (void *, wait_result_t)
 {
   for (;;) {
-    IOSleep (5000);
+    IOSleep (10000);
     uint64_t winFlight = gWindowInFlight;
     uint64_t ufsFlight = gUfsInFlight;
-    if (!winFlight && !ufsFlight) {
-      continue;
-    }
-    IOLog ("NATIVE_UFS_HEARTBEAT: winFlight=%llu ufsFlight=%llu cmds=%llu "
+    IOLog ("NATIVE_UFS_ALIVE: winFlight=%llu ufsFlight=%llu cmds=%llu "
            "winReq=%llu winBytes=%llu lastCmd=%llx/%llu req=%llx/%llu\n",
            (unsigned long long) winFlight, (unsigned long long) ufsFlight,
            (unsigned long long) gUfsCommands,
