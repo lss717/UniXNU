@@ -1390,10 +1390,38 @@ H87a 镜像/内核：
 | kernel | `dd275f7473783ec03a7e45dbe7585026be29950505755c6ca3c5ec0b72bb00a4` |
 | payload | `cf7796371587f275a20f5a1721db76472057126ec6da36580e5dc25eaf53fc27` |
 
-下一步：确认 `driverkitd is active` 是慢还是挂住；若是挂住，需要在
-FileSet KC / driverkitd 的等待点加日志。之后才是 display/backboardd。
-真实 PMGR（DinnerABC `CheeseburgerPlatformPower` + PMGR bindings）仍是完整
-NativeUfs root 的最终依赖；当前 Probe 路径用 firmware warm-link 绕开了它。
+H87c：保留 board 默认的 permissive AMFI（`amfi_get_out_of_my_way=1`、
+`amfi=0x94`、`amfi_allow_any_signature=1`、`cs_enforcement_disable=1`、
+`native-skip-exec-signature=1`），只额外加 `allow-root-hash-mismatch=1`，
+并回到 `cpus=1`。结果 `_check_cdhash_in_trustcache ... Only allowed
+processes` 的循环消失，说明之前命令行追加的 `amfi=0 ...` 覆盖了 board 默认值。
+
+H87c 之后仍停在：
+
+```text
+KextLog: Loading FileSet KC(s)
+KextLog: driverkitd is active
+NATIVE_UFS_WINDOW: SystemOS ... ok=1 ticks=114
+```
+
+而且没有 `NATIVE_UFS_ALIVE` heartbeat，说明不是空闲，而是 Probe 的 warm-link
+路径在后续 SystemOS 读/kext 加载中停住。UFS root、auth blob、TrustCache
+权限都已越过；剩下是 warm-link transport 的稳定性，或完整 NativeUfs 的真实
+PMGR 依赖。
+
+H87c：boot `3c0747cdd0ebe6d47c98679dc617157f87b560231276f22f55a9a0e5b38bcd42`，
+payload `8cc67f1a0757c86d0cb80092b39180a97ff8958b707a22df44ce7a9b746ed15a`。
+
+下一步二选一：
+
+1. 移植 DinnerABC `CheeseburgerPlatformPower` + PMGR bindings，让完整
+   NativeUfs root 路径可用（需要按当前 slide 调整 PMGR 绝对地址）。
+2. 继续在 Probe warm-link 上做 transport watchdog/reset，尝试跨过这次
+   SystemOS 读停住。
+
+display/backboardd 仍未到达；当前只是内核控制台。
+
+最终恢复真实 owner boot manifest、VerifiedRoot/AMFI/TrustCache，移除 ADT 占位。
 
 最终恢复真实 owner boot manifest、VerifiedRoot/AMFI/TrustCache，移除 ADT 占位。
 
