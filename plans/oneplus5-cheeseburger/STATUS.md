@@ -1536,9 +1536,16 @@ AuthAPFS/owner manifest 才能完成挂载；只让 cryptexd 活着并不能提�
 SystemOS/FileSet KC。当前设备 userdata 已被覆盖为上述镜像；原始 OS/SystemOS
 可从 IPSW 恢复，Data 已丢失（用户已批准）。
 
-下一步要么提供真实 `Cryptex1,SystemVolume`/owner manifest/im4m，要么对
-`cryptexd`/libcryptex 的 AuthAPFS 分支做真正的二进制 patch。完整
-`startRoot()` 仍黑屏；H91 内核仍是当前最佳 Probe 内核。
+真实 owner manifest/im4m 路径已核查：项目和 DinnerABC 都没有 Image4 IM4M
+生成器。IPSW 的 `SystemVolume`/`Cryptex1,SystemVolume` 只是 229 字节 IM4P
+root hash；`scripts/audit-target-root-hashes.py` 明确记录
+`personalized_im4m_present=False`，这些 payload 不能提供 personalized IM4M。
+我们的 VerifiedRoot manifest 是 `VROOT01` 自签格式，`cryptexd` 不识别。
+真实 IM4M 需要 Apple TSS/personalization，当前输入无法生成。
+
+因此当前只剩：对 `cryptexd`/libcryptex 的 AuthAPFS 分支做二进制 patch，
+或恢复原始 userdata 并停在 H91。完整 `startRoot()` 仍黑屏；H91 内核仍是
+当前最佳 Probe 内核。
 
 最终恢复真实 owner boot manifest、VerifiedRoot/AMFI/TrustCache，移除 ADT 占位。
 
