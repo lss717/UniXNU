@@ -1504,9 +1504,20 @@ H91：
 SystemOS root hash 才能完成挂载，因此 `driverkitd` 循环。该占位已足以过
 mount-phase-1，但不足以保证 cryptex 验证。
 
-下一步要么提供真实 owner boot manifest / `Cryptex1,SystemVolume` 输入，
-要么做临时 cryptex 验证 bypass（用户态/kernel 侧），才能继续到 display/UI。
-完整 `startRoot()` 仍黑屏。
+`cryptexd` 的字符串确认它走 AuthAPFS / Image4 `im4m` 认证：
+
+```text
+AuthAPFS disabled because quire lacks an im4m.
+AuthAPFS enabled, skip up-front dmg authentication.
+Running in debug mode, skip trust cache
+```
+
+没有现成的 `cryptex=0` boot arg。临时 bypass 需要改 `cryptexd`/libboot
+跳过 AuthAPFS，但会改动 OS 根镜像，使当前 APFS root policy/root hash 失效，
+必须重新生成 policy；或者提供真实 `Cryptex1,SystemVolume` owner manifest/im4m。
+在此之前 display/UI 不会出现。
+
+完整 `startRoot()` 仍黑屏；H91 是当前最佳 Probe 镜像。
 
 最终恢复真实 owner boot manifest、VerifiedRoot/AMFI/TrustCache，移除 ADT 占位。
 
