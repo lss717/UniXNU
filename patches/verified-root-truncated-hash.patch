@@ -1,0 +1,95 @@
+From 4c43a0160ae79b1299197abb2f64278b5a39c663 Mon Sep 17 00:00:00 2001
+From: lss717 <ls1043636133@gmail.com>
+Date: Sat, 31 Oct 2026 01:55:45 +0800
+Subject: [PATCH] bring-up: allow truncated per-block digest for small boot
+ images
+
+---
+ include/verified_root.h | 5 +++++
+ src/verified_root.c     | 8 ++++----
+ tools/manifest.py       | 9 ++++++++-
+ 3 files changed, 17 insertions(+), 5 deletions(-)
+
+diff --git a/include/verified_root.h b/include/verified_root.h
+index 66c3959..b3ec7fa 100644
+--- a/include/verified_root.h
++++ b/include/verified_root.h
+@@ -10,6 +10,11 @@ extern "C" {
+ #define VR_SIGNATURE_BYTES 384u
+ #define VR_KEY_BYTES 395u
+ #define VR_BLOCK_BYTES 4096u
++/* Bring-up builds may truncate the per-block digest to fit the boot image.
++ * Production builds keep the full 32-byte SHA-256. */
++#ifndef VR_HASH_BYTES
++#define VR_HASH_BYTES 32u
++#endif
+ 
+ enum vr_status { VR_OK, VR_FORMAT, VR_KEY, VR_SIGNATURE, VR_HASH_TABLE, VR_BLOCK };
+ struct vr_crypto {
+diff --git a/src/verified_root.c b/src/verified_root.c
+index 55c3e5a..829ea33 100644
+--- a/src/verified_root.c
++++ b/src/verified_root.c
+@@ -27,15 +27,15 @@ int vr_open(const uint8_t *p, size_t n, const uint8_t key[VR_KEY_BYTES], uint64_
+     count = le(p + 32, 8);
+     generation = le(p + 152, 8);
+     if (!bytes || count != bytes / VR_BLOCK_BYTES + (bytes % VR_BLOCK_BYTES != 0) ||
+-        count > (SIZE_MAX - VR_HEADER_BYTES - VR_SIGNATURE_BYTES) / 32 ||
+-        n != VR_HEADER_BYTES + VR_SIGNATURE_BYTES + (size_t)count * 32 || generation < minimum_generation) return VR_FORMAT;
++        count > (SIZE_MAX - VR_HEADER_BYTES - VR_SIGNATURE_BYTES) / VR_HASH_BYTES ||
++        n != VR_HEADER_BYTES + VR_SIGNATURE_BYTES + (size_t)count * VR_HASH_BYTES || generation < minimum_generation) return VR_FORMAT;
+     if (!same(key, key_magic, 8) || !(key[8] & 0x80) || !(key[391] & 1) ||
+         key[392] != 1 || key[393] != 0 || key[394] != 1 ||
+         !crypto->sha256(key, VR_KEY_BYTES, digest) || !same(digest, p + 120, 32)) return VR_KEY;
+     if (!crypto->sha256(p, VR_HEADER_BYTES, digest) ||
+         !crypto->rsa3072_sha256(key, digest, p + VR_HEADER_BYTES)) return VR_SIGNATURE;
+     const uint8_t *hashes = p + VR_HEADER_BYTES + VR_SIGNATURE_BYTES;
+-    if (!crypto->sha256(hashes, (size_t)count * 32, digest) || !same(digest, p + 88, 32)) return VR_HASH_TABLE;
++    if (!crypto->sha256(hashes, (size_t)count * VR_HASH_BYTES, digest) || !same(digest, p + 88, 32)) return VR_HASH_TABLE;
+     out->hashes = hashes;
+     out->image_bytes = bytes;
+     out->block_count = count;
+@@ -51,6 +51,6 @@ int vr_verify_block(const struct vr_view *view, uint64_t index, const void *data
+     uint64_t remaining = view->image_bytes - index * VR_BLOCK_BYTES;
+     size_t expected = remaining < VR_BLOCK_BYTES ? (size_t)remaining : VR_BLOCK_BYTES;
+     if (n != expected || !crypto->sha256(data, n, digest) ||
+-        !same(digest, view->hashes + index * 32, 32)) return VR_BLOCK;
++        !same(digest, view->hashes + index * VR_HASH_BYTES, VR_HASH_BYTES)) return VR_BLOCK;
+     return VR_OK;
+ }
+diff --git a/tools/manifest.py b/tools/manifest.py
+index da122d2..e7b070a 100644
+--- a/tools/manifest.py
++++ b/tools/manifest.py
+@@ -3,12 +3,19 @@
+ import argparse
+ import hashlib
+ import json
++import os
+ from pathlib import Path
+ import re
+ import struct
+ import subprocess
+ import uuid
+ 
++# Bring-up images may truncate the per-block digest to shrink the manifest.
++# The C verifier is compiled with the same VR_HASH_BYTES value.
++HASH_BYTES = int(os.environ.get('VR_HASH_BYTES', '32'))
++if HASH_BYTES not in (8, 16, 32):
++    raise ValueError('VR_HASH_BYTES must be 8, 16 or 32')
++
+ 
+ def public_anchor(public_key):
+     text = subprocess.check_output(['openssl', 'rsa', '-pubin', '-in', str(public_key), '-text', '-noout'], text=True)
+@@ -35,7 +42,7 @@ def make(stream, image_bytes, key, public_key, volume_uuid, generation, output):
+             data = stream.read(min(4096, remaining))
+             if len(data) != min(4096, remaining):
+                 raise ValueError('Short image stream')
+-            digest = hashlib.sha256(data).digest()
++            digest = hashlib.sha256(data).digest()[:HASH_BYTES]
+             image_hash.update(data)
+             table_hash.update(digest)
+             hashes.write(digest)
+-- 
+2.43.0
+

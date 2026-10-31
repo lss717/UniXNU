@@ -1575,6 +1575,27 @@ root hash；`scripts/audit-target-root-hashes.py` 明确记录
 FileSet KC 的真实 owner IM4M/AMFI-trustcache，当前输入无法生成。完整
 `startRoot()` 仍黑屏。
 
+### H95：仓库收尾与当前产物
+
+- 已删除项目根目录 183 个 `*.jpg`，以及
+  `plans/oneplus5-cheeseburger/assets/`；后者的 Git 删除已提交。
+- `drivers/NativeUfs` 子模块指针更新到 `43a4bc7`（已推送到
+  `lss717/NativeUfs` fork）。
+- VerifiedRoot 的 8 字节 digest bring-up 改动（`4c43a01`）因上游
+  `UniXNU/VerifiedRoot` push 403，保存为
+  `patches/verified-root-truncated-hash.patch`；应用方式：
+  `git -C kits/VerifiedRoot am patches/verified-root-truncated-hash.patch`。
+  父仓库不指向未推送的子模块 commit。
+- 设备仓库新增 warm-link `NativeUfsWarm.cpp`、`CheeseburgerPlatformPower.cpp`、
+  PMGR/AuthAPFS glue、ADT auth blob/boot-manifest-hash 属性、policy 生成脚本；
+  这些是 bring-up 代码，默认 board 配置仍保持 Probe 基线。
+- 远端测试 board 的差异（slide `0x5000000`、runtime/PMGR archive、payload
+  `size_mib=76`、1 GiB 内存/AMFI placeholder）保留在远端 board.toml，未提交到
+  干净基线。
+- 当前设备：原始 userdata（OS `e5634d04...`、SystemOS `b4908cde...`）+
+  H91 内核；停在 `FileSet KC` / `driverkitd` + `_check_cdhash_in_trustcache`
+  循环。H91 boot `cd81c5b8...` 是当前最佳镜像。
+
 最终恢复真实 owner boot manifest、VerifiedRoot/AMFI/TrustCache，移除 ADT 占位。
 
 ## 更新规则
