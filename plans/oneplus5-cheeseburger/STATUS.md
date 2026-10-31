@@ -1560,6 +1560,21 @@ root hash；`scripts/audit-target-root-hashes.py` 明确记录
 循环。当前设备 userdata 是 H93 修改版，UI 仍未到达。建议恢复原始 userdata
 并停在 H91；若继续，只能进入预链接 AMFI/trustcache 的二进制 patch。
 
+### H94：恢复原始 userdata，停在 H91
+
+- 用原始 OS/SystemOS DMG 重建 userdata：
+  OS 窗口 sha `e5634d04a8ac35f024845f583394e0a35deb26a04cb0c00286a8674e25a9a4f2`，
+  SystemOS 窗口 sha `b4908cde41d23e6bc05e6af51a2c9eeb00cf0f863a6a18b1600c96a3fd70414f`，
+  image sha `fd43ee7035ce185ce4215ac93fdc006fd784a54b3b7442e21457c226cbe03093`。
+- `fastboot flash userdata` 成功（12 个 sparse 块，354 秒）。
+- `fastboot boot` H91 成功，设备回到 Probe 基线（原 OS + PMGR + auth blob +
+  48 字节 boot-manifest-hash）；H92/H93 修改版已从设备上移除。
+- Data 已在 H92/H93 覆盖中丢失，用户已批准。
+
+最终状态：H91 是当前最佳 Probe 镜像；剩余阻塞是 SystemOS Cryptex1 /
+FileSet KC 的真实 owner IM4M/AMFI-trustcache，当前输入无法生成。完整
+`startRoot()` 仍黑屏。
+
 最终恢复真实 owner boot manifest、VerifiedRoot/AMFI/TrustCache，移除 ADT 占位。
 
 ## 更新规则
