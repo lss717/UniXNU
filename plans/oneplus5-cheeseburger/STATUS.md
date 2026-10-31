@@ -1543,9 +1543,22 @@ root hash；`scripts/audit-target-root-hashes.py` 明确记录
 我们的 VerifiedRoot manifest 是 `VROOT01` 自签格式，`cryptexd` 不识别。
 真实 IM4M 需要 Apple TSS/personalization，当前输入无法生成。
 
-因此当前只剩：对 `cryptexd`/libcryptex 的 AuthAPFS 分支做二进制 patch，
-或恢复原始 userdata 并停在 H91。完整 `startRoot()` 仍黑屏；H91 内核仍是
-当前最佳 Probe 内核。
+### H93：cryptexd AuthAPFS stub patch（破坏性，未成功）
+
+- 恢复原始 `cryptexd`，把 `_cryptex_core_image_authapfs_enabled` 的
+  symbol stub（`0x3fce8`）改成 `mov w0,#0; ret`，强制 AuthAPFS disabled。
+- 重建 userdata：OS 窗口 sha `5fae7a80...`，image sha `5b780d89...`，
+  再次 `fastboot flash userdata` 成功（350 秒）。
+- 启动后 APFS/launchd/PMGR 继续，但 `_check_cdhash_in_trustcache`
+  “Only allowed processes can check the trustcache” 循环再次出现，随后仍是
+  `FileSet KC` / `driverkitd`。修改后的 OS 二进制不再受 AMFI/trustcache 信任，
+  这是 patch 系统 daemon 的直接副作用。
+- `check_cdhash_in_trustcache` 在原始 Apple AMFI kext/预链接代码里，不在
+  当前 XNU 源码中；继续 bypass 需要 patch AMFI/trustcache 或真实签名/权限。
+
+结论：补真实 IM4M 不可得；patch `cryptexd` 又会触发 AMFI/trustcache 完整性
+循环。当前设备 userdata 是 H93 修改版，UI 仍未到达。建议恢复原始 userdata
+并停在 H91；若继续，只能进入预链接 AMFI/trustcache 的二进制 patch。
 
 最终恢复真实 owner boot manifest、VerifiedRoot/AMFI/TrustCache，移除 ADT 占位。
 
