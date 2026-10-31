@@ -1484,8 +1484,23 @@ H90e 放宽 `(HCS&3)==3` 后，结果没有实质变化：多数 provider 仍打
 `importing root hash`。参考 warm-link 驱动在当前 firmware/控制器状态下也无法
 建立可用队列。
 
-下一步只剩三条：给 Probe 加 transport watchdog/reset；接串口捕获停住原因；
-或继续反向参考驱动的 provider/profile 匹配。完整 `startRoot()` 仍黑屏。
+H91：Probe + PMGR + 10 秒 stall panic。实机没有触发
+`NATIVE_UFS_STALL`，屏幕上 SystemOS 读持续完成（`ok=1 ticks≈96`），
+`winBytes` 约 3.23 GB，最后停在 `KextLog: driverkitd is active`。
+说明这次 UFS transport 没有硬卡死；剩余阻塞在 **FileSet KC / driverkitd
+的 kext/SystemOS cryptex 加载循环**，不是 UFS 读停住。
+
+H91：
+
+| 项 | sha256 |
+| --- | --- |
+| boot | `cd81c5b8ec91f103f3e3c0fd7de7bfb26633f4fbabecd34490e5627dd6f3ff9b` |
+| kernel | `7f02891c32825b75fcb76f2969ea2c1a541662d4c369d29fc85732b19f0e532d` |
+| payload | `e7fa5cdff58217886ebf269b30683c78da83c409ae179c356650f69869f08942` |
+
+下一步不再是 UFS：需要看 FileSet KC / driverkitd / SystemOS cryptex
+用户态加载为什么循环。可选串口/用户态日志、检查 Cryptex1,SystemVolume
+输入，或等待更长时间确认是否只是慢。完整 `startRoot()` 仍黑屏。
 
 最终恢复真实 owner boot manifest、VerifiedRoot/AMFI/TrustCache，移除 ADT 占位。
 
