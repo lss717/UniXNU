@@ -1517,7 +1517,28 @@ Running in debug mode, skip trust cache
 必须重新生成 policy；或者提供真实 `Cryptex1,SystemVolume` owner manifest/im4m。
 在此之前 display/UI 不会出现。
 
-完整 `startRoot()` 仍黑屏；H91 是当前最佳 Probe 镜像。
+### H92：cryptexd stub + 完整 userdata 覆盖（破坏性）
+
+按用户明确批准执行：
+
+- OS DMG 转 UDRW，替换 `/usr/libexec/cryptexd` 为 keep-alive stub；
+  修改后 OS whole-disk sha256 `10f92356d14ddbdb9b94d87ea291b54272fa3078eb4642e82ad10b57e11e7401`。
+- 重建完整 userdata：OS `6,077,580,800` + SystemOS `3,303,014,400`，
+  image `9,382,658,048` 字节，sha256
+  `b0e75882e4de823c0b47fba909fe11f87a897e96a6f29f79a871e0b8425dc85a`。
+- `fastboot flash userdata` 成功（12 个 sparse 块，350 秒）。
+- 用 H91 启动：APFS root hash mismatch 被 `allow-root-hash-mismatch=1`
+  放行，launchd/PMGR/用户态继续，但仍停在
+  `KextLog: Loading FileSet KC(s)` / `driverkitd is active`。
+
+结论：stub `cryptexd` 不是正确的 gate。SystemOS 的 Cryptex1 需要真实
+AuthAPFS/owner manifest 才能完成挂载；只让 cryptexd 活着并不能提供
+SystemOS/FileSet KC。当前设备 userdata 已被覆盖为上述镜像；原始 OS/SystemOS
+可从 IPSW 恢复，Data 已丢失（用户已批准）。
+
+下一步要么提供真实 `Cryptex1,SystemVolume`/owner manifest/im4m，要么对
+`cryptexd`/libcryptex 的 AuthAPFS 分支做真正的二进制 patch。完整
+`startRoot()` 仍黑屏；H91 内核仍是当前最佳 Probe 内核。
 
 最终恢复真实 owner boot manifest、VerifiedRoot/AMFI/TrustCache，移除 ADT 占位。
 
