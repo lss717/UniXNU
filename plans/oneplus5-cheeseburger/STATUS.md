@@ -1498,9 +1498,15 @@ H91：
 | kernel | `7f02891c32825b75fcb76f2969ea2c1a541662d4c369d29fc85732b19f0e532d` |
 | payload | `e7fa5cdff58217886ebf269b30683c78da83c409ae179c356650f69869f08942` |
 
-下一步不再是 UFS：需要看 FileSet KC / driverkitd / SystemOS cryptex
-用户态加载为什么循环。可选串口/用户态日志、检查 Cryptex1,SystemVolume
-输入，或等待更长时间确认是否只是慢。完整 `startRoot()` 仍黑屏。
+下一步不再是 UFS。`cryptexd` 只认 **Cryptex1** 格式；当前 ADT 的
+`boot-manifest-hash` 仍是 48 字节全零占位。`mount-phase-1` 只检查属性存在，
+但 SystemOS 的 Cryptex1/FileSet KC 很可能需要真实 owner boot manifest /
+SystemOS root hash 才能完成挂载，因此 `driverkitd` 循环。该占位已足以过
+mount-phase-1，但不足以保证 cryptex 验证。
+
+下一步要么提供真实 owner boot manifest / `Cryptex1,SystemVolume` 输入，
+要么做临时 cryptex 验证 bypass（用户态/kernel 侧），才能继续到 display/UI。
+完整 `startRoot()` 仍黑屏。
 
 最终恢复真实 owner boot manifest、VerifiedRoot/AMFI/TrustCache，移除 ADT 占位。
 
