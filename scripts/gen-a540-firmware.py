@@ -13,6 +13,8 @@ KNOWN = {
     'a530_pm4.fw': ('a02c9be11787472d4ab0173ed8552afbde1f31b1e81bcd87adf1fcea97b6115f', 'a540_fw_pm4'),
     'a530_pfp.fw': ('cc4f2b1cd6b3a9401592e2498ec43b87ba926a23848fa231f417ab08df9c47ba', 'a540_fw_pfp'),
     'a540_gpmu.fw2': ('57d7653c4dcc1130ac2c31512ec7fbb6348613d4bcd99b9b6221e3f9ee52f535', 'a540_fw_gpmu'),
+    'a540_zap.mdt': ('530c0a89308b275231bbcbaf0eb3104cccbb885e9014993aea5d6d81aa9063be', 'a540_fw_zap_mdt'),
+    'a540_zap.b02': ('997933766e93f7692329f397808f8c23128a58b565d6305e48608cfce711e5d7', 'a540_fw_zap_b02'),
 }
 
 

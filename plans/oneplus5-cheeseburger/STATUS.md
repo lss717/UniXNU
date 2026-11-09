@@ -3,9 +3,9 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
-- 当前阶段：**C3 完成（2026-11-09）。RBBM reset、SMMUv2、CP configure、
-  ME_INIT、GPMU 固件 `BABEFACE` 全部通过；H236ay 确认 CP 仍在 secure 模式
-  （trust=1），数据写被丢弃，H236az 测试 host 侧清 trust。**
+- 当前阶段：**C3 完成（2026-11-09）。H236ay 确认 CP 在 secure 模式，H236az
+  证明 trust 寄存器 host 不可写；H236ba 已实现 ZAP/PAS（SCM image 13）+
+  `CP_SET_SECURE_MODE(0)`，待验证 trust 清零与数据写。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,12 +17,12 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236az 的 secure 解除。** H236ay 的 `trust=00000001` 证明 CP
-  在 secure 模式，非安全数据写被丢弃。H236az 从 AP 侧写
-  `RBBM_SECVID_TRUST_CNTL=0` 并读回；若读回 0 且数据写成功，则 secure 可由
-  host 解除；否则进入 ZAP/PAS（`a540_zap.mdt/b00/b01/b02` + SCM PAS +
-  `CP_SET_SECURE_MODE(0)`）。SMMU 几何和 CP 配置已固定：ID0=48016403、
-  ID1=20008003、ID2=00007511。
+- 当前 gate：**H236ba 的 ZAP/PAS。** H236az 证明 `RBBM_SECVID_TRUST_CNTL`
+  host 不可写（写 0 挂总线）。H236ba 已实现 SCM PAS image 13：
+  `PAS_INIT_IMAGE(a540_zap.mdt)` → `PAS_MEM_SETUP` → `a540_zap.b02` →
+  `PAS_AUTH_AND_RESET` → `CP_SET_SECURE_MODE(0)`，并读回 trust 必须为 0。
+  通过后 `CACHE_FLUSH_TS`/`CP_MEM_WRITE` 应能落内存，再进入 C4/C5。
+  SMMU 几何和 CP 配置已固定：ID0=48016403、ID1=20008003、ID2=00007511。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
 - 当前代码提交：本地 UniXNU `main`（H236an 提交）；NativeMobileDisplay H236an
   （无 flush 的 RBBM 脉冲）；设备仓库 `main` 未变
@@ -10869,6 +10869,46 @@ H236az boot    d51d180285f57a7b33a4dcc720f177771a7a8929dbc4b2615a0690f06a0262ad
 
 镜像在 `/tmp/opencode/boot-H236az.img`，待实测。若写 0 直接挂总线，最后一行会是
 `trust write begin`。
+
+### H236az 结果与 H236ba：ZAP/PAS 实现（2026-11-09）
+
+H236az：
+
+```text
+[ 68.130725] submit probe
+[ 68.158257] trust write begin old=00000001
+（没有 trust write done）
+```
+
+从 AP 非安全侧写 `RBBM_SECVID_TRUST_CNTL` 直接挂总线，寄存器是 secure-only。
+CP 的 secure 状态只能通过 ZAP/PAS 解除。
+
+H236ba 按 A 线 `redwood_adreno.c` 的 SCM 调用和 sagit 的
+`CP_SET_SECURE_MODE(0)` 流程实现：
+
+1. `PAS_SHUTDOWN(13)`；
+2. `PAS_INIT_IMAGE(13, a540_zap.mdt)`（`.mdt` 放在低 4G、物理连续的 8 KiB buffer）；
+3. `PAS_MEM_SETUP(13, image_phys, 0x2000)`；
+4. 把 `a540_zap.b02` 写进 image buffer，`dc cvac`；
+5. `PAS_AUTH_AND_RESET(13)`；
+6. ring 提交 `CP_SET_SECURE_MODE(0x66)=0` + `CP_WAIT_FOR_IDLE(0x26)`；
+7. 读回 `RBBM_SECVID_TRUST_CNTL`，要求为 0；
+8. 再跑 `CACHE_FLUSH_TS` + `CP_MEM_WRITE` 双探针。
+
+`a540_zap.mdt`/`.b02` 已加入 `scripts/gen-a540-firmware.py` 的校验表（SHA-256
+与 H236 计划一致，blob 仍只从 `.cache/firmware/a540/` 读取，不提交）。
+
+产物：
+
+```text
+H236ba kernel  b4a5ad39dad2fb90f7078bb0c2bfdc2a3a775fe90efc929bf44d77b7c961047d
+H236ba payload 1624f262a23f45870d0e39ab2921003152294099300446aa4a4f770afbd74d74
+H236ba boot    731fa9a9df58cf70caa74c1099f40214fcbcb5570f94c8ae14b8721927885ef2
+```
+
+镜像在 `/tmp/opencode/boot-H236ba.img`，待实测。期望顺序：
+`zap shutdown` → `zap init` → `zap mem setup` → `zap auth` → `zap unsecure
+... trust=00000000` → `submit ... value=deadbeef ring=cafebabe`。
 
 ## 更新规则
 
