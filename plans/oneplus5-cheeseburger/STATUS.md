@@ -11247,6 +11247,26 @@ H236bn boot     034a702c06df14bec9d387296507b4e1f4875ee96261447d19985cb72fbb8e75
 镜像在 `/tmp/opencode/boot-H236bn.img`。手机还在 UEFI 菜单，需要先重启到
 TWRP/fastboot 再启动。
 
+
+### H236bo：恢复 logo，并在 DarwinBoot 失败点显示错误（2026-11-09）
+
+H236bn 仍停在 UEFI 菜单，说明 `AllocateWindow` 或 `AllocateZapWindow` 仍然
+失败。为了不再猜，H236bo：
+
+- 恢复 `[ui] logo = true`（用户只要求改菜单文字，不改 logo）；
+- `AllocateWindow` 失败时在屏幕画 `NO KERNEL WINDOW %r size=…`，`Stall 15s`；
+- `AllocateZapWindow` 失败/越界时画 `NO ZAP %r base=… kernel=…`，`Stall 15s`；
+- 菜单文字保持 `OnePlus 5 IOS`、`[ios 17.7.11]`、`Restart`、`Shut down`。
+
+产物：
+
+```text
+firmware H236bo 05951cf19e6e37807fca1feee8801a8c85d1203948ac4eeea3f80ffe21bb51a4
+H236bo boot     36904d0502ed75184add71f2f452204cb0309de2c9fbccae0c1e5aae12d7c9ae
+```
+
+下一步是让用户看到并记录这行 15 秒的错误，而不是继续改分配参数。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。
