@@ -3,9 +3,9 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
-- 当前阶段：**C3 的 RBBM reset、SMMU、CP 配置全部通过；H236as 修正 PM4
-  奇偶校验后 CP opcode error 消失，ME 已运行；H236at 收紧 idle 判据，
-  待看 GPMU 是否走通（2026-11-09）。**
+- 当前阶段：**C3 的 RBBM reset、SMMU、CP、ME_INIT 全部通过；H236at 的
+  GPMU 固件已装载但未回 BABEFACE；H236au 补 AGC/电压/功率阈值后待看
+  GPMU 握手（2026-11-09）。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,12 +17,12 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236at 的 GPMU。** H236as 已消除 CP opcode error，`CP_ME_CNTL=0`，
-  `rptr=wptr=9`，CP busy 位全 0；H236at 只等 CP 相关位（mask 0x7e），不再等
-  `GPU_BUSY_IGN_AHB/HYST`。接下来看 GPMU 包是否被消费、
-  `GPMU_GENERAL_0` 是否回 `BABEFACE`。SMMU 几何和 CP 配置已经固定：
-  ID0=48016403、ID1=20008003、ID2=00007511；bootloader 没有留映射，C3 必须
-  自己写 CB0 和 SID0→CB0。
+- 当前 gate：**H236au 的 GPMU 握手。** H236at 已通过 ME_INIT（idle=1），GPMU
+  固件包被 CP 消费，但 CM3 没有回 `BABEFACE`；H236au 在释放 CM3 前补了
+  AGC 初始化消息、电压/功率阈值和 power-collapse 参数。接下来看
+  `GPMU_GENERAL_0` 是否回 `BABEFACE`，否则用 `general0/general1/cm3/magic`
+  定位。SMMU 几何和 CP 配置已经固定：ID0=48016403、ID1=20008003、
+  ID2=00007511；bootloader 没有留映射，C3 必须自己写 CB0 和 SID0→CB0。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
 - 当前代码提交：本地 UniXNU `main`（H236an 提交）；NativeMobileDisplay H236an
   （无 flush 的 RBBM 脉冲）；设备仓库 `main` 未变
@@ -10658,6 +10658,40 @@ H236at boot    b509271587ecff85b83a3096a678ce336a1c970fc936856e6c8b0a14a7b42bf9
 
 镜像在 `/tmp/opencode/boot-H236at.img`，待实测。期望看到 `gpmu load` 和
 `GPMU firmware reached BABEFACE`。
+
+### H236at 结果与 H236au：GPMU 缺 AGC 初始化（2026-11-09）
+
+H236at 的 ME_INIT 通过：
+
+```text
+[ 69.094697] cp rptr=00000009 rbbm=c0000101 me=00000000 ... idle=1
+[ 69.212514] gpmu load
+[ 75.631403] fail step 22 (gpmu handshake)
+```
+
+GPMU 固件包被 CP 消费（没有 fail step 21），但释放 CM3 后 5 s 内
+`GPMU_GENERAL_0` 没有回 `BABEFACE`。对比 sagit 的 `gpmu()`，我们在
+`GPMU_CM3_SYSRESET=0` 之前少了：
+
+- `GPMU_GPMU_VOLTAGE=0x80000000`、`GPMU_GPMU_PWR_THRESHOLD=0x80000000|6000`；
+- AGC 初始化消息（`0x9800+7`，payload 36 dwords：5448、1、752 mV、257 MHz、
+  `(1<<24)|(1<<17)|(2<<8)`、`~0x303`）；
+- `AGC_INIT_MSG_MAGIC=0xBABEFACE`；
+- `PWR_COL_INTER_FRAME_CTRL=0x7f`、`BINNING_CTRL=0`、
+  `INTER_FRAME_HYST=0xa0080`、`STAGGER_DELAY=0x600040`。
+
+H236au 补上这些，并在握手失败时打印 `general0/general1/voltage/threshold/
+magic/cm3`。
+
+产物：
+
+```text
+H236au kernel  de5539b5eaddf188dcc9a35a24c074cb9b32d6b3693eed87dac237a922e52a1c
+H236au payload c6c82e3fb21061ac8989e3931434c72ad13e329cd77347595d13609873c49ce4
+H236au boot    4324e2c546b19d2517d75ceb3f400d8adcc5a63bcf63da029ec161ec06dda4b3
+```
+
+镜像在 `/tmp/opencode/boot-H236au.img`，待实测。
 
 ## 更新规则
 
