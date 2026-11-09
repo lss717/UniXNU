@@ -11624,6 +11624,36 @@ boot     c1c823a751c34ed48176a6095a3767872dbdc35df5ae273c3301304f2f504b17  boot-
 下一步：用这条 launchd 基线确认 C3/ZAP/PAS（`NATIVE_GPU_C3: zap auth rc=0`、
 `zap unsecure … trust=00000000`、submit probe），再进 C4/C5。
 
+### H236cv–H236cw：zap-base 与 ZAP 映射（2026-11-10）
+
+H236cv：payload 的 boot args 已 997 字符，loader 的 `len + 32 < 1024`
+判断让 `zap-base` 从未追加，C3 打印 `zap-base missing or invalid: 0`。
+改为按实际格式化长度追加后，C3 显示
+`zap alloc mdt=0xabe00000 image=0xabf00000`、`gpu reset ok`、`smmu setup`、
+`zap shutdown rc=0`。
+
+H236cw：随后的
+
+```text
+Unaligned kernel data abort. at pc _bzero+0x44, lr zap_load+0x144
+far=0xfffffff1f0284040  x0=0xfffffff1f0284000  x2=0x1f80
+```
+
+是 `memset(zapHeader.cpu, …)` 打在 Device-nGnRnE 映射上（`mapWindow` 用了
+`kIOMapInhibitCache`），16 字节存储触发对齐中止。ZAP 的 mdt/image 是普通
+WB DRAM，改为 `kIOMapCopybackCache`；MMIO 仍保持 inhibit。
+
+产物：
+
+```text
+firmware ac56ddbd542cb3dbfeab1d84ad67eb6f76da13dac6dc0b28473232300af9fca4
+kernel   7e71d1be1b384143950fd79244230cfc1cc77475061478fd4cf6c5025526e137
+boot     8bbfa67a29c370dde56d26b376284e736808646d04bfb7ba8cf5ad42b449ca4e  boot-H236cw.img
+```
+
+H236cw 启动后 C3 继续运行，待拉日志确认 `zap init/mem setup/auth rc=0`、
+`zap unsecure … trust=00000000` 和 submit probe。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。

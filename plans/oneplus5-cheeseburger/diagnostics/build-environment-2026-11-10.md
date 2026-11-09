@@ -221,3 +221,45 @@ firmware abf2adb574d4b5513b3972be38841e80c64775da0c75881c5779d5025d2d8e3c  (完�
 kernel   e30750dc1e934e56393d3d3a0bb94fee2526a60f64964c7d02176dfb270c0429  (重编 display 归档)
 boot     c1c823a751c34ed48176a6095a3767872dbdc35df5ae273c3301304f2f504b17  boot-H236ct.img
 ```
+
+---
+
+## 11. `zap-base` 追不进去：命令行已经 997 字符（H236cv）
+
+`NativeA540C3` 用 `PE_parse_boot_argn("zap-base", …)` 读物理地址，loader 负责
+在命令行末尾追加。旧代码：
+
+```c
+if (AsciiStrLen (CommandLine) + 32 < sizeof (CommandLine)) { … }
+```
+
+payload 的 args 已经是 **997** 字符，997+32=1029 > 1024，所以 `zap-base`
+从来没被追加，C3 打印 `zap-base missing or invalid: 0`。
+
+修正：先把参数格式化进临时缓冲，再按**实际长度**判断并 `CopyMem`。
+
+## 12. ZAP 的 mdt/image 必须用可缓存映射（H236cw）
+
+`zap shutdown rc=0` 之后立刻：
+
+```text
+Unaligned kernel data abort. at pc _bzero+0x44, lr zap_load+0x144
+far=0xfffffff1f0284040  x0=0xfffffff1f0284000  x2=0x1f80
+```
+
+`zap_load()` 的第一句是 `memset(c.zapHeader.cpu, 0, bytes)`；ZAP 的
+`.mdt`/`.b02` 是 DarwinBoot 在普通 DRAM 里预留的 WB 内存，但 `mapWindow()`
+一直用 `kIOMapInhibitCache`（Device-nGnRnE）。Device 内存不支持
+memset/memcpy 的 16 字节存储 → 对齐中止。
+
+修正：`mapWindowFlags()` 增加缓存参数，ZAP 的两块窗口用
+`kIOMapCopybackCache`；`cleanDcache()` 仍在每次 SMC 前把数据刷到 PoC。
+MMIO（GCC/GPU/SMMU）继续 `kIOMapInhibitCache`。
+
+产物（H236cw）：
+
+```text
+firmware ac56ddbd542cb3dbfeab1d84ad67eb6f76da13dac6dc0b28473232300af9fca4
+kernel   7e71d1be1b384143950fd79244230cfc1cc77475061478fd4cf6c5025526e137
+boot     8bbfa67a29c370dde56d26b376284e736808646d04bfb7ba8cf5ad42b449ca4e  boot-H236cw.img
+```
