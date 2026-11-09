@@ -4,8 +4,8 @@
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
 - 当前阶段：**C3 完成（2026-11-09）。ZAP/PAS 的 shutdown/init/mem setup 均
-  rc=0；H236bb 的 .b02-only 镜像 auth 通过但不生效，H236bc 的完整 .elf 在
-  auth 返回 -68，H236bd 用精确 0x4334 尺寸重试。**
+  rc=0；对照 mdt_loader 后确认 a540 的运行时镜像就是 .b02（0x2000），
+  H236be 回到 .b02 并把 ZAP/secure 顺序改成 vendor 语义。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,11 +17,11 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236bd 的 PAS_AUTH 尺寸。** H236bc 的完整 `.elf` 在
-  `PAS_AUTH_AND_RESET` 返回 -68，H236bd 把 `PAS_MEM_SETUP` 的 size 从 0x5000
-  改为精确的 0x4334。若仍失败，断电冷启动清 TZ 保留的 ZAP 后再试。通过后
-  `CACHE_FLUSH_TS`/`CP_MEM_WRITE` 应能落内存，再进入 C4/C5。SMMU 几何和 CP
-  配置已固定：ID0=48016403、ID1=20008003、ID2=00007511。
+- 当前 gate：**H236be 的 ZAP 顺序。** H236bc/H236bd 的完整 `.elf` 分别 auth
+  失败/尺寸失败；Linux mdt_loader 表明 a540 只有 `.b02` 是 PT_LOAD，镜像大小
+  0x2000。H236be 用 `.b02`-only 并把 ZAP 放到 ME_INIT 前、secure-mode 命令放到
+  GPMU 前。通过后 `CACHE_FLUSH_TS`/`CP_MEM_WRITE` 应能落内存，再进入 C4/C5。
+  SMMU 几何和 CP 配置已固定：ID0=48016403、ID1=20008003、ID2=00007511。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
 - 当前代码提交：本地 UniXNU `main`（H236an 提交）；NativeMobileDisplay H236an
   （无 flush 的 RBBM 脉冲）；设备仓库 `main` 未变
@@ -10978,6 +10978,45 @@ H236bd boot    69b47c979bd9d929ba6a98db5ed388e782568a8fccb9b51f9b1173a2c3cd3ae5
 
 镜像在 `/tmp/opencode/boot-H236bd.img`，待实测。若仍是 -68，下一步彻底断电
 冷启动一次（TZ 可能保留 H236bb 已认证的 ZAP），再重试。
+
+### H236bc/H236bd 结果与 H236be：ZAP 顺序（2026-11-09）
+
+冷启动后 H236bc（完整 `.elf` + 0x5000）仍然是：
+
+```text
+zap init rc=0
+zap mem setup rc=0
+zap auth rc=-68
+```
+
+H236bd（完整 `.elf` + 精确 0x4334）在 `PAS_MEM_SETUP` 就返回 -32。对照 Linux
+v6.12 `drivers/soc/qcom/mdt_loader.c`：
+
+- `mdt_phdr_valid()` 只接受 `p_type == PT_LOAD` 且不是 hash 段；
+- a540 的 `.mdt` 三个 program header 中只有 `.b02` 是 PT_LOAD
+  （`p_paddr=0x5000`、`p_memsz=0x1334`、relocatable），所以镜像大小是
+  `ALIGN(0x5000+0x1334,4K)-0x5000 = 0x2000`，`.b02` 放在偏移 0；
+- `.b01` 是 hash 段，不进入运行时镜像；完整 `.elf` 不是 `PAS_MEM_SETUP` 的
+  期望布局。
+
+H236be 回到 `.b02`-only / 0x2000，并调整顺序为 vendor `a5xx_rb_start` 的语义：
+
+```text
+reset → SMMU → ZAP/PAS(auth) → CP ME_INIT → CP_SET_SECURE_MODE(0)
+      → GPMU → submit
+```
+
+之前 ZAP 放在 GPMU 之后，CP 的 secure 状态可能已经在 ME_INIT 时锁定。
+
+产物：
+
+```text
+H236be kernel  e82dd1765e644e1d04c7a85fa6ae97556b53be535f9669c0cc6fb99250d740ea
+H236be payload 4d6471cb384389eaef22ade294c0a7092fe23a4c07fc04f413c68dfe5790d819
+H236be boot    44a7b6752cf5e1009446678afaf9bb920fb7a9e89eb21ea937bd9ec4feb52c1e
+```
+
+镜像在 `/tmp/opencode/boot-H236be.img`，待实测。
 
 ## 更新规则
 
