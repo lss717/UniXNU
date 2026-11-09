@@ -4,8 +4,8 @@
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
 - 当前阶段：**C3 完成（2026-11-09）。RBBM reset、SMMUv2、CP configure、
-  ME_INIT、GPMU 固件 `BABEFACE` 全部通过；H236av 的 CP_MEM_WRITE 被消费
-  但读回 0，H236aw 用 CACHE_FLUSH_TS + CP_MEM_WRITE 双探针定位。**
+  ME_INIT、GPMU 固件 `BABEFACE` 全部通过；提交包被 CP 消费但数据写不落内存，
+  H236ax 用 ring 页写入区分 SMMU 写权限与 CP data-write 状态。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,11 +17,12 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236aw 的提交双探针。** H236av 的 `CP_MEM_WRITE` 包被消费
-  （rptr=3136/3136）但读回 0；H236aw 同时发 `CACHE_FLUSH_TS` 时间戳和
-  `CP_MEM_WRITE`，并打印 CP/SMMU 状态。若时间戳非 0，则 CP→内存通路成立；
-  若全 0，检查 secure 状态或地址映射。通过后进入 C4/C5。SMMU 几何和 CP
-  配置已固定：ID0=48016403、ID1=20008003、ID2=00007511。
+- 当前 gate：**H236ax 的 ring 页写入。** H236aw 的 `CACHE_FLUSH_TS` 和
+  `CP_MEM_WRITE` 都读回 0，且无 CP fault。H236ax 把同样的写指向 ring 缓冲区
+  的空闲页（CP 自身在读，映射必然可用）；若 ring 页可写而 `rptr` 页不可写，
+  是 SMMU 写权限；若两者都不可写，是 CP data-write 的 secure/protected 状态。
+  通过后进入 C4/C5。SMMU 几何和 CP 配置已固定：ID0=48016403、ID1=20008003、
+  ID2=00007511。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
 - 当前代码提交：本地 UniXNU `main`（H236an 提交）；NativeMobileDisplay H236an
   （无 flush 的 RBBM 脉冲）；设备仓库 `main` 未变
@@ -10779,6 +10780,36 @@ H236aw boot    e44833d55dfe175b3b9ac870f68d6c04cc1ca1ca5973001c7717fb17f79f8e6c
 镜像在 `/tmp/opencode/boot-H236aw.img`，待实测。若 `ts` 非 0，说明 CP→内存
 通路成立，问题只在 `CP_MEM_WRITE`/cache；若两者都是 0，则检查 secure 状态或
 数据地址映射。
+
+### H236aw 结果与 H236ax：时间戳和写值都是 0（2026-11-09）
+
+H236aw：
+
+```text
+[ 68.786258] submit probe
+[ 68.813815] submit write rptr=3141/3141 ts=0000000000000000 value=00000000 done=1
+[ 68.844288] submit diag cpint=00000000 hwfault=00000000 fsr=00000400 rbbm=e0c801c1
+[ 68.875007] fail step 30 (cp mem write)
+```
+
+CP 消费了 `CACHE_FLUSH_TS` 和 `CP_MEM_WRITE`，但两者都没有落内存；没有
+CP interrupt、没有 `CP_HW_FAULT`，`CB0.FSR` 仍是 0x400（MULTI 位，之前一直
+存在）。这更像数据写权限/地址映射问题，而不是 CP 执行错误。
+
+H236ax 增加第三个写入目标：`kRingIova + 0x7000`。这一页是 ring 缓冲区的一部分，
+CP 自己就在读它，映射必然可用；把同一个 `CP_MEM_WRITE` 写到这里，再读回
+`0xCAFEBABE`。若 ring 页能写而 `rptr` 页不能，就是 `rptr` range 的写入权限/映射；
+若两者都不能写，说明 CP 的 data write 被 secure/protected 状态丢弃。
+
+产物：
+
+```text
+H236ax kernel  7996a37106c20190b2c32481e01c5093f4399a689a5eed3e2198da354d39f614
+H236ax payload 640d2c811affff20f6f79ca293d02984a7a414614bd3b7186f86a08316494c35
+H236ax boot    f0574cb2d9f96e3cf4a7808700b1aa4547eebdc53a134edd534b488672076123
+```
+
+镜像在 `/tmp/opencode/boot-H236ax.img`，待实测。
 
 ## 更新规则
 
