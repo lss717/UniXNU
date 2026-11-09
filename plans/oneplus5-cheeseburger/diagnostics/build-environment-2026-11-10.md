@@ -1,0 +1,145 @@
+# 构建环境与启动约束（H236ck–H236cm，2026-11-10）
+
+这份记录只收“会重复踩”的坑：每一条都对应一次真实的失败和一次已经验证的修正。
+构建顺序、打包和安全约束仍以 `AGENTS.md` 与 `STATUS.md` 为准。
+
+---
+
+## 1. macOS 内核构建脚本
+
+`~/run-h103n-build.sh` 现在是仓库内 `scripts/macos-build-kernel.sh` 的安装副本，
+旧脚本备份为 `~/run-h103n-build.sh.bak-20261110`。
+
+脚本自动决定 bootstrap 还是复用：
+
+- `.cache/xnu-work/.git` 不存在，或 `bsd/kern/kern_exec.c` 不含补丁标记
+  `H82_DATA_WAIT` → 删除并重新 `git clone --shared refer/xnu`，
+  然后 `XNU_SKIP_PATCH_LOOP=0` 完整打补丁；
+- 否则复用已打补丁的树，`XNU_SKIP_PATCH_LOOP=1`。
+
+### 坑 1：未打补丁的新树 + `XNU_SKIP_PATCH_LOOP=1`
+
+H236ck 时为了应用新补丁删除了 `.cache/xnu-work`，但 wrapper 仍然
+`export XNU_SKIP_PATCH_LOOP=1`。结果是新 clone **一个补丁都没打**，
+编译报出一堆看似“源码坏了”的错误：
+
+```text
+osfmk/arm/pmap/pmap.h:476:7: error: duplicate member 'reserved10'
+bsd/net/necp_client.c:71:10: fatal error: 'CodeSignature/Entitlements.h' file not found
+```
+
+这两条都是**未打补丁的基线源码**在新 SDK 下的表现，不是补丁冲突。
+判断方法：`grep -c H82_DATA_WAIT .cache/xnu-work/bsd/kern/kern_exec.c`
+应为 1。
+
+修复：`bash ~/run-h103n-build.sh --clean`（完整重新 clone + 打补丁），
+日常增量构建直接 `bash ~/run-h103n-build.sh`。
+
+### 坑 2：Xcode 26.2 不再带 `availability.pl`
+
+```text
+Unable to locate /Applications/Xcode.app/.../iPhoneOS26.2.sdk//usr/local/libexec/availability.pl
+make[5]: *** [_symbol_aliasing.h] Error 1
+```
+
+`bsd/sys/make_symbol_aliasing.sh` 需要 SDK 的
+`usr/local/libexec/availability.pl`；Xcode 26.2 的 SDK 已删除该文件。
+`_symbol_aliasing.h` 只依赖 XNU 自己的头文件，所以脚本在没有
+SDK / `.cache/fakeroot` 副本时，保留上一次构建生成的
+`build/xnu/ios-obj/bsd/sys/_symbol_aliasing.h` 并 `touch` 到比
+生成脚本新，从而跳过重新生成。
+
+注意：这个 `touch` 必须发生在 clone 之后（clone 会刷新生成脚本的
+mtime），所以脚本自己先 clone，再回退。
+
+---
+
+## 2. 内核窗口基址必须带 2 MiB 内的 0x4000 偏移
+
+XNU 的 `start_first_cpu` 用 2 MiB block 建初始页表，要求
+**物理基址**与 Mach-O `__TEXT` 虚拟地址在 2 MiB 内的偏移一致
+（`__TEXT` 是 `0x...4000`）。
+
+- 错误：窗口放在 `0xA0000000`；
+- 正确：`0xA0004000`（= `ALIGN_VALUE(base, 2 MiB) + (Kernel->Base & (2 MiB - 1))`）。
+
+症状：内核执行到 `msr SCTLR_EL1, x0` 之前（品红带）后完全静默，
+`arm_init` 从不执行；入口复位探针 `--reset-at _arm_vm_init` 也不触发。
+
+H236cj 验证：把 `AllocateWindow()` 的固定候选也加上该偏移后，
+`_arm_vm_init` 入口的复位探针**立即触发重启**，问题消失。
+
+---
+
+## 3. sidecar（ramdisk/addon/policy）必须留在内核窗口内
+
+`osfmk/arm64/arm_vm_init.c` 直接用 boot_args 设置物理范围：
+
+```c
+gPhysBase = args->physBase;
+gPhysSize = ((gPhysBase + args->memSize) & ~PAGE_MASK) - gPhysBase;
+```
+
+现在 `physBase=0xA0004000`、`memSize=192 MiB`，所以内核管理的物理范围
+只有 `0xA0004000–0xAC004000`。`NativeRamBlock::start()` 会拒绝范围外的
+ramdisk（`physical < gPhysBase || ... || physical - gPhysBase > gPhysSize - bytes`）。
+
+H236cc 曾把 ramdisk 放到低 4 GiB（约 `0xF9xxxxxx`），于是：
+
+```text
+NATIVE_H82_DATA_WAIT: 550
+NATIVE_H82_DATA: status=2 stage=0 ro=-1 dev=-1 size=0
+panic(cpu 0 ...): offline scratch Data mount failed: 2 @kern_exec.c:8688
+```
+
+等 55 秒也等不到卷，因为驱动根本没接受 seed，不是时序问题。
+
+修正：192 MiB 窗口时 sidecar 放窗口内（H236bw 的行为，`Used` 约 96 MiB，
+放得下）；只有 192 MiB 分配失败、回退 128 MiB 时才用低 4 GiB 布局。
+H236cl 已按此改回。
+
+配套的内核侧修改：`native_owner_data_prepare()` 对 seed 卷做有限重试
+（600 × 100 ms），避免 load_init_program 早于 NativeRamBlock/APFS 发布
+（旧日志：load_init_program ~20 s，NativeRamBlock online ~33 s，
+Data 卷发布 ~37 s）。重试只是保险，范围检查才是硬约束。
+
+---
+
+## 4. 日志与照片判读
+
+- h103 ring 从约 30 秒才开始写（`NATIVE_BUILD` 那一行的时间戳）。
+  20 秒前的探针/panic 不会落库，别再指望从 `userdata_ios` 拉早期日志。
+- H236cc 的照片只截到屏幕中段，顶部 1/16 的绿条和探针 band 1 都不在画面里，
+  差点得出“XNU 没执行”的错误结论。凡是要看颜色带，必须拍**完整屏幕**。
+- 入口探针默认把 stage 1 放在 band 1（顶部第二格），容易被裁掉；
+  用 `--band 8` 放到屏幕正中。
+
+---
+
+## 5. 生成的脚本目录不是软链
+
+`out/cheeseburger/tree/scripts/` 是 `unixnu defconfig` 时**复制**的。
+改了 `../UniXNU-cheeseburger/scripts/patch-xnu-entry-probe.py` 之后，
+要么重新 `./unixnu defconfig cheeseburger_defconfig -D ../UniXNU-cheeseburger`，
+要么手动把脚本复制进 `out/.../tree/scripts/`，否则运行的是旧版本
+（H236cj 的 `--band` 一开始就是这样“不存在”的）。
+
+---
+
+## 6. 入口探针工具的两个修正
+
+- 本内核 `_start` 之后的固定 padding 已被占用，工具现在会在同一
+  file-backed segment 里向后找全零区，并保证每个 stage 用不同的 cave；
+- `--band N` 可把 stage 1 的色带放到指定 1/16 带（8 = 屏幕正中）。
+
+---
+
+## 7. 本轮产物
+
+```text
+firmware 5a728a3e9c99807367ec94c9d680210c600ab5d1d4bdf5cb7c9aa2336694e36c  (192 MiB + 窗口内 sidecar)
+kernel   ce7d7bb6cdbbe9a3cd0de06f4c53a7b4c6e909ee00ad21a07f0bd1cec0f45f72  (Data wait + ready/bytes 诊断)
+kernel   c3fd801369ac3e2ee89bdd09ae4ffbca1775b4cdb852aa4732b6892039376f0e  (Data wait，无 ready 诊断)
+boot     d444465f9cc87dde28b10064109e7387954118a592b4a3856a623abb2d0d15b9  boot-H236cm.img
+boot     af2f54bd87a1f38f9af732e7460aedf908822f618f7989bbb116e20b3b8383f6  boot-H236cl.img
+```

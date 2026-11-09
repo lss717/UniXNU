@@ -11484,6 +11484,100 @@ probe 也重建了：`patch-xnu-entry-probe.py` 增加 `--band`，把 stage 1 �
    1/128 绿条是否出现，以区分 EBS 是否返回）。
 3. 拿到 TWRP 的 `h103log-H236*.bin` 再确认 `PE_init`/`kprintf`/`panic`。
 
+### H236cf–H236cj：探针把卡点钉在“开 MMU 之后、arm_init 之前”（2026-11-09）
+
+H236ce 的入口探针（`--no-reset --band 8`）实测：屏幕正中蓝色横带出现、顶部品红带
+也出现，菜单干净。说明：
+
+- `ExitBootServices` 返回、`DarwinEnter` 执行（绿条）；
+- XNU `_start` 执行（蓝带，x0=boot_args 有效，能读 `boot_args->Video`）；
+- 执行到 `msr SCTLR_EL1, x0` 之前（品红带）。
+
+随后：
+
+| 探针 | 结果 | 含义 |
+| --- | --- | --- |
+| H236cf `reset 6 s after MMU on` | 手机自己重启进 Android | 开 MMU 之后的复位点被执行（此时仍在物理地址上跑） |
+| H236cg `--reset-after _arm_vm_init`（`_arm_init` 内） | 不重启，停在 绿/品红/蓝 | `_arm_vm_init` 没有返回 |
+| H236ch `--reset-at _arm_vm_init` | 只有绿条，不重启 | `_arm_vm_init` 入口都没到 |
+
+结论：卡点在 `msr SCTLR_EL1, x0` 之后、`_arm_vm_init` 之前，即
+`start_first_cpu` 后半段/`arm_init` 入口。
+
+**根因假设（H236cj）**：XNU 的 `start_first_cpu` 用 2 MiB block 建初始页表，
+要求物理基址与 `__TEXT` 虚拟地址在 2 MiB 内的偏移一致（都是 `0x4000`）。
+H236bs 的固定窗口列表先命中 `0xA0000000`，而 map-walk 路径本来会算
+`ALIGN_VALUE(base, BLOCK_SIZE) + (Kernel->Base & (BLOCK_SIZE-1))` = `0xA0004000`。
+基址少了 `0x4000` 时，开 MMU 后按 VA 跳 `arm_init` 会落到错误的物理页 → 取指异常/挂死；
+而开 MMU 后的前几条指令仍在物理地址上（identity mapping），所以 H236cf 的复位点能到。
+
+H236cj 修正：固定列表的每个候选也加 `(Kernel->Base & (BLOCK_SIZE - 1))`，
+192 MiB 窗口落在 `0xA0004000`。产物：
+
+```text
+firmware def0f2c717c5db07fbabb5da7336a2504cb9404cb6a8652e6cc60edb0ca11488
+probe    ea0b6e1f081dd66054228dc584c9354e9c0562b7e01d9e01dce4445d7be1a171  boot-H236cj-probe.img（_arm_vm_init 入口复位）
+clean    175ffa2d166b4f5fd27e6aeb6eb6aaaaa94899d1ac02a422c8883887e3bfdfbf  boot-H236cj.img（真内核）
+```
+
+判定：H236cj-probe 若启动后立即自己重启 → `arm_vm_init` 已进入，基址就是主因，
+接着用 `boot-H236cj.img` 看真内核能走多远（下一步是 `serial_init`/`kprintf` 或
+`arm_vm_init` 内二分）。
+
+### H236cj–H236cm：2 MiB 基址修正、sidecar 回窗口、构建坑固化（2026-11-10）
+
+H236cf–H236ci 的探针结论（全部实测）：
+
+| 探针 | 结果 | 结论 |
+| --- | --- | --- |
+| `--no-reset --band 8` | 屏幕正中蓝带 + 顶部品红带 | `_start` 执行、执行到开 MMU 前 |
+| `reset 6 s after MMU on` | 手机自己重启 | 开 MMU 之后的复位点能到 |
+| `--reset-after _arm_vm_init` | 不重启 | `_arm_vm_init` 没返回 |
+| `--reset-at _arm_vm_init` | 只有绿条，不重启 | `_arm_vm_init` 入口都没到 |
+
+H236cj 修正 `AllocateWindow()` 的固定候选：也加
+`(Kernel->Base & (BLOCK_SIZE - 1))`（`__TEXT` 的 2 MiB 内偏移 `0x4000`），
+192 MiB 窗口从 `0xA0000000` 移到 `0xA0004000`。之后
+`--reset-at _arm_vm_init` **立即触发重启**，真内核第一次跑进 XNU 并打印日志。
+
+真内核 H236cj 卡在：
+
+```text
+panic(cpu 0 caller 0xfffffff0077802934):
+  offline scratch Data mount failed: 2 @kern_exec.c:8679
+```
+
+H236ck 给 Data seed 查询加有限重试（600 × 100 ms）；实测仍失败，且
+`NATIVE_H82_DATA_WAIT` 一直等到 550（55 s）。H236cl 把 H236cc 强制
+`LowSidecars = TRUE` 的改动回退：XNU 的 `gPhysBase/gPhysSize` 来自
+`boot_args->physBase/memSize`（192 MiB 窗口），`NativeRamBlock` 拒绝范围外的
+ramdisk（低 4 GiB 的 `0xF9xxxxxx`），所以 sidecar 必须留在窗口内；
+只有 128 MiB 回退才用低 4 GiB。H236cm 又在等待行打印
+`ready=/bytes=`，用于区分“ramdisk 没交付”和“APFS 卷没发布”。
+
+构建环境（详见
+`plans/oneplus5-cheeseburger/diagnostics/build-environment-2026-11-10.md`）：
+
+- `~/run-h103n-build.sh` 改为仓库内 `scripts/macos-build-kernel.sh`
+  （旧脚本备份 `.bak-20261110`）：自动判断是否需要重新 bootstrap
+  （`XNU_SKIP_PATCH_LOOP`），并在 Xcode 26.2 缺 `availability.pl` 时
+  复用上一次生成的 `_symbol_aliasing.h`；
+- 坑：未打补丁的新 clone + `XNU_SKIP_PATCH_LOOP=1` 会报
+  `pmap.h duplicate member 'reserved10'`、缺 `CodeSignature/Entitlements.h`；
+- 坑：`out/.../tree/scripts/` 是复制目录，不是软链；
+- 坑：h103 ring 约 30 s 才开始写，20 s 前的探针/panic 不会落库；
+- 坑：H236cc 的照片只截到中段，顶部绿条/蓝条看不到，差点误判“内核没执行”。
+
+产物：
+
+```text
+firmware 5a728a3e9c99807367ec94c9d680210c600ab5d1d4bdf5cb7c9aa2336694e36c
+kernel   ce7d7bb6cdbbe9a3cd0de06f4c53a7b4c6e909ee00ad21a07f0bd1cec0f45f72
+kernel   c3fd801369ac3e2ee89bdd09ae4ffbca1775b4cdb852aa4732b6892039376f0e
+boot     d444465f9cc87dde28b10064109e7387954118a592b4a3856a623abb2d0d15b9  boot-H236cm.img
+boot     af2f54bd87a1f38f9af732e7460aedf908822f618f7989bbb116e20b3b8383f6  boot-H236cl.img
+```
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。

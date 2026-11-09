@@ -1,0 +1,109 @@
+#!/bin/bash
+# Build the OnePlus 5 (cheeseburger) 4 KiB XNU kernel on the macOS builder.
+#
+# This is the tracked copy of the host-local ~/run-h103n-build.sh wrapper. It
+# carries two lessons that cost H236ck/H236cm a full build each:
+#
+# 1. XNU_SKIP_PATCH_LOOP=1 only makes sense on an ALREADY PATCHED xnu-work
+#    tree. After deleting .cache/xnu-work the baseline script clones the feed
+#    and, with the skip flag set, never applies patches/xnu. The unpatched
+#    source then fails on unrelated-looking errors (duplicate pmap fields,
+#    missing <CodeSignature/Entitlements.h>). Decide the flag from the tree,
+#    not from a constant.
+#
+# 2. Xcode 26.2's iPhoneOS SDK no longer ships
+#    usr/local/libexec/availability.pl, so the bootstrap rule that regenerates
+#    bsd/sys/_symbol_aliasing.h fails ("Unable to locate ...availability.pl").
+#    The header only depends on XNU's own headers and the previous build left
+#    a good copy in build/xnu/ios-obj, so keep that copy and make it newer
+#    than the generator script after the clone.
+#
+# Usage: bash macos-build-kernel.sh [--clean]
+#   --clean   delete .cache/xnu-work first (full re-bootstrap with patches)
+
+set -e
+
+TREE="$HOME/UniXNU/out/cheeseburger/tree"
+WORK="$TREE/.cache/xnu-work"
+FEED="$TREE/refer/xnu"
+GEN="$TREE/build/xnu/ios-obj/bsd/sys/_symbol_aliasing.h"
+PATCH_MARKER="H82_DATA_WAIT"   # added by patches/xnu/offline-owner-systemos-mount.patch
+
+if [ "${1:-}" = "--clean" ]; then
+  rm -rf "$WORK"
+fi
+
+# Bootstrap decision: a tree is reusable only when it is a git checkout that
+# already carries our patch set. Anything else is rebuilt from the feed.
+NEED_PATCH=0
+if [ ! -d "$WORK/.git" ]; then
+  NEED_PATCH=1
+elif ! grep -q "$PATCH_MARKER" "$WORK/bsd/kern/kern_exec.c" 2>/dev/null; then
+  NEED_PATCH=1
+fi
+if [ "$NEED_PATCH" = 1 ]; then
+  rm -rf "$WORK"
+  # Pre-clone here so the generated-header fallback below runs after the clone
+  # (the baseline script clones with the same command when the tree is absent).
+  git clone --shared "$FEED" "$WORK"
+  export XNU_SKIP_PATCH_LOOP=0
+else
+  export XNU_SKIP_PATCH_LOOP=1
+fi
+
+export PATH=/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin:/opt/local/bin:/opt/local/libexec/llvm-20/bin:/opt/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+
+cd "$TREE"
+export XNU_TRUST_CACHE_RUNTIME=0
+export XNU_OWNER_CACHE_MOUNT=1
+export XNU_OWNER_CACHE_STARTUP=1
+export XNU_OWNER_CACHE_CARRIER=1
+export XNU_OWNER_CACHE_CARRIER_WRONG_UUID=0
+export XNU_NATIVE_CS_HASH_CACHE=1
+export XNU_OWNER_UNION_SYSTEMOS=0
+export XNU_OWNER_PREBOOT_LAYOUT=1
+export XNU_OWNER_PREBOOT_ROOT_UNION=0
+export XNU_BRINGUP_CACHE_MOUNT=1
+export XNU_OWNER_DATA_MOUNT=1
+export XNU_OWNER_BOOT_MANIFEST=0
+export XNU_OWNER_DATA_VOLATILE=1
+export XNU_OWNER_CRYPTEX_FILES=0
+export XNU_NATIVE_UFS=0
+export XNU_NATIVE_UFS_PROBE=1
+export XNU_OWNER_ROOT_AUDIT=0
+export XNU_VERIFIED_ROOT_PROBE=0
+export XNU_OWNER_ROOT_TRUST=0
+export XNU_NATIVE_VIRTIO_BLOCK=0
+export XNU_SOURCE_CORECRYPTO14=1
+export XNU_NATIVE_RAM_BLOCK=1
+export XNU_NATIVE_MOBILE_DISPLAY=0
+export XNU_NATIVE_LEGACY_DISPLAY=1
+export XNU_NATIVE_AES=0
+export XNU_NATIVE_ADRENO=0
+export XNU_ARM_DT_PLATFORM=1
+export XNU_ARMCPU=1
+export XNU_SOURCE_PTHREAD=1
+export XNU_NATIVE_ARCH_TIMER=1
+export XNU_DT_PANIC_REGION=1
+export XNU_BOOT_PROGRESS=0
+export XNU_SOURCE_MOCKFS=1
+export XNU_CRYPTO_BOOTSTRAP=source
+export XNU_OWNER_DATA_VOLUME_UUID="1A4CE9DF-34B6-4B52-9744-5052A9D20B23"
+export XNU_SHENG_PMGR=1
+
+# The SDK's availability.pl is gone in Xcode 26.2; the fakeroot build in
+# build-xnu-4k-baseline.sh only runs when .cache/fakeroot lacks it. When both
+# are missing, reuse the previous generated header (same XNU revision).
+SDK_PL="$(xcrun --sdk iphoneos --show-sdk-path)/usr/local/libexec/availability.pl"
+FAKE_PL="$TREE/.cache/fakeroot/usr/local/libexec/availability.pl"
+if [ ! -x "$SDK_PL" ] && [ ! -x "$FAKE_PL" ] && [ -f "$GEN" ]; then
+  touch "$GEN"
+fi
+
+cd "$TREE/refer"
+[ -e xnu/.git ] || { [ -d xnu ] && [ ! -L xnu ] && mv xnu "xnu.partial.$(date +%s)" 2>/dev/null || true; ln -sfn "$HOME/UniXNU/out/feeds/xnu-0b4b910d" xnu; }
+ln -sfn "$HOME/UniXNU/out/feeds/libdispatch-50d3508d" libdispatch
+ln -sfn "$HOME/UniXNU/out/feeds/libplatform-08d11127" libplatform
+cd "$TREE"
+exec bash scripts/build-xnu-4k-baseline.sh

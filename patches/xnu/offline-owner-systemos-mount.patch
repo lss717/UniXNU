@@ -1,14 +1,15 @@
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -96,6 +96,7 @@
+@@ -96,6 +96,8 @@
  #include <sys/vnode_internal.h>
  #include <sys/file_internal.h>
  #include <sys/stat.h>
 +#include <sys/fcntl.h>
++#include <IOKit/IOLib.h>
  #include <sys/uio_internal.h>
  #include <sys/acct.h>
  #include <sys/exec.h>
-@@ -183,7 +184,7 @@
+@@ -183,7 +185,7 @@
  
  #include "kern_exec_internal.h"
  
@@ -17,7 +18,7 @@
  
  #include <mach/exclaves.h>
  
-@@ -7013,8 +7014,493 @@
+@@ -7013,8 +7015,504 @@
   *		word width of the kernel. Once the self-exec completes, the
   *		initproc might be different.
   */
@@ -251,6 +252,8 @@
 +#error Supply the observed scratch volume UUID for the IOKit backend
 +#endif
 +extern int native_ram_block_volume_seed(const char *, dev_t *, char *, size_t, uint64_t *, uint64_t *, uint8_t *);
++extern volatile uint32_t native_ram_block_ready;
++extern volatile uint64_t native_ram_block_bytes;
 +#endif
 +extern dev_t mdevlookup(int);
 +extern int mdevgetrange(int, uint64_t *, uint64_t *);
@@ -274,8 +277,17 @@
 +#if defined(XNU_NATIVE_RAM_BLOCK) && XNU_NATIVE_RAM_BLOCK
 +	/* The typed provider supplies logical seed identity for both dense and
 +	 * sparse media. A sparse disk has no contiguous logical-byte address. */
-+	if (!native_ram_block_volume_seed(XNU_OWNER_DATA_VOLUME_UUID, &device, device_path,
-+	    sizeof(device_path), &base, &size, native_owner_data_seed_sha256)) { error = ENOENT; goto done; }
++	/* H236ck: the scratch RAM disk and its APFS volume publish around 28-37 s
++	 * while load_init_program can run at ~20 s. Wait for the volume instead of
++	 * panicking on that boot-order race (600 x 100 ms). */
++	for (unsigned wait = 0; ; wait++) {
++		if (native_ram_block_volume_seed(XNU_OWNER_DATA_VOLUME_UUID, &device, device_path,
++		    sizeof(device_path), &base, &size, native_owner_data_seed_sha256)) break;
++		if (wait >= 600) { error = ENOENT; goto done; }
++		if ((wait % 50) == 0) printf("NATIVE_H82_DATA_WAIT: %u ready=%u bytes=%llu\n",
++		    wait, native_ram_block_ready, (unsigned long long)native_ram_block_bytes);
++		IOSleep(100);
++	}
 +	/* The typed provider's disk may be far larger than 2 GiB (a persistent Data disk keeps only its seed's nonzero pages). */
 +	if (!size || size > UINT64_C(0x10000000000) || (size & 4095)) goto done;
 +#else
@@ -512,7 +524,7 @@
  {
  	int retval[2];
  	int error;
-@@ -7086,7 +7572,7 @@
+@@ -7086,7 +7584,7 @@
  	 */
  	init_exec_args.fname = argv0;
  	init_exec_args.argp = scratch_addr;
@@ -521,7 +533,7 @@
  
  	/*
  	 * So that init task is set with uid,gid 0 token
-@@ -7148,6 +7634,15 @@
+@@ -7148,6 +7646,15 @@
  	mach_vm_size_t map_page_size = vm_map_page_size(map);
  
  	(void) mach_vm_allocate_kernel(map, &scratch_addr, map_page_size, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE);
@@ -537,7 +549,7 @@
  #if CONFIG_MEMORYSTATUS
  	(void) memorystatus_init_at_boot_snapshot();
  #endif /* CONFIG_MEMORYSTATUS */
-@@ -7162,7 +7659,7 @@
+@@ -7162,7 +7669,7 @@
  
  		if (is_release_suffix) {
  			printf("load_init_program: attempting to load /sbin/launchd\n");
@@ -546,7 +558,7 @@
  			if (!error) {
  				return;
  			}
-@@ -7173,7 +7670,7 @@
+@@ -7173,7 +7680,7 @@
  			strlcat(launchd_path, launchd_suffix, sizeof(launchd_path));
  
  			printf("load_init_program: attempting to load %s\n", launchd_path);
@@ -555,7 +567,7 @@
  			if (!error) {
  				return;
  			} else if (error != ENOENT) {
-@@ -7186,7 +7683,7 @@
+@@ -7186,7 +7693,7 @@
  	error = ENOENT;
  	for (i = 0; i < sizeof(init_programs) / sizeof(init_programs[0]); i++) {
  		printf("load_init_program: attempting to load %s\n", init_programs[i]);
