@@ -18,6 +18,12 @@
 #    a good copy in build/xnu/ios-obj, so keep that copy and make it newer
 #    than the generator script after the clone.
 #
+# 3. The prelinked kernel is extremely sensitive to the Legacy display archive
+#    contents (H173/H174, repeated at H236ct): a kernel built against a stale or
+#    half-rebuilt libNativeLegacyDisplay.late.a can take an "Undefined kernel
+#    instruction" in an unrelated text address before launchd. Rebuild the
+#    archive whenever its sources are newer.
+#
 # Usage: bash macos-build-kernel.sh [--clean]
 #   --clean   delete .cache/xnu-work first (full re-bootstrap with patches)
 
@@ -91,6 +97,17 @@ export XNU_SOURCE_MOCKFS=1
 export XNU_CRYPTO_BOOTSTRAP=source
 export XNU_OWNER_DATA_VOLUME_UUID="1A4CE9DF-34B6-4B52-9744-5052A9D20B23"
 export XNU_SHENG_PMGR=1
+
+# Keep the display archive in step with its sources. The A540 C3 / Legacy
+# display objects are linked into the prelinked kernel; rebuilding only XNU
+# after touching drivers/NativeMobileDisplay leaves a stale archive and the
+# boot dies with a bogus "Undefined kernel instruction" (H236ct, H173/H174).
+DISPLAY_ARCHIVE="$TREE/build/native-legacy-display/libNativeLegacyDisplay.late.a"
+if [ ! -f "$DISPLAY_ARCHIVE" ] || \
+   [ -n "$(find -L "$HOME/UniXNU/drivers/NativeMobileDisplay" -type f -newer "$DISPLAY_ARCHIVE" -print -quit 2>/dev/null)" ]; then
+  echo "rebuilding the legacy display archive (sources newer than $DISPLAY_ARCHIVE)"
+  SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)" python3 scripts/build-op5-legacy-display.py
+fi
 
 # The SDK's availability.pl is gone in Xcode 26.2; the fakeroot build in
 # build-xnu-4k-baseline.sh only runs when .cache/fakeroot lacks it. When both

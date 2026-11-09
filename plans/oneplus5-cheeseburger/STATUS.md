@@ -11578,6 +11578,52 @@ boot     d444465f9cc87dde28b10064109e7387954118a592b4a3856a623abb2d0d15b9  boot-
 boot     af2f54bd87a1f38f9af732e7460aedf908822f618f7989bbb116e20b3b8383f6  boot-H236cl.img
 ```
 
+### H236cn–H236ct：Data 挂载、内存预算、预链接归档（2026-11-10）
+
+H236cn：`ramPackedLayout()` 要求传入长度正好结束（`cursor == n`），窗口内布局
+把 packed seed 按页对齐成 3223552 导致 `ready=0`。改为 packed 用
+`Request->RamdiskSize` 原值，dense 才对齐。Data 挂载随后成功。
+
+H236co：Data 挂载通过后出现
+`memorystatus_jetSam_thread: no victim available pages:2306` —— `memSize`
+仍等于 192 MiB 窗口，jetsam 又回来了（H78/H103ay 同类）。
+
+H236cp–cs 内存预算：
+
+- `TopOfKernelData = Address + WindowSize`（整个窗口保留）；
+- `MemorySize/Actual = ManagedSize`（窗口所在连续 DRAM run 的末尾 − Address）；
+- `ManagedEnd` 只取紧贴窗口结尾的 conventional run（取“最大末尾”会选中
+  4 GiB 以上高内存，把含洞的 7 GiB 交给 XNU，内核在 console 前挂死）；
+- ZAP 放窗口顶部，且必须向下对齐
+  （`ALIGN_VALUE` 会向上取整到窗口外）；
+- `Used` 检查预留 2 MiB。
+
+H236cq（临时 512 MiB 上限）：用户态进程起来
+（`backboardd`/`lockdownd`/`sharingd`/`imagent`），但随后
+`Undefined kernel instruction` panic。
+
+H236cs（完整 1.5 GiB run）：同一个 panic，
+`pc=0xfffffff0074c7c00 instr=807ff080 @sleh.c:1674`。
+
+隔离：**新固件 + H174 payload（旧 kernel/prelink）** 启动到 launchd 并运行
+1182 s，`Undefined kernel instruction` 为 0 → 固件没问题，回归在 kernel/prelink
+（H173/H174 同类）。
+
+H236ct：Mac 上重建 `libNativeLegacyDisplay.late.a` → 重编内核 + prelink，
+panic 消失，内核到 launchd。`scripts/macos-build-kernel.sh` 现在会在
+`drivers/NativeMobileDisplay` 比归档新时自动重建归档。
+
+产物：
+
+```text
+firmware abf2adb574d4b5513b3972be38841e80c64775da0c75881c5779d5025d2d8e3c
+kernel   e30750dc1e934e56393d3d3a0bb94fee2526a60f64964c7d02176dfb270c0429
+boot     c1c823a751c34ed48176a6095a3767872dbdc35df5ae273c3301304f2f504b17  boot-H236ct.img
+```
+
+下一步：用这条 launchd 基线确认 C3/ZAP/PAS（`NATIVE_GPU_C3: zap auth rc=0`、
+`zap unsecure … trust=00000000`、submit probe），再进 C4/C5。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。

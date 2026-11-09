@@ -143,3 +143,81 @@ kernel   c3fd801369ac3e2ee89bdd09ae4ffbca1775b4cdb852aa4732b6892039376f0e  (Data
 boot     d444465f9cc87dde28b10064109e7387954118a592b4a3856a623abb2d0d15b9  boot-H236cm.img
 boot     af2f54bd87a1f38f9af732e7460aedf908822f618f7989bbb116e20b3b8383f6  boot-H236cl.img
 ```
+
+---
+
+## 8. packed ramdisk 的长度必须精确（H236cn）
+
+`NativeRamBlock::ramPackedLayout()` 最后要求 `cursor == n`：传入的字节数必须
+**正好等于** DBRDISK1 的编码长度。窗口内布局原来按页对齐：
+
+```c
+RamdiskBytes = ALIGN_VALUE (KeepPacked ? Request->RamdiskSize : RamdiskExpandedSize, EFI_PAGE_SIZE);
+```
+
+3,219,600 → 3,223,552，`ramPackedLayout` 失败 → `NativeRamBlock::start()`
+返回 false → `ready=0` → `native_owner_data_prepare` 等到超时后
+`offline scratch Data mount failed: 2`。
+
+修正：packed seed 用 `Request->RamdiskSize` 原样传递，只有 dense 才页对齐；
+`TrustCacheAddress` 单独 `ALIGN_VALUE(..., 16 KiB)`。
+
+## 9. 内存预算：不要把 `boot_args->memSize` 当成窗口大小（H236cp/cs）
+
+三处叠加造成了内存回归：
+
+1. `WindowSize > 192 MiB` 被砍到 192 MiB（`board.toml` 要的是 4 GiB）；
+2. `Used` 检查；
+3. 临时的 512 MiB `ManagedSize` 上限。
+
+`H236co` 的 `memorystatus_jetSam_thread: no victim available pages:2306`
+就是 H78/H103ay 那个 jetsam 问题回来了：XNU 只管理 192 MiB。
+
+约束与修正：
+
+- `arm_vm_init()` 用 `gPhysBase = args->physBase`、`gPhysSize = args->memSize`，
+  并且只把 **`[topOfKernelData, gPhysBase+memSize)`** 当空闲页；
+- 因此 `TopOfKernelData = Address + WindowSize`（把整个窗口保留），
+  `MemorySize = MemorySizeActual = ManagedSize`（窗口所在的连续 DRAM run 末尾 − Address）；
+- `ManagedEnd` 必须只取**紧贴窗口结尾**的那个 conventional run；取“最大的
+  conventional 末尾”会选中 4 GiB 以上的高内存（8 GB 机器），把含空洞的
+  7 GiB 范围交给 XNU，内核在 console 之前挂死（H236cp 绿条卡住）；
+- ZAP 放到窗口顶部（`TopOfKernelData` 覆盖它），并且必须**向下**对齐：
+  `ALIGN_VALUE(Address + WindowSize - 2 MiB, 1 MiB)` 会向上取整到窗口外
+  （0xABF00000..0xAC100000），要用
+  `(Address + WindowSize - 2 MiB) & ~(1 MiB - 1)`；
+- `Used` 检查要给 ZAP 留 2 MiB：
+  `Used > WindowSize - BLOCK_SIZE - 2 MiB` 才算失败。
+
+结果：H236cs（完整 run，约 1.5 GiB）不再 jetsam，用户态进程能起来
+（`backboardd`/`lockdownd`/`sharingd`/`imagent`）。
+
+## 10. Undefined kernel instruction = 预链接归档不匹配（H236ct）
+
+H236cs 在用户态起来后又 panic：
+
+```text
+Undefined kernel instruction: pc=0xfffffff0074c7c00 instr=807ff080 @sleh.c:1674
+```
+
+与 H170/H173 同签名：pc 落在合法代码段，但镜像里该地址不是这条指令 → 间接
+跳转/PAC 目标不对，不是真的执行坏指令。
+
+隔离方法：**新固件 + H174 payload（旧 kernel/prelink）** 启动 → 完整到
+launchd 并运行 1182 s，`Undefined kernel instruction` 为 0 → 固件没问题。
+
+修正：在 Mac 上重新执行 `scripts/build-op5-legacy-display.py`（重建
+`libNativeLegacyDisplay.late.a`），再重编内核 + prelink；
+`Undefined kernel instruction` 消失，内核到 launchd。
+
+`scripts/macos-build-kernel.sh` 现在会检查
+`build/native-legacy-display/libNativeLegacyDisplay.late.a`：只要
+`drivers/NativeMobileDisplay` 有更新的文件，就先重建归档再编内核。
+
+产物：
+
+```text
+firmware abf2adb574d4b5513b3972be38841e80c64775da0c75881c5779d5025d2d8e3c  (完整 run + ZAP 顶部)
+kernel   e30750dc1e934e56393d3d3a0bb94fee2526a60f64964c7d02176dfb270c0429  (重编 display 归档)
+boot     c1c823a751c34ed48176a6095a3767872dbdc35df5ae273c3301304f2f504b17  boot-H236ct.img
+```
