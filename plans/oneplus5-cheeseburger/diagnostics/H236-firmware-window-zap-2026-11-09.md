@@ -632,7 +632,8 @@ H236cc 的屏幕照片只截到画面中段：顶部 1/16 的绿色 handoff chec
 
 ### 8.3 H236cd/H236ce 改动
 
-- 屏上成功诊断全部删除（`ZAP LOW`/`WIN`/`IMG`/`USED`/`COPY DONE`/
+- 屏上成功输出全部删除：`DARWINBOOT: fixed window type`、
+  `DARWINBOOT: low alloc base` 以及大字诊断（`ZAP LOW`/`WIN`/`IMG`/`USED`/`COPY DONE`/
   `ARGS ZERO`/`KERNEL|TREE|TRUST|ADDON|POLICY|RAMDISK START|DONE`），
   `DARWINBOOT: ARM64/video/zap/command line/inputs validated` 与整屏
   `\fDARWINBOOT: hand-off` DEBUG 块删除；失败诊断
@@ -685,11 +686,11 @@ mcopy -o -i /tmp/opencode/payload-H236ce-probe.img \
 产物：
 
 ```text
-firmware 16c85e11f49a7f5aa89106d9b2561e185a2a17b8d2a70aa7f8e662612ca13aee
-boot     5732510f5e2fcd341870743b30208512a9411777637186bd065d947ab507405f  boot-H236ce.img
+firmware a6c8e77be21c72af78674da902d8dea3ac4444dc0341fe19f302ea1be1249827
+boot     318151950c74980ffb725f4b571a55f52a4c74f1950fe1b26124b3769b3f302c  boot-H236ce.img
 probe k  983c17f5748c6acb7f2b6ae2d90a8dbcd076b88ebe061c3a4a5da9a8425189d9
 probe p  b09d65fa8032bb0275cdbd48a125e6d8fa97a02d33ec0158b271b6f2751b4e72
-probe b  610f551c8b0e4fecc94691f9a47bc43174e10f4375b9f6daf4ae264a15139c0f  boot-H236ce-probe.img
+probe b  a4863f4518e573317e87f4ca981b3517c29ca57cc713dcb5e9904decebbb7d8d  boot-H236ce-probe.img
 ```
 
 ### 8.5 坑
