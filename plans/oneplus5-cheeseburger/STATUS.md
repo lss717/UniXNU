@@ -4,8 +4,8 @@
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
 - 当前阶段：**C3 完成（2026-11-09）。ZAP/PAS 全部 rc=0，但 XNU 运行时拿不到
-  低 4G + 1 MiB 对齐的 ZAP 镜像；H236bi 已让 DarwinBoot 在 kernel window 内
-  预留并传 `zap-base`，待实测 trust 是否清零。**
+  低 4G + 1 MiB 对齐的 ZAP 镜像；H236bj/bk 已修正 4 GiB window 检查并在
+  kernel window 内预留 ZAP，H236bl 待实测 trust 是否清零。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,9 +17,10 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236bi 的 boot-reserved ZAP。** DarwinBoot 已在 kernel window 内
-  预留 2 MiB、低 4G、1 MiB 对齐的 ZAP 区并追加 `zap-base`；C3 用
-  `IOMemoryDescriptor` 映射。接下来看 `zap auth rc=0` 后
+- 当前 gate：**H236bl 的 boot-reserved ZAP 与菜单。** H236bi 因 4 GiB window
+  的“整段在 4G 以下”检查失败停在菜单；H236bj/bk 改为只要求 window 起点和
+  ZAP 地址在 4G 以下。H236bl 还包含 `OnePlus 5 iOS` / `[ios 17.7.11]` /
+  `Restart` / `Shut down` 菜单。接下来看 `zap auth rc=0` 后
   `zap unsecure ... trust=00000000` 和数据写探针。SMMU 几何和 CP 配置已固定：
   ID0=48016403、ID1=20008003、ID2=00007511。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
@@ -11181,6 +11182,37 @@ H236bi boot    554f77822c2796c840e7cb27ace456b491b1db4b730616a198a8dcc2e3a55584
 镜像在 `/tmp/opencode/boot-H236bi.img`，待实测。期望 C3 看到
 `zap alloc mdt=0x8… image=0x8…`（低于 4 GiB、image 1 MiB 对齐），
 `zap auth rc=0`，`zap unsecure ... trust=00000000`，然后数据写探针成功。
+
+### H236bi 结果与 H236bj/H236bk：4 GiB window 与菜单（2026-11-09）
+
+H236bi 实测停在 UEFI 菜单。原因不是 ZAP 代码：
+
+- `board.toml` 的 `[payload.adt] owned_memory_size = "0x100000000"`，即
+  DarwinBoot 的 kernel window 是 **4 GiB**；
+- H236bi 的新检查要求 `Candidate + WindowSize <= 4 GiB`，4 GiB 的 window
+  永远不满足，`AllocateWindow` 失败，DarwinBoot 返回，UniXNU 回到菜单。
+
+修正：只要求 **window 起点**（`Candidate`）在 4 GiB 以下；window 可以跨过
+4 GiB。ZAP 区仍由 `ZapAddress + 2 MiB <= 4 GiB` 检查，实际落在 window 前部
+（~0x8A000000）。
+
+同时完成菜单改动：
+
+- `board.toml` `title = "OnePlus 5 iOS"`；
+- UniXNU 的 xnu 类型标签从 `[xnu]` 改为 `[ios 17.7.11]`（`Ui.c`）；
+- payload 增加 `Restart`（reset）和 `Shut down`（shutdown）两个 action；
+- `payload.py` 支持 `[[payload.menu]]`，设备仓库 `board.toml` 已写英文标题。
+
+产物：
+
+```text
+firmware H236bk 869941412eea46170822a72a3da692273a9b4ec4e310057ba0febfbcc85fc907
+H236bl payload  97f3ac5f6650fd4d590bda0b21808af0ac9fd583a0927fa9a971a482c06833a2
+H236bl boot     d44791aa3416bc9311bdc8e50cacb9bd0f27d5c3c1ecb098a73ec504f6f9bdf8
+```
+
+镜像在 `/tmp/opencode/boot-H236bl.img`。由于手机停在 UEFI 菜单，需要先重启
+到 TWRP/fastboot，再 `fastboot boot` 这个镜像。
 
 ## 更新规则
 

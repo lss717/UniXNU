@@ -157,10 +157,14 @@ def build(ctx, kernel=None):
     run(command, cwd=ctx.tree, env=dict(os.environ, UNIXNU_UEFI=str(ctx.uefi or '')), log_file=ctx.logs / 'payload-adt.log')
     initrd = 'initrd = "Payloads/scratch-data.img"\n' if data else ''
     loader = '' if spec.get('loader', 'firmware') == 'firmware' else '[[driver]]\npath = "Payloads/DarwinBoot.efi"\n'
+    menu = spec.get('menu', [])
+    menu_entries = ''.join(
+        f'[[entry]]\nid = "{item["id"]}"\ntitle = "{item["title"]}"\ntype = "action"\naction = "{item["action"]}"\n'
+        for item in menu)
     (stage / 'EFI/UniXNU/unixnu.toml').write_text(
         f'version = 1\n[boot]\ntimeout = {spec.get("timeout", 3)}\ndefault = "xnu"\n[kits]\nautoload = false\n{loader}'
         f'[[entry]]\nid = "xnu"\ntitle = "{spec.get("title", "UniXNU")}"\ntype = "xnu"\npath = "Payloads/kernel.macho"\n{initrd}'
-        f'args = "{line}"\n')
+        f'args = "{line}"\n{menu_entries}')
     for path in [stage, *stage.rglob('*')]:
         os.utime(path, (EPOCH, EPOCH))
     size = int(spec.get('size_mib', 192))

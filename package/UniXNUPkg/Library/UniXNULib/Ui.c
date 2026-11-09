@@ -196,7 +196,7 @@ TypeTag (
     case UniXNUEntryLinux:
       return L"linux";
     case UniXNUEntryXnu:
-      return L"xnu";
+      return L"ios 17.7.11";
     case UniXNUEntryAction:
       return L"action";
     default:
