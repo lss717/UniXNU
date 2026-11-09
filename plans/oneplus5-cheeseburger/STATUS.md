@@ -4,8 +4,8 @@
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
 - 当前阶段：**C3 完成（2026-11-09）。RBBM reset、SMMUv2、CP configure、
-  ME_INIT、GPMU 固件 `BABEFACE` 全部通过；提交包被 CP 消费但数据写不落内存
-  （ring 页也不落），H236ay 用 protected-mode 包裹和 trust/ME 状态定位。**
+  ME_INIT、GPMU 固件 `BABEFACE` 全部通过；H236ay 确认 CP 仍在 secure 模式
+  （trust=1），数据写被丢弃，H236az 测试 host 侧清 trust。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,12 +17,12 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236ay 的 data-write 状态。** H236ax 连 ring 页也写不进，且无
-  CP fault；H236ay 用 `CP_SET_PROTECTED_MODE(0/1)` 包裹写入，并打印
-  `RBBM_SECVID_TRUST_CNTL`、`CP_ME_CNTL`、`CP_ME_STAT_DATA`。若 trust 非 0，
-  则需要 ZAP/secure 转换；若 protected 状态导致，则调整提交包裹。通过后进入
-  C4/C5。SMMU 几何和 CP 配置已固定：ID0=48016403、ID1=20008003、
-  ID2=00007511。
+- 当前 gate：**H236az 的 secure 解除。** H236ay 的 `trust=00000001` 证明 CP
+  在 secure 模式，非安全数据写被丢弃。H236az 从 AP 侧写
+  `RBBM_SECVID_TRUST_CNTL=0` 并读回；若读回 0 且数据写成功，则 secure 可由
+  host 解除；否则进入 ZAP/PAS（`a540_zap.mdt/b00/b01/b02` + SCM PAS +
+  `CP_SET_SECURE_MODE(0)`）。SMMU 几何和 CP 配置已固定：ID0=48016403、
+  ID1=20008003、ID2=00007511。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
 - 当前代码提交：本地 UniXNU `main`（H236an 提交）；NativeMobileDisplay H236an
   （无 flush 的 RBBM 脉冲）；设备仓库 `main` 未变
@@ -10840,6 +10840,35 @@ H236ay boot    7fd1b6814e0f0043258ff45f126d6cc9cce5423f7b90212309e32c7090553203
 ```
 
 镜像在 `/tmp/opencode/boot-H236ay.img`，待实测。
+
+### H236ay 结果与 H236az：CP 仍在 secure 模式（2026-11-09）
+
+H236ay：
+
+```text
+[ 70.152213] submit write rptr=3149/3149 ts=0 value=0 ring=0 done=1
+[ 70.183409] submit diag cpint=0 hwfault=0 fsr=400 rbbm=e0c801c1
+             trust=00000001 me=00000000 mestat=70928000
+```
+
+`RBBM_SECVID_TRUST_CNTL=1`：CP 在 secure 模式，非安全数据写被丢弃，这解释了
+“包被消费、无 fault、但两处写都是 0”。GPMU 的寄存器写和 ring/微码读不受影响。
+
+H236az 先做最便宜的尝试：从 AP 侧写 `RBBM_SECVID_TRUST_CNTL(0xf400)=0`，
+写前后落盘并读回。若读回 0 且数据写成功，secure 状态可由 host 解除；若读回
+仍是 1（或被 TZ 忽略），下一步必须走 ZAP/PAS：
+`a540_zap.mdt/b00/b01/b02` + SCM PAS init/auth + ZAP + `CP_SET_SECURE_MODE(0)`。
+
+产物：
+
+```text
+H236az kernel  cdcee3233800a30354645c92a741963929ec1cfe3fa92c8f4d26eebe080aa94b
+H236az payload 67033d2daefb21bad34c41ac08339611a7dfa39b2d4fef126f62859f7da40b12
+H236az boot    d51d180285f57a7b33a4dcc720f177771a7a8929dbc4b2615a0690f06a0262ad
+```
+
+镜像在 `/tmp/opencode/boot-H236az.img`，待实测。若写 0 直接挂总线，最后一行会是
+`trust write begin`。
 
 ## 更新规则
 
