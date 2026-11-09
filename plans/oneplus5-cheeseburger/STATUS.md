@@ -3,8 +3,9 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
-- 当前阶段：**C1/C2 完成，C3 已打通 SMMU 与 CP 配置，正在复核 RBBM 软复位
-  （H236an，2026-11-09）。**
+- 当前阶段：**C1/C2 完成，C3 已打通 SMMU 与 CP 配置；H236an 确认 RBBM 复位
+  写 1 真挂总线，H236ao 正在补 sagit 的完整 GPUCC/GCC 时钟后复测
+  （2026-11-09）。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -16,11 +17,12 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236an 的 reset 脉冲复测。** 期望日志顺序为
-  `reset pulse begin` → `reset writes done` → `reset pulse released rst=00000000`；
-  若停在 `reset pulse begin`，才说明写 1 真的把总线挂死，下一步再走 UEFI/secure
-  路线。SMMU 几何和 CP 配置已经固定：ID0=48016403、ID1=20008003、
-  ID2=00007511；bootloader 没有留映射，C3 必须自己写 CB0 和 SID0→CB0。
+- 当前 gate：**H236ao 的 reset 复测。** H236an 已确认停在 `reset pulse begin`；
+  H236ao 补上 `gpucc_cxo_clk`/`rbcpr_clk`/`rbbmtimer_clk`、CX/RBCPR reset 解除
+  和 `gcc_gpu_gpll0_clk`。若仍停在 `reset pulse begin`，下一步把
+  `reset → SMMU → configure → CP/GPMU` 移到 UEFI。SMMU 几何和 CP 配置已经固定：
+  ID0=48016403、ID1=20008003、ID2=00007511；bootloader 没有留映射，C3 必须
+  自己写 CB0 和 SID0→CB0。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
 - 当前代码提交：本地 UniXNU `main`（H236an 提交）；NativeMobileDisplay H236an
   （无 flush 的 RBBM 脉冲）；设备仓库 `main` 未变
@@ -10419,6 +10421,45 @@ rm -rf ~/UniXNU/out/cheeseburger/tree/.cache/xnu-work
 
 `~/run-h103n-build.sh` 已加入 `export XNU_SKIP_PATCH_LOOP=1`。本轮旧树备份在
 `~/UniXNU/out/cheeseburger/tree/.cache/xnu-work.partial-h236an`，不要直接再用。
+
+### H236an 结果与 H236ao：补齐 sagit 的 GPUCC/GCC 时钟（2026-11-09）
+
+H236an 实测（`sheng-gpu-power=7`）：
+
+```text
+[ 60.670206] reset halt write me=00000303 vbif=000f0000
+[ 60.754403] reset halt me=00000303 ok=1
+[ 60.836878] reset vbif=000f000f ok=1
+[ 60.919525] reset pulse begin
+（之后无 reset writes done）
+```
+
+去掉了两次写之间的 log/flush 后仍然停在 `reset pulse begin`，所以“写 1 挂总线”
+不是 flush 造成的假象；H236am 的结论成立。
+
+但和 sagit 的 EFI 启动相比，我们的 C2 只开了 gfx3d，缺少 sagit
+`PowerStartup::start()` 里的 GPUCC 时钟：
+
+- `gpucc_cxo_clk`（0x1020 bit0）
+- `rbcpr_clk`（0x1054 bit0）
+- `rbbmtimer_clk`（0x10d0 bit0）
+- CX/RBCPR reset 解除（0x1000=0、0x1050=0）
+- GCC `gcc_gpu_gpll0_clk`（0x5200c bit4）
+
+H236ao 在 C2 的 step 22 和 C3 的 `gpu_reset()` 里补齐这些并使能后读回记录。
+如果 RBBM reset 的握手依赖其中某个时钟，这一步会解开；否则才把整条链搬到 UEFI。
+
+产物（firmware `fw-H103ea` 不变，payload 以 H236an 为基线只换 kernel）：
+
+```text
+H236ao kernel  5d7ef0e87094adf00b59b31cd710128aeb35d56a071f407176984792631a2336
+H236ao payload 399cffc25215c899b74d331ceea61c24f7d2c7ecdee7f2771304d63de1fc6475
+H236ao boot    208bbf773641e3b8e2d49dc3a200eb8534e873748016ff9655ee2e968ff684bd
+```
+
+镜像在 `/tmp/opencode/boot-H236ao.img`。若日志出现
+`gpucc ... cxo=... rbcpr=... rbtimer=...` 且 reset 释放，则继续 C3 的 ME_INIT；
+若仍停在 `reset pulse begin`，下一步进入 UEFI 侧 `reset → SMMU → configure → CP/GPMU`。
 
 ## 更新规则
 
