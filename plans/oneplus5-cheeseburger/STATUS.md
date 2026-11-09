@@ -4,8 +4,8 @@
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
 - 当前阶段：**C3 完成（2026-11-09）。ZAP/PAS 全部 rc=0，但 XNU 运行时拿不到
-  低 4G + 1 MiB 对齐的 ZAP 镜像；H236bj/bk 已修正 4 GiB window 检查并在
-  kernel window 内预留 ZAP，H236bl 待实测 trust 是否清零。**
+  低 4G + 1 MiB 对齐的 ZAP 镜像；H236bm 改成 kernel window（高 4G）与独立
+  低 4G ZAP 分离，H236bn 待实测 trust 是否清零。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,12 +17,12 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236bl 的 boot-reserved ZAP 与菜单。** H236bi 因 4 GiB window
-  的“整段在 4G 以下”检查失败停在菜单；H236bj/bk 改为只要求 window 起点和
-  ZAP 地址在 4G 以下。H236bl 还包含 `OnePlus 5 iOS` / `[ios 17.7.11]` /
-  `Restart` / `Shut down` 菜单。接下来看 `zap auth rc=0` 后
-  `zap unsecure ... trust=00000000` 和数据写探针。SMMU 几何和 CP 配置已固定：
-  ID0=48016403、ID1=20008003、ID2=00007511。
+- 当前 gate：**H236bn 的独立低 ZAP。** H236bi/bj/bk 因 4 GiB kernel window 无法
+  整体低地址化而停在菜单。H236bm 把 4 GiB kernel window 固定在高 4 GiB，另用
+  `AllocateMaxAddress` 在低 4 GiB 分配 1 MiB 对齐的 ZAP；H236bn 同时包含
+  `OnePlus 5 IOS` / `[ios 17.7.11]` / `Restart` / `Shut down` 菜单。接下来看
+  `zap auth rc=0` 后 `zap unsecure ... trust=00000000` 和数据写探针。SMMU 几何
+  和 CP 配置已固定：ID0=48016403、ID1=20008003、ID2=00007511。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
 - 当前代码提交：本地 UniXNU `main`（H236an 提交）；NativeMobileDisplay H236an
   （无 flush 的 RBBM 脉冲）；设备仓库 `main` 未变
@@ -11213,6 +11213,39 @@ H236bl boot     d44791aa3416bc9311bdc8e50cacb9bd0f27d5c3c1ecb098a73ec504f6f9bdf8
 
 镜像在 `/tmp/opencode/boot-H236bl.img`。由于手机停在 UEFI 菜单，需要先重启
 到 TWRP/fastboot，再 `fastboot boot` 这个镜像。
+
+### H236bm/H236bn：kernel window 与 ZAP 分离（2026-11-09）
+
+H236bj/bk 仍停在菜单。根因是 `owned_memory_size = 4 GiB`：kernel window 本身
+就是 4 GiB，不可能整体放在 4 GiB 以下，也不可能塞进一个 4 GiB 的低地址
+conventional run。
+
+改成 sagit 的分离模型：
+
+- `AllocateWindow` 只接受 **起点 >= 4 GiB** 的 4 GiB window；这正是原来能启动的
+  窗口；
+- 新增 `AllocateZapWindow()`：在低 4 GiB 用 `AllocateMaxAddress` 分配 2 MiB +
+  1 MiB 对齐（多分配 1 MiB，内部对齐），放在 kernel window 之外；
+- XNU 的 VM 范围是 `[TopOfKernelData, PhysicalBase + MemorySize)`，都在高
+  4 GiB window 内，低地址 ZAP 不会被回收；
+- `zap-base` 仍通过 command line 传给 C3。
+
+菜单同时改为：
+
+- `[ui] title = "OnePlus 5 IOS"`、`logo = false`（释放 logo 高度，三条都能显示）；
+- entry title `OnePlus 5 IOS`，类型标签 `[ios 17.7.11]`；
+- `Restart` / `Shut down` 两个 action；
+- `payload.py` 生成 `[ui]` 和 `[[payload.menu]]`。
+
+产物：
+
+```text
+firmware H236bm 5afa42900aa7d40860a9d4f664f6af02258c2c01a3b40e423f399b34cc6f6cdc
+H236bn boot     034a702c06df14bec9d387296507b4e1f4875ee96261447d19985cb72fbb8e75
+```
+
+镜像在 `/tmp/opencode/boot-H236bn.img`。手机还在 UEFI 菜单，需要先重启到
+TWRP/fastboot 再启动。
 
 ## 更新规则
 

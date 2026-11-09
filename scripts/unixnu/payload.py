@@ -162,7 +162,8 @@ def build(ctx, kernel=None):
         f'[[entry]]\nid = "{item["id"]}"\ntitle = "{item["title"]}"\ntype = "action"\naction = "{item["action"]}"\n'
         for item in menu)
     (stage / 'EFI/UniXNU/unixnu.toml').write_text(
-        f'version = 1\n[boot]\ntimeout = {spec.get("timeout", 3)}\ndefault = "xnu"\n[kits]\nautoload = false\n{loader}'
+        f'version = 1\n[boot]\ntimeout = {spec.get("timeout", 3)}\ndefault = "xnu"\n[kits]\nautoload = false\n'
+        f'[ui]\ntitle = "{spec.get("title", "UniXNU")}"\nlogo = {str(spec.get("logo", True)).lower()}\n{loader}'
         f'[[entry]]\nid = "xnu"\ntitle = "{spec.get("title", "UniXNU")}"\ntype = "xnu"\npath = "Payloads/kernel.macho"\n{initrd}'
         f'args = "{line}"\n{menu_entries}')
     for path in [stage, *stage.rglob('*')]:
