@@ -3,9 +3,9 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
-- 当前阶段：**C3 的 RBBM reset、SMMU、CP、ME_INIT 全部通过；H236at 的
-  GPMU 固件已装载但未回 BABEFACE；H236au 补 AGC/电压/功率阈值后待看
-  GPMU 握手（2026-11-09）。**
+- 当前阶段：**C3 完成（2026-11-09）。RBBM reset、SMMUv2、CP configure、
+  ME_INIT、GPMU 固件 `BABEFACE` 全部通过；下一步做 CP `CP_MEM_WRITE`
+  最小提交验证，再进入 C4/C5。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,12 +17,11 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236au 的 GPMU 握手。** H236at 已通过 ME_INIT（idle=1），GPMU
-  固件包被 CP 消费，但 CM3 没有回 `BABEFACE`；H236au 在释放 CM3 前补了
-  AGC 初始化消息、电压/功率阈值和 power-collapse 参数。接下来看
-  `GPMU_GENERAL_0` 是否回 `BABEFACE`，否则用 `general0/general1/cm3/magic`
-  定位。SMMU 几何和 CP 配置已经固定：ID0=48016403、ID1=20008003、
-  ID2=00007511；bootloader 没有留映射，C3 必须自己写 CB0 和 SID0→CB0。
+- 当前 gate：**C5 前置的最小提交。** C3 已完整通过；下一轮用 CP
+  `CP_MEM_WRITE` 写 `0xDEADBEEF` 到 GPU 可见内存并 CPU 读回，验证
+  CP→SMMU→DMA→内存的真实数据通路。通过后进入 C4（IOGPU 服务/type-1
+  user client）和 C5（Fill32/Barrier/Copy32）。SMMU 几何和 CP 配置已固定：
+  ID0=48016403、ID1=20008003、ID2=00007511。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
 - 当前代码提交：本地 UniXNU `main`（H236an 提交）；NativeMobileDisplay H236an
   （无 flush 的 RBBM 脉冲）；设备仓库 `main` 未变
@@ -10692,6 +10691,28 @@ H236au boot    4324e2c546b19d2517d75ceb3f400d8adcc5a63bcf63da029ec161ec06dda4b3
 ```
 
 镜像在 `/tmp/opencode/boot-H236au.img`，待实测。
+
+### H236au 结果：C3 全链打通（2026-11-09）
+
+```text
+[ 69.188471] cp rptr=00000009 rbbm=c0000101 me=00000000 ... idle=1
+[ 69.306196] gpmu load
+[ 69.335214] gpmu general0=babeface general1=00000000 voltage=00000000
+             threshold=80001770 magic=babeface cm3=00000000
+[ 69.367215] GPMU firmware reached BABEFACE
+```
+
+**C3 完成**：RBBM reset、SMMUv2（3 CB / 8 页 / 36 位 PA / CB0 + SID0）、
+CP configure、ME_INIT、GPMU 固件加载与 `BABEFACE` 握手全部通过。之前卡住的
+三个真实缺陷分别是：
+
+1. GCC/GPUCC 的 CXO/RBCPR/RBBMTIMER 与 `gcc_gpu_gpll0_clk` 未开，RBBM reset
+   写 1 挂总线；
+2. PM4 `type4`/`type7` 头缺奇偶校验位，CP 把 ME_INIT 判成 opcode error；
+3. 释放 CM3 前缺 AGC 初始化消息与电压/功率阈值，GPMU 不写 `BABEFACE`。
+
+H236au 的 kernel/payload/boot 哈希见上一节。下一轮做最小提交验证：
+CP `CP_MEM_WRITE` 写 `0xDEADBEEF` 到 GPU 可见内存，CPU 读回；通过后进入 C4/C5。
 
 ## 更新规则
 
