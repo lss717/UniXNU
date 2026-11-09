@@ -4,10 +4,11 @@
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
 - 当前阶段：**C3 完成（2026-11-09）。ZAP/PAS 全部 rc=0，但 boot 阶段给不出
-  XNU 能映射的低 4G + 1 MiB 对齐 ZAP 缓冲区；H236bu 首次让 128 MiB 固定
-  `EfiLoaderCode` 窗口在固定表地址（首项 `0xA0000000`，屏幕行被截断）
-  分配成功，但把 ramdisk/addon/policy 留在 4 GiB 以上 pool 后，boot 在
-  `0x17ABAC58` 同步异常；菜单已达标。**
+  XNU 能映射的低 4G + 1 MiB 对齐 ZAP 缓冲区。H236bv 按 sagit `stageZap` 把
+  ZAP 移到 kernel window 外的低 4G（`AllocateMaxAddress` 多分配 + 对齐 +
+  UC/XP），并把内核 `.elf` 大小检查修回 `.b02`；firmware `4dd964a8…`、
+  kernel `453d668b…`、payload `4a30ad17…`、boot `8149ba01…` 已打包，待实测。
+  H236bu 的菜单/logo 已达标。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -19,18 +20,19 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236bu 的 sidecar 映射。** 固件拒绝单次 256 MiB
-  `AllocatePages`（所有地址/类型），但 128 MiB 成功、76 MiB pool 成功；
-  H236bi–bt 的 256 MiB 尝试全部 `Out of Resources`。H236bu 的 128 MiB
-  窗口 + 窗口外 sidecar 在 `0x17ABAC58`（4 GiB 以上）同步异常。下一步先把
-  `Image`/`Ramdisk`/`Addon`/`Policies`/`Used`/`Entry` 地址画出来，再决定
-  192 MiB 全窗口还是 128 MiB + 低 4 GiB sidecar。菜单保持
-  `OnePlus 5 IOS` / `[ios 17.7.11]` / `Restart` / `Shut down`，logo 保留。
-  SMMU 几何和 CP 配置已固定：ID0=48016403、ID1=20008003、ID2=00007511。
+- 当前 gate：**H236bv 的低 4G ZAP 实测。** H236bv 先试 192 MiB kernel
+  window；失败则 128 MiB + `AllocateLow()` 低 4G sidecar。ZAP 在窗口外
+  低 4G，已修正 `.elf`→`.b02` 的 size 检查。先看
+  `DARWINBOOT: low alloc`/`fixed window`，再看
+  `NATIVE_GPU_C3: zap alloc mdt/image`、`zap auth rc=0` 和
+  `zap unsecure … trust=00000000`。256 MiB 仍是单次上限，不再重试。
+  菜单保持 `OnePlus 5 IOS` / `[ios 17.7.11]` / `Restart` / `Shut down`，
+  logo 保留。SMMU 几何和 CP 配置已固定：ID0=48016403、ID1=20008003、
+  ID2=00007511。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
-- 当前代码提交：本地 UniXNU `main`（H236bu 提交，本文档同批）；
-  NativeMobileDisplay H236an（无 flush 的 RBBM 脉冲）；设备仓库 `main`
-  `30c3aaf`（菜单/logo 最终版）
+- 当前代码提交：本地 UniXNU `main`（H236bv 提交，本文档同批）；
+  NativeMobileDisplay H236bv（`.b02` + `NativeA540AcceleratorStub.cpp`）；
+  设备仓库 `main` `30c3aaf`（菜单/logo 最终版）
 - 远程仓库：
   - UniXNU `https://github.com/lss717/UniXNU`（`main`）
   - UEFI fork `https://github.com/lss717/edk2-msm8998`（分支 `unixnu-cheeseburger`）
@@ -11335,6 +11337,54 @@ H236bu boot     bf73e82bed5f5dde410d4d3190bd83676030c639527d2847af7071daf29e26fc
 
 完整时间线、屏幕判读和踩坑见
 `diagnostics/H236-firmware-window-zap-2026-11-09.md`。
+
+### H236bv：按 sagit `stageZap` 把 ZAP 移出 XNU arena（2026-11-09）
+
+用户给出 sagit-ios-port `e23decf` 的 `boot/bridge/gpu_handoff.cpp:423
+stageZap()`，逐条对应：
+
+- `AllocateMaxAddress(EfiLoaderData, limit=UINT32_MAX)`；
+- `total = usable + alignment - 4096`，多分配再内部对齐；
+- 对齐后检查低 4 GiB；`FlushDataCache(WB-invalidate)` →
+  `SetMemoryAttributes(UC|XP)`，失败还原 WB 再释放；
+- ZAP 始终在 XNU arena 之外；`zap-base` 交给内核；
+- 上游 `qcom_scm.c` 的 PAS 参数是 32 位物理地址，低 4 GiB 是 ABI 约束；
+  原厂 kgsl/PIL 也是 bootloader/TZ 预留 carveout，OS 只借用。
+
+H236bv 源码：
+
+- `drivers/DarwinBoot`：新增 `AllocateLow()`，ZAP 用 2 MiB/1 MiB 在窗口外
+  低 4G 预留；kernel window 先试 192 MiB，失败回退 128 MiB 并把
+  ramdisk/addon/policy 用 `AllocateLow()` 放到低 4G；192 时 sidecar 在窗口内。
+- `NativeA540C3.cpp`：`zap size` 检查从 `.elf`（17,204 B）改成 `.b02`
+  （4,916 B）；`.elf` 只作回归参考。
+- Legacy archive：补回 `NativeA540C3.o` / `ArmSmmu4K.o` / `ArmSmmu4KProgram.o` /
+  `ArmSmmu4KMmio.o` / `ArmSmmu4KStreams.o` / `ArmSmmu4KContext.o` member；
+  A 线 `AGXAccelerator`/`IOAcceleratorES` 探针不在 B 线链接，
+  用 `NativeA540AcceleratorStub.cpp` 提供 `native_a540_*`、
+  `native_a540_accelerator_probe`、`native_iogpu_accel_probe` 和空的
+  `__GLOBAL__sub_I_NativeA540AcceleratorProbe.cpp`；`(void)` 代替 C++
+  中未定义的 `VOID` 宏；`build-report.json` 的 source hash 随归档重编更新。
+
+固件/kernel/payload/boot H236bv：
+
+```text
+firmware 4dd964a8bfc87775f134954418cb9b77d182d9e5926890311dd6c42837074052
+kernel   453d668bd8f983d84c33099856b4208fe53d0c1a91629bb292a43c3dcf36a9f2
+payload  4a30ad17b1c465e5cf77c24d4b1d1bb3491d66b9623022ceb13a97d0230c1349
+boot     8149ba01e032a05bfea16a441db202717030c87015aebaa61354ed3b0ccb0a81
+```
+
+设备现在没有 adb/fastboot，需要手动重启到 bootloader/TWRP 后
+`fastboot boot boot-H236bv.img`。实测先看：
+
+```text
+DARWINBOOT: low alloc base=… raw=… total=…   (zap)
+DARWINBOOT: fixed window type=… base=…       (192 或 128)
+NATIVE_GPU_C3: zap alloc mdt=… image=…
+NATIVE_GPU_C3: zap auth rc=0
+NATIVE_GPU_C3: zap unsecure … trust=00000000
+```
 
 ## 更新规则
 

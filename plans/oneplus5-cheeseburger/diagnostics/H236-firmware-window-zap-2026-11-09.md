@@ -234,6 +234,85 @@ Shut down
 4 GiB 以上的 pool、只把地址写进 ADT”不可用。下一步必须保证
 这些 sidecar 在 XNU 早期页表能映射的范围内，或者重新回到窗口内。
 
+### 2.6 H236bv：按 sagit `stageZap` 把 ZAP 移出 XNU arena（2026-11-09）
+
+用户给出的 sagit-ios-port（`e23decf`）`boot/bridge/gpu_handoff.cpp:423`
+`stageZap()` 是同一块板（MSM8998 + A540）的真机配方。它和我们失败点的逐条对应：
+
+| sagit `stageZap` | 我们之前的失败 |
+| --- | --- |
+| `AllocateMaxAddress(EfiLoaderData, limit=UINT32_MAX)`（L449–452） | H236bf/bg 用 XNU `IOBufferMemoryDescriptor` + physical mask，XNU 直接忽略 mask；H236bm 的精确低 4G 分配也失败 |
+| `total = usable + alignment - 4096`，多分配再内部对齐（L447–449） | H236bh 的“低 4G + 1 MiB 内部对齐”失败，差的就是“多分一块” |
+| 分配后 `physicalConflict()` 检查已映射页表/旧 GPU 映射；冲突就 `FreePages` 并把 limit 压到冲突地址以下重试（L410–419、453–458） | 我们完全没做这一步；固件的 `Out of Resources` 很可能就是压到了已占用页 |
+| 分配后 `FlushDataCache(writeback+invalidate)`，再 `SetMemoryAttributes(UC\|XP)`；失败还原 WB 再释放（L461–472） | 我们只做了 `dc cvac`，没有切 UC |
+| 注释明确 “All pages stay outside the advertised XNU arena” | 我们反过来想把 ZAP 塞进 kernel window，才引出一堆 256 MiB/窗口分配问题 |
+| 支持 DT carveout `qcom,gpu-zap-memory`（16 B LE64/LE64；>=0x80000000、4 KiB 对齐、<4 GiB、`EfiReservedMemoryType`+UC、无 RP/WP/RO/runtime，L477–500） | 这是“厂商已预留一块”的借用路径，我们没有；OP5 原厂 DT 只有 `qcom,zap-shader = "a540_zap"` |
+| `docs/gpu/hardware-submission.md:127–160`：PAS 认证前不读、不 flush、不释放 ZAP 内存；只有 `trust=0` + fence 真写回 + ring 空闲才算成功；未进入 PAS 的准备失败要撤销普通分配 | 我们的 `zap_load` 在 PAS 前写入 `.mdt`/`.b02` 并 `cleanDcache`；认证后没有释放；这部分需要保持 |
+| `boot/bridge/firmware_image.h` / `AdrenoFirmware.h::MDTImage`：PT_LOAD 且非 hash 段、`p_align`、按 `p_paddr` 偏移、BSS/空洞清零、4/16/32 MiB 上限 | H236bd 自己推的“.b02-only + 0x2000”与它一致；但内核的 `zap size` 检查误用了 `.elf` 的 17,204 B |
+| `AdrenoStartup.h` / `QcomGPUSecure.*`：`CP_SET_SECURE_MODE(0)` + `WAIT_FOR_IDLE` + 真实 timestamp | 我们已经在用 opcode `0x66`；形态可以对比 |
+
+上游语义也解释了为什么必须低 4 GiB：
+
+- `drivers/firmware/qcom_scm.c` 的 PAS `init_image`/`auth_and_reset` 参数是
+  **32 位物理地址**；H236be 的 `0x188c43000` 被截断就是这个 ABI 约束，
+  不是我们的偏好。
+- `drivers/soc/qcom/mdt_loader.c` 的 `qcom_mdt_pas_init()` 段规则与
+  `MDTImage` 一致。
+- `drivers/gpu/drm/msm/adreno/a5xx_gpu.c` 的 `a5xx_zap_shader_load()` 走
+  `qcom_scm` 而不是 PIL；可对照参数打包。
+- 下游 kgsl `adreno_a5xx.c` 的 `a5xx_microcode_load()` 用
+  `subsystem_get("zap")`，ZAP 内存来自 DT 预先声明的 reserved carveout，
+  由 bootloader/TZ 分配。原厂和 sagit 都是“启动阶段预留一块，OS 只借用”，
+  从来没有“OS 自己找低内存给 ZAP”这条路。
+
+**H236bv 实现**（`drivers/DarwinBoot`）：
+
+1. 新增 `AllocateLow()`，严格按 sagit：
+   - `AllocateMaxAddress`、`EfiLoaderData`、`limit=0xFFFFFFFF`；
+   - `Total = Usable + Alignment - 4096`，在预留块内向上对齐；
+   - 对齐后若越界或跨 4 GiB，`FreePages` 并把 `Limit = Raw - 1` 重试
+     （最多 64 次）；
+   - `FlushDataCache(WB-invalidate)`，再
+     `SetMemoryAttributes(UC|XP)`；失败还原 `WB` 并释放。
+2. ZAP 在 **kernel window 之外** 用 `AllocateLow(2 MiB, 1 MiB, UC|XP)`
+   预留，`zap-base` 指向它；`Used`/`Args->MemorySize` 不再包含 ZAP。
+3. kernel window 先试 **192 MiB**；如果固件的单次上限仍是 128 MiB，
+   回退到 128 MiB，并用同一个 `AllocateLow()` 把 ramdisk/addon/policy
+   放到低 4 GiB。192 MiB 成功时则把这些 sidecar 放回窗口内（`Used` ≈141.5 MiB，
+   留约 50 MiB VM）；128 MiB 时 `Used` ≈52.6 MiB，留约 75 MiB VM。
+4. 修正内核 `NativeA540C3.cpp` 的 ZAP 大小检查：
+   `.elf`（17,204 B）只是回归参考，运行时镜像必须用 `.b02`（4,916 B）；
+   `zapImage.bytes` 仍是 `0x2000`。
+5. TrustCache 始终留在窗口内；ZAP 在窗口外低 4G；ramdisk/addon/policy
+   在 192 时窗口内、128 时低 4G。
+6. Legacy 归档：补 `ArmSmmu4K.o`/`ArmSmmu4KProgram.o`/`ArmSmmu4KMmio.o`/
+   `ArmSmmu4KStreams.o`/`ArmSmmu4KContext.o`；A 线
+   `AGXAccelerator`/`IOAcceleratorES` 探针不链接，改用
+   `NativeA540AcceleratorStub.cpp` 提供 `native_a540_*`、
+   `native_a540_accelerator_probe`、`native_iogpu_accel_probe` 和空的
+   `__GLOBAL__sub_I_NativeA540AcceleratorProbe.cpp`；`NativeA540C3.cpp`
+   仍保留完整 C3。
+
+H236bv 产物：
+
+```text
+firmware 4dd964a8bfc87775f134954418cb9b77d182d9e5926890311dd6c42837074052
+kernel   453d668bd8f983d84c33099856b4208fe53d0c1a91629bb292a43c3dcf36a9f2
+payload  4a30ad17b1c465e5cf77c24d4b1d1bb3491d66b9623022ceb13a97d0230c1349
+boot     8149ba01e032a05bfea16a441db202717030c87015aebaa61354ed3b0ccb0a81
+```
+
+设备现在没有 adb/fastboot，需要手动重启到 bootloader/TWRP，
+再 `fastboot boot boot-H236bv.img`。实测时要看：
+
+```text
+DARWINBOOT: low alloc base=… raw=… total=…      (zap)
+DARWINBOOT: fixed window type=… base=…          (192 或 128)
+NATIVE_GPU_C3: zap alloc mdt=… image=…
+NATIVE_GPU_C3: zap auth rc=0
+NATIVE_GPU_C3: zap unsecure … trust=00000000
+```
+
 ---
 
 ## 3. 踩过的坑（按重要性排序）
@@ -314,6 +393,64 @@ H236bu 屏幕顶部和条目下方各有一条
 菜单、DarwinBoot 卡住、早期 XNU 卡住都可能没有 adb/fastboot。
 要结合屏幕、15 秒诊断和（最好）串口日志判断。
 
+### 3.11 内核 ZAP 大小检查曾误用 `.elf`
+
+H236bi 内核的 `zap_load()` 用
+`a540_fw_zap_elf_size > c.zapImage.bytes`（17,204 > 8,192）判断，
+导致 `zap size` 在 step 40 必然失败；H236be 的 `zap auth rc=0` 是
+`.elf` 加入之前的内核。运行时镜像只能是 `.b02`（4,916 B），
+`.elf` 只是 `.mdt`+`.b00`+`.b01`+`.b02` 的回归参考。H236bv 已改为
+`a540_fw_zap_b02_size`，并用 `(void)` 保持 `.elf` 的引用。
+
+### 3.12 低 4G ZAP 的关键是“多分配 + limit 回退”
+
+`AllocateMaxAddress(EfiLoaderData, limit=UINT32_MAX)` 不是只把
+`limit` 设成 4 GiB 就够：
+
+- 要分配 `usable + alignment - 4096`，再在块内向上对齐；
+- 对齐后若跨 4 GiB，要 `FreePages` 并把 `limit` 压到 `raw - 1` 重试；
+- 分配后 `FlushDataCache(WB-invalidate)`，再 `SetMemoryAttributes(UC|XP)`，
+  失败还原 WB 再释放。
+
+H236bh 的“低 4G + 1 MiB 对齐”失败，差的就是“多分一块”和 limit 回退。
+
+### 3.13 窗口外 sidecar 必须落在 XNU 能映射的范围
+
+H236bu 把 ramdisk/addon/policy 留在 4 GiB 以上的 pool，只写 ADT；
+boot 在 `0x17ABAC58` 同步异常。H236bv 对 128 MiB 分支用
+`AllocateLow()` 把 sidecar 放到低 4G；192 MiB 分支则放回窗口内。
+不要把“UEFI 能访问”当成“XNU 早期能访问”。
+
+### 3.14 Legacy archive 的 A5403/SMMU/probe member
+
+H236bv 重编 Legacy 归档时踩到：
+
+- `NativeA540C3.o` 需要 `ArmSmmu4K.o`/`ArmSmmu4KProgram.o`/
+  `ArmSmmu4KMmio.o`/`ArmSmmu4KStreams.o`/`ArmSmmu4KContext.o` 这些
+  kit 对象，否则 `ArmSmmu4KBindMmio`/`Build`/`ProgramDisabledContext`
+  未定义；
+- `NativeA540AcceleratorProbe.o` 必须提供 `native_a540_*` 和
+  `native_a540_accelerator_probe`；
+- `build-report.json` 的 source hash 和 archive hash 会被
+  `build-xnu-4k-baseline.sh` 校验；改源码后必须重编归档，不能只改报告；
+- `(VOID)` 在 C++ 归档里未定义，要用 `(void)`。
+
+### 3.15 Mac 构建树的 A-line AGX 探针
+
+`NativeA540AcceleratorProbe.cpp` 里带 `AGXAccelerator : IOAcceleratorES`
+（A 线）的发布探针；`LegacyDisplayProbe.cpp:24` 还按名字调用它的
+`__GLOBAL__sub_I_NativeA540AcceleratorProbe.cpp`。B 线 H236bv 的 C3
+不需要 AGX，也不需要 `IOAcceleratorFamily2`，所以链接会报
+`IOAcceleratorES` 未定义。
+
+H236bv 用 `NativeA540AcceleratorStub.cpp` 提供
+`native_a540_abi_report(s)`、`open_count/type`、`sel_count/last`、
+`native_a540_accel_state`、`native_a540_accelerator_probe()`、
+`native_iogpu_accel_probe()` 和空的
+`__GLOBAL__sub_I_NativeA540AcceleratorProbe.cpp`；`NativeA540C3.cpp`
+仍保留完整 C3，Legacy 归档只链接 A540 C3 + Stub + `ArmSmmu4K` 对象。
+这不会让 A-line AGX 路径“通过”，只是让 B-line C3 能链接和启动。
+
 ---
 
 ## 4. 当前产物
@@ -324,6 +461,10 @@ H236bu 屏幕顶部和条目下方各有一条
 | `payload-H236bq.img`（菜单/logo 最终版） | `4580eb1723ec47e24a5684351a4bff7b8d49776aa7451bf0330ac11668b5536d` |
 | H236bu firmware `uefi-cheeseburger.img.gz-dtb` | `519f76638abcfd9f3118c53217a8f2fa5f57b78db9dccee1d749f1056c5c0af7` |
 | `boot-H236bu.img` | `bf73e82bed5f5dde410d4d3190bd83676030c639527d2847af7071daf29e26fc` |
+| H236bv firmware `uefi-cheeseburger.img.gz-dtb` | `4dd964a8bfc87775f134954418cb9b77d182d9e5926890311dd6c42837074052` |
+| H236bv kernel `kernel.macho` | `453d668bd8f983d84c33099856b4208fe53d0c1a91629bb292a43c3dcf36a9f2` |
+| H236bv payload | `4a30ad17b1c465e5cf77c24d4b1d1bb3491d66b9623022ceb13a97d0230c1349` |
+| `boot-H236bv.img` | `8149ba01e032a05bfea16a441db202717030c87015aebaa61354ed3b0ccb0a81` |
 
 其他镜像的 boot 哈希（`/tmp/opencode/boot-H236b*.img`）：
 
@@ -397,35 +538,38 @@ fastboot boot D:\Users\ls\Documents\OnePlus5_ios\boot-H236bu.img
 
 ## 6. 下一步建议
 
-按优先级：
+H236bv 已经实现了 1–3 的核心；现在的顺序是：
 
-1. **先拿到 H236bu 的完整 DarwinBoot 串口/屏幕地址**：
-   - 在 `AllocateWindow` 成功后画 `fixed window base=…`（完整行）；
-   - 画 `kernel Base/Entry`、`Image`/`Request->Ramdisk`/`Addon`/
-     `Policies` 的 pool 地址、`Used`；
-   - 在 `Used` 超限和 `DarwinEnter` 前后加 15 秒诊断。
-   这样才能确认 `0x17ABAC58` 是 `Image`、`Ramdisk`、`Addon` 还是 policy。
-2. **验证 128–256 之间的上限**：单独试 160/192 MiB 固定
-   `0xA0000000` `EfiLoaderCode`。如果 192 MiB 能成功，回到“所有
-   sidecar 在窗口内”的方案，窗口 192 MiB，XNU VM 还有约 47 MiB；
-   如果只有 128 MiB，走第 3 步。
-3. **128 MiB + 低 4 GiB sidecar**：保留 128 MiB 窗口，把 ramdisk/
-   addon/policy 复制到 **4 GiB 以下**的 `AllocateMaxAddress`/
-   `AllocatePages` 缓冲区（低空闲 run 在 `0xA8000000` 以上），
-   再写 ADT。`0x17ABAC58` 在 4 GiB 以上，低 4 GiB 早期映射可能可用；
-   但要先确认 XNU `arm_vm_init` 是否映射窗口外低 4 GiB。
-4. **减少 payload/addon**：如果只能 128 MiB 且低 4 GiB 方案不通，
-   必须把 kernel+ramdisk+必要 addon+policy+ZAP 塞进 128 MiB，
-   并给 VM 留出空间。当前 kernel 52.5 + payload 76 已经 128.5，
-   至少要把 payload 缩到 ~60 MiB 或把 addon 移出窗口。
-5. **不要动 TrustCache 的窗口内位置**；不要把 `owned_memory_size`
-   当成实际窗口；不要再用 256 MiB。
+1. **实测 H236bv**：
+   - 屏幕先看 `DARWINBOOT: low alloc base=…`（ZAP 低 4G）、
+     `fixed window type=… base=…`（192 或 128）；
+   - 如果进 XNU，取 `NATIVE_GPU_C3: zap alloc mdt/image`、
+     `zap init/mem setup/auth rc=0`、
+     `zap unsecure … trust=00000000` 和 submit probe。
+2. **192 MiB 成功时**：ramdisk/addon/policy 都在窗口内（`Used` ≈141.5 MiB），
+   留约 50 MiB VM；ZAP 在窗口外低 4G。重点看 `trust` 是否清零；
+   如果 VM 不足，再考虑减少 GpuAddon/scratch。
+3. **192 MiB 失败、走 128 MiB 时**：ramdisk/addon/policy 由
+   `AllocateLow()` 放到低 4G。重点看 `0x17ABAC58` 是否消失；
+   如果低 4G 窗口外仍异常，说明 XNU 早期只映射了 kernel window，
+   需要把 sidecar 重新塞回 128 MiB（缩 payload）或增大窗口。
+4. **trust 仍为 1 时**：确认 `zap-base` 的 `base` 是 1 MiB 对齐、`base+2 MiB <= 4 GiB`、
+   `.b02` 4916 B 写入的是 `base+1 MiB`；检查 `CP_SET_SECURE_MODE(0)` 后的
+   `WAIT_FOR_IDLE`/fence/timestamp，而不是直接写 `SECVID_TRUST_CNTL`。
+5. **可选 carveout 路径**：如果平台确实预留了
+   `qcom,gpu-zap-memory`（16 B LE64/LE64、`EfiReservedMemoryType`+UC、
+   无 RP/WP/RO/runtime），优先借用它；当前 OP5 ADT 只有
+   `qcom,zap-shader = "a540_zap"`，没有 carveout，所以 H236bv 用
+   `AllocateMaxAddress` 路径。
+6. 不要动 TrustCache 的窗口内位置；不要把 `owned_memory_size`
+   当成实际窗口；不要再用 256 MiB 单次 `AllocatePages`。
 
 ---
 
 ## 7. 一句话总结
 
-H236bu 把问题从“窗口分配失败”推进到“128 MiB 窗口分配成功，但
-窗口外 4 GiB 以上的 sidecar 在 boot 早期触发同步异常”。
-下一步不再是换 256 MiB 的地址/类型，而是**给 sidecar 一个 XNU 能映射的
-位置**（窗口内或低 4 GiB），并用完整地址诊断确认 `0x17ABAC58` 到底是谁。
+H236bu 证明 256 MiB 是固件单次分配上限、128 MiB 可行；H236bv 按
+sagit `stageZap` 把 ZAP 移到**窗口外的低 4 GiB**（多分配 + 对齐 + UC/XP），
+并把内核 `.elf` 检查修回 `.b02`。下一步是实测 H236bv 的
+`low alloc`/192-or-128 window/`zap auth`/`trust=0`，而不是继续调
+256 MiB 窗口。
