@@ -6,9 +6,10 @@
 - 当前阶段：**C3 完成（2026-11-09）。ZAP/PAS 全部 rc=0，但 boot 阶段给不出
   XNU 能映射的低 4G + 1 MiB 对齐 ZAP 缓冲区。H236bv 按 sagit `stageZap` 把
   ZAP 移到 kernel window 外的低 4G（`AllocateMaxAddress` 多分配 + 对齐 +
-  UC/XP），并把内核 `.elf` 大小检查修回 `.b02`；firmware `4dd964a8…`、
-  kernel `453d668b…`、payload `4a30ad17…`、boot `8149ba01…` 已打包，待实测。
-  H236bu 的菜单/logo 已达标。**
+  UC/XP），并把内核 `.elf` 大小检查修回 `.b02`。H236bv 实测在
+  `0x17ABAC18` 同步异常（>4G 的 Image/Addon pool）；H236bw 去掉 ZAP 的
+  UC/XP 并加 `ZAP LOW`/`WIN`/`IMG`/`COPY DONE` 诊断；firmware
+  `d02b3812…`、boot `4f0a892a…`，待实测。H236bu 的菜单/logo 已达标。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -20,10 +21,11 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236bv 的低 4G ZAP 实测。** H236bv 先试 192 MiB kernel
-  window；失败则 128 MiB + `AllocateLow()` 低 4G sidecar。ZAP 在窗口外
-  低 4G，已修正 `.elf`→`.b02` 的 size 检查。先看
-  `DARWINBOOT: low alloc`/`fixed window`，再看
+- 当前 gate：**H236bw 的 ZAP/Image 地址诊断。** H236bv 在
+  `0x17ABAC18` 同步异常，`0x17A` 是 >4G 的 Image/Addon pool；H236bw
+  去掉 ZAP 的 UC/XP，并在屏上画 `ZAP LOW`/`WIN`/`IMG`/`COPY DONE`。
+  先看这四行：如果 `IMG` 后异常，下一步把 Image/Addon/Policies 复制到
+  低 4G；如果 `ZAP LOW`/`WIN` 就异常，查 `AllocateLow`/窗口。随后再看
   `NATIVE_GPU_C3: zap alloc mdt/image`、`zap auth rc=0` 和
   `zap unsecure … trust=00000000`。256 MiB 仍是单次上限，不再重试。
   菜单保持 `OnePlus 5 IOS` / `[ios 17.7.11]` / `Restart` / `Shut down`，
@@ -11385,6 +11387,35 @@ NATIVE_GPU_C3: zap alloc mdt=… image=…
 NATIVE_GPU_C3: zap auth rc=0
 NATIVE_GPU_C3: zap unsecure … trust=00000000
 ```
+
+### H236bw：去掉 ZAP 的 UC/XP，加可读地址（2026-11-09）
+
+H236bv 屏幕：菜单/`OnePlus 5 IOS`/`ios 17.7.11` 仍在，条目下是
+`Synchronous Exception at 0x0000000017ABAC18`；没有看到
+`DARWINBOOT: low alloc`/`fixed window` 行。`0x17A` 是 4 GiB 以上的
+Image/Addon pool（H236bu 是 `0x17ABAC58`），说明 H236bv 新增的
+`AllocateLow(..., UC|XP)` / `SetMemoryAttributes` 或 Image/Addon 复制
+仍是嫌疑；H236bi/H236be 的 256 MiB 窗口没有这个 `SetMemoryAttributes`。
+
+H236bw：
+
+- ZAP `AllocateLow` 改为 `Attributes=0`（WB/normal），不再在 boot 阶段
+  调 `SetMemoryAttributes(UC|XP)`；内核 `mapWindow` 仍用
+  `kIOMapInhibitCache`，写入 `.mdt`/`.b02` 后 `cleanDcache`。
+- 屏上画 4 行 15 秒内的诊断：
+  `ZAP LOW base/raw`、`WIN base/size/low`、`IMG/ADD/POL/RAM`、
+  `COPY DONE`。
+- 产物：
+
+```text
+firmware d02b38122a640807ca916599771302da1e93af4aac2110452dd8308f7b6933d6
+boot     4f0a892a53fcdf9859425b171b1ff8d3ee7411c46cbdc7205b4001311a4fada7
+payload  4a30ad17b1c465e5cf77c24d4b1d1bb3491d66b9623022ceb13a97d0230c1349
+kernel   453d668bd8f983d84c33099856b4208fe53d0c1a91629bb292a43c3dcf36a9f2
+```
+
+手机需要手动重启到 fastboot/TWRP，再
+`fastboot boot boot-H236bw.img`。
 
 ## 更新规则
 

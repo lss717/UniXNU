@@ -313,6 +313,35 @@ NATIVE_GPU_C3: zap auth rc=0
 NATIVE_GPU_C3: zap unsecure … trust=00000000
 ```
 
+### 2.7 H236bv 实测：0x17ABAC18，以及 H236bw（2026-11-09）
+
+H236bv `fastboot boot` 返回 OKAY，但屏幕在菜单条目下给出：
+
+```text
+Synchronous Exception at 0x0000000017ABAC18
+```
+
+没有看到 `DARWINBOOT: low alloc`/`fixed window` 行。`0x17A` 仍是 4 GiB 以上的
+Image/Addon pool（H236bu 是 `0x17ABAC58`）。这说明：
+
+- 128/192 窗口和低 4G ZAP 本身未必失败；
+- H236bv 新增的 `AllocateLow(..., UC|XP)` / `SetMemoryAttributes` 是相对
+  H236bi/H236be 的新变量；
+- Image/Addon 的 `CopyMem` 在 H236bi/H236be 的 256 MiB 窗口里是成功的，
+  现在异常落在同一个 >4G 池，最可能是 `SetMemoryAttributes` 之后从该池的
+  复制不可访问，或源池本身没有按预期映射。
+
+H236bw：
+
+- ZAP `AllocateLow` 改为 `Attributes=0`（WB/normal），boot 阶段不再调
+  `SetMemoryAttributes(UC|XP)`；内核 `mapWindow` 仍用 `kIOMapInhibitCache`，
+  `.mdt`/`.b02` 写入后 `cleanDcache`。
+- 屏上加 4 行诊断：`ZAP LOW`、`WIN`、`IMG/ADD/POL/RAM`、`COPY DONE`。
+- 产物：firmware `d02b3812…`、boot `4f0a892a…`、payload `4a30ad17…`、
+  kernel `453d668b…`。
+- 判读：如果 `IMG`/`COPY DONE` 出现后异常，下一步把 Image/Addon/Policies
+  复制到低 4G 再进窗口；如果 `ZAP LOW`/`WIN` 就异常，查 `AllocateLow`/窗口。
+
 ---
 
 ## 3. 踩过的坑（按重要性排序）
@@ -465,6 +494,8 @@ H236bv 用 `NativeA540AcceleratorStub.cpp` 提供
 | H236bv kernel `kernel.macho` | `453d668bd8f983d84c33099856b4208fe53d0c1a91629bb292a43c3dcf36a9f2` |
 | H236bv payload | `4a30ad17b1c465e5cf77c24d4b1d1bb3491d66b9623022ceb13a97d0230c1349` |
 | `boot-H236bv.img` | `8149ba01e032a05bfea16a441db202717030c87015aebaa61354ed3b0ccb0a81` |
+| H236bw firmware `uefi-cheeseburger.img.gz-dtb` | `d02b38122a640807ca916599771302da1e93af4aac2110452dd8308f7b6933d6` |
+| `boot-H236bw.img` | `4f0a892a53fcdf9859425b171b1ff8d3ee7411c46cbdc7205b4001311a4fada7` |
 
 其他镜像的 boot 哈希（`/tmp/opencode/boot-H236b*.img`）：
 
