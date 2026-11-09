@@ -3,9 +3,9 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
-- 当前阶段：**C1/C2 完成，C3 已打通 SMMU 与 CP 配置；H236an 确认 RBBM 复位
-  写 1 真挂总线，H236ao 正在补 sagit 的完整 GPUCC/GCC 时钟后复测
-  （2026-11-09）。**
+- 当前阶段：**C3 的 RBBM reset、SMMU、CP 配置全部通过；H236ao 证明补齐
+  GPUCC CXO/RBCPR/RBBMTIMER 后 CP 已取走 ME_INIT，H236ap 正在补足
+  2 s/5 s 等待以推进 GPMU（2026-11-09）。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,10 +17,10 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236ao 的 reset 复测。** H236an 已确认停在 `reset pulse begin`；
-  H236ao 补上 `gpucc_cxo_clk`/`rbcpr_clk`/`rbbmtimer_clk`、CX/RBCPR reset 解除
-  和 `gcc_gpu_gpll0_clk`。若仍停在 `reset pulse begin`，下一步把
-  `reset → SMMU → configure → CP/GPMU` 移到 UEFI。SMMU 几何和 CP 配置已经固定：
+- 当前 gate：**H236ap 的 GPMU 握手。** H236ao 已证明 reset、SMMU、CP 配置和
+  ME_INIT 取指都成立（rptr=9）；之前只是 idle 轮询太短。H236ap 把 ME_INIT、
+  GPMU 包和 `BABEFACE` 的等待补到 vendor 的 2 s/2 s/5 s，待看是否回
+  `GPMU_GENERAL_0=0xBABEFACE`。SMMU 几何和 CP 配置已经固定：
   ID0=48016403、ID1=20008003、ID2=00007511；bootloader 没有留映射，C3 必须
   自己写 CB0 和 SID0→CB0。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
@@ -10460,6 +10460,52 @@ H236ao boot    208bbf773641e3b8e2d49dc3a200eb8534e873748016ff9655ee2e968ff684bd
 镜像在 `/tmp/opencode/boot-H236ao.img`。若日志出现
 `gpucc ... cxo=... rbcpr=... rbtimer=...` 且 reset 释放，则继续 C3 的 ME_INIT；
 若仍停在 `reset pulse begin`，下一步进入 UEFI 侧 `reset → SMMU → configure → CP/GPMU`。
+
+### H236ao 结果与 H236ap：CP 已经取指，等待时间补足（2026-11-09）
+
+H236ao 日志：
+
+```text
+[ 67.274709] NATIVE_GPU_PWR: c1e2 gpucc cxrst=00000000->00000000
+             rbcrprst=00000000->00000000 cxo=00000001->00000001
+             rbcpr=80000000->00000001 rbtimer=80000000->00000001
+[ 69.026583] NATIVE_GPU_C3: reset pulse begin
+[ 69.111677] NATIVE_GPU_C3: reset writes done
+[ 69.169200] NATIVE_GPU_C3: reset pulse released rst=00000000
+[ 69.197855] NATIVE_GPU_C3: gpu reset ok
+[ 69.251305] NATIVE_GPU_C3: cp init
+[ 69.277149] NATIVE_GPU_C3: cp configure done
+[ 69.303936] NATIVE_GPU_C3: cp rptr=00000009 rbbm=c00001c1 me=00000400
+             wptr=00000009 ints=00000000 cpints=00000000 gfsr=00000000
+             fsr=00000400 far=00000000 idle=0
+[ 69.361289] NATIVE_GPU_C3: fail step 11 (cp me init)
+```
+
+判读：
+
+- `cxo` 本来就在跑；`rbcpr`/`rbtimer` 之前是 halt（bit31），补上后读回 1。
+- **RBBM reset 已释放，CP 已经把 ME_INIT 的 9 个 dword 全部读走**（rptr = wptr = 9）。
+- `idle=0` 不是因为 CP 没跑，而是我们的轮询只有约 10–20 ms；vendor
+  `adreno_ringbuffer_submit_spin` 等 2000 ms。`rbbm=c00001c1` 表示 ME 仍在忙。
+
+H236ap 改动：
+
+- ME_INIT 等待改为 2000 次 `IOSleep(1)`；
+- GPMU 固件包完成等待改为 2000 ms；
+- `GPMU_GENERAL_0 == 0xBABEFACE` 等待改为 5000 ms（vendor
+  `GPMU_FW_INIT_RETRY=5000`）。
+
+产物：
+
+```text
+H236ap kernel  46b3fd7f26e76e8abd1c3f419944dbd07376b2774bea0b598921030cf8fdcf0c
+H236ap payload bb9acc298cfb70da4b56e3daa0deb81e66ac22e4560218c9edb5e8d5c841f432
+H236ap boot    bb5c5a25b8b734ab1130c160597cc5b3692f32bfacc71a10ed72e2df1a8de9bf
+```
+
+镜像在 `/tmp/opencode/boot-H236ap.img`，待实测。若 GPMU 回 `BABEFACE`，C3 的
+reset/SMMU/CP/GPMU 链就完整成立；若卡在 `gpmu packets` 或 `gpmu handshake`，
+再按 vendor 的 GPMU 初始化顺序补。UEFI 迁移暂时不再是必须项。
 
 ## 更新规则
 
