@@ -4,8 +4,8 @@
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
 - 当前阶段：**C3 完成（2026-11-09）。RBBM reset、SMMUv2、CP configure、
-  ME_INIT、GPMU 固件 `BABEFACE` 全部通过；H236av 正在做 CP
-  `CP_MEM_WRITE` 最小提交验证，再进入 C4/C5。**
+  ME_INIT、GPMU 固件 `BABEFACE` 全部通过；H236av 的 CP_MEM_WRITE 被消费
+  但读回 0，H236aw 用 CACHE_FLUSH_TS + CP_MEM_WRITE 双探针定位。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,11 +17,11 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236av 的最小提交。** C3 已完整通过；H236av 用 CP
-  `CP_MEM_WRITE` 写 `0xDEADBEEF` 到 GPU 可见内存，`CP_WAIT_MEM_WRITES` 后
-  CPU 读回。通过后进入 C4（IOGPU 服务/type-1 user client）和 C5
-  （Fill32/Barrier/Copy32）。SMMU 几何和 CP 配置已固定：ID0=48016403、
-  ID1=20008003、ID2=00007511。
+- 当前 gate：**H236aw 的提交双探针。** H236av 的 `CP_MEM_WRITE` 包被消费
+  （rptr=3136/3136）但读回 0；H236aw 同时发 `CACHE_FLUSH_TS` 时间戳和
+  `CP_MEM_WRITE`，并打印 CP/SMMU 状态。若时间戳非 0，则 CP→内存通路成立；
+  若全 0，检查 secure 状态或地址映射。通过后进入 C4/C5。SMMU 几何和 CP
+  配置已固定：ID0=48016403、ID1=20008003、ID2=00007511。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
 - 当前代码提交：本地 UniXNU `main`（H236an 提交）；NativeMobileDisplay H236an
   （无 flush 的 RBBM 脉冲）；设备仓库 `main` 未变
@@ -10742,6 +10742,43 @@ NATIVE_GPU_C3: submit probe
 NATIVE_GPU_C3: submit write rptr=<n>/<n> value=deadbeef done=1
 NATIVE_GPU_C3: submit test ok
 ```
+
+### H236av 结果与 H236aw：提交包被消费但写值为 0（2026-11-09）
+
+H236av：
+
+```text
+[ 70.070799] submit probe
+[ 70.098317] submit write rptr=3136/3136 value=00000000 done=1
+[ 70.127670] fail step 30 (cp mem write)
+```
+
+CP 的 RPTR 已经推进到包尾（3136/3136），说明 `CP_MEM_WRITE` +
+`CP_WAIT_MEM_WRITES` 被消费；但 CPU 读回 scratch 是 0。需要区分：
+
+1. 写真的没发生（CP 丢弃/secure/地址不对）；
+2. 写发生了，但 CPU 读到旧 cache 行。
+
+H236aw 同时提交两个独立探针：
+
+- 标准 `CP_EVENT_WRITE(0x46,4)` + `CACHE_FLUSH_TS` + IRQ，向 `kRptrIova`
+  写 64 位时间戳；
+- `CP_MEM_WRITE` 向 `kRptrIova+8` 写 `0xDEADBEEF`；
+- 之后 `CP_WAIT_MEM_WRITES`，再 `dc ivac` 读回；
+- 打印 `ts`、`value`、`CP_INTERRUPT_STATUS`、`CP_HW_FAULT`、`CB0.FSR`、
+  `RBBM_STATUS`。
+
+产物：
+
+```text
+H236aw kernel  400cda7bdb7dcffe4a6c255fb87f0be62e67a7abaaae386754145c1e26ee7771
+H236aw payload 5476f724767719adb9c064c18aea5a693b61292f57d95ca29c7db1cc88688b75
+H236aw boot    e44833d55dfe175b3b9ac870f68d6c04cc1ca1ca5973001c7717fb17f79f8e6c
+```
+
+镜像在 `/tmp/opencode/boot-H236aw.img`，待实测。若 `ts` 非 0，说明 CP→内存
+通路成立，问题只在 `CP_MEM_WRITE`/cache；若两者都是 0，则检查 secure 状态或
+数据地址映射。
 
 ## 更新规则
 
