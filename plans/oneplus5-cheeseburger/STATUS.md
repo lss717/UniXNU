@@ -3,9 +3,9 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
-- 当前阶段：**C3 完成（2026-11-09）。ZAP/PAS 的 shutdown/init/mem setup 均
-  rc=0；对照 mdt_loader 后确认 a540 的运行时镜像就是 .b02（0x2000），
-  H236be 回到 .b02 并把 ZAP/secure 顺序改成 vendor 语义。**
+- 当前阶段：**C3 完成（2026-11-09）。ZAP/PAS 全部 rc=0，但 CP secure 状态
+  未解除；H236bf 发现 ZAP header/image 分配在 4 GiB 以上，SCM/PAS 的 32 位
+  物理地址会截断，改用低 4G 分配。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,11 +17,10 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236be 的 ZAP 顺序。** H236bc/H236bd 的完整 `.elf` 分别 auth
-  失败/尺寸失败；Linux mdt_loader 表明 a540 只有 `.b02` 是 PT_LOAD，镜像大小
-  0x2000。H236be 用 `.b02`-only 并把 ZAP 放到 ME_INIT 前、secure-mode 命令放到
-  GPMU 前。通过后 `CACHE_FLUSH_TS`/`CP_MEM_WRITE` 应能落内存，再进入 C4/C5。
-  SMMU 几何和 CP 配置已固定：ID0=48016403、ID1=20008003、ID2=00007511。
+- 当前 gate：**H236bf 的低 4G ZAP 内存。** H236be 的 PAS 全部成功但 trust 仍为
+  1；H236bf 把 ZAP header/image 分配到低 4 GiB（SCM/PAS 参数是 32 位）。
+  通过后 `CACHE_FLUSH_TS`/`CP_MEM_WRITE` 应能落内存，再进入 C4/C5。SMMU 几何
+  和 CP 配置已固定：ID0=48016403、ID1=20008003、ID2=00007511。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
 - 当前代码提交：本地 UniXNU `main`（H236an 提交）；NativeMobileDisplay H236an
   （无 flush 的 RBBM 脉冲）；设备仓库 `main` 未变
@@ -11017,6 +11016,42 @@ H236be boot    44a7b6752cf5e1009446678afaf9bb920fb7a9e89eb21ea937bd9ec4feb52c1e
 ```
 
 镜像在 `/tmp/opencode/boot-H236be.img`，待实测。
+
+### H236be 结果与 H236bf：ZAP 内存在 4 GiB 以上（2026-11-09）
+
+H236be（`.b02`-only，ZAP 在 ME_INIT 前，secure-mode 在 GPMU 前）：
+
+```text
+zap init rc=0
+zap mem setup rc=0
+zap auth rc=0
+cp init ... idle=1
+zap unsecure rptr=12/12 done=1 trust=00000001
+fail step 44
+```
+
+PAS 全部成功，但 CP 仍在 secure。检查地址发现 ZAP 的两个 buffer 在
+
+```text
+mdt=188c41000
+image=188c43000
+```
+
+都**超过 4 GiB**。SCM/PAS 的物理地址参数是 32 位的，TZ 会把 0x188c43000
+截断；route C 计划也要求 ZAP memory 在低 4 GiB、4 KiB 对齐。
+
+H236bf 给 `Alloc::init` 增加 `physicalMask` 参数，ZAP header/image 用
+`0x00000000fffff000`（低 4G）分配，其余 GPU buffer 仍用原来的 36 位掩码。
+
+产物：
+
+```text
+H236bf kernel  eb102b954688cefd5bc43c178c881daa6e1d5d2740f0f27aba9df1640ca895d0
+H236bf payload 0c9a1245addf3988bd1d9218f08c56a967e4baab99585d3a8d75297cfcc9d927
+H236bf boot    066c75c0bc8f2c2553687d4e6fcd81abc6cf86e52e79cf792dc02a2e39c73c94
+```
+
+镜像在 `/tmp/opencode/boot-H236bf.img`，待实测。
 
 ## 更新规则
 
