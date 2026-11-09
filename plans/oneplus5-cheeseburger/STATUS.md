@@ -3,9 +3,9 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
-- 当前阶段：**C3 的 RBBM reset、SMMU、CP 配置全部通过；H236ao 证明补齐
-  GPUCC CXO/RBCPR/RBBMTIMER 后 CP 已取走 ME_INIT，H236ap 正在补足
-  2 s/5 s 等待以推进 GPMU（2026-11-09）。**
+- 当前阶段：**C3 的 RBBM reset、SMMU、CP 配置全部通过；CP 已取走 ME_INIT
+  （rptr=9）。H236aq 正在等满 vendor 的 2 s 并采集 CP fault/ME 状态，
+  以判断 ME 为何仍报 busy（2026-11-09）。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,12 +17,13 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236ap 的 GPMU 握手。** H236ao 已证明 reset、SMMU、CP 配置和
-  ME_INIT 取指都成立（rptr=9）；之前只是 idle 轮询太短。H236ap 把 ME_INIT、
-  GPMU 包和 `BABEFACE` 的等待补到 vendor 的 2 s/2 s/5 s，待看是否回
-  `GPMU_GENERAL_0=0xBABEFACE`。SMMU 几何和 CP 配置已经固定：
-  ID0=48016403、ID1=20008003、ID2=00007511；bootloader 没有留映射，C3 必须
-  自己写 CB0 和 SID0→CB0。
+- 当前 gate：**H236aq 的 CP busy 判读。** H236ao 已证明 reset、SMMU、CP 配置和
+  ME_INIT 取指都成立（rptr=9）；H236ap 的 2 s 等待被一个瞬时错误位提前打断。
+  H236aq 等满 2 s 并打印 `first_ints/first_cpints/first_rbbm`、`CP_HW_FAULT`、
+  `CP_PROTECT_STATUS`、`CP_ME_STAT_DATA`、`CP_INTERRUPT_STATUS` 和
+  `RBBM_STATUS3`，据此决定是继续 GPMU 还是修 CP configure。SMMU 几何和 CP
+  配置已经固定：ID0=48016403、ID1=20008003、ID2=00007511；bootloader 没有留
+  映射，C3 必须自己写 CB0 和 SID0→CB0。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
 - 当前代码提交：本地 UniXNU `main`（H236an 提交）；NativeMobileDisplay H236an
   （无 flush 的 RBBM 脉冲）；设备仓库 `main` 未变
@@ -10506,6 +10507,50 @@ H236ap boot    bb5c5a25b8b734ab1130c160597cc5b3692f32bfacc71a10ed72e2df1a8de9bf
 镜像在 `/tmp/opencode/boot-H236ap.img`，待实测。若 GPMU 回 `BABEFACE`，C3 的
 reset/SMMU/CP/GPMU 链就完整成立；若卡在 `gpmu packets` 或 `gpmu handshake`，
 再按 vendor 的 GPMU 初始化顺序补。UEFI 迁移暂时不再是必须项。
+
+### H236ap 结果与 H236aq：先等满 2 s，并采集 CP fault（2026-11-09）
+
+H236ap 的 `cp init` 仍然在 `cp configure done` 之后约 61 ms 就结束，而不是等满
+2 s：
+
+```text
+[ 69.631070] cp configure done
+[ 69.692362] cp rptr=00000009 rbbm=c00001c1 me=00000400 wptr=00000009
+             ints=00000000 cpints=00000000 ... idle=0
+[ 69.749811] fail step 11 (cp me init)
+```
+
+说明循环是在某一拍看到了 `ints & 0x7e` 或 `cpints & 0x3f` 后 `break` 的；最后
+一次读到的是已经被读清的 0。`RBBM_STATUS=0xc00001c1` 按 a5xx XML 展开：
+
+```text
+bit31 GPU_BUSY_IGN_AHB      bit30 GPU_BUSY_IGN_AHB_CP
+bit8  GPU_BUSY_IGN_AHB_HYST bit7  CP_BUSY_IGN_HYST
+bit6  CP_BUSY               bit0  HI_BUSY
+（bit1 CP_ME_BUSY、bit2 CP_PFP_BUSY 都是 0）
+```
+
+`rptr == wptr == 9` 已经证明 ME_INIT 被取走；剩下的是 ME/CP 的聚合 busy 位。
+
+H236aq：
+
+- 不再在第一个错误位 `break`，按 vendor `adreno_ringbuffer_submit_spin` 等满
+  2000 ms；
+- 记录第一次出现错误位的 `ms/ints/cpints/rbbm`；
+- 同时打印 `CP_HW_FAULT`(0x0b1a)、`CP_PROTECT_STATUS`(0x0b1c)、
+  `CP_ME_STAT_DATA`(0x0b14)、`CP_INTERRUPT_STATUS`(0x0b18) 和 `RBBM_STATUS3`。
+
+产物：
+
+```text
+H236aq kernel  1121b41fc60822a24a1ad5ddffa261705b2fdb4fd0d3cec3304f28e06bc852e8
+H236aq payload 29f036769d0c549148cbf2f98a2cd7f98daf8d6a9502d06974a8a287678e8b2b
+H236aq boot    9d13e2ca2250ce1e0c4ee88a18c441b63257de3fa6b4026c414a803fe7356b2b
+```
+
+镜像在 `/tmp/opencode/boot-H236aq.img`。下一步按 `first_*` 和 `hwfault` 判读：
+若是 ME 还在跑，等满 2 s 后应能进入 GPMU；若是 CP fault，再按 fault 位修
+configure/ring。
 
 ## 更新规则
 
