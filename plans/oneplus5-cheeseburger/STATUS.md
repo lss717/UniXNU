@@ -4,8 +4,8 @@
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
 - 当前阶段：**C3 完成（2026-11-09）。RBBM reset、SMMUv2、CP configure、
-  ME_INIT、GPMU 固件 `BABEFACE` 全部通过；下一步做 CP `CP_MEM_WRITE`
-  最小提交验证，再进入 C4/C5。**
+  ME_INIT、GPMU 固件 `BABEFACE` 全部通过；H236av 正在做 CP
+  `CP_MEM_WRITE` 最小提交验证，再进入 C4/C5。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,11 +17,11 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**C5 前置的最小提交。** C3 已完整通过；下一轮用 CP
-  `CP_MEM_WRITE` 写 `0xDEADBEEF` 到 GPU 可见内存并 CPU 读回，验证
-  CP→SMMU→DMA→内存的真实数据通路。通过后进入 C4（IOGPU 服务/type-1
-  user client）和 C5（Fill32/Barrier/Copy32）。SMMU 几何和 CP 配置已固定：
-  ID0=48016403、ID1=20008003、ID2=00007511。
+- 当前 gate：**H236av 的最小提交。** C3 已完整通过；H236av 用 CP
+  `CP_MEM_WRITE` 写 `0xDEADBEEF` 到 GPU 可见内存，`CP_WAIT_MEM_WRITES` 后
+  CPU 读回。通过后进入 C4（IOGPU 服务/type-1 user client）和 C5
+  （Fill32/Barrier/Copy32）。SMMU 几何和 CP 配置已固定：ID0=48016403、
+  ID1=20008003、ID2=00007511。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
 - 当前代码提交：本地 UniXNU `main`（H236an 提交）；NativeMobileDisplay H236an
   （无 flush 的 RBBM 脉冲）；设备仓库 `main` 未变
@@ -10713,6 +10713,35 @@ CP configure、ME_INIT、GPMU 固件加载与 `BABEFACE` 握手全部通过。�
 
 H236au 的 kernel/payload/boot 哈希见上一节。下一轮做最小提交验证：
 CP `CP_MEM_WRITE` 写 `0xDEADBEEF` 到 GPU 可见内存，CPU 读回；通过后进入 C4/C5。
+
+### H236av：CP_MEM_WRITE 最小提交（2026-11-09）
+
+在 GPMU `BABEFACE` 之后追加一个 CP 提交：
+
+1. 清 `rptr` scratch 页（`kRptrIova=0x1400000`，SMMU 读写映射）；
+2. ring 写 `CP_MEM_WRITE(0x3d, 3)` + 64 位地址 + `0xDEADBEEF`；
+3. 紧跟 `CP_WAIT_MEM_WRITES(0x12, 0)`，确保写完成顺序；
+4. 推 WPTR，等 `CP_RB_RPTR` 到新位置（2 s）；
+5. `dc ivac` 失效 CPU cache 后读 scratch 页，要求值等于 `0xDEADBEEF`。
+
+这一步验证的是 CP → SMMU SID0/CB0 → VBIF → 内存的真实数据通路，不只是
+“包被取走”。
+
+产物：
+
+```text
+H236av kernel  2cb846d0f2eefb42ed709f9ecb27a2833b6e9b574d09305c19e4522a36b6b926
+H236av payload e79c96fe4512ef355ef901a538f15a29d2ced8ebe61556040cb98d38a4876b46
+H236av boot    7392523978f07d8ed369e53786f808a0a0b615afd49861e0664e821ae69b1c23
+```
+
+镜像在 `/tmp/opencode/boot-H236av.img`，待实测。期望日志：
+
+```text
+NATIVE_GPU_C3: submit probe
+NATIVE_GPU_C3: submit write rptr=<n>/<n> value=deadbeef done=1
+NATIVE_GPU_C3: submit test ok
+```
 
 ## 更新规则
 
