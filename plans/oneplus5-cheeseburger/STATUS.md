@@ -3,9 +3,10 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
-- 当前阶段：**C3 完成（2026-11-09）。ZAP/PAS 全部 rc=0，但 XNU 运行时拿不到
-  低 4G + 1 MiB 对齐的 ZAP 镜像；H236bm 改成 kernel window（高 4G）与独立
-  低 4G ZAP 分离，H236bn 待实测 trust 是否清零。**
+- 当前阶段：**C3 完成（2026-11-09）。ZAP/PAS 全部 rc=0，但 boot 阶段给不出
+  XNU 能映射的低 4G + 1 MiB 对齐 ZAP 缓冲区；H236bu 首次让 128 MiB 固定
+  `EfiLoaderCode` 窗口在 `0xA0000000` 分配成功，但把 ramdisk/addon/policy
+  留在 4 GiB 以上 pool 后，boot 在 `0x17ABAC58` 同步异常；菜单已达标。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,15 +18,18 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236bn 的独立低 ZAP。** H236bi/bj/bk 因 4 GiB kernel window 无法
-  整体低地址化而停在菜单。H236bm 把 4 GiB kernel window 固定在高 4 GiB，另用
-  `AllocateMaxAddress` 在低 4 GiB 分配 1 MiB 对齐的 ZAP；H236bn 同时包含
-  `OnePlus 5 IOS` / `[ios 17.7.11]` / `Restart` / `Shut down` 菜单。接下来看
-  `zap auth rc=0` 后 `zap unsecure ... trust=00000000` 和数据写探针。SMMU 几何
-  和 CP 配置已固定：ID0=48016403、ID1=20008003、ID2=00007511。
+- 当前 gate：**H236bu 的 sidecar 映射。** 固件拒绝单次 256 MiB
+  `AllocatePages`（所有地址/类型），但 128 MiB 成功、76 MiB pool 成功；
+  H236bi–bt 的 256 MiB 尝试全部 `Out of Resources`。H236bu 的 128 MiB
+  窗口 + 窗口外 sidecar 在 `0x17ABAC58`（4 GiB 以上）同步异常。下一步先把
+  `Image`/`Ramdisk`/`Addon`/`Policies`/`Used`/`Entry` 地址画出来，再决定
+  192 MiB 全窗口还是 128 MiB + 低 4 GiB sidecar。菜单保持
+  `OnePlus 5 IOS` / `[ios 17.7.11]` / `Restart` / `Shut down`，logo 保留。
+  SMMU 几何和 CP 配置已固定：ID0=48016403、ID1=20008003、ID2=00007511。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
-- 当前代码提交：本地 UniXNU `main`（H236an 提交）；NativeMobileDisplay H236an
-  （无 flush 的 RBBM 脉冲）；设备仓库 `main` 未变
+- 当前代码提交：本地 UniXNU `main`（H236bu 提交，本文档同批）；
+  NativeMobileDisplay H236an（无 flush 的 RBBM 脉冲）；设备仓库 `main`
+  `30c3aaf`（菜单/logo 最终版）
 - 远程仓库：
   - UniXNU `https://github.com/lss717/UniXNU`（`main`）
   - UEFI fork `https://github.com/lss717/edk2-msm8998`（分支 `unixnu-cheeseburger`）
@@ -11298,6 +11302,38 @@ H236bq boot     de27ee09a6241e6c8a76fe9984caa6b666e49c3f06270a9fb1c41a2d4ccab566
 ```
 
 镜像在 `/tmp/opencode/boot-H236bq.img`。
+
+### H236br–H236bu：256 MiB 上限、128 MiB 窗口与 sidecar 映射（2026-11-09）
+
+H236br/bs/bt 依次试了 `0xA0000000`/`0xA0004000`/`0x100000000`/
+`0x180000000`、`EfiLoaderCode`/`EfiLoaderData`、`AllocateAddress`/
+`AllocateMaxAddress`；256 MiB 仍然全部 `EFI_OUT_OF_RESOURCES`。
+而 76 MiB 的 payload `AllocatePool` 成功，说明不是空闲 run 不够。
+
+H236bu 把 `WindowSize` 截到 128 MiB，只把 kernel/args/ADT/TrustCache/ZAP
+放进窗口，ramdisk/addon/policy 留在 UniXNU pool 并直接写 ADT。屏幕：
+
+```text
+DARWINBOOT: fixed window type=0 base=0x…   (固定表第一项 0xA0000000，右侧截断)
+Synchronous Exception at 0x0000000017ABAC58
+OnePlus 5 IOS / ios 17.7.11 / Restart / Shut down
+```
+
+- 128 MiB 固定 `EfiLoaderCode` 分配首次成功，证明 256 MiB 是单次分配上限；
+- `0x17ABAC58` 在 4 GiB 以上，正好是 pool 区；窗口外 ramdisk/addon/policy
+  是当前最大嫌疑；
+- 菜单三项、`ios 17.7.11`、UniXNU logo 全部确认；
+- 设备无 adb/fastboot，不能区分 DarwinBoot 卡住和早期 XNU 卡住。
+
+产物：
+
+```text
+H236bu firmware 519f76638abcfd9f3118c53217a8f2fa5f57b78db9dccee1d749f1056c5c0af7
+H236bu boot     bf73e82bed5f5dde410d4d3190bd83676030c639527d2847af7071daf29e26fc
+```
+
+完整时间线、屏幕判读和踩坑见
+`diagnostics/H236-firmware-window-zap-2026-11-09.md`。
 
 ## 更新规则
 
