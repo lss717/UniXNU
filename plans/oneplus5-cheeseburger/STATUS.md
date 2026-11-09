@@ -4,8 +4,8 @@
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
 - 当前阶段：**C3 完成（2026-11-09）。ZAP/PAS 全部 rc=0，但 CP secure 状态
-  未解除；H236bf 发现 ZAP header/image 分配在 4 GiB 以上，SCM/PAS 的 32 位
-  物理地址会截断，改用低 4G 分配。**
+  未解除；H236bf 改用低 4G ZAP 分配后在分配处失去日志，H236bg 加落盘标记和
+  回退以确认低内存是否可用。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,9 +17,9 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236bf 的低 4G ZAP 内存。** H236be 的 PAS 全部成功但 trust 仍为
-  1；H236bf 把 ZAP header/image 分配到低 4 GiB（SCM/PAS 参数是 32 位）。
-  通过后 `CACHE_FLUSH_TS`/`CP_MEM_WRITE` 应能落内存，再进入 C4/C5。SMMU 几何
+- 当前 gate：**H236bg 的低 4G 分配可见性。** H236bf 在低 4G ZAP 分配处没有
+  任何 C3 日志，H236bg 加分配前后落盘并在失败时回退到 36 位掩码。若看到
+  `zap low4g failed`，低内存需要从启动阶段预留，而不是运行时分配。SMMU 几何
   和 CP 配置已固定：ID0=48016403、ID1=20008003、ID2=00007511。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
 - 当前代码提交：本地 UniXNU `main`（H236an 提交）；NativeMobileDisplay H236an
@@ -11052,6 +11052,31 @@ H236bf boot    066c75c0bc8f2c2553687d4e6fcd81abc6cf86e52e79cf792dc02a2e39c73c94
 ```
 
 镜像在 `/tmp/opencode/boot-H236bf.img`，待实测。
+
+### H236bf 结果与 H236bg：低 4G 分配处日志缺失（2026-11-09）
+
+H236bf 的持久日志里完全没有 `NATIVE_GPU_C3: thread start`，也没有
+`c3 full run`。说明 C3 在最早的 `zapHeader/zapImage` 低 4G 分配处就停住，
+且停在首次 flush 之前。低 4G 的 `IOBufferMemoryDescriptor` 在这台内核上可能
+直接阻塞或失败。
+
+H236bg：
+
+- 分配前后加 `IOLog` + `native_log_flush_hook()`；
+- 低 4G 分配失败时回退到原来的 36 位物理掩码，保证 C3 继续并打印真实地址；
+- `smmu setup` 后、`zap load` 前也补 flush。
+
+产物：
+
+```text
+H236bg kernel  141dcb2a68f7f75e5a613775da03017f63151dedcf02b5b281f97d4f3f745e24
+H236bg payload 3750ab13283073ea3bdc066ccf4091dd41e6635d6fb2f4cc47035f6d72431fc6
+H236bg boot    37f08f3ea37aa475f0de7f6caaf7e75ad1f066c1bc2ab741e3e2b8132d790aa7
+```
+
+镜像在 `/tmp/opencode/boot-H236bg.img`，待实测。若看到
+`zap low4g failed`，说明低 4G 分配不可用；需要改用启动阶段预留的低内存，
+而不是运行时分配。
 
 ## 更新规则
 
