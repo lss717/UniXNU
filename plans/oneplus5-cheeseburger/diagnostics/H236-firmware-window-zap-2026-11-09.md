@@ -604,3 +604,99 @@ sagit `stageZap` 把 ZAP 移到**窗口外的低 4 GiB**（多分配 + 对齐 + 
 并把内核 `.elf` 检查修回 `.b02`。下一步是实测 H236bv 的
 `low alloc`/192-or-128 window/`zap auth`/`trust=0`，而不是继续调
 256 MiB 窗口。
+
+---
+
+## 8. H236bx–H236ce：窗口外 sidecar、清理屏上诊断、重建入口探针（2026-11-09）
+
+### 8.1 H236bx–H236by 收敛
+
+- `ZeroMem((VOID *)Address, Used)`（约 97 MiB，含窗口外地址）是 H236cb
+  同步异常的来源：窗口只有 192 MiB，`Used` 却按“全部内部排列”算过。
+  改为 `ZeroMem(Args)` + 只清每个 segment 的 `Size - FileSize`（BSS）。
+- `ReadFileLow()`：kernel、ADT、trustcache 都由 `AllocateLow()` 读入低
+  4 GiB，再从低地址复制进窗口，避免 `AllocatePool` 把 52 MB 内核放到
+  4 GiB 以上。
+- `LowSidecars = TRUE` 无条件生效：ramdisk、gpuaddon、policy 都在窗口外，
+  `Args->TopOfKernelData` 只覆盖 kernel/args/ADT/trust，给 XNU 早期留
+  约 139 MiB，而不是 H236bu 的约 24 MiB。
+- H236cc 启动：`ZAP LOW 0xFCB00000/0xFCA27000`、
+  `WIN 0xA0000000 sz 0xC000000 low 1`、`IMG 0xFCD36000 ADD 0xFBB83000`、
+  `POL 0x0 RAM 0x…`、复制全部完成、`entry=0xA0415488`，随后画面不变。
+
+### 8.2 照片裁剪导致的误判（重要）
+
+H236cc 的屏幕照片只截到画面中段：顶部 1/16 的绿色 handoff checkpoint、
+以及入口探针 band 1（第 2 个 1/16）都不在照片里。因此 H236cb “没有蓝条”
+**不能**证明 XNU 没有执行，必须用整屏照片或把探针条移到画面中段重测。
+
+### 8.3 H236cd/H236ce 改动
+
+- 屏上成功诊断全部删除（`ZAP LOW`/`WIN`/`IMG`/`USED`/`COPY DONE`/
+  `ARGS ZERO`/`KERNEL|TREE|TRUST|ADDON|POLICY|RAMDISK START|DONE`），
+  `DARWINBOOT: ARM64/video/zap/command line/inputs validated` 与整屏
+  `\fDARWINBOOT: hand-off` DEBUG 块删除；失败诊断
+  （`NO ZAP ALLOC`/`NO KERNEL WINDOW`/`NO RAMDISK|ADDON|POLICY LOW`）保留。
+- 删除 GIC 快照打印：
+  - `drivers/DarwinBoot`：`DiagGic()` 与 `GicRead32()`；
+  - `edk2-msm8998`：`CheeseburgerBootMemoryDxe` 的
+    `UNIXNU-GIC-entry/-exit` 打印和 ExitBootServices 事件注册。
+  CTLR=0/DS=0/ARE=0 已经取到，不需要每次启动重复。
+- 新增 `NO EBS <status> try <n> key <key>`：ExitBootServices 重试耗尽时
+  直接画在屏上，不再静默死循环。
+- `Entry.S`：绿色 checkpoint 从 1/16 缩到 1/128 屏高；只有停在 handoff
+  时才可见，内核接管显示后会被覆盖。
+- 构建坑：删掉 `DiagGic` 后 `GicRead32` 变成未使用函数，
+  `-Werror=unused-function` 让固件构建失败；一起删掉即可。
+
+### 8.4 探针工具的两处修正
+
+1. stage 1 的蓝条原来在 band 1（顶部第二个 1/16），照片容易裁掉。新增
+   `--band`（band 8 = 屏幕正中）；本次用 `--no-reset --band 8`。
+2. 本内核 `_start` 之后 `0xFFFFFFF007419500` 的固定 padding 已被占用，
+   工具原来直接报 `Padding ... is not empty`。现在会在同一 file-backed
+   segment 内向后扫描全零区，取第一个能放下 `CAVE_SIZE` 的 4 字节对齐
+   地址，并记录已用 cave，保证每个 stage 用不同的 padding。
+
+构建/打包：
+
+```sh
+cd /mnt/data_2048/project/ios/edk2-msm8998
+UNIXNU_TREE=/mnt/data_2048/project/ios/UniXNU \
+  ./build.sh -d cheeseburger -r RELEASE --skip-rootfs-gen
+
+cd /mnt/data_2048/project/ios/UniXNU-cheeseburger
+python3 scripts/make-bootimg.py --edk2 ../edk2-msm8998 \
+  --kernel ../edk2-msm8998/workspace/uefi-cheeseburger.img.gz-dtb \
+  --payload /tmp/opencode/payload-H236cc.img \
+  --out /tmp/opencode/boot-H236ce.img
+```
+
+探针（内核副本，绝不改原 kernel.macho）：
+
+```sh
+python3 out/cheeseburger/tree/scripts/patch-xnu-entry-probe.py \
+  /tmp/opencode/kernel-H236ce-probe.macho --no-reset --band 8
+cp /tmp/opencode/payload-H236cc.img /tmp/opencode/payload-H236ce-probe.img
+mcopy -o -i /tmp/opencode/payload-H236ce-probe.img \
+  /tmp/opencode/kernel-H236ce-probe.macho ::/EFI/UniXNU/Payloads/kernel.macho
+```
+
+产物：
+
+```text
+firmware 16c85e11f49a7f5aa89106d9b2561e185a2a17b8d2a70aa7f8e662612ca13aee
+boot     5732510f5e2fcd341870743b30208512a9411777637186bd065d947ab507405f  boot-H236ce.img
+probe k  983c17f5748c6acb7f2b6ae2d90a8dbcd076b88ebe061c3a4a5da9a8425189d9
+probe p  b09d65fa8032bb0275cdbd48a125e6d8fa97a02d33ec0158b271b6f2751b4e72
+probe b  610f551c8b0e4fecc94691f9a47bc43174e10f4375b9f6daf4ae264a15139c0f  boot-H236ce-probe.img
+```
+
+### 8.5 坑
+
+- `out/cheeseburger/tree/scripts/` 是 **defconfig 时复制的**，不是软链；
+  改 `../UniXNU-cheeseburger/scripts/patch-xnu-entry-probe.py` 后要重新
+  `./unixnu defconfig cheeseburger_defconfig -D ../UniXNU-cheeseburger`，
+  或把脚本复制进 `out/.../tree/scripts/` 再跑。
+- `boot-H236cc.img` 的 payload 与 `payload-H236cc.img` 相同，替换固件时
+  只换 kernel（`--kernel`），payload 不要重打，否则会丢 gpuaddon/trustcache。

@@ -11417,6 +11417,72 @@ kernel   453d668bd8f983d84c33099856b4208fe53d0c1a91629bb292a43c3dcf36a9f2
 手机需要手动重启到 fastboot/TWRP，再
 `fastboot boot boot-H236bw.img`。
 
+### H236bx–H236ce：192 MiB 窗口 + 窗口外 sidecar，清理屏上诊断（2026-11-09）
+
+H236bx–H236by 在 H236bw 的基础上把 boot 阶段重新收敛：
+
+- `ZeroMem(Address, Used)`（约 97 MiB）是 >4 GiB 同步异常的来源，改成
+  `ZeroMem(Args)` + 逐 segment 清 BSS；`ReadFileLow` 让 kernel/ADT/trustcache
+  都落在低 4 GiB，不再从 >4 GiB pool 复制。
+- 192 MiB 固定窗口在 `0xA0000000` 可用；ramdisk/addon/policy 始终由
+  `AllocateLow` 放到窗口外（`LowSidecars = TRUE`），窗口内留给
+  kernel/args/ADT/trust，约 139 MiB 早期启动内存。
+- `.b02` ZAP 仍在窗口外低 4 GiB（H236bw 已去掉 UC/XP）。
+
+H236cc 实测（`boot-H236cc.img` `de6a010b…`）：`ZAP LOW 0xFCB00000/0xFCA27000`、
+`WIN 0xA0000000 sz 0xC000000 low 1`、`IMG 0xFCD36000 ADD 0xFBB83000`、
+所有 `COPY/DONE` 行出现、`ExitBootServices` 前最后一行有效，
+`entry=0xA0415488`（= `0xA0000000 + 0x415488`，与 Mach-O `LC_UNIXTHREAD`
+一致），之后屏幕不再变化。
+
+**重新核对照片**：H236cc 的照片只截到屏幕中段，顶部 1/16（DarwinEnter 的
+绿色 checkpoint）和 probe 的 band 1 都不在画面里。因此“没看到绿条/蓝条”
+不能作为“XNU 没有执行”的证据；此前 H236cb 的结论需要重测。
+
+H236cd/H236ce（本次）：
+
+- 删除成功路径上的大字诊断：`ZAP LOW`、`WIN`、`IMG`、`USED`、
+  `COPY DONE`、`ARGS ZERO`、`KERNEL/TREE/TRUST/ADDON/POLICY/RAMDISK
+  START/DONE`，以及 `DARWINBOOT: ARM64/video/zap/command line/inputs
+  validated` 和整屏 `DARWINBOOT: hand-off` DEBUG 块；失败路径的
+  `NO ZAP ALLOC`/`NO KERNEL WINDOW`/`NO RAMDISK LOW`/`NO ADDON LOW`/
+  `NO POLICY LOW` 保留。
+- 删除 GIC 快照：DarwinBoot 的 `DiagGic`（含 `GicRead32`）和
+  `edk2-msm8998` 的 `CheeseburgerBootMemoryDxe` 在驱动入口 /
+  ExitBootServices 事件里的 `UNIXNU-GIC-entry/-exit` 打印。CTLR=0 的
+  快照已经拿到，不再需要每次启动刷屏。
+- 新增失败诊断：`ExitBootServices` 三次重试都失败时画
+  `NO EBS <status> try <n> key <key>`，不再无声 `CpuDeadLoop`。
+- `DarwinEnter` 保留一个 1/128 屏高的绿色 checkpoint（原位 1/16 太大），
+  只在启动停在 handoff 时可见，内核接管显示后即被覆盖。
+- 构建修复：删掉 `DiagGic` 后未使用的 `GicRead32` 触发
+  `-Werror=unused-function`。
+
+kernel 没有变化（H236by `453d668b…`）；固件/镜像：
+
+```text
+firmware 16c85e11f49a7f5aa89106d9b2561e185a2a17b8d2a70aa7f8e662612ca13aee  (1454258 B)
+payload  ebe00fef70b3756b21e1eac16448969111168c6ae7a75ebbf4a957c786cefa02  (payload-H236cc，含 gpuaddon)
+boot     5732510f5e2fcd341870743b30208512a9411777637186bd065d947ab507405f  (boot-H236ce.img，干净菜单)
+```
+
+probe 也重建了：`patch-xnu-entry-probe.py` 增加 `--band`，把 stage 1 的
+蓝条放到**屏幕中段**（band 8，照片一定拍得到）；本内核 `_start` 后面的
+固定 padding 已被占用，工具改为在同一 segment 内找下一段全零 padding，
+并保证每个 stage 用各自的 cave。probe 内核 `983c17f5…`、payload
+`b09d65fa…`、boot `610f551c…`。
+
+下一步实测顺序：
+
+1. `fastboot boot boot-H236ce.img`：确认菜单干净（只剩 `OnePlus 5 IOS` /
+   `ios 17.7.11` / `Restart` / `Shut down` + logo），没有 `DARWINBOOT`、
+   `UNIXNU-GIC`、`ZAP/WIN/IMG/COPY` 等字样。
+2. `fastboot boot boot-H236ce-probe.img`：看屏幕中段是否出现蓝色 band。
+   出现 → XNU `_start` 确实执行，卡点在 XNU 早期（下一步用 panic-screen /
+   reset-after 探针）；不出现 → `br x1` 之前或入口本身有问题（看顶部
+   1/128 绿条是否出现，以区分 EBS 是否返回）。
+3. 拿到 TWRP 的 `h103log-H236*.bin` 再确认 `PE_init`/`kprintf`/`panic`。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。
