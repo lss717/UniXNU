@@ -3,9 +3,9 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
-- 当前阶段：**C3 的 RBBM reset、SMMU、CP 配置全部通过；H236ar 定位到
-  CP_ME_INIT 被 opcode error 拒绝，根因是 PM4 type4/type7 头缺奇偶校验位。
-  H236as 已修正 PM4 头，待看 ME_INIT → GPMU 是否走通（2026-11-09）。**
+- 当前阶段：**C3 的 RBBM reset、SMMU、CP 配置全部通过；H236as 修正 PM4
+  奇偶校验后 CP opcode error 消失，ME 已运行；H236at 收紧 idle 判据，
+  待看 GPMU 是否走通（2026-11-09）。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,10 +17,9 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236as 的 ME_INIT → GPMU。** H236ar 的 `cp diag` 给出
-  `first_ms=1 first_cpints=00000001 hwfault=0`，即 CP opcode error；根因是
-  C3 的 PM4 type4/type7 头缺少奇偶校验位、type7 count 还写成 count-1。
-  H236as 已修正。接下来看 ME_INIT 是否 idle、GPMU 包是否被消费、
+- 当前 gate：**H236at 的 GPMU。** H236as 已消除 CP opcode error，`CP_ME_CNTL=0`，
+  `rptr=wptr=9`，CP busy 位全 0；H236at 只等 CP 相关位（mask 0x7e），不再等
+  `GPU_BUSY_IGN_AHB/HYST`。接下来看 GPMU 包是否被消费、
   `GPMU_GENERAL_0` 是否回 `BABEFACE`。SMMU 几何和 CP 配置已经固定：
   ID0=48016403、ID1=20008003、ID2=00007511；bootloader 没有留映射，C3 必须
   自己写 CB0 和 SID0→CB0。
@@ -10626,6 +10625,39 @@ H236as boot    c00dd01bae7f6092ff05f4bd811f149896d7d0d8d9e65e0404bfeb63775b12d5
 镜像在 `/tmp/opencode/boot-H236as.img`，待实测。若 ME_INIT 通过，应该看到
 `gpmu load` 以及 `GPMU firmware reached BABEFACE`；否则 `cp diag` 的
 `first_cpints`/`hwfault` 会告诉下一步。
+
+### H236as 结果与 H236at：CP 已 idle，余下是 GPU busy 位（2026-11-09）
+
+H236as 的修正生效：
+
+```text
+[ 69.331589] cp configure done
+[ 71.919786] cp rptr=00000009 rbbm=c0000101 me=00000000 wptr=00000009
+             ints=00000000 cpints=00000000 gfsr=00000000 fsr=00000400
+             far=00000000 idle=0
+[ 71.977232] cp diag first_ms=4294967295 first_ints=00000000
+             first_cpints=00000000 hwfault=00000000 protect=00000000
+             mestat=0000002e cpint=00000000 status3=00100000
+```
+
+- `cpints` 的 opcode error 消失，`CP_ME_CNTL=0`（ME 已运行）；
+- `RBBM_STATUS` 的 CP busy 位（1/2/4/6）全为 0，只剩 bit31/30/8：
+  `GPU_BUSY_IGN_AHB`、`GPU_BUSY_IGN_AHB_CP`、`GPU_BUSY_IGN_AHB_HYST`；
+- 这些是 3D 块未做 power collapse 时的全局 busy 指示，不是 CP 的 idle 判据。
+
+H236at 把 idle 判据从 `status & ~1` 改为 `status & 0x7e`（CP_ME/PFP/ETS/
+CRASH/GPMU_MASTER/CP_BUSY），并保留 `RBBM_STATUS3` bit24 的 SMMU stall 检查。
+
+产物：
+
+```text
+H236at kernel  df61d739af41aec0ac61663601107d4f696e4fab424dffe0116538d01257b98a
+H236at payload 7a83738093b2b7a94f873a9b92018422d6360e9773b50e8b827f1fcd7bb209de
+H236at boot    b509271587ecff85b83a3096a678ce336a1c970fc936856e6c8b0a14a7b42bf9
+```
+
+镜像在 `/tmp/opencode/boot-H236at.img`，待实测。期望看到 `gpmu load` 和
+`GPMU firmware reached BABEFACE`。
 
 ## 更新规则
 
