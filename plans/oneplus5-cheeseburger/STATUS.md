@@ -4,8 +4,8 @@
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
 - 当前阶段：**C3 完成（2026-11-09）。RBBM reset、SMMUv2、CP configure、
-  ME_INIT、GPMU 固件 `BABEFACE` 全部通过；提交包被 CP 消费但数据写不落内存，
-  H236ax 用 ring 页写入区分 SMMU 写权限与 CP data-write 状态。**
+  ME_INIT、GPMU 固件 `BABEFACE` 全部通过；提交包被 CP 消费但数据写不落内存
+  （ring 页也不落），H236ay 用 protected-mode 包裹和 trust/ME 状态定位。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,11 +17,11 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236ax 的 ring 页写入。** H236aw 的 `CACHE_FLUSH_TS` 和
-  `CP_MEM_WRITE` 都读回 0，且无 CP fault。H236ax 把同样的写指向 ring 缓冲区
-  的空闲页（CP 自身在读，映射必然可用）；若 ring 页可写而 `rptr` 页不可写，
-  是 SMMU 写权限；若两者都不可写，是 CP data-write 的 secure/protected 状态。
-  通过后进入 C4/C5。SMMU 几何和 CP 配置已固定：ID0=48016403、ID1=20008003、
+- 当前 gate：**H236ay 的 data-write 状态。** H236ax 连 ring 页也写不进，且无
+  CP fault；H236ay 用 `CP_SET_PROTECTED_MODE(0/1)` 包裹写入，并打印
+  `RBBM_SECVID_TRUST_CNTL`、`CP_ME_CNTL`、`CP_ME_STAT_DATA`。若 trust 非 0，
+  则需要 ZAP/secure 转换；若 protected 状态导致，则调整提交包裹。通过后进入
+  C4/C5。SMMU 几何和 CP 配置已固定：ID0=48016403、ID1=20008003、
   ID2=00007511。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
 - 当前代码提交：本地 UniXNU `main`（H236an 提交）；NativeMobileDisplay H236an
@@ -10810,6 +10810,36 @@ H236ax boot    f0574cb2d9f96e3cf4a7808700b1aa4547eebdc53a134edd534b488672076123
 ```
 
 镜像在 `/tmp/opencode/boot-H236ax.img`，待实测。
+
+### H236ax 结果与 H236ay：ring 页也写不进（2026-11-09）
+
+H236ax：
+
+```text
+[ 69.341378] submit write rptr=3145/3145 ts=0000000000000000 value=00000000
+             ring=00000000 done=1
+[ 69.372622] submit diag cpint=00000000 hwfault=00000000 fsr=00000400 rbbm=e0c801c1
+```
+
+连 ring 缓冲区自己的空闲页都写不进，且没有 CP fault，说明不是 `rptr` 映射的
+写权限问题，而是 GPMU 之后 CP 的 data-write 被丢弃/未执行。两个候选：
+
+1. `CP_SET_PROTECTED_MODE(1)` 状态（GPMU 包最后一条）仍在阻止写；
+2. CP 进入 secure 模式，非安全数据写被丢弃。
+
+H236ay 在提交里显式包上 `CP_SET_PROTECTED_MODE(0)` / `(1)`，并打印
+`RBBM_SECVID_TRUST_CNTL`(0xf400)、`CP_ME_CNTL`、`CP_ME_STAT_DATA`，用来判断
+是 protected 状态还是 secure 状态。
+
+产物：
+
+```text
+H236ay kernel  52214ef9977a10477aab9537f5633b1f19436d493999be83f0ee6062c27d4190
+H236ay payload 052b2fd5ed093a15b96890acedc35b710a37932a57f8ec9b88c73d43563be0a6
+H236ay boot    7fd1b6814e0f0043258ff45f126d6cc9cce5423f7b90212309e32c7090553203
+```
+
+镜像在 `/tmp/opencode/boot-H236ay.img`，待实测。
 
 ## 更新规则
 
