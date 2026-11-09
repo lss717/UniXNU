@@ -4,8 +4,8 @@
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
 - 当前阶段：**C3 的 RBBM reset、SMMU、CP 配置全部通过；CP 已取走 ME_INIT
-  （rptr=9）。H236aq 正在等满 vendor 的 2 s 并采集 CP fault/ME 状态，
-  以判断 ME 为何仍报 busy（2026-11-09）。**
+  （rptr=9）。H236aq 发现 C3 线程卡在 IOSleep；H236ar 用定时器忙等替代，
+  等待 2 s 后采集 CP fault/ME 状态（2026-11-09）。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,13 +17,14 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236aq 的 CP busy 判读。** H236ao 已证明 reset、SMMU、CP 配置和
-  ME_INIT 取指都成立（rptr=9）；H236ap 的 2 s 等待被一个瞬时错误位提前打断。
-  H236aq 等满 2 s 并打印 `first_ints/first_cpints/first_rbbm`、`CP_HW_FAULT`、
-  `CP_PROTECT_STATUS`、`CP_ME_STAT_DATA`、`CP_INTERRUPT_STATUS` 和
-  `RBBM_STATUS3`，据此决定是继续 GPMU 还是修 CP configure。SMMU 几何和 CP
-  配置已经固定：ID0=48016403、ID1=20008003、ID2=00007511；bootloader 没有留
-  映射，C3 必须自己写 CB0 和 SID0→CB0。
+- 当前 gate：**H236ar 的 CP busy 判读。** H236ao 已证明 reset、SMMU、CP 配置和
+  ME_INIT 取指都成立（rptr=9）；H236ap 的 2 s 等待被错误位提前打断；H236aq
+  发现线程卡在 IOSleep。H236ar 用 `spinMs()` 忙等等满 2 s，并打印
+  `first_ints/first_cpints/first_rbbm`、`CP_HW_FAULT`、`CP_PROTECT_STATUS`、
+  `CP_ME_STAT_DATA`、`CP_INTERRUPT_STATUS` 和 `RBBM_STATUS3`，据此决定继续
+  GPMU 还是修 CP configure。SMMU 几何和 CP 配置已经固定：ID0=48016403、
+  ID1=20008003、ID2=00007511；bootloader 没有留映射，C3 必须自己写 CB0 和
+  SID0→CB0。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
 - 当前代码提交：本地 UniXNU `main`（H236an 提交）；NativeMobileDisplay H236an
   （无 flush 的 RBBM 脉冲）；设备仓库 `main` 未变
@@ -10551,6 +10552,35 @@ H236aq boot    9d13e2ca2250ce1e0c4ee88a18c441b63257de3fa6b4026c414a803fe7356b2b
 镜像在 `/tmp/opencode/boot-H236aq.img`。下一步按 `first_*` 和 `hwfault` 判读：
 若是 ME 还在跑，等满 2 s 后应能进入 GPMU；若是 CP fault，再按 fault 位修
 configure/ring。
+
+### H236aq 结果与 H236ar：C3 线程不能在 IOSleep 里等（2026-11-09）
+
+H236aq 的日志停在：
+
+```text
+[ 67.872251] NATIVE_GPU_C3: cp configure done
+（之后没有 cp rptr / cp diag）
+```
+
+但系统仍在继续（272 s 的 GIC/UFS、371 s 的 APFS 都正常），所以不是 GPU 挂死，
+而是 C3 线程卡在 2000 次 `IOSleep(1)` 里没有返回。H236ap 只睡了约 61 次就
+break，没暴露这个问题。
+
+H236ar 把 `IOSleep(1)` 换成基于 `mach_absolute_time()`/`absolutetime_to_nanoseconds`
+的有界忙等 `spinMs(1)`；ME_INIT 仍等 2 s，GPMU 包 2 s，`BABEFACE` 5 s。忙等会
+占用唯一 CPU，但不会让线程永久停在 sleep 上，日志会在等待结束后落盘。
+
+产物：
+
+```text
+H236ar kernel  71f48e5989619d41ac873262270c645aa1426e29a67415fa0237c6569b0516d1
+H236ar payload e46e7f9e20b9d4ea42b1f554a706bc5678c91ea38b7a65c754dbd1c749e05bd0
+H236ar boot    15dc9341be249f1b29d9656f43ec783c2de53ba23e7c74be08e901896d2e04fb
+```
+
+镜像在 `/tmp/opencode/boot-H236ar.img`。若 2 s 后仍 busy，`cp diag` 会给出
+`first_ints/first_cpints/first_rbbm`、`CP_HW_FAULT`、`CP_PROTECT_STATUS`、
+`CP_ME_STAT_DATA` 和 `RBBM_STATUS3`，再据此修 CP。
 
 ## 更新规则
 
