@@ -10322,6 +10322,51 @@ H236y boot    9fc64a864ec364331b3bada40f4410f2db86b2e42ea1bc3c740c260034ee5204
 H236y 用 `sheng-gpu-power=7`（C3），已在 `2026-11-09` 启动；下一步看 C3 是否
 越过 SMMU 进入 `cp me init` 和 GPMU `BABEFACE`。
 
+### H236z-H236am：C3 的 CP 启动与平台复位限制（2026-11-09）
+
+在 H236y 把 SMMU context/route 打通之后，C3 继续推进到 CP：
+
+- `ArmSmmu4KAttachStreams` 在这个 SMMU 上返回 Busy：FAULT 类型的 S2CR 读回
+  `0x000200ff`（cbndx=0xff），kit 要求“正好 FAULT”。改为手工发布
+  `S2CR0=0`（translation → CB0）和 `SMR0=0x80000000|SID0`，读回校验通过。
+- CP `ME_INIT` 一直不消费（RPTR=0）。逐项排除：
+  - 队列阈值（MEQ/MERCIU/ROQ）已补，无效；
+  - SMMU 侧无 fault：`sGFSR=0`、`CB0.FSR=0x400`、`FAR=0`，CP 根本没发起取指；
+  - `CP_ME_CNTL` 写 0 后读回 `0x404`，ME 未进入运行空闲态。
+- 按 sagit 参考补上 reset/configure 语义（只按寄存器语义重写）：
+  - `CP_ME_CNTL=0x303` + `VBIFHalt=0xf` 均能 ACK（`me=0303 ok=1`、
+    `vbif=000f000f ok=1`）；
+  - `RBBM_SW_RESET_CMD` 写 1 就挂总线：用 `native_log_flush_hook()` 逐步落盘后，
+    最后一行稳定是 `reset w1`，dummy read 之前就断；去掉 dummy read 也一样；
+  - 块复位（`RBBM_BLOCK_SW_RESET_CMD=0xffdffc0`）同样挂；
+  - 跳过复位时 CP 仍然不取指（`gfsr=0` 证明不是 SID/映射）。
+- 发现 GCC GPU 内存分支被 bootloader 关闭：`gcc_bimc_gfx_clk`（0x46040）
+  读 `0x80000000`（bit31=halt，bit0=0），置位后读回 `0x00000001`；
+  `gpu_cfg_ahb`/`gpu_bimc_gfx`/`bimc_gfx_src` 本来就在跑。H236am 已在 reset 前
+  使能并打印，但 `RBBM_SW_RESET_CMD` 仍然一写就挂。
+
+结论：**从 XNU（AP 非安全侧）不能对这个 OP5 的 A540 发 RBBM 软复位**。sagit 的
+实现是在 **EFI 阶段**（ExitBootServices 之前）完成真实复位和 GPU/CP/GPMU 启动，
+XNU 只接管已运行的引擎；这与当前现象一致，也说明下一步必须把
+`reset → configure → CP/GPMU` 移到 `edk2-msm8998` 的桥/loader 里，或者先查清
+OP5 的 GPU XPU/TZ 是否把 `RBBM_SW_RESET_CMD` 保护为仅 secure 可写（若是则需
+SCM/PIL 路径）。
+
+同时保留的成果：
+
+- C3 的 GPU 内存（32 KiB ring、PM4/PFP/GPMU buffer、RPTR）和 SMMU 表/context/route
+  已完整可用；
+- `sheng-gpu-power=8` 的只读 survey 可复用；
+- 复位/启动链每一步都有 `native_log_flush_hook()` 落盘，后续任何实验都能看到
+  最后成功的步骤。
+
+产物（供下轮复现）：
+
+```text
+H236am kernel  9f10f87d2585d0043ccab4328fb852f64339e571e4aeba05c87c08318f296624
+H236am boot    ac3a9670ab5dde1059730d69ac8a6adea6aebe49a1821b3b590ae83a9c9c944b
+```
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。
