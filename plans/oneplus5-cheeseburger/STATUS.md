@@ -5,8 +5,9 @@
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
 - 当前阶段：**C3 完成（2026-11-09）。ZAP/PAS 全部 rc=0，但 boot 阶段给不出
   XNU 能映射的低 4G + 1 MiB 对齐 ZAP 缓冲区；H236bu 首次让 128 MiB 固定
-  `EfiLoaderCode` 窗口在 `0xA0000000` 分配成功，但把 ramdisk/addon/policy
-  留在 4 GiB 以上 pool 后，boot 在 `0x17ABAC58` 同步异常；菜单已达标。**
+  `EfiLoaderCode` 窗口在固定表地址（首项 `0xA0000000`，屏幕行被截断）
+  分配成功，但把 ramdisk/addon/policy 留在 4 GiB 以上 pool 后，boot 在
+  `0x17ABAC58` 同步异常；菜单已达标。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
