@@ -3,9 +3,9 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
-- 当前阶段：**C3 的 RBBM reset、SMMU、CP 配置全部通过；CP 已取走 ME_INIT
-  （rptr=9）。H236aq 发现 C3 线程卡在 IOSleep；H236ar 用定时器忙等替代，
-  等待 2 s 后采集 CP fault/ME 状态（2026-11-09）。**
+- 当前阶段：**C3 的 RBBM reset、SMMU、CP 配置全部通过；H236ar 定位到
+  CP_ME_INIT 被 opcode error 拒绝，根因是 PM4 type4/type7 头缺奇偶校验位。
+  H236as 已修正 PM4 头，待看 ME_INIT → GPMU 是否走通（2026-11-09）。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,14 +17,13 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236ar 的 CP busy 判读。** H236ao 已证明 reset、SMMU、CP 配置和
-  ME_INIT 取指都成立（rptr=9）；H236ap 的 2 s 等待被错误位提前打断；H236aq
-  发现线程卡在 IOSleep。H236ar 用 `spinMs()` 忙等等满 2 s，并打印
-  `first_ints/first_cpints/first_rbbm`、`CP_HW_FAULT`、`CP_PROTECT_STATUS`、
-  `CP_ME_STAT_DATA`、`CP_INTERRUPT_STATUS` 和 `RBBM_STATUS3`，据此决定继续
-  GPMU 还是修 CP configure。SMMU 几何和 CP 配置已经固定：ID0=48016403、
-  ID1=20008003、ID2=00007511；bootloader 没有留映射，C3 必须自己写 CB0 和
-  SID0→CB0。
+- 当前 gate：**H236as 的 ME_INIT → GPMU。** H236ar 的 `cp diag` 给出
+  `first_ms=1 first_cpints=00000001 hwfault=0`，即 CP opcode error；根因是
+  C3 的 PM4 type4/type7 头缺少奇偶校验位、type7 count 还写成 count-1。
+  H236as 已修正。接下来看 ME_INIT 是否 idle、GPMU 包是否被消费、
+  `GPMU_GENERAL_0` 是否回 `BABEFACE`。SMMU 几何和 CP 配置已经固定：
+  ID0=48016403、ID1=20008003、ID2=00007511；bootloader 没有留映射，C3 必须
+  自己写 CB0 和 SID0→CB0。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
 - 当前代码提交：本地 UniXNU `main`（H236an 提交）；NativeMobileDisplay H236an
   （无 flush 的 RBBM 脉冲）；设备仓库 `main` 未变
@@ -10581,6 +10580,52 @@ H236ar boot    15dc9341be249f1b29d9656f43ec783c2de53ba23e7c74be08e901896d2e04fb
 镜像在 `/tmp/opencode/boot-H236ar.img`。若 2 s 后仍 busy，`cp diag` 会给出
 `first_ints/first_cpints/first_rbbm`、`CP_HW_FAULT`、`CP_PROTECT_STATUS`、
 `CP_ME_STAT_DATA` 和 `RBBM_STATUS3`，再据此修 CP。
+
+### H236ar 结果与 H236as：PM4 头缺奇偶校验位（2026-11-09）
+
+H236ar 等满 2 s 后拿到：
+
+```text
+[ 72.060804] cp rptr=00000009 rbbm=c00001c1 me=00000400 wptr=00000009
+             ints=00000000 cpints=00000000 ... idle=0
+[ 72.118206] cp diag first_ms=1 first_ints=00000000 first_cpints=00000001
+             first_rbbm=c00001c1 hwfault=00000000 protect=00000000
+             mestat=000000fe cpint=00000000 status3=00100000
+```
+
+`CP_INTERRUPT_STATUS` 的 bit0 在 1 ms 就置起，`CP_HW_FAULT`/`CP_PROTECT_STATUS`
+都是 0，说明是 **CP opcode error**，不是取指 fault。
+
+根因是 C3 里的 PM4 头格式错了：
+
+```c
+// 旧：缺 parity，type7 还写 count-1
+type4 = 0x40000000 | ((count-1)<<16) | addr
+type7 = 0x70000000 | (opcode<<16) | (count-1)
+```
+
+vendor `adreno_pm4types.h` 的 A5xx 格式：
+
+```c
+type4 = 0x40000000 | cnt | parity(cnt)<<7  | (addr&0x3ffff)<<8 | parity(addr)<<27
+type7 = 0x70000000 | cnt | parity(cnt)<<15 | (opcode&0x7f)<<16 | parity(opcode)<<23
+```
+
+所以 ME_INIT（opcode 0x48）被 CP 直接判成 opcode error，ME 从未执行。
+H236as 修正 `type4()`/`type7()`，加入奇偶校验并改正 count；GPMU 的 type4
+也会随之正确。
+
+产物：
+
+```text
+H236as kernel  a05a4ae376acd451cffaa664db3da5a705d4f4416ae81bd64bfd2ddf6b1e6c3f
+H236as payload e61f869972f4f034925e7dac795c4e8a3a840828122da23283d0edb6738c172f
+H236as boot    c00dd01bae7f6092ff05f4bd811f149896d7d0d8d9e65e0404bfeb63775b12d5
+```
+
+镜像在 `/tmp/opencode/boot-H236as.img`，待实测。若 ME_INIT 通过，应该看到
+`gpmu load` 以及 `GPMU firmware reached BABEFACE`；否则 `cp diag` 的
+`first_cpints`/`hwfault` 会告诉下一步。
 
 ## 更新规则
 
