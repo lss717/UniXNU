@@ -3,9 +3,9 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
-- 当前阶段：**C3 完成（2026-11-09）。H236ay 确认 CP 在 secure 模式，H236az
-  证明 trust 寄存器 host 不可写；H236ba 已实现 ZAP/PAS（SCM image 13）+
-  `CP_SET_SECURE_MODE(0)`，待验证 trust 清零与数据写。**
+- 当前阶段：**C3 完成（2026-11-09）。ZAP/PAS 已在 H236bb 全部通过
+  （shutdown/init/mem setup/auth 均 rc=0），但只加载了 .b02，CP 仍未离开
+  secure；H236bc 改为完整 a540_zap.elf 镜像，待验证 trust 清零。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,12 +17,11 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236ba 的 ZAP/PAS。** H236az 证明 `RBBM_SECVID_TRUST_CNTL`
-  host 不可写（写 0 挂总线）。H236ba 已实现 SCM PAS image 13：
-  `PAS_INIT_IMAGE(a540_zap.mdt)` → `PAS_MEM_SETUP` → `a540_zap.b02` →
-  `PAS_AUTH_AND_RESET` → `CP_SET_SECURE_MODE(0)`，并读回 trust 必须为 0。
-  通过后 `CACHE_FLUSH_TS`/`CP_MEM_WRITE` 应能落内存，再进入 C4/C5。
-  SMMU 几何和 CP 配置已固定：ID0=48016403、ID1=20008003、ID2=00007511。
+- 当前 gate：**H236bc 的完整 ZAP 镜像。** H236bb 的 PAS 调用全部 rc=0，但只
+  加载了 `.b02`，`CP_SET_SECURE_MODE(0)` 后 trust 仍为 1。H236bc 用完整
+  `a540_zap.elf`（0x0/0x1000/0x3000 三段）和 0x5000 mem setup。通过后
+  `CACHE_FLUSH_TS`/`CP_MEM_WRITE` 应能落内存，再进入 C4/C5。SMMU 几何和 CP
+  配置已固定：ID0=48016403、ID1=20008003、ID2=00007511。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
 - 当前代码提交：本地 UniXNU `main`（H236an 提交）；NativeMobileDisplay H236an
   （无 flush 的 RBBM 脉冲）；设备仓库 `main` 未变
@@ -10909,6 +10908,46 @@ H236ba boot    731fa9a9df58cf70caa74c1099f40214fcbcb5570f94c8ae14b8721927885ef2
 镜像在 `/tmp/opencode/boot-H236ba.img`，待实测。期望顺序：
 `zap shutdown` → `zap init` → `zap mem setup` → `zap auth` → `zap unsecure
 ... trust=00000000` → `submit ... value=deadbeef ring=cafebabe`。
+
+### H236bb 结果与 H236bc：ZAP 签名通过，镜像不完整（2026-11-09）
+
+H236bb（225 上重跑）：
+
+```text
+[ 71.549178] zap shutdown call
+[ 71.577644] zap shutdown rc=0 answer=0
+[ 71.606422] zap init call mdt=188c86000/6684
+[ 71.663059] zap init rc=0 answer=0
+[ 71.692474] zap mem setup call image=188c88000/8192
+[ 71.721687] zap mem setup rc=0 answer=0
+[ 71.751253] zap auth call b02=4916
+[ 71.781384] zap auth rc=0 answer=0
+[ 71.837529] zap unsecure rptr=3134/3134 done=1 trust=00000001
+```
+
+TrustZone 的 `PAS_INIT_IMAGE`/`PAS_MEM_SETUP`/`PAS_AUTH_AND_RESET` 全部返回 0，
+签名通过；但 `CP_SET_SECURE_MODE(0)` 后 trust 仍是 1。根因是 ZAP 镜像不完整：
+a540 的 `.mdt` 段表是 3 段，`.b00`/`.b01`/`.b02` 分别在镜像偏移 0/0x1000/0x3000，
+完整拼接就是 `a540_zap.elf`（17,204 B）。H236bb 只把 `.b02` 拷到偏移 0，且
+`PAS_MEM_SETUP` 只有 8 KiB。
+
+H236bc：
+
+- `a540_zap.elf` 加入 generator（`efac89c5…`）；
+- `zapImage` 扩到 32 KiB，整份 `.elf` 放入；
+- `PAS_MEM_SETUP` 传 0x5000（覆盖 0x0..0x4334 的三段）；
+- `PAS_INIT_IMAGE` 仍用 `.mdt` 签名头。
+
+产物：
+
+```text
+H236bc kernel  809ee8a3fd4035875f68049d878c38bb907f0e72c850b68469682184f0951ad4
+H236bc payload e91d23bd5dc4f2051eb1bc1e5d75d4f7c5bd9ee43a1ab48aacd2198095f92407
+H236bc boot    1156d219c50a0af87b4c22b749e0903ef11b79c4a1f2aab4e05e1243c838fbff
+```
+
+镜像在 `/tmp/opencode/boot-H236bc.img`，待实测。成功后应看到
+`zap unsecure ... trust=00000000` 和 `submit ... value=deadbeef ring=cafebabe`。
 
 ## 更新规则
 
