@@ -11462,16 +11462,16 @@ H236cd/H236ce（本次）：
 kernel 没有变化（H236by `453d668b…`）；固件/镜像：
 
 ```text
-firmware a6c8e77be21c72af78674da902d8dea3ac4444dc0341fe19f302ea1be1249827  (1454178 B)
+firmware 8742d677e7369b7c3e399dd5879cf10e3c10bcd820044728379e048aae6e841e  (1454014 B)
 payload  ebe00fef70b3756b21e1eac16448969111168c6ae7a75ebbf4a957c786cefa02  (payload-H236cc，含 gpuaddon)
-boot     318151950c74980ffb725f4b571a55f52a4c74f1950fe1b26124b3769b3f302c  (boot-H236ce.img，干净菜单)
+boot     cd00555c10a2c6348e4335988e714e0c7cc13a7c5333348514fb108d321ecade  (boot-H236ce.img，干净菜单)
 ```
 
 probe 也重建了：`patch-xnu-entry-probe.py` 增加 `--band`，把 stage 1 的
 蓝条放到**屏幕中段**（band 8，照片一定拍得到）；本内核 `_start` 后面的
 固定 padding 已被占用，工具改为在同一 segment 内找下一段全零 padding，
 并保证每个 stage 用各自的 cave。probe 内核 `983c17f5…`、payload
-`b09d65fa…`、boot `a4863f45…`。
+`b09d65fa…`、boot `6223b3bf…`。
 
 下一步实测顺序：
 
