@@ -3,22 +3,27 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
-- 当前阶段：**C1/C2 完成，C3 进入 SMMU 只读 survey（2026-11-09）。**
+- 当前阶段：**C1/C2 完成，C3 已打通 SMMU 与 CP 配置，正在复核 RBBM 软复位
+  （H236an，2026-11-09）。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
   `qcom,smmu-v2` 已按厂商 `arm-smmu.c` 路径核对。H236x 的只读 survey 已确认
   SMMU 几何（3 个 CB、8 个寄存器页、36 位 PA），H236y 用修正后的 kit 参数执行
-  C3（CB0 + SID0 映射 + CP/GPMU）。基线见
+  C3（CB0 + SID0 映射 + CP/GPMU）。H236z–H236am 已把 CP halt/VBIF drain、
+  configure、INSTR/RB base 全部读回通过，SMMU 无 fault，但 ME_INIT 不消费；
+  RBBM 软复位在写 1 处挂住。H236an 把脉冲两次写之间的 UFS log flush 去掉，
+  用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**C3 进入 SMMU 编程。ID0=48016403（S1TS/SMS，3 个 SMR）、
-  ID1=20008003（8 页、3 个 CB）、ID2=00007511（IAS/OAS=36、4K 表）；
-  bootloader 没有留任何映射（SMR=0、S2CR=FAULT、CB0 关），所以 C3 必须自己写
-  CB0 和 SID0→CB0。H236y 已把 output_bits 改成 36、预清 S2CR、补 ACTLR。**
+- 当前 gate：**H236an 的 reset 脉冲复测。** 期望日志顺序为
+  `reset pulse begin` → `reset writes done` → `reset pulse released rst=00000000`；
+  若停在 `reset pulse begin`，才说明写 1 真的把总线挂死，下一步再走 UEFI/secure
+  路线。SMMU 几何和 CP 配置已经固定：ID0=48016403、ID1=20008003、
+  ID2=00007511；bootloader 没有留映射，C3 必须自己写 CB0 和 SID0→CB0。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
-- 当前代码提交：本地 UniXNU `main`（H236y 提交）；NativeMobileDisplay H236y
-  （SMMU 几何修正 + CP/GPMU 路径 + 只读 survey）；设备仓库 `main` 未变
+- 当前代码提交：本地 UniXNU `main`（H236an 提交）；NativeMobileDisplay H236an
+  （无 flush 的 RBBM 脉冲）；设备仓库 `main` 未变
 - 远程仓库：
   - UniXNU `https://github.com/lss717/UniXNU`（`main`）
   - UEFI fork `https://github.com/lss717/edk2-msm8998`（分支 `unixnu-cheeseburger`）
@@ -10366,6 +10371,38 @@ SCM/PIL 路径）。
 H236am kernel  9f10f87d2585d0043ccab4328fb852f64339e571e4aeba05c87c08318f296624
 H236am boot    ac3a9670ab5dde1059730d69ac8a6adea6aebe49a1821b3b590ae83a9c9c944b
 ```
+
+### H236an：去掉 reset 脉冲之间的 log flush（2026-11-09）
+
+H236am 的结论是“写 1 就挂总线”，但代码里 `wr(1)` 和 `wr(0)` 之间还有
+`IOLog("reset w1 done")` 和 `native_log_flush_hook()`。落盘的最后一行恰好是
+flush 之前的 `reset w1`，而 flush 是 UFS 的 DMA/设备写；它可以排在尚未完成的
+复位写之后，所以“挂住”的可能不是 `RBBM_SW_RESET_CMD`，而是这次 flush。
+H236al 的“去掉 dummy read”版本仍然保留了这条 flush，因此不能区分两者。
+
+H236an 的改动（`NativeA540C3.cpp`）：
+
+- `wr(RBBM_SW_RESET_CMD, 1)` → CPU-only `yield` 延时 → `wr(..., 0)` → 延时，
+  中间不 log、不 flush、不读寄存器；
+- 释放后才落盘 `reset writes done`，再读回 `RBBM_SW_RESET_CMD` 并打印
+  `reset pulse released rst=%08x`；读回非 0 直接失败；
+- 因此最后一行停在哪里就是明确的判据：
+  - 停在 `reset pulse begin`：脉冲本身（或它造成的 NoC 停滞）挂总线；
+  - 看到 `reset writes done` / `reset pulse released rst=00000000`：之前的
+    “挂”是 flush 排在未完成的复位写之后，复位可用。
+
+产物（firmware 沿用 `fw-H103ea.img.gz-dtb`，sha256 `163917aa…`；payload 以
+H236am 的 76 MiB FAT 为基线，只替换 `kernel.macho`，`sheng-gpu-power=7` 不变）：
+
+```text
+H236an kernel  db750a0f6bd48dab199f6b7fda5f102f729c9d4d22083016fcbff135bc33fc9d
+H236an payload 211d12e75b0af4d3d97c51892bb9f4144dd33c195ffeddd300181a39acb3af45
+H236an boot    736eabecafbd132201d5c1c192bbb1b9f4f13f9a5ec19ad414558895f736ed5a
+```
+
+镜像在 `/tmp/opencode/boot-H236an.img`（`boot-H236an.json` 为打包报告），
+待 `fastboot boot` 实测。若复位通过，C3 后续仍要解决 ME_INIT 不消费；若复位
+仍挂，再把 `reset → SMMU → configure → CP/GPMU` 移到 UEFI，或先查 secure/XPU。
 
 ## 更新规则
 
