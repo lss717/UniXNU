@@ -3,9 +3,9 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
-- 当前阶段：**C3 完成（2026-11-09）。ZAP/PAS 已在 H236bb 全部通过
-  （shutdown/init/mem setup/auth 均 rc=0），但只加载了 .b02，CP 仍未离开
-  secure；H236bc 改为完整 a540_zap.elf 镜像，待验证 trust 清零。**
+- 当前阶段：**C3 完成（2026-11-09）。ZAP/PAS 的 shutdown/init/mem setup 均
+  rc=0；H236bb 的 .b02-only 镜像 auth 通过但不生效，H236bc 的完整 .elf 在
+  auth 返回 -68，H236bd 用精确 0x4334 尺寸重试。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,9 +17,9 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236bc 的完整 ZAP 镜像。** H236bb 的 PAS 调用全部 rc=0，但只
-  加载了 `.b02`，`CP_SET_SECURE_MODE(0)` 后 trust 仍为 1。H236bc 用完整
-  `a540_zap.elf`（0x0/0x1000/0x3000 三段）和 0x5000 mem setup。通过后
+- 当前 gate：**H236bd 的 PAS_AUTH 尺寸。** H236bc 的完整 `.elf` 在
+  `PAS_AUTH_AND_RESET` 返回 -68，H236bd 把 `PAS_MEM_SETUP` 的 size 从 0x5000
+  改为精确的 0x4334。若仍失败，断电冷启动清 TZ 保留的 ZAP 后再试。通过后
   `CACHE_FLUSH_TS`/`CP_MEM_WRITE` 应能落内存，再进入 C4/C5。SMMU 几何和 CP
   配置已固定：ID0=48016403、ID1=20008003、ID2=00007511。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
@@ -10948,6 +10948,36 @@ H236bc boot    1156d219c50a0af87b4c22b749e0903ef11b79c4a1f2aab4e05e1243c838fbff
 
 镜像在 `/tmp/opencode/boot-H236bc.img`，待实测。成功后应看到
 `zap unsecure ... trust=00000000` 和 `submit ... value=deadbeef ring=cafebabe`。
+
+### H236bc 结果与 H236bd：PAS_AUTH 的尺寸（2026-11-09）
+
+H236bc 把完整 `.elf` 放入镜像后：
+
+```text
+zap init rc=0 answer=0
+zap mem setup rc=0 answer=0 image=.../20480
+zap auth call elf=17204
+zap auth rc=-68 answer=0
+fail step 43 (zap auth and reset)
+```
+
+`PAS_INIT_IMAGE` 和 `PAS_MEM_SETUP` 都接受，但 `PAS_AUTH_AND_RESET` 返回
+`-68`。H236bb 只放 `.b02` 时 auth 能过，说明 TZ 对镜像布局/尺寸敏感；最可能
+是 `PAS_MEM_SETUP` 传了 0x5000，而 `.elf` 的实际大小是 0x4334。
+
+H236bd 只改一处：`PAS_MEM_SETUP` 的 size 用 `a540_fw_zap_elf_size`（17204 =
+0x4334），不再取整到 0x5000。
+
+产物：
+
+```text
+H236bd kernel  3bbbe1813b501817aca5383e6160a43aab4969775a63211a2deb86088946551e
+H236bd payload ae4aba4627140b1643a074b7103fcc868c707d10ced4498cf8e392a0696e6c39
+H236bd boot    69b47c979bd9d929ba6a98db5ed388e782568a8fccb9b51f9b1173a2c3cd3ae5
+```
+
+镜像在 `/tmp/opencode/boot-H236bd.img`，待实测。若仍是 -68，下一步彻底断电
+冷启动一次（TZ 可能保留 H236bb 已认证的 ZAP），再重试。
 
 ## 更新规则
 
