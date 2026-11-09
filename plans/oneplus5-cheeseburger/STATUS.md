@@ -4,8 +4,8 @@
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
 - 当前阶段：**C3 完成（2026-11-09）。ZAP/PAS 全部 rc=0，但 CP secure 状态
-  未解除；对照 sagit 后确认 ZAP 镜像必须低 4 GiB 且 1 MiB 对齐，H236bh 按此
-  实现分配。**
+  未解除；H236bh 证明 XNU 运行时拿不到低 4G + 1 MiB 对齐的 ZAP 镜像，下一步
+  必须由 UEFI/DarwinBoot 预留并传给 XNU。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,10 +17,11 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236bh 的 1 MiB 对齐 ZAP 镜像。** sagit 的 `MDTImage::imageInto`
-  要求 `.b02` 的 `p_align=0x100000`，`stageZap` 在低 4 GiB 内做内部对齐。
-  H236bh 用低 4G mask `0xffffffff`、多分配并对齐到 1 MiB。通过后
-  `CP_MEM_WRITE` 应能落内存，再进入 C4/C5。SMMU 几何和 CP 配置已固定：
+- 当前 gate：**UEFI/ADT 预留 ZAP 低内存。** H236bh 已证明 XNU 运行时无法提供
+  低 4G + 1 MiB 对齐的 ZAP 镜像。下一步在 edk2-msm8998/DarwinBoot 的
+  ExitBootServices 前按 sagit `stageZap()` 分配 2 MiB、低 4G、1 MiB 对齐
+  缓冲区，经 `/chosen` 属性或 boot arg 传给 XNU；XNU 只做物理映射和 PAS。
+  完成后再回到 `CP_SET_SECURE_MODE(0)` / 数据写。SMMU 几何和 CP 配置已固定：
   ID0=48016403、ID1=20008003、ID2=00007511。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
 - 当前代码提交：本地 UniXNU `main`（H236an 提交）；NativeMobileDisplay H236an
@@ -11121,6 +11122,35 @@ H236bh boot    8b1f57f064c41b9336ac93d131a09125e810493494b02db94b427150d4b1da62
 ```
 
 镜像在 `/tmp/opencode/boot-H236bh.img`，待实测。
+
+### H236bh 结果：XNU 运行时无法提供低 4G + 1 MiB 对齐（2026-11-09）
+
+```text
+NATIVE_GPU_C3: alloc zap low4g aligned
+NATIVE_GPU_C3: zap low4g aligned failed h=0 i=0
+```
+
+XNU 的 `IOBufferMemoryDescriptor` 在 `physicalMask=0xffffffff` + 1 MiB 内部
+对齐下仍然分配失败。这不是参数没调对：低 4 GiB 的连续 1 MiB 物理块在 XNU
+启动后已经不可用。sagit 的 `stageZap()` 在 **EFI 阶段**用
+`AllocateMaxAddress(UINT32_MAX)` 分配并内部对齐，正是同一原因。
+
+**结论：ZAP 的 PAS metadata/image 必须由启动阶段（UEFI/DarwinBoot）预留低
+4 GiB、1 MiB 对齐的物理页，再交给 XNU。** XNU 侧只保留 `IOMemoryDescriptor::
+withPhysicalAddress` 映射和 PAS 调用。
+
+下一步（需要新的 UEFI/ADT 改动，不再盲发 XNU 镜像）：
+
+1. 在 `edk2-msm8998`/DarwinBoot 的 ExitBootServices 前分配一块 2 MiB、
+   低 4G、1 MiB 对齐的缓冲区（sagit `allocate()` 的同样算法）；
+2. 把物理地址写入 XNU 可见的 `/chosen` 属性或 boot arg
+   （`qcom,gpu-zap-memory = <phys size>`），并确保它不出现在 XNU 的可用
+   内存图里；
+3. XNU C3 读取该属性，用 `IOMemoryDescriptor::withPhysicalAddress` 映射，
+   把 `a540_zap.mdt` 和 `.b02` 拷进去，再走现有 PAS 流程；
+4. 成功后继续 `CP_SET_SECURE_MODE(0)` 和数据写探针。
+
+在完成 1–2 之前，XNU 侧的低 4G 分配实验到此为止。
 
 ## 更新规则
 
