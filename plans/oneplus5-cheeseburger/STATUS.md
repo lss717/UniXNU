@@ -11267,6 +11267,38 @@ H236bo boot     36904d0502ed75184add71f2f452204cb0309de2c9fbccae0c1e5aae12d7c9ae
 
 下一步是让用户看到并记录这行 15 秒的错误，而不是继续改分配参数。
 
+
+### H236bp 屏幕判读与 H236bq（2026-11-09）
+
+H236bp 的 15 秒诊断给出：
+
+```text
+NO WINDOW 10000000 BIG RUN FCC00000 @ 180000
+NO KERNEL WINDOW Out of Resources
+FREE 180000000 + FCC0000
+```
+
+- `WindowSize = 256 MiB`，不是 4 GiB；payload 的 ADT 没有 4 GiB 属性；
+- 低地址 `0x180000` 的 4.2 GiB run 和 `0x180000000` 的 264 MiB run 都存在；
+- `AllocateAddress` 精确 256 MiB 仍然被固件拒绝（Out of Resources），不是没有空间。
+
+H236bq：
+
+- `AllocateWindow` 在逐 run `AllocateAddress` 失败后回退到
+  `AllocateMaxAddress` + 内部 2 MiB 对齐（sagit `stageZap` 的分配方式），
+  仍然要求 window 和 ZAP 在低 4 GiB；
+- 菜单 `[ui] title` 回到 `UniXNU`、`logo = true`，只把菜单项标题改成
+  `OnePlus 5 IOS`；三项 `OnePlus 5 IOS` / `Restart` / `Shut down` 已确认可见。
+
+产物：
+
+```text
+firmware H236bq e0a0e0393ae64ca420e6bc77430b94b43a7c4d1c3b697d941d61e3ffd67182f4
+H236bq boot     de27ee09a6241e6c8a76fe9984caa6b666e49c3f06270a9fb1c41a2d4ccab566
+```
+
+镜像在 `/tmp/opencode/boot-H236bq.img`。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。
