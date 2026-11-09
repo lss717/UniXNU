@@ -10404,6 +10404,22 @@ H236an boot    736eabecafbd132201d5c1c192bbb1b9f4f13f9a5ec19ad414558895f736ed5a
 待 `fastboot boot` 实测。若复位通过，C3 后续仍要解决 ME_INIT 不消费；若复位
 仍挂，再把 `reset → SMMU → configure → CP/GPMU` 移到 UEFI，或先查 secure/XPU。
 
+**Mac 构建注意（H236an 起固定）**：`build-xnu-4k-baseline.sh` 的 patch 循环对
+已打补丁的 `.cache/xnu-work` 不是幂等的，会在 `iokit/KernelConfigTables.cpp`
+上失败；失败时它可能已经反向卸掉 `zzz*` 后置 patch（H236v/H236an 都踩过）。
+因此：
+
+```sh
+# 正常重建（xnu-work 已经是完整 patch 状态）
+XNU_SKIP_PATCH_LOOP=1 bash ~/run-h103n-build.sh
+
+# 只有在需要重新应用全部 patch 时，才先删树再完整跑一次（不带 SKIP）
+rm -rf ~/UniXNU/out/cheeseburger/tree/.cache/xnu-work
+```
+
+`~/run-h103n-build.sh` 已加入 `export XNU_SKIP_PATCH_LOOP=1`。本轮旧树备份在
+`~/UniXNU/out/cheeseburger/tree/.cache/xnu-work.partial-h236an`，不要直接再用。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。
