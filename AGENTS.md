@@ -47,6 +47,11 @@ git clone https://github.com/lss717/UniXNU-cheeseburger
 - Useful checks:
   - `./unixnu status`
   - `cd ../UniXNU-cheeseburger && python3 scripts/check-cheeseburger.py`
+  - `python3 scripts/check-zap-layout.py --firmware ~/.cache/firmware/a540`
+    (verifies the A540 ZAP PAS layout: only `.b02` is PT_LOAD, `.b02@0`,
+    extent 0x2000, metadata 0x1a1c)
+  - `python3 scripts/check-bootargs-fit.py --payload <payload.img>`
+    (the boot_args command line must leave room for ` zap-base=0x...`)
   - `python3 scripts/check-unixnu.py` (offline driver self-test; on this Linux
     host with GNU mtools 4.0.43 it currently stops at
     `FAIL: payload volume is reproducible` — confirm on macOS before treating
