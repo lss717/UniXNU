@@ -3,9 +3,9 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
-- 当前阶段：**C3 完成（2026-11-09）。ZAP/PAS 全部 rc=0，但 CP secure 状态
-  未解除；H236bh 证明 XNU 运行时拿不到低 4G + 1 MiB 对齐的 ZAP 镜像，下一步
-  必须由 UEFI/DarwinBoot 预留并传给 XNU。**
+- 当前阶段：**C3 完成（2026-11-09）。ZAP/PAS 全部 rc=0，但 XNU 运行时拿不到
+  低 4G + 1 MiB 对齐的 ZAP 镜像；H236bi 已让 DarwinBoot 在 kernel window 内
+  预留并传 `zap-base`，待实测 trust 是否清零。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,11 +17,10 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**UEFI/ADT 预留 ZAP 低内存。** H236bh 已证明 XNU 运行时无法提供
-  低 4G + 1 MiB 对齐的 ZAP 镜像。下一步在 edk2-msm8998/DarwinBoot 的
-  ExitBootServices 前按 sagit `stageZap()` 分配 2 MiB、低 4G、1 MiB 对齐
-  缓冲区，经 `/chosen` 属性或 boot arg 传给 XNU；XNU 只做物理映射和 PAS。
-  完成后再回到 `CP_SET_SECURE_MODE(0)` / 数据写。SMMU 几何和 CP 配置已固定：
+- 当前 gate：**H236bi 的 boot-reserved ZAP。** DarwinBoot 已在 kernel window 内
+  预留 2 MiB、低 4G、1 MiB 对齐的 ZAP 区并追加 `zap-base`；C3 用
+  `IOMemoryDescriptor` 映射。接下来看 `zap auth rc=0` 后
+  `zap unsecure ... trust=00000000` 和数据写探针。SMMU 几何和 CP 配置已固定：
   ID0=48016403、ID1=20008003、ID2=00007511。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
 - 当前代码提交：本地 UniXNU `main`（H236an 提交）；NativeMobileDisplay H236an
@@ -11151,6 +11150,37 @@ withPhysicalAddress` 映射和 PAS 调用。
 4. 成功后继续 `CP_SET_SECURE_MODE(0)` 和数据写探针。
 
 在完成 1–2 之前，XNU 侧的低 4G 分配实验到此为止。
+
+### H236bi：DarwinBoot 预留 ZAP 低内存（2026-11-09）
+
+按 sagit `stageZap()` 的做法，ZAP 区放进 DarwinBoot 已分配的 kernel window：
+
+- `DarwinBoot.c` 在 `PolicyAddress` 之后按 `SIZE_1MB` 对齐预留 2 MiB，要求
+  `ZapAddress + 2 MiB <= 4 GiB`；
+- `Used` 包含该区，`boot_args.MemorySize`/`TopOfKernelData` 因此把整段标记为
+  kernel 所有，XNU 不会回收；
+- 在 XNU command line 追加 `zap-base=0x<phys>`；
+- UEFI 屏上新增 `DARWINBOOT: zap base=0x… size=0x200000`。
+
+XNU C3：
+
+- `PE_parse_boot_argn("zap-base", &u64)`，要求 1 MiB 对齐且低于 4 GiB；
+- `mapWindow(zapBase, 0x2000)` 作为 `.mdt` metadata，`mapWindow(zapBase+0x100000,
+  0x2000)` 作为 `.b02` image；
+- 删除运行时低 4G `Alloc` 路径。
+
+构建产物：
+
+```text
+firmware  362f68e931b188f70a79defecd6da103dd46615147a8a5c1ff8ff22a5843ffed
+H236bi kernel  53cedef9b1442435c136b74826dd13802cb2a8dee02d8d11a0347fd94e81aaf2
+H236bi payload 8d558c4b48a6647d8ab9b40f720963b8bf5ec6aa7aa0920627c432920f5aad67
+H236bi boot    554f77822c2796c840e7cb27ace456b491b1db4b730616a198a8dcc2e3a55584
+```
+
+镜像在 `/tmp/opencode/boot-H236bi.img`，待实测。期望 C3 看到
+`zap alloc mdt=0x8… image=0x8…`（低于 4 GiB、image 1 MiB 对齐），
+`zap auth rc=0`，`zap unsecure ... trust=00000000`，然后数据写探针成功。
 
 ## 更新规则
 
