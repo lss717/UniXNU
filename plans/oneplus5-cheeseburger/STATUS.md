@@ -11654,6 +11654,31 @@ boot     8bbfa67a29c370dde56d26b376284e736808646d04bfb7ba8cf5ad42b449ca4e  boot-
 H236cw 启动后 C3 继续运行，待拉日志确认 `zap init/mem setup/auth rc=0`、
 `zap unsecure … trust=00000000` 和 submit probe。
 
+### H236cx–H236da：ZAP 布局定论与 timestamp 判据（2026-11-10）
+
+H236cx/cy 把 `.mdt` 的全部 file-backed phdr 拼成 0x9000 交给 PAS，
+`zap auth rc=-68`。解析 `.mdt` 后确认只有 `.b02` 是 `PT_LOAD`，正确布局是
+`.b02@0`、extent 0x2000、metadata 为整份 `.mdt`（0x1a1c），所以旧的
+`.b02`-only 布局本来就是对的。新增离线校验器
+`scripts/check-zap-layout.py`。
+
+H236cz 把 `gpmu_load` 提前到 `zap_unsecure` 之前（sagit 的
+`Engine::start` 要求 GPMUReady=0xbabeface 后才接受 secure-mode 包），
+`GPMU firmware reached BABEFACE` 后 `zap unsecure rptr=3134/3134 done=1`，
+trust 仍是 `00000001`。
+
+H236da 补上 sagit 的最后一项差异：secure-mode 包后紧跟
+`CP_EVENT_WRITE(CACHE_FLUSH_TS|IRQ)` 时间戳，并以 timestamp 退休 +
+trust==0 为判据（2 s 轮询，日志 `ts=lo:hi`）。镜像待上机。
+
+产物：
+
+```text
+firmware ac56ddbd542cb3dbfeab1d84ad67eb6f76da13dac6dc0b28473232300af9fca4
+kernel   7210df9f803ae1de0b6170968c20f43d0a77ed7ca06d44f326427398118771c8
+boot     86348bcac054cf6e3627a4344e83378597961b3c0be15f51ccaab08ccdb42ab7  boot-H236da.img
+```
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。

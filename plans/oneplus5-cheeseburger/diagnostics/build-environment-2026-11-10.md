@@ -263,3 +263,58 @@ firmware ac56ddbd542cb3dbfeab1d84ad67eb6f76da13dac6dc0b28473232300af9fca4
 kernel   7e71d1be1b384143950fd79244230cfc1cc77475061478fd4cf6c5025526e137
 boot     8bbfa67a29c370dde56d26b376284e736808646d04bfb7ba8cf5ad42b449ca4e  boot-H236cw.img
 ```
+
+---
+
+## 13. A540 ZAP 的 PAS 布局：只认 `.mdt` 的 PT_LOAD（H236cx/cy）
+
+`a540_zap.elf` 和 `a540_zap.mdt` 都是 **ELF32**，各 3 个 program header：
+
+```text
+#0  type 0  paddr 0x0000  filesz 0x94    memsz 0        (b00, header)
+#1  type 0  paddr 0x7000  filesz 0x1988  memsz 0x2000   (b01, hash, flags 0x2200000)
+#2  type 1  paddr 0x5000  filesz 0x1334  memsz 0x1334   (b02, PT_LOAD, flags 0x8000007, align 1 MiB)
+```
+
+按 sagit `AdrenoFirmware.h::MDTImage` 的规则（只取 `type == 1 && memsz` 的段，
+跳过 hash 段）：
+
+```text
+metadata  = mdt[0x94] + mdt[0x94..0x1a1c] = 整份 .mdt (0x1a1c)
+first     = 0x5000
+extent    = 0x2000          (.b02 0x1334，页对齐)
+image     = .b02 放在偏移 0
+alignment = 1 MiB，relocate = 1（flags bit 27）
+```
+
+所以原来 `.b02@0 / 0x2000 / metadata=.mdt` 的布局**是对的**。H236cy 把
+“所有 file-backed phdr 拼成 0x9000”交给 PAS，`zap auth` 立刻 `-68`
+（与 H236bc 用整份 ELF 文件同因：非 PT_LOAD 段也在镜像里）。
+
+`scripts/check-zap-layout.py --firmware ~/.cache/firmware/a540` 可以离线复核
+这套推导（只读 blob，不提交）。
+
+## 14. `CP_SET_SECURE_MODE(0)` 后 trust 仍为 1（H236cw/cz/da）
+
+已经排除的因素（都有实测）：
+
+- PAS 镜像布局（见 §13）；
+- ZAP 地址/对齐（`0xABE00000/0xABF00000`，低 4G、1 MiB 对齐）；
+- GPMU 顺序：把 `gpmu_load` 挪到 `zap_unsecure` 之前，`GPMUReady=0xbabeface`
+  之后发 `CP_SET_SECURE_MODE(0)`，`rptr=3134/3134 done=1`，trust 仍是
+  `00000001`（H236cz）。
+
+剩下与 sagit `AdrenoSubmit::Engine::start` 的差异只有：它在
+`CP_SET_SECURE_MODE(0)` + `CP_WAIT_FOR_IDLE` 之后**紧跟真实 timestamp**
+（`CP_EVENT_WRITE(CACHE_FLUSH_TS|IRQ)`），并以“timestamp 退休 + trust==0”
+为成功判据。H236da 按此实现（2 s 轮询 trust，日志追加 `ts=lo:hi`），
+镜像 `boot-H236da.img` 待上机。
+
+产物：
+
+```text
+firmware ac56ddbd542cb3dbfeab1d84ad67eb6f76da13dac6dc0b28473232300af9fca4
+kernel   7210df9f803ae1de0b6170968c20f43d0a77ed7ca06d44f326427398118771c8
+payload  5eeb2d1c90274a64a6838fa1d305da0147f9092b10a80c0e187e98ea818af294
+boot     86348bcac054cf6e3627a4344e83378597961b3c0be15f51ccaab08ccdb42ab7  boot-H236da.img
+```
