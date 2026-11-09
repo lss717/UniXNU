@@ -4,8 +4,8 @@
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
 - 当前阶段：**C3 完成（2026-11-09）。ZAP/PAS 全部 rc=0，但 CP secure 状态
-  未解除；H236bf 改用低 4G ZAP 分配后在分配处失去日志，H236bg 加落盘标记和
-  回退以确认低内存是否可用。**
+  未解除；对照 sagit 后确认 ZAP 镜像必须低 4 GiB 且 1 MiB 对齐，H236bh 按此
+  实现分配。**
   PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
   1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
   （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
@@ -17,10 +17,11 @@
   用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
   `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
   `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236bg 的低 4G 分配可见性。** H236bf 在低 4G ZAP 分配处没有
-  任何 C3 日志，H236bg 加分配前后落盘并在失败时回退到 36 位掩码。若看到
-  `zap low4g failed`，低内存需要从启动阶段预留，而不是运行时分配。SMMU 几何
-  和 CP 配置已固定：ID0=48016403、ID1=20008003、ID2=00007511。
+- 当前 gate：**H236bh 的 1 MiB 对齐 ZAP 镜像。** sagit 的 `MDTImage::imageInto`
+  要求 `.b02` 的 `p_align=0x100000`，`stageZap` 在低 4 GiB 内做内部对齐。
+  H236bh 用低 4G mask `0xffffffff`、多分配并对齐到 1 MiB。通过后
+  `CP_MEM_WRITE` 应能落内存，再进入 C4/C5。SMMU 几何和 CP 配置已固定：
+  ID0=48016403、ID1=20008003、ID2=00007511。
 - 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
 - 当前代码提交：本地 UniXNU `main`（H236an 提交）；NativeMobileDisplay H236an
   （无 flush 的 RBBM 脉冲）；设备仓库 `main` 未变
@@ -11077,6 +11078,49 @@ H236bg boot    37f08f3ea37aa475f0de7f6caaf7e75ad1f066c1bc2ab741e3e2b8132d790aa7
 镜像在 `/tmp/opencode/boot-H236bg.img`，待实测。若看到
 `zap low4g failed`，说明低 4G 分配不可用；需要改用启动阶段预留的低内存，
 而不是运行时分配。
+
+### H236bg 结果与 H236bh：ZAP 镜像必须 1 MiB 对齐（2026-11-09）
+
+H236bg：
+
+```text
+zap alloc mdt=188bfd000 image=188c40000
+zap init rc=0
+zap mem setup rc=0
+zap auth rc=0
+zap unsecure ... trust=00000001
+```
+
+低 4G 的 `physicalMask=0xfffff000` 并没有把地址压到 4 GiB 以下（XNU 的
+`IOBufferMemoryDescriptor` 在这条路径上忽略了该限制），所以 ZAP 仍在
+0x188c40000。
+
+对照 sagit 的 `AdrenoFirmware.h::MDTImage` 和 `gpu_handoff.cpp::stageZap`：
+
+- a540 的 `.b02` `p_align = 0x100000`；
+- `imageInto()` 要求 `physical & (imageAlignment()-1) == 0`，即 ZAP 镜像物理
+  基址必须 **1 MiB 对齐**；
+- `stageZap()` 先按 `imageAlignment()` 预留额外空间，再在分配内部对齐；
+  EFI 分配上限 `UINT32_MAX`，即低 4 GiB；
+- `PAS::setup()` 用 `PAS_MEM_SETUP(13, imagePhys, imageBytes)`，镜像内容按
+  `p_paddr - low` 放到偏移 0。
+
+H236bh 按这个实现改 `Alloc::init`：
+
+- 增加 `alignment` 参数，多分配 `alignment - 4096` 并在内部对齐物理地址；
+- ZAP header：低 4G mask `0xffffffff` + 4 KiB 对齐；
+- ZAP image：低 4G mask `0xffffffff` + **1 MiB 对齐**，大小 0x2000；
+- 其余 GPU buffer 保持原 36 位掩码/4 KiB 对齐。
+
+产物：
+
+```text
+H236bh kernel  de635097b94d1568bbd255258c96dbaa4fb13430e08f05ba2afa1c4fa32f9d48
+H236bh payload d6a4a3bbacf04775179c8deba976f88fe69008592e06a87a89b0fa6ef7b52d1e
+H236bh boot    8b1f57f064c41b9336ac93d131a09125e810493494b02db94b427150d4b1da62
+```
+
+镜像在 `/tmp/opencode/boot-H236bh.img`，待实测。
 
 ## 更新规则
 
