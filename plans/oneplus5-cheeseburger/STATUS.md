@@ -11699,6 +11699,23 @@ AP 直写在任何时机都挂总线。剩余假设集中在：
 a540 是否真的启用 content protection（决定 CP 路径是否有效）、以及
 TZ 对 SECVID 的锁定/解锁时机（PAS shutdown 前后、上电前后）。
 
+### H236de/df：两个并行假设的镜像（2026-11-10）
+
+- **A（H236de）**：`zap_unsecure` 在 trust!=0 时不失败，继续到 submit probe，
+  用来判断 trust=1 是否本来就是 ZAP 路径的正常值（sagit 只在 trust>1 时报错）。
+  判据：submit 的 `ts/value/ring` 是否非 0。
+- **B（H236df）**：用 CP 的 `CP_SET_PROTECTED_MODE(0) + CP_WIDE_REG_WRITE(0xF400,0)
+  + CP_SET_PROTECTED_MODE(1)` 代替 AP 直写，绕开总线挂死。
+
+产物：
+
+```text
+A kernel 2e2c4dbb…  boot ef9cd842…  boot-H236de.img
+B kernel ea5ff5d5…  boot 69005908…  boot-H236df.img
+```
+
+两个镜像都已放到 Windows 的 `D:\Users\ls\Documents\OnePlus5_ios\`。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。

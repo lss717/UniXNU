@@ -360,3 +360,43 @@ _me_init_ucode_workarounds(): A540v1 = 0x0A（我们原来传 0）
 2. 用 `CP_WIDE_REG_WRITE`（a4xx 风格）让 **CP** 去写 trust 寄存器；
 3. 确认 a540 的 `ADRENO_CONTENT_PROTECTION`（DT/gpudev）；若没有，厂商路径就是
    上电直写，需要把直写放到 TZ 锁寄存器之前（我们在 reset 后写仍然挂）。
+
+---
+
+## 16. 两个并行镜像：trust 语义 vs CP 写寄存器（H236de/df）
+
+用户要求把 §15 的两个假设分别做成镜像：
+
+### A（H236de）：先验证 trust=1 是否真的阻塞数据写
+
+改动：`zap_unsecure` 在 `trust != 0` 时只打印
+`zap unsecure continuing with trust=…`，**不再 fail**，继续 GPMU + submit probe。
+
+判读：
+
+- `submit write ... ts=<非0> value=deadbeef ring=cafebabe done=1` → trust=1 是 ZAP 路径
+  的正常值（与 sagit `trust>1` 判据一致），问题只是之前根本没跑到 submit；
+- `ts=0 value=0 ring=0` → CP 数据路径确实被 secure 挡住，回到 B / secure 解锁。
+
+### B（H236df）：让 CP 写 trust 寄存器（a4xx 风格）
+
+改动：把 `CP_SET_SECURE_MODE(0)` 换成 kgsl a4xx `cp_secure_mode()` 的序列：
+
+```text
+CP_SET_PROTECTED_MODE(1) = 0
+CP_WIDE_REG_WRITE(2) = [0x0000F400 (RBBM_SECVID_TRUST_CNTL dword), 0]
+CP_SET_PROTECTED_MODE(1) = 1
+CP_WAIT_FOR_IDLE
++ CACHE_FLUSH_TS 时间戳 + 2 s trust 轮询
+```
+
+判读：`trust=00000000` → CP 写寄存器可行；仍为 1 → 该寄存器在 TZ 侧被锁，CP 也写不进。
+
+产物：
+
+```text
+A kernel 2e2c4dbb091fbd58876be9617368495f8d1315e71cb2d2ad8d3a6eef461030fa
+A boot   ef9cd84209dedfcab7cae56c1da3568b8d5153aa7870555b7ec1f38584e5751f  boot-H236de.img
+B kernel ea5ff5d55737143551eea267710e5092de1b376170a07ad12d5fa774bc0134b8
+B boot   69005908bd5ed6f6be74c18bc0f4a857dcb51ce740978643e539a27eaeebd16b  boot-H236df.img
+```
