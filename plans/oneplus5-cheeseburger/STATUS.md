@@ -11716,6 +11716,21 @@ B kernel ea5ff5d5…  boot 69005908…  boot-H236df.img
 
 两个镜像都已放到 Windows 的 `D:\Users\ls\Documents\OnePlus5_ios\`。
 
+### H236di–dn：真 0x66、PAS 真伪与 SECVID 权限（2026-11-10）
+
+- 顺序修正（`PAS_MEM_SETUP` 之后写 `.b02`，H236di）不改变结果；TZ 确实在 setup 后
+  清零该内存（`after setup=0`）。
+- `0x66` 的多种发送方式（运行中 ME、kgsl 基址顺序、sagit 停管线发布）全部**被接受
+  但不生效**：`cpint/hwfault=0`，trust=1，`CP_MEM_WRITE`/`CACHE_FLUSH_TS` 不落内存。
+- 坏 metadata 调 `PAS_INIT_IMAGE` 返回 **-9**，证明 PAS 是真调用，不是假成功。
+- GPMU 的 type4 寄存器写在 trust=1 下可成功（BABEFACE），说明只有**经 SMMU 的内存写**
+  被丢；AP 写 `TRUST_CNTL`、读 `SECVID/TSB` 都挂总线。
+- 下一候选：仿 kgsl `_set_secvid()` 用**写**配置 `RBBM_SECVID_TSB_*`（不读），或调用
+  SCM SIP BOOT `0x0A` 的 ZAP resume，或把 ZAP 镜像移到独立 carveout。
+
+镜像：`boot-H236di.img 3c09cbe8…`、`dj ee31583e…`、`dk 5e65248a…`、`dl b1fdf315…`、
+`dm 63b87763…`、`dn 3487ffa4…`（dn 会挂总线，仅作证据）。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。

@@ -415,3 +415,38 @@ A boot   ef9cd84209dedfcab7cae56c1da3568b8d5153aa7870555b7ec1f38584e5751f  boot-
 B kernel ea5ff5d55737143551eea267710e5092de1b376170a07ad12d5fa774bc0134b8
 B boot   69005908bd5ed6f6be74c18bc0f4a857dcb51ce740978643e539a27eaeebd16b  boot-H236df.img
 ```
+
+---
+
+## 17. 真正的 0x66 与后续（H236di–dn）
+
+| 版本 | 改动 | 结果 |
+| --- | --- | --- |
+| H236di | `PAS_MEM_SETUP` 之后再写 `.b02`（Linux/A 线顺序） + 内存回读 | `after setup=0`（TZ 确实清零），auth rc=0，`mem=0` |
+| H236dj | `0x66` 后直接 `CP_MEM_WRITE` 探针，不以 trust 失败 | `mem=00000000`，GPMU 包失败 |
+| H236dk | 按 kgsl：CP 基址 → ZAP → ME_INIT → 0x66 | 同上 |
+| H236dl | 按 sagit：先 GPMU(BABEFACE) → 停 ME/VBIF → 发布 `0x66`+`CP_WAIT_FOR_IDLE`+探针 → 释放 | 同上 |
+| H236dm | 坏 metadata 调 `PAS_INIT_IMAGE` + `PAS_IS_SUPPORTED` | `support rc=0 answer=0`；**`corrupt init rc=-9`** |
+| H236dn | 读 `SECVID/TSB` 寄存器（0xf000/0xf800..） | **挂总线**（黑屏、无日志）——该块连读都不可用 |
+
+### 结论
+
+1. **PAS 是真的**：坏 metadata 返回 -9，说明 TZ 在验证签名；好镜像 rc=0 是真实认证。
+2. `0x66` 被 CP 接受（`cpint/hwfault=0`），但 `RBBM_SECVID_TRUST_CNTL` 不变，
+   `CP_MEM_WRITE`/`CACHE_FLUSH_TS` 的数据写全部被丢。
+3. **type4 寄存器写（GPMU 固件、AGC 消息）在 trust=1 下可以成功**（BABEFACE），
+   所以 CP 并不是完全被 secure 挡住——**只有经 SMMU 的内存写被丢**。
+4. AP 对 `TRUST_CNTL` 的写、以及对 SECVID/TSB 块的读都会挂总线：
+   这些寄存器要么是 TZ 独占，要么是只写/只读寄存器（读未实现）。
+5. kgsl 在 `adreno_start`/`adreno_reset` 里由 AP **写** `RBBM_SECVID_TSB_CNTL/
+   TRUSTED_BASE/SIZE`（`_set_secvid()`，仅当 `mmu.secured`），发生在 ZAP 之前。
+   我们从未写过它们，且读它们会挂——下一候选是用**写**而不是读去配置 TSB。
+
+### 下一步候选
+
+1. 仿 `_set_secvid()`：`TSB_CNTL=0`、`TSB_TRUSTED_BASE=<一个合法页表基址>`、
+   `TSB_TRUSTED_SIZE=<size>`、`TSB_ADDR_MODE_CNTL=1`（只写，不读），再试 0x66。
+   需要确定 secure page table 的合法基址（kgsl: `KGSL_IOMMU_SECURE_BASE`）。
+2. 调 SCM SIP BOOT `0x0A`（args `{0,13}`）——kgsl 在 ZAP 保留时用它把 ZAP 基址
+   写回寄存器，也许我们的“新鲜认证”路径同样需要。
+3. 把 ZAP 镜像放进独立的 reserved carveout（A 线用 DT 预留区），而不是内核窗口。
