@@ -12,12 +12,12 @@
   a540 的 ZAP（跑在着色器上）无法执行 → `CP_SET_SECURE_MODE(0)` 不被授权 →
   trust 恒为 1 → 内存写全被丢。§30/§31 的“漂浮读值 / `0x0EC0` 挂总线 / 探针 2.6 s”
   都是这个根因的症状。
-- 当前 gate：**C4 前置 —— `gpmu_load` 之后 CP 写失效。** H236es 证明 GPMU 加载后 CP
-  仍推进 RPTR，但其写出的内容不再落地；H236et 因此把冒烟提交放在 GPMU 之前。
-  kgsl 的顺序是 `0x66 → gpmu_init → 提交`，说明我们 GPMU 之后还缺一步 CP 恢复/重新
-  初始化。C4 提交真实作业前必须先查清，详见 `diagnostics/build-environment-2026-11-10.md`
-  §33.2。
-- 基线提交：**H236et** kernel `e8868290…`、boot `b0493767…`（C3 完成）；
+- 当前 gate：**C4（真实 GPU 作业提交）**。C3 已按 kgsl 顺序 `0x66 → gpmu → 提交` 全通
+  （H236ez：`ts=beef1234`、`value=c0ffee11`、`submit test ok`）。
+  此前记录的“GPMU 之后 CP 写失效”已更正为探针问题：RPTR 前进只代表取指，回读前必须等
+  `RBBM_STATUS & 0x7e` 清零再给 20 ms，详见
+  `diagnostics/build-environment-2026-11-10.md` §34。
+- 基线提交：**H236ez** kernel `451c7d7c…`、boot `b936e889…`（C3 完成 + kgsl 顺序）；
   C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
 - 当前代码提交：UniXNU `main` `7f2a4d0`（H236et 文档批次）；
   NativeMobileDisplay `h103-a540` `8e729a4`（RBCCU/SP GDSC 上电 + 提交探针）；
@@ -11949,8 +11949,9 @@ GPMU firmware reached BABEFACE trust=00000000
 （`0x778000` + 轮询 bit20 + SP 时钟）。着色器块没电 → ZAP（跑在着色器上）无法执行 →
 `0x66` 不被授权 → trust 恒为 1。§30/§31 的漂浮读值、`0x0EC0` 挂总线都是症状。
 
-**留给 C4**：`gpmu_load` 之后 CP 仍推进 RPTR 但写不落地（H236es 已证），冒烟提交必须放在
-GPMU 之前；kgsl 是 `0x66 → gpmu → 提交`，说明我们 GPMU 之后还缺一步 CP 恢复。
+**后续更正（§34）**：此前记为“GPMU 之后 CP 写失效”的现象是探针缺陷——`RPTR` 前进只代表
+取指，回读前需等 `RBBM_STATUS & 0x7e` 清零并留 20 ms；按 kgsl 顺序 `0x66 → gpmu → 提交`
+已完全通过（H236ez）。
 
 基线：H236et（kernel `e8868290…`、boot `b0493767…`）。
 
