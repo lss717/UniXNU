@@ -1289,3 +1289,57 @@ bo submit done=1 rptr=3167/3167 ib0=703d8003 tgt=0adc0de1/feed0002/600d0003 t3=d
 `BoAlloc/BoMap/BoCpuMap/BoFree/Submit/WaitFence`，并用 `clientMemoryForType`
 把 BO 映射给调用者；现有 `NativeAdrenoUserTest.h` 的调用序列（Query →
 BoAlloc×2 → BoMap → BoCpuMap → 写 IB → Submit → WaitFence → 校验）可直接作为验收。
+
+---
+
+## 36. C4-B step 2：用户态 ABI 端到端通过（H236fc/fd，2026-11-10）
+
+### 36.1 实现
+
+C3 侧（`NativeA540C3.cpp`）把单次流程扩成可复用的引擎：
+
+- 8 个 4 KiB 真实 BO 槽（`0x2000000 + i*0x1000`，SMMU 一次建成，IOVA 升序）；
+- 导出 `native_a540_gpu_ready / bo_iova / bo_bytes / bo_slots / bo_descriptor /
+  submit_bo / wait_fence`；
+- `submit_bo`：clean BO → `CP_INDIRECT_BUFFER_PFE`（IB 来自 BO）→ `CACHE_FLUSH_TS`
+  （单调 fence）→ `CP_WAIT_MEM_WRITES` → 等 RPTR + RBBM 空闲 + 20 ms。
+
+用户客户端（`NativeA540AcceleratorProbe.cpp`）：
+
+- `BoAlloc/BoMap/BoCpuMap/BoCpuUnmap/BoFree/Submit/WaitFence` 全部实现；
+- `clientMemoryForType(token)` 返回对应 BO 槽的 `IOMemoryDescriptor`；
+- `GetDeviceInfo` 报告 BO 窗口（`va_start=0x2000000`，`va_size=8*4KiB`）。
+
+### 36.2 踩到的坑
+
+**引擎就绪晚于用户态测试**：backboardd 的 ABI 测试在 ~35 s 就发起 `BoAlloc`，而 C3 在 ~70 s
+才完成，于是拿到 `kIOReturnNotReady`（报告 `s2 ee00002c7`）并放弃。
+H236fd 给 `BoAlloc` 与 `clientMemoryForType` 加了**有界等待**（50 ms × 2400 = 120 s，
+引擎就绪即放行）。
+
+### 36.3 结果（H236fd）
+
+用户态（backboardd）报告：
+
+```
+NATIVE_A540_ABI: report backboard s34 e0 v4/4      [172.1 s]
+```
+
+- `s34`：34 步全部完成（Query → GetDeviceInfo → BoAlloc×2 → BoMap → BoCpuMap →
+  写 IB → Submit → WaitFence → 回读校验）；
+- `e0`：无错误；
+- `v4/4`：4 个校验字全部符合（3 个写入值 + 1 个未触碰的 `0xdeadbeef`）。
+
+C3 侧的 `bo submit done=1 ... hits=4` 同样保持通过。
+
+### 36.4 镜像
+
+| 版本 | 内容 | kernel | boot |
+| --- | --- | --- | --- |
+| fc | ABI 方法实现（就绪不等待） | `82350417…` | `ee1b13f9…` |
+| **fd** | 加就绪有界等待（**通过**） | `0f245b1b…` | `a285866e…` |
+
+### 36.5 下一步
+
+C4-B 的接口层已通。剩余：每连接/多队列隔离、BO 动态扩容（预映射池）、fence 语义与故障隔离，
+然后进入 **C5（Fill32/Barrier/Copy32 回读）**。

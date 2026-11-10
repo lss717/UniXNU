@@ -11970,6 +11970,19 @@ bo submit done=1 rptr=3167/3167 ib0=703d8003 tgt=0adc0de1/feed0002/600d0003 t3=d
 下一步：把该路径接到 user client（BoAlloc/BoMap/BoCpuMap/Submit/WaitFence +
 `clientMemoryForType`），用现有 `NativeAdrenoUserTest.h` 做验收。
 
+### C4-B step 2 完成：用户态 ABI 端到端（H236fd，2026-11-10）
+
+- C3 侧扩成 8 个 4 KiB BO 槽 + 导出引擎 API（ready/iova/descriptor/submit/wait_fence）；
+- user client 实现 `BoAlloc/BoMap/BoCpuMap/BoCpuUnmap/BoFree/Submit/WaitFence` +
+  `clientMemoryForType`；`GetDeviceInfo` 报告 BO 窗口；
+- 坑：backboardd 的测试在 ~35 s 就调 `BoAlloc`，而 C3 在 ~70 s 才完成 → `kIOReturnNotReady`；
+  H236fd 加有界等待（120 s 上限，就绪即放行）。
+
+用户态报告：`report backboard s34 e0 v4/4`（34 步全过、无错误、4/4 校验字正确）。
+
+镜像：fc `82350417…`/`ee1b13f9…`，**fd**（通过）`0f245b1b…`/`a285866e…`。
+下一步：多客户端/队列隔离、BO 池扩容、fence 故障语义，然后 C5。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。
