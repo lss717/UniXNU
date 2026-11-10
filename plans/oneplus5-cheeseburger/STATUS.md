@@ -11731,6 +11731,18 @@ B kernel ea5ff5d5…  boot 69005908…  boot-H236df.img
 镜像：`boot-H236di.img 3c09cbe8…`、`dj ee31583e…`、`dk 5e65248a…`、`dl b1fdf315…`、
 `dm 63b87763…`、`dn 3487ffa4…`（dn 会挂总线，仅作证据）。
 
+### H236do–dq：TSB 窗口、SCM resume、窗口 A/B（2026-11-10）
+
+- H236do：按 kgsl `_set_secvid()` 在 CP 启动前写 `TSB_CNTL=0`、
+  `TRUSTED_BASE=0xE8000000`、`SIZE=0x10000000`、`ADDR_MODE=1`（只写不读）——
+  全部成功写入，但 `0x66` 仍不生效（trust=1、mem=0）。
+- H236dp：`SIP BOOT 0xA {0,13}`（ZAP resume）返回 0，无效果。
+- H236dq：在 SMMU 映射一页 `0xE9000000`（可信窗口内），CP 写窗口内/外都失败
+  （`win=0`、`mem=0`）。
+
+结论：限制不在 kgsl 的 TSB 窗口，而在 secure 访问所用的 SMMU secure context（CB2/TZ 表），
+AP 侧无法参与。剩余方向是找到 TZ 侧切换 GPU secure 状态的接口，或证明 ZAP 未真正运行。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。

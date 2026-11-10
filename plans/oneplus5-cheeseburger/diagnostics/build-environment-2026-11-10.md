@@ -450,3 +450,27 @@ B boot   69005908bd5ed6f6be74c18bc0f4a857dcb51ce740978643e539a27eaeebd16b  boot-
 2. 调 SCM SIP BOOT `0x0A`（args `{0,13}`）——kgsl 在 ZAP 保留时用它把 ZAP 基址
    写回寄存器，也许我们的“新鲜认证”路径同样需要。
 3. 把 ZAP 镜像放进独立的 reserved carveout（A 线用 DT 预留区），而不是内核窗口。
+
+---
+
+## 18. TSB 可信窗口、ZAP resume、窗口 A/B（H236do–dq）
+
+| 版本 | 改动 | 结果 |
+| --- | --- | --- |
+| H236do | `gpu_reset` 后、CP 启动前写 `TSB_CNTL=0`、`TRUSTED_BASE=0xE8000000`、`SIZE=0x10000000`、`ADDR_MODE=1`（不读回） | 5 条全部写完不挂；`0x66` 仍 trust=1、`mem=0` |
+| H236dp | `zap_load` 成功后、`cp_start` 前发 SCM `SIP BOOT 0xA {0,13}`（kgsl 的 ZAP resume） | `rc=0 answer=0`；无效果 |
+| H236dq | 在 SMMU 加一页 `0xE9000000`（可信窗口内），CP 同时写窗口内/外 | `win=00000000`、`mem=00000000` |
+
+### 结论
+
+- `RBBM_SECVID_TSB_*` 对 AP **可写**（不像 `TRUST_CNTL`），按 kgsl `_set_secvid()` 写入正确窗口值也不改变 `0x66` 的结果。
+- SCM BOOT 0xA（ZAP resume）被 TZ 接受但同样不改变 CP 的 secure 状态。
+- secure 模式下 CP 的内存写**在可信窗口内也失败**，说明限制不在 kgsl 的 TSB 窗口，而在
+  secure 访问使用的 **SMMU secure context（CB2 / TZ 的表）**——AP 侧无法参与。
+- 目前唯一还没排除的是 ZAP 镜像的物理位置/carveout（成本高，且 PAS 已被证明消费了镜像）。
+
+### 剩余方向
+
+1. 找到 TZ 侧把 GPU 从 secure 切走的接口（SCM 或 ZAP 的 mailbox），而不是让 CP 自己切。
+2. 若没有该接口，则必须让 ZAP “真正运行”；需要证据表明它当前没有运行（例如 ZAP 的执行痕迹/
+   GPMU 状态），再决定 carveout。
