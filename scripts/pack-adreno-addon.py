@@ -33,6 +33,12 @@ def main() -> int:
         mode = 0o755 if path.name in ('NativeAdrenoMetal', 'libvulkan_freedreno.dylib') else 0o644
         files.append(('addons/' + ADDON_NAME + '/' + path.relative_to(BUNDLE).as_posix(), mode, path.read_bytes()))
     files.append(('bin/adrenoprobed', 0o755, (PLUGIN / 'adrenoprobed').read_bytes()))
+    # H236ft: the plugin returns the native Metal device only when this marker
+    # sits beside the bundle in /System/Library/Extensions (the addons/ tree is
+    # mounted there by zzy-native-gpu-addon-mount). Without it the principal
+    # class runs the ABI test and returns nil, so CoreAnimation never gets a
+    # device.
+    files.append(('addons/NativeAdrenoMetal.publish', 0o644, b'1\n'))
     for plist in sorted(PLUGIN.glob('*.plist')):
         if not plist.name.endswith('-entitlements.plist'):
             files.append(('daemons/' + plist.name, 0o644, plist.read_bytes()))

@@ -12069,6 +12069,16 @@ fs 版移除 `sheng-disable-jobs=…` 后（args 874，C3 正常）复测，`sel
 **决定**：display 侧暂停（未解：438×780 来源、MobileGestalt 屏幕记录、
 通知端口不注册），转回 **GPU 前端**。
 
+### GPU 前端第一探：publish 模式（H236ft，2026-11-10）
+
+打开插件 publish 模式（addon 增加 `NativeAdrenoMetal.publish`，payload 换 addon）：
+加速器打开 **378 次**（160–351 s），ABI 只有 `method=1 (Query)` + `method=15 (GetDeviceInfo)`
+成对 14 次，之后没有 BoAlloc/Submit；display 客户端升到 8 个、56 次调用，仍无 3/4/5。
+
+结论：publish 把失败点从“返回 nil”推进到“查完设备信息后放弃”，根因是 Turnip
+没有 a5xx 后端 → **GPU 前端必须自研**（自实现 `_MTLDevice` 子类直连 ABI，或给 Turnip
+加 a5xx）。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。

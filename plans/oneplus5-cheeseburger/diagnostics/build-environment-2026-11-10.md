@@ -1656,3 +1656,39 @@ display 侧暂停，转回 **GPU 前端**：内核可见信号已用尽，而 GP
 - 报告尺寸 438×780 的来源（与 canvas/dot-pitch 均无关）；
 - MobileGestalt 屏幕记录的实际值（需要 userland 可见性）；
 - 通知端口从不注册的原因。
+
+---
+
+## 44. GPU 前端第一探：现有插件的 publish 模式（H236ft，2026-11-10）
+
+### 44.1 做了什么
+
+`drivers/NativeMetal/NativeAdrenoMetalPlugin.mm` 的 principal class
+`NativeAdrenoMetalDevice` 有两条路：
+
+- 默认（无标记）：跑共享 ABI 自测后**返回 nil**——这就是 CA 反复重开加速器的原因；
+- publish（`/System/Library/Extensions/NativeAdrenoMetal.publish` 存在）：返回真正的
+  Metal 设备（metal2vulkan → Turnip）。
+
+`pack-adreno-addon.py` 增加 `addons/NativeAdrenoMetal.publish`（`addons/` 由
+`zzy-native-gpu-addon-mount` 挂到 `/System/Library/Extensions`），重打 addon
+（12,125,860 B），payload 只换 `Payloads/kernel.macho.gpuaddon` 与插件名
+（`NativeAdreno`），内核不变（`0c578859…`）。boot `07205fb6…`。
+
+### 44.2 结果（ft，360 s）
+
+```
+open request ×378        （160→351 s，约 2 次/秒，持续重试）
+ABI method=1 (Query) + method=15 (GetDeviceInfo) ×14 对，之后无 BoAlloc/Submit
+dpy=8/56/0/0/0  s345=0/0/0  xf=0 fr=0
+```
+
+- publish 模式生效：插件真的打开了加速器并查询了设备信息（默认模式只有一次自测）；
+- 但查完就放弃并重试——**Turnip 没有 a5xx 后端**，Metal 设备创建仍然失败；
+- display 侧客户端数升到 8、调用 56 次，但依然没有 3/4/5。
+
+### 44.3 结论
+
+现有 metal2vulkan/Turnip 通路在 a5xx 上走不通，publish 模式只能把失败点从
+“返回 nil”推进到“查完设备信息后放弃”。**GPU 前端只能自研**：自己实现
+`_MTLDevice` 子类，直接接我们的 ABI，或给 Turnip 加 a5xx 后端。
