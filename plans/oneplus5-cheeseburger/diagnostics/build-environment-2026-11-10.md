@@ -562,3 +562,35 @@ secure SMMU 这条线到此为止；后续如果还要走，需要 TZ 固件侧�
 - “ZAP 在 GPMU 上执行”的假设也不成立（GPMU 先行 + auth 后仍 babeface，仍不生效）；
 - AP 侧能控制的机制（0x66 的位置/时机、TSB 窗口、顺序、resume、SMMU 配置）已经全部试过，
   剩下的差异只在 TZ/安全世界内部，AP 没有可观测入口。
+
+---
+
+## 22. C3 收尾：镜像清单（2026-11-10）
+
+本轮（H236dg–dx）产生的镜像，全部只做 `fastboot boot`：
+
+| 版本 | 目的 | kernel | boot |
+| --- | --- | --- | --- |
+| dg | 真 0x66 + cpint/hwfault 诊断 | `75dfedc7…` | `c4143620…` |
+| dh | PAS auth 后 AP 直写 TRUST_CNTL | `d6b0e810…` | `b4af3571…` |
+| di | `MEM_SETUP` 后再写 `.b02` | `61d40e5d…` | `3c09cbe8…` |
+| dj | 0x66 后 `CP_MEM_WRITE` 探针 | `fc8c4dc7…` | `ee31583e…` |
+| dk | kgsl 顺序（基址→ZAP→ME_INIT） | `3dccce55…` | `5e65248a…` |
+| dl | sagit 停管线转换 | `a34c164d…` | `b1fdf315…` |
+| dm | 坏 metadata / PAS 支持查询 | `1fbadd8b…` | `63b87763…` |
+| dn | SECVID/TSB 读（挂） | `a8b02ad3…` | `3487ffa4…` |
+| do | TSB 窗口 0xE8000000 | `2144149b…` | `b4015b58…` |
+| dp | ZAP resume SCM | `adfb1450…` | `dabbadd6…` |
+| dq | 可信窗口 A/B | `1e9dfb6f…` | `1419fe74…` |
+| dr | 上游 msm 顺序 | `65e33b81…` | `09eade35…` |
+| ds | ZAP 先于 SMMU | `4c08951f…` | `873422d6…` |
+| dt | `RESTORE_SEC_CFG(18)` | `f866253e…` | `1497aa08…` |
+| du | halt + restore + resume | `14d4a470…` | `d3ed852b…` |
+| dv | device id 扫描（id=19 挂死） | `94f690c9…` | `9e4dce4f…` |
+| dw | auth 后读镜像（挂） | `a08458d0…` | `679165e2…` |
+| dx | GPMU 先行 → ZAP → 0x66 | `ab5c914d…` | `42edaac3…` |
+
+**不要重跑**：dn（读 SECVID 挂）、dv（id 扫描挂）、dw（auth 后读镜像挂）。
+
+基线仍用 H236db（kgsl 顺序 + `0x0A`）：kernel `87da966b…`、boot `7778cf6f…`，
+它能把 C3 跑到 `zap unsecure` 且不挂总线。

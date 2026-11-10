@@ -11772,6 +11772,23 @@ AP 侧无法参与。剩余方向是找到 TZ 侧切换 GPU secure 状态的接�
 
 镜像：`dw 679165e2…`、`dx 42edaac3…`。
 
+### C3 收尾结论（2026-11-10）
+
+经过 H236dg–dx 共 18 个镜像，C3 的 AP 侧变量已全部穷尽：
+
+- **ZAP 已被 TZ 加载**：auth 后镜像页读取挂总线；PAS 不是假成功（坏 metadata 返回 -9）；
+- `CP_SET_SECURE_MODE(0)`（0x66）被 CP 接受（`cpint/hwfault=0`）但不改变
+  `RBBM_SECVID_TRUST_CNTL`；secure 模式下只有**经 SMMU 的内存写**被丢，
+  type4 寄存器写（GPMU/AGC）正常；
+- AP 直写 `TRUST_CNTL`、读 `SECVID/TSB` 都挂总线；`RESTORE_SEC_CFG(GPU)` 被 TZ 拒绝
+  （`{-2,-4}`，halt 与否相同），device id 遍历会让 SMC 永久阻塞（id=19）；
+- 0x66 的位置、顺序（kgsl/sagit/上游）、TSB 窗口、ZAP resume、GPMU 先行、可信窗口写入
+  全部实测无效。
+
+**结论：C3 冻结**。继续需要 TZ/安全世界侧的资料（device id 语义、secure VMID、
+ZAP 完成信号），AP 侧没有剩余可执行的变体。镜像清单见
+`diagnostics/build-environment-2026-11-10.md` §22；路线 C 计划见 §11。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。
