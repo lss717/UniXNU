@@ -196,6 +196,7 @@ extern "C" int sheng_gpu_power_step(void);
 extern "C" volatile uint32_t native_legacy_client_calls;
 extern "C" volatile uint32_t native_legacy_transfer_calls;
 extern "C" volatile uint32_t native_legacy_frame_count;
+extern "C" volatile uint32_t native_legacy_swap_validation_calls;
 extern "C" volatile uint32_t native_legacy_frame_kind[32];
 extern "C" volatile uint64_t native_legacy_frame_stats[32][5];
 
@@ -401,12 +402,15 @@ heartbeatThread (void *, wait_result_t)
     unsigned gpucc_index = 0;
     uint32_t gpucc_value = 0;
     int gpucc_got = sheng_gpucc_next (&gpucc_index, &gpucc_value);
-    IOLog ("NATIVE_ACCEL_HB: accel=%u/%u/%u/%u abi=%d/%d/%d rep=%.31s gc=%d:%08x\n",
+    IOLog ("NATIVE_ACCEL_HB: accel=%u/%u/%u/%u abi=%d/%d/%d rep=%.31s gc=%d:%08x dpy=%u/%u/%u\n",
            (unsigned) native_a540_open_count, (unsigned) native_a540_open_type,
            (unsigned) native_a540_sel_count, (unsigned) native_a540_sel_last,
            (int) native_a540_abi_calls, (int) native_a540_abi_last_method,
            (int) native_a540_abi_reports, native_a540_abi_report,
-           gpucc_got ? (int) gpucc_index : -1, gpucc_value);
+           gpucc_got ? (int) gpucc_index : -1, gpucc_value,
+           (unsigned) native_legacy_swap_validation_calls,
+           (unsigned) native_legacy_transfer_calls,
+           (unsigned) native_legacy_frame_count);
     if (beat == 1 || (beat % 10) == 0) {
     IOLog ("NATIVE_UFS_ALIVE: winFlight=%llu ufsFlight=%llu cmds=%llu "
            "winReq=%llu winBytes=%llu lastCmd=%llx/%llu req=%llx/%llu "

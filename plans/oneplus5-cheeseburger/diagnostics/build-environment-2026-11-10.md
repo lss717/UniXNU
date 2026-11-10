@@ -1483,3 +1483,49 @@ Mesa `fd5_blitter` 路径）。下一步是决定用最小 blit shader（自建 
    “frames>0”的直接阻塞，和 GPU 无关）；
 2. **GPU 前端**：做一个只记录不实现的 tracing stub 插件（`MetalPluginName` 指向它），
    枚举 CA 实际调用的 MTL 选择器与参数，用来给自研 Metal 前端定范围。
+
+---
+
+## 40. 帧通路追踪（H236fm/fn，2026-11-10）
+
+### 40.1 先更正两条记录
+
+1. **selector 6 不是 swap**。按 H163 的对照，真正的交换是 selector **3/4/5**
+   （SwapBegin/SetLayer/SwapEnd），6 只是 swap id/选项。§39 里“CA 真的 swap 了”
+   不成立。
+2. **fl/fk 两次启动只跑到 155 s / 168 s**（心跳最后一次在 146/158 s），
+   fj 的加速器阶段在 174 s 才开始。所以那两次“没有锁屏、没打开加速器”只是
+   **没等够时间**，不能作为结论；重跑（fm）到 279.9 s、fn 到 393.2 s 才有效。
+
+### 40.2 新增追踪
+
+`NativeLegacyDisplay.cpp` 加了两处有界日志（各前 8 次）：
+
+- `kickSwapQueue()` 入口：`NATIVE_LEGACY_SWAP: kick transferred=… pending=…`
+- `kickOnce()` 的 guard：`skip en/tr/pm/map/pri`、`skip req/valid`
+
+内核 `3ecc7160…`，boot `e08eb125…`（payload 仍为 `NoMetalX`）。
+
+### 40.3 结果（fn，393 s）
+
+```
+[155.08] client enter pid=55 comm=backboardd
+[155.22] selector=8 → 438,780；29 struct=8；79 struct=1580；74 struct=64
+[160.08] selector=6 in=0,80000003,0 status=0      ← 只是 swap id
+NATIVE_FRAME: event=5 client=2 xfer=0 frames=0
+NATIVE_LEGACY_SWAP: 0 条
+selector=3/4/5: 0 次
+```
+
+- `kickSwapQueue` 从未被调用 → 不是我们的 kick/guard 丢帧；
+- 3/4/5 从未出现 → CA 根本没有提交交换；
+- 期间 backboardd 仍打开一次 `AGXAccelerator type=1` 并调用 `sel=2`。
+
+### 40.4 结论
+
+**帧通路的 gate 在 CA/userland 侧：拿不到可用的 CADisplay，就不会走
+SwapBegin/SetLayer/SwapEnd**。这和有没有 Metal 插件无关（fj 与 fn 都没有 3/4/5），
+也不是我们 kick 路径的 guard 问题。display 握手（8/29/79/74）与 swap id（6）都已完成，
+说明缺的是更上层“显示对象成立”的条件。
+
+下一步应围绕“CA 为什么不建 CADisplay”取证，而不是继续改 swap 实现。

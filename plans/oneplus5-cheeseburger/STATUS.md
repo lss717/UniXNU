@@ -12021,6 +12021,19 @@ fill32 words=1024 hits=1024 untouch=1 fence=4 cpint=00000000 hwfault=00000000
 bundle 访问我们的加速器（fj 有、fl 无），没有第二条路径；删参数会回落到默认
 `AGXMetalA10`。下一步：并行查帧通路（display provider）与 tracing stub 插件定 Metal 面。
 
+### 帧通路追踪（H236fm/fn，2026-11-10）
+
+更正：selector 6 是 swap id，不是交换；真正交换是 3/4/5。fl/fk 两次启动只跑了
+155 s/168 s（fj 的加速器阶段从 174 s 开始），此前的“没锁屏/没打开加速器”是**没等够时间**。
+
+fn（NoMetalX，kernel `3ecc7160…`，跑到 393 s）新增 `kickSwapQueue`/`kickOnce` 追踪：
+
+- display 握手完成（8/29/79/74），selector 6（swap id）一次；
+- **selector 3/4/5 零次**，`NATIVE_LEGACY_SWAP` 零条，`xfer=0 frames=0`。
+
+结论：帧通路的 gate 在 CA 侧（没有可用 CADisplay 就不提交交换），与 Metal 插件无关，
+也不是我们 kick 路径的问题。下一步应取证“CA 为何不建 CADisplay”。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。
