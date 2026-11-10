@@ -1856,3 +1856,24 @@ ABI method:        0 次
 **不链接 bridge/Turnip**、只含 `A540TraceDevice` + ABI Log 调用；`MetalPluginName=A540Trace`。
 这样排除所有第三方依赖后，若仍不加载，问题就在“bundle 被 CA 接受的条件”本身；
 若加载，则 A1 的三份产出物即可拿到。
+
+### 45.11 独立最小插件（ga/gb）：仍不加载，指向“Data seed 才是真正的插件来源”
+
+- ga：独立 `A540Trace.bundle`（只依赖 Foundation/IOKit/Metal，86 KB），
+  `MetalPluginName=A540Trace`，addon 仅 4,832 B → `MTL 0 / opens 1 / abi 0`（277 s）。
+- gb：改为使用 Metal 传入的 accelerator 端口，不再自己 `IOServiceOpen` →
+  仍然 `MTL 0 / opens 1 / abi 0`（410 s，窗口正常）。
+
+结合 ft（原始 bundle + publish 标记 → 378 次 open、插件确实运行）：
+
+**最可能的解释**：addon 挂载只让“标记文件”生效，而 **bundle 本体来自 Data seed**
+（`add-gpu-plugin-data.py` 写入 `/private/var/ngpu/addons`，再由 mount 覆盖到
+`/System/Library/Extensions`）。ft 之所以成功，是因为它用的就是 seed 里那份旧 bundle；
+我们换掉 addon 里的 bundle 并没有换掉 seed 里的那份。
+
+下一步（下轮直接做）：
+
+1. 在 Mac 上用 `add-gpu-plugin-data.py`（或等价流程）把**新的 A540Trace.bundle**
+   写进 payload 的 `scratch-data.img`（Data seed）；
+2. `MetalPluginName=A540Trace`，addon 里只放标记/不需要的旧 bundle 都可以；
+3. 启动后应出现 `NATIVE_MTL: dev#…`，即 A1 三份产出物。
