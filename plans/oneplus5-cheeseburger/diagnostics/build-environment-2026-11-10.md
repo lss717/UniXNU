@@ -1251,3 +1251,41 @@ C3 从 H236s 起卡了几十个镜像，真正缺的只有一件事：**没有�
   这个阻塞；
 - 之前的 `submit_probe` 失败是读得太早；
 - 新基线：**H236ez** kernel `451c7d7c…`、boot `b936e889…`（kgsl 顺序 + 完成性等待）。
+
+---
+
+## 35. C4-B 第一步：真实 BO + 间接缓冲提交（H236fa/fb，2026-11-10）
+
+### 35.1 做法
+
+在 C3 的 SMMU 表里加入两页真实 GPU 缓冲区（`kIbIova=0x2000000`、
+`kTgtIova=0x2001000`，各 4 KiB，`IOBufferMemoryDescriptor` 物理连续），然后：
+
+1. 在 IB 页写入三条 `CP_MEM_WRITE`（目标为 `kTgtIova+0/4/8`）；
+2. 目标页预填 `0xdeadbeef`；
+3. 内核 ring 里提交 `CP_INDIRECT_BUFFER_PFE`(0x3F, 3 dwords: iova lo/hi/count)
+   → `CACHE_FLUSH_TS` → `CP_WAIT_MEM_WRITES`；
+4. 等 RPTR + RBBM 空闲 + 20 ms，invalidate 后回读目标页。
+
+### 35.2 结果（H236fb）
+
+```
+bo submit done=1 rptr=3167/3167 ib0=703d8003 tgt=0adc0de1/feed0002/600d0003 t3=deadbeef hits=4
+```
+
+- 间接缓冲从 BO 读取并执行 ✔
+- 三条 `CP_MEM_WRITE` 全部落到目标 BO ✔
+- 未触碰的字保持 `0xdeadbeef`（hits=4，说明写是精确的、没有越界）✔
+- 全链路 `fail step 0`（C3 + C4-B step 1）
+
+### 35.3 踩到的坑
+
+`ArmSmmu4KBuild` 要求 **IOVA 升序且不重叠**。第一次把两个 BO 的 range 排在
+`0xE9000000` 之后，直接 `ArmSmmu4KOverlap`（`fail step 4`）。按升序插入即可。
+
+### 35.4 下一步（C4-B step 2）
+
+把这条路径接到用户态：`NativeA540AcceleratorProbe.cpp` 的 user client 实现
+`BoAlloc/BoMap/BoCpuMap/BoFree/Submit/WaitFence`，并用 `clientMemoryForType`
+把 BO 映射给调用者；现有 `NativeAdrenoUserTest.h` 的调用序列（Query →
+BoAlloc×2 → BoMap → BoCpuMap → 写 IB → Submit → WaitFence → 校验）可直接作为验收。

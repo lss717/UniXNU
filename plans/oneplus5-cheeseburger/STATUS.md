@@ -3,7 +3,7 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
-- 当前阶段：**C3 完成（2026-11-10，H236et）。** A540 的 CP 已离开 secure 模式：
+- 当前阶段：**C3 完成（2026-11-10，H236et→ez）。** A540 的 CP 已离开 secure 模式：
   `RBBM_SECVID_TRUST_CNTL=0`，`CP_MEM_WRITE`（`0xC0FFEE11`）与 `CACHE_FLUSH_TS`
   （`0xBEEF1234`）都经 SMMU 落地，可信窗口写（`0xEA57BEEF`）落地，提交冒烟测试
   `submit test ok`，GPMU 固件到达 `BABEFACE`。
@@ -11954,6 +11954,21 @@ GPMU firmware reached BABEFACE trust=00000000
 已完全通过（H236ez）。
 
 基线：H236et（kernel `e8868290…`、boot `b0493767…`）。
+
+### C4-B 第一步完成（H236fb，2026-11-10）
+
+在 SMMU 表里加入两个真实 BO（4 KiB，物理连续），用 `CP_INDIRECT_BUFFER_PFE` 从 BO
+提交三条 `CP_MEM_WRITE`：
+
+```
+bo submit done=1 rptr=3167/3167 ib0=703d8003 tgt=0adc0de1/feed0002/600d0003 t3=deadbeef hits=4
+```
+
+间接缓冲读取/执行、目标 BO 写入精确（未触碰字保持 `0xdeadbeef`）全部通过，`fail step 0`。
+坑：`ArmSmmu4KBuild` 要求 IOVA 升序，乱序会 `Overlap`。
+
+下一步：把该路径接到 user client（BoAlloc/BoMap/BoCpuMap/Submit/WaitFence +
+`clientMemoryForType`），用现有 `NativeAdrenoUserTest.h` 做验收。
 
 ## 更新规则
 
