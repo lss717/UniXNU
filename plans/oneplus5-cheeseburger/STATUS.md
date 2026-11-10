@@ -11830,6 +11830,20 @@ P2/P1 探针（auth 前后各拍一次 CP/RBBM 快照、auth 后立刻读一次 
 
 详见 `diagnostics/build-environment-2026-11-10.md` §24。
 
+### Android 逐项 A/B（2026-11-10）
+
+- `pas-id=13`、`firmware-name=a540_zap`、`b00`、**`b02` 全部逐字节相同**——真正执行的
+  ZAP 代码与 Android 一致；
+- `mdt`/`b01` 哈希不同，但解析程序头后：`ph2` 是唯一 `PT_LOAD`（b02），`ph1`（b01 哈希段）
+  是 `PT_NULL`+type=HASH，`mdt_loader` 从不装载它；mdt 内嵌的 b00/b02 哈希也相同，
+  差异只在签名块 → **不影响装载与执行**；
+- 启动路径逐项一致：纯 SCM 的 `subsys-pil-tz`、冷启动同样做 `RBBM_SW_RESET`、
+  `0x66` 报文、ME_INIT 载荷、CP_PROTECT 表；
+- hyp 日志与 Android **逐字相同**。
+
+**结论**：AP 侧输入已对齐到可执行代码级别，Android 的成功路径里没有我们缺的 AP 侧寄存器
+操作。剩余差异在安全世界内部，AP 侧无可观测入口。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。

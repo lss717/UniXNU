@@ -752,3 +752,60 @@ hyp 日志内容都完全正确。
 ### 24.6 现场恢复
 
 Android 侧临时 `setenforce 0` 已恢复为 `Enforcing`，临时的 `/data/local/tmp/mem` 已删除。
+
+---
+
+## 25. 与 Android 的逐项 A/B（2026-11-10）
+
+用同机 Android（LineageOS + Magisk root，kgsl 工作正常）作为参照，把“我们喂给 PAS 的东西”
+和“Android 喂给 PAS 的东西”逐项对比。
+
+### 25.1 参数与固件
+
+| 项 | Android | 我们 | 结论 |
+| --- | --- | --- | --- |
+| DT `qcom,pas-id` | `0x0d` (13) | `kPasGpu = 13` | 相同 |
+| DT `qcom,firmware-name` | `a540_zap` | `a540_zap` | 相同 |
+| DT 节点属性 | 只有 `compatible/firmware-name/pas-id` | — | 没有额外时钟/电源/reg 要求 |
+| `a540_zap.b00` sha256 | `5302ecf8…` | `5302ecf8…` | **相同** |
+| `a540_zap.b02` sha256 | `99793376…` | `99793376…` | **相同**（真正执行的代码） |
+| `a540_zap.mdt` sha256 | `2d17e0b2…` | `530c0a89…` | 不同（见 25.2） |
+| `a540_zap.b01` sha256 | `1d71345f…` | `31ffe885…` | 不同（见 25.2） |
+| PAS 镜像大小 | `0x2000`（日志 `loading from …f6900000 to …f6902000`） | `0x2000` | 相同 |
+
+### 25.2 mdt / b01 的差异不影响装载
+
+解析两个 mdt 的 ELF 头与程序头（`entry=0x5000`、`e_phnum=3`）：
+
+```
+ph0: type=0 (PT_NULL)  off=0x0     paddr=0x0     filesz=0x94   flags=0x07000000
+ph1: type=0 (PT_NULL)  off=0x1000  paddr=0x7000  filesz=0x1988 flags=0x02200000  <- HASH 段(b01)
+ph2: type=1 (PT_LOAD)  off=0x3000  paddr=0x5000  filesz=0x1334 flags=0x08000007  <- 代码(b02)
+```
+
+- 两个文件的程序头**完全一致**（含 `paddr=0x5000`、`filesz=0x1334`=4916）；
+- mdt 内嵌的 **b00 与 b02 哈希也完全一致**；
+- 差异集中在三段 256 字节的**签名/证书块**和 b01（HASH 段）的哈希；
+- b01 对应 `PT_NULL` + `flags` 的 type 字段 = `HASH`，`mdt_loader` 只装载 `PT_LOAD`
+  （这也是 Android 日志里 mem_setup 只有 `0x2000` 的原因），**b01 从不进镜像**。
+
+所以：**实际执行的那段代码与 Android 逐字节相同**，签名块不同只说明两份 mdt 来自不同的
+签名批次（都能通过验签，我们 rc=0 也证明了这一点）。
+
+### 25.3 启动路径
+
+| 项 | Android | 我们 |
+| --- | --- | --- |
+| PAS 调用方 | `subsys-pil-tz`（**纯 SCM**，对 `kgsl-hyp` 连 base 寄存器都没有） | 手写 SCM |
+| 顺序 | power → mmu → `_set_secvid` → a5xx hw init → RB/INSTR 基址 → **PAS**（ME 停）→ ME 释放 → ME_INIT → `0x66` → GPMU | H236ea 已按此顺序实测 |
+| 冷启动是否 RBBM 软复位 | 是（`regulators_left_on` → `_soft_reset`，含 `RBBM_SW_RESET`） | 是（`gpu_reset`） |
+| `0x66` 报文 | `CP_SET_SECURE_MODE(1 dword)=0` | 相同 |
+| ME_INIT 载荷 | `0x2f,3,0x20000000,0,0,0x0A,0,0` (a540v1) | 相同 |
+| CP_PROTECT 表 | 含 `{0xf800,4}`、`{0xf400,1}`，编码 `0x60000000|l2<<24|base<<2` | 相同 |
+| hyp 日志 | `TZ.BF.4.0.6-00161 / RAGAANAAA / CRM / SMMU Info: VMID 4 not support ×2 / Initializing PIL` | **逐字相同** |
+
+### 25.4 结论
+
+AP 侧能给 TZ 的输入已经**逐项对齐**到可执行代码级别，Android 的成功路径里也没有任何我们
+缺失的 AP 侧寄存器操作。剩下的差异只可能在安全世界内部（ZAP 的执行与其完成信号），
+而 AP 侧没有可观测入口（SECVID 读会挂、CB2 在非安全侧读作 RAZ、qsee 日志加密）。
