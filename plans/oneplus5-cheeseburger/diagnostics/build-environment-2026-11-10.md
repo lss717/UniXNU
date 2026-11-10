@@ -318,3 +318,44 @@ kernel   7210df9f803ae1de0b6170968c20f43d0a77ed7ca06d44f326427398118771c8
 payload  5eeb2d1c90274a64a6838fa1d305da0147f9092b10a80c0e187e98ea818af294
 boot     86348bcac054cf6e3627a4344e83378597961b3c0be15f51ccaab08ccdb42ab7  boot-H236da.img
 ```
+
+---
+
+## 15. CP secure 位：三条路径的实测（H236da–dc）
+
+对照下游 kgsl `adreno_a5xx.c`：
+
+```text
+a5xx_rb_start: microcode_load -> ME_HALT=0 -> ME_INIT -> a5xx_set_unsecured_mode -> gpmu_init
+a5xx_set_unsecured_mode:
+    if (ADRENO_CONTENT_PROTECTION)  CP_SET_SECURE_MODE(0)      // a5xx 专用 opcode
+    else                            RBBM_SECVID_TRUST_CNTL = 0 // AP 直写
+a5xx_regulator_enable: 同样的直写，发生在 GPU 上电时
+_me_init_ucode_workarounds(): A540v1 = 0x0A（我们原来传 0）
+```
+
+本端口实测：
+
+| 版本 | 做法 | 结果 |
+| --- | --- | --- |
+| H236cw | `CP_SET_SECURE_MODE(0)+WAIT_FOR_IDLE`，GPMU 之后 | `trust=1`，`ts=0` |
+| H236da | 追加 `CACHE_FLUSH_TS` 时间戳 + 2 s 轮询 | `trust=1`，`ts=0`（时间戳没写回） |
+| H236db | ME_INIT workaround 0x0A + kgsl 顺序（unsecure 在 GPMU 前） | `trust=1`，`ts=0` |
+| H236dc | `gpu reset` 后立即 AP 直写 `TRUST_CNTL=0` | **挂总线**（只打出 `old=1`，没有 `new=`） |
+
+结论：
+
+- AP 直写在任何时机都不可用（H236az 是 ~68 s，H236dc 是 reset 后，均挂死）；
+- CP 的 `CP_SET_SECURE_MODE(0)` 被执行（RPTR 追上）但 trust 位不变，
+  且 secure 模式下 `CACHE_FLUSH_TS` 不落内存；
+- 尚未验证的差异：`cp_init` 的寄存器表把
+  `RBBM_SECVID_TSB_CNTL/TRUSTED_BASE_LO/HI/SIZE`（0x3e00c/0x3e000/0x3e004/0x3e008）
+  全部写成 0，等于禁用 secure TSB。a540 若有 content protection，TSB 可能需要
+  真实配置后 secure 转换才会被接受。
+
+下一步候选（按风险从低到高）：
+
+1. 读 `A5XX_RBBM_SECVID_TSB_*` 的复位值并保留，而不是清零；
+2. 用 `CP_WIDE_REG_WRITE`（a4xx 风格）让 **CP** 去写 trust 寄存器；
+3. 确认 a540 的 `ADRENO_CONTENT_PROTECTION`（DT/gpudev）；若没有，厂商路径就是
+   上电直写，需要把直写放到 TZ 锁寄存器之前（我们在 reset 后写仍然挂）。

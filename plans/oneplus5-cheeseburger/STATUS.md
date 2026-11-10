@@ -11679,6 +11679,20 @@ kernel   7210df9f803ae1de0b6170968c20f43d0a77ed7ca06d44f326427398118771c8
 boot     86348bcac054cf6e3627a4344e83378597961b3c0be15f51ccaab08ccdb42ab7  boot-H236da.img
 ```
 
+### H236da–H236dc：secure 位三条路径（2026-11-10）
+
+- H236da：`CP_SET_SECURE_MODE(0)` 后追加 `CACHE_FLUSH_TS` 时间戳并轮询 2 s →
+  `trust=00000001 ts=00000000:00000000`；
+- H236db：ME_INIT ucode workaround 改为 a540v1 的 `0x0A`，顺序恢复成 kgsl 的
+  `ME_INIT → unsecure → GPMU` → 仍是 `trust=1 ts=0`；
+- H236dc：`gpu reset` 后立即 AP 直写 `RBBM_SECVID_TRUST_CNTL=0` → 挂总线
+  （只有 `trust write early old=1`，无 `new=`）。
+
+对照 kgsl `a5xx_set_unsecured_mode()`：有 content protection 才走
+`CP_SET_SECURE_MODE(0)`，否则在上电时直写寄存器。本端口直写不可用；CP 路径
+命令被执行但状态不变。已发现 `cp_init` 把 `RBBM_SECVID_TSB_*` 全部清零，
+可能是 secure 转换被拒的原因，下一步优先验证。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。
