@@ -858,3 +858,61 @@ H236ed/ee/ef 里对 `0x146BF720`(0x3000) 和 `0x14692000`(0x1000) 的文本 dump
 | --- | --- | --- | --- |
 | ef | hwcg 全表 + P2/P1 探针 | `83fd023e…` | `606638b6…` |
 | **eg** | ef 去掉危险 TZ dump（**基线**） | `ca13c26c…` | `26f0c53f…` |
+
+---
+
+## 27. 证据判别力复核与 C3 边界修正（2026-11-10）
+
+前面 §23–§26 的结论需要收窄。逐条复核：
+
+| 证据 | 判别力 | 说明 |
+| --- | --- | --- |
+| P2：auth 前后 CP/RBBM 快照一字不差 | **中性** | mainline 的 `a5xx_zap_shader_init()` 本来就在 ME 已释放、ME_INIT/power_init 完成之后调 PAS，随后继续用同一个 ring 发 `0x66` 并 idle。若 `AUTH_AND_RESET` 会清 AP 可见的 CP 状态，这条路根本走不通，而它在 OP5 上能跑 GPU。**只排除了“TZ 复位 GPU”这一支，推不出 ZAP 没跑。** |
+| P1：auth 后 trust 立刻为 1 | **信息不足** | kgsl 的注释是 “GPU comes up in secured mode, make it unsecured by default”；sagit 的判据是 `TrustControl > 1` 才算错、`0x66` 之后才要求 0 —— 都暗示 auth 时刻为 1 是正常的。**我们从未在 Android 上量过这台机器的 trust**，所以既不能证实也不能证伪。 |
+| hyp 日志无 GPU/PAS 记录 | **误读** | PAS 走 TZ/QSEE，不走 hyp。hyp 日志里没有 PAS 记录是**必然**，不构成“TZ 没记录”。 |
+| 与 Android 逐项 A/B | **只对齐了“内容 + 调用序列”，没对齐“归属”** | 验签只看内容，执行还要看内存/电源/NoC 归属。Android 的载荷来自预留池、电源/时钟/NoC 由 RPM+GPUCC+CPR 驱动；我们的是 DarwinBoot 从 DRAM 切的窗口 + 直接写 GCC 位。内容相同、仍然不跑，正是“归属未对齐”的典型形态。 |
+| hw-init 全量复刻（含 a540 hwcg 95 条） | **最强的一条** | 它排除了“寄存器内容没对齐”这一整类，但只有这一类。 |
+
+### 27.1 修正后的表述
+
+C3 冻结在**寄存器内容层已对齐**：PAS 参数、ZAP 镜像字节、CP/RBBM hw-init（含 a540 hwcg
+95 条）、启动顺序均与同机 Android 一致；`AUTH_AND_RESET` 不复位 AP 可见状态、auth 后
+trust 恒为 1、`0x66` 被接受但不生效。
+
+**未验证项（均为 AP 可执行，故不构成“外部依赖”）**：
+
+1. **正例 Android 的 SECVID 读数**（trust / TSB_CNTL / TSB base）；
+2. **无 PAS 的 `0x66` 对照**（`0x66` 是在实现 PAS 之后才引入的，这条从未测过）；
+3. **坏载荷负控制**（合法 metadata + 故意改坏的 `.b02`）；
+4. **ZAP 内存的 cache 属性与固定保留区归属**（uncached 回退；放到与 Android 同类的地址）；
+5. **同机型 mainline 正例**（`fastboot boot` mainline/postmarketOS，读同一个 trust）。
+
+**真正的外部依赖**：QSEE 日志解密/符号、TZ/hyp 调试固件，或 QCOM 对
+“`CP_SET_SECURE_MODE` 在 TZ 侧的前置条件”的说明。
+
+### 27.2 正例读数：地址与前提更正
+
+寄存器是 **dword 索引 ×4**，对应 GPU 块（基址 `0x05000000`）的字节地址：
+
+| 寄存器 | dword | 字节地址 |
+| --- | --- | --- |
+| `RBBM_SECVID_TRUST_CNTL` | `0xF400` | **`0x0503D000`** |
+| `RBBM_SECVID_TSB_TRUSTED_BASE_LO` | `0xF800` | `0x0503E000` |
+| `..._HI` | `0xF801` | `0x0503E004` |
+| `..._SIZE` | `0xF802` | `0x0503E008` |
+| `..._CNTL` | `0xF803` | `0x0503E00C` |
+
+（此前的 `0x050F4000` 写法是 dword 索引当作字节用，偏大 4 倍。）
+
+**前提问题**：本机 LineageOS 内核 `CONFIG_DEVMEM is not set`、无 `/proc/kcore`，所以
+Android 用户态**无法**用 `devmem` 读这些地址。可行路径只有：
+(a) `fastboot boot` 一份打开了 `CONFIG_DEVMEM` 的 mainline/postmarketOS 镜像（只 boot）；
+(b) 在 kgsl/其它驱动里找可读寄存器的 debugfs 入口（本机 `kgsl-3d0/` 下只有 `isdb`，
+读出来是 0，未验证可用）。
+
+### 27.3 TZ 日志的“消费者”前提
+
+`0x146BF720` 在我们环境里遍历会挂，但那时 AP 还没有作为“日志消费者”和 TZ 建立关系；
+Android 的 `tzbsp` 驱动能读它。未试过：**失败启动后不断电重启回 Android**，再读
+`/sys/kernel/debug/tzdbg/log`（本机的节点名）。若缓冲区不清零，就能看到 TZ 对那次
+PAS/`0x66` 的记录。这比“找带调试的 TZ 固件”便宜两个数量级。

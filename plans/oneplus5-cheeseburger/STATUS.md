@@ -11790,6 +11790,11 @@ AP 侧无法参与。剩余方向是找到 TZ 侧切换 GPU secure 状态的接�
 - 0x66 的位置、顺序（kgsl/sagit/上游）、TSB 窗口、ZAP resume、GPMU 先行、可信窗口写入
   全部实测无效。
 
+**复核修正（见 §27）**：P2 的“快照一字不差”是 mainline 路径的**必要条件**（mainline 同样
+在 ME 运行后调 PAS 并继续用同一个 ring），不具判别力；P1 在缺“正例读数”时不具判别力；
+hyp 日志没有 PAS 记录是**必然**（PAS 走 QSEE）；与 Android 的 A/B 只对齐了“内容 + 调用
+序列”，**没有对齐“归属”**（预留池 vs 普通窗口、RPM/GPUCC/CPR vs 直接写 GCC）。
+
 **结论**：AP 侧真正未闭合的只剩一点——**ZAP 有没有在 GPU 上执行**（`PAS_AUTH_AND_RESET
 rc=0` 只证明验签通过）。`trust=1` 在启动早期不是异常（同 SoC 的 sagit 也读到 1，靠 0x66
 清零；其 `reset()` 判据是 `TrustControl > 1` 才算错，提交判据才是 `== 0`）。下一步是
@@ -11800,8 +11805,8 @@ P2/P1 探针（auth 前后各拍一次 CP/RBBM 快照、auth 后立刻读一次 
 
 ### H236dy–ee：P2/P1 探针与 TZ 日志（2026-11-10）
 
-- **P2**：auth 前后 CP/RBBM 快照**一字不差**（ME 运行/停机两种状态都测），
-  `AUTH_AND_RESET` 不复位 AP 可见的 GPU 状态；
+- **P2**：auth 前后 CP/RBBM 快照**一字不差**（ME 运行/停机两种状态都测）——这条是
+  **中性证据**（mainline 同样在 ME 运行后调 PAS），只排除“TZ 复位 GPU”这一支；
 - **P1**：auth 之后**立刻**读 `TRUST_CNTL` 就是 `1`（中间只有一个 GPMU 寄存器读）——
   TZ 在 auth 时根本没有清它，`trust=1` 不是被后续步骤改回去的；
 - **V1**（PAS 先、reset 后）未充分测试：PAS 跑在时钟打开之前，读数全是 `ffffffff`；
@@ -11841,8 +11846,8 @@ P2/P1 探针（auth 前后各拍一次 CP/RBBM 快照、auth 后立刻读一次 
   `0x66` 报文、ME_INIT 载荷、CP_PROTECT 表；
 - hyp 日志与 Android **逐字相同**。
 
-**结论**：AP 侧输入已对齐到可执行代码级别，Android 的成功路径里没有我们缺的 AP 侧寄存器
-操作。剩余差异在安全世界内部，AP 侧无可观测入口。
+**结论（收窄后）**：AP 侧的**寄存器内容与调用序列**已对齐到可执行代码级别；**内存/电源/
+NoC 归属层未对齐**，仍是 AP 可执行的变体。因此不能据此断言“只剩安全世界”。
 
 ### hw-init 全量复刻（H236ef/eg，2026-11-10）
 
