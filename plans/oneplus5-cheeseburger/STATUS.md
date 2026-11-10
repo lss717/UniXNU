@@ -12034,6 +12034,14 @@ fn（NoMetalX，kernel `3ecc7160…`，跑到 393 s）新增 `kickSwapQueue`/`ki
 结论：帧通路的 gate 在 CA 侧（没有可用 CADisplay 就不提交交换），与 Metal 插件无关，
 也不是我们 kick 路径的问题。下一步应取证“CA 为何不建 CADisplay”。
 
+### 显示客户端取证（H236fo，2026-11-10）
+
+o 版（NoMetalX，336 s）：`NATIVE_LEGACY: reg` 0 条（从未注册通知端口），selector 3/4/5 零次，
+`kickSwapQueue` 零次，`xfer=0 frames=0`；加速器只打开 1 次（type=1）+ `sel=2`。
+判读：display 握手与 swap id 都完成，但 CA 既不注册通知端口也不提交交换；无法仅凭内核日志
+区分“显示不可用”与“缺渲染器”。踩坑：`NativeUfsProbe.cpp` 链接的是预编译归档，
+`run-h103n-build.sh` 不会重建它，本轮心跳缺 `dpy=` 字段。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。

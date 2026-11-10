@@ -1529,3 +1529,43 @@ SwapBegin/SetLayer/SwapEnd**。这和有没有 Metal 插件无关（fj 与 fn �
 说明缺的是更上层“显示对象成立”的条件。
 
 下一步应围绕“CA 为什么不建 CADisplay”取证，而不是继续改 swap 实现。
+
+---
+
+## 41. 显示客户端取证（H236fo，2026-11-10）
+
+### 41.1 目的
+
+围绕“CA 为什么不建可用的 CADisplay / 不提交交换”取证：记录通知端口注册、
+每个客户端的选择器直方图，并把统计塞进每 10 s 的心跳行。
+
+### 41.2 构建注意（踩坑）
+
+`LegacyDisplayProbe.cpp` 的改动会生效（`NATIVE_LEGACY: reg` 字符串已进内核），
+但 **`NativeUfsProbe.cpp` 的改动不会**：内核链接的是预编译归档
+（`scripts/build-arm-driver.py NativeUfsProbe`），
+`run-h103n-build.sh` 只会按需重建 legacy display 归档，不会重建 UfsProbe 归档。
+所以本轮心跳行**没有** `dpy=` 字段，显示统计留给下一次（先重建 UfsProbe 归档）。
+
+### 41.3 结果（fo，NoMetalX，336 s）
+
+- `NATIVE_LEGACY: reg` **0 条** → backboardd 从未注册显示通知端口；
+- 选择器轨迹与 fm 相同：`88/57/15/22/8(438,780)/29/33/79/74/12/6/27/17/84/50`；
+- `selector 3/4/5` **0 次**，`kickSwapQueue` 0 次，`xfer=0 frames=0`；
+- `AGXAccelerator` 只打开 1 次（type=1）+ `sel=2`。
+
+### 41.4 判读
+
+display 侧的“握手 + swap id”都完成了，但 CA 既没注册通知端口，也没提交交换；
+`kickSwapQueue`/传输/帧计数全 0 说明这**不是我们丢帧**。要么 CA 认为这个显示
+不可用（但握手已过），要么它在等一个渲染器（没有可提交的内容）。
+
+仅凭内核日志无法区分这两者：CA 的决定发生在 userland，而我们对 userland 的可见性
+只有少数落到 dmesg 的字符串（历史上 SpringBoard 的
+`failed to find the main CADisplay` 是以 `NATIVE_TRAP_STR` 形式出现的，且属于更早的启动）。
+
+### 41.5 下一步选项
+
+1. 重建 `NativeUfsProbe` 归档，让心跳带上 `dpy=`（每客户端 calls/fails/sel6/regs/3/4/5），
+   至少能在 UI 静默期持续观察；
+2. 若仍无法区分，则按“渲染器缺失”处理，回到 GPU 前端（stub/自研 Metal）。

@@ -197,6 +197,7 @@ extern "C" volatile uint32_t native_legacy_client_calls;
 extern "C" volatile uint32_t native_legacy_transfer_calls;
 extern "C" volatile uint32_t native_legacy_frame_count;
 extern "C" volatile uint32_t native_legacy_swap_validation_calls;
+extern "C" unsigned native_legacy_client_stats(uint32_t*,uint32_t*,uint32_t*,uint32_t*,uint32_t*,uint32_t*,uint32_t*,uint32_t*) __attribute__((weak_import));
 extern "C" volatile uint32_t native_legacy_frame_kind[32];
 extern "C" volatile uint64_t native_legacy_frame_stats[32][5];
 
@@ -402,12 +403,17 @@ heartbeatThread (void *, wait_result_t)
     unsigned gpucc_index = 0;
     uint32_t gpucc_value = 0;
     int gpucc_got = sheng_gpucc_next (&gpucc_index, &gpucc_value);
-    IOLog ("NATIVE_ACCEL_HB: accel=%u/%u/%u/%u abi=%d/%d/%d rep=%.31s gc=%d:%08x dpy=%u/%u/%u\n",
+    uint32_t dpc=0,dca=0,dfa=0,ds6=0,drg=0,ds3=0,ds4=0,ds5=0;
+    if (native_legacy_client_stats)
+      native_legacy_client_stats (&dpc,&dca,&dfa,&ds6,&drg,&ds3,&ds4,&ds5);
+    IOLog ("NATIVE_ACCEL_HB: accel=%u/%u/%u/%u abi=%d/%d/%d rep=%.31s gc=%d:%08x "
+           "dpy=%u/%u/%u/%u/%u s345=%u/%u/%u val=%u xf=%u fr=%u\n",
            (unsigned) native_a540_open_count, (unsigned) native_a540_open_type,
            (unsigned) native_a540_sel_count, (unsigned) native_a540_sel_last,
            (int) native_a540_abi_calls, (int) native_a540_abi_last_method,
            (int) native_a540_abi_reports, native_a540_abi_report,
            gpucc_got ? (int) gpucc_index : -1, gpucc_value,
+           dpc,dca,dfa,ds6,drg,ds3,ds4,ds5,
            (unsigned) native_legacy_swap_validation_calls,
            (unsigned) native_legacy_transfer_calls,
            (unsigned) native_legacy_frame_count);
