@@ -683,3 +683,72 @@ RAZ/WI，所以这**不能**证明安全流不存在，只能作为记录。
    （零区长串折叠、跳过无内容行、每行 flush、每窗口限 48 行）。
 3. 读 `0x146BF720` 前 0x50 字节没问题，但整段 0x3000 逐字节读会让设备挂死
    （表现为黑屏，重启后日志完好）。
+
+---
+
+## 24. Android 侧参考态（同机、已 root，2026-11-10）
+
+设备回到 Android（LineageOS，Magisk root）后取的**同一台机器上的成功参照**。
+
+### 24.1 kgsl 的 ZAP 加载（成功）
+
+```
+[7.425] ueventd: firmware: loading 'a540_zap.mdt' .../soc:qcom,kgsl-hyp/firmware/a540_zap.mdt
+[7.430] subsys-pil-tz soc:qcom,kgsl-hyp: a540_zap: loading from 0x00000000f6900000 to 0x00000000f6902000
+[7.461] ueventd: firmware: loading 'a540_zap.b02'
+[7.471] subsys-pil-tz soc:qcom,kgsl-hyp: a540_zap: Brought out of reset
+```
+
+- 和我们 iOS 侧的 `a540_zap: loading from 0xf6500000 to 0xf6502000` 结构完全相同；
+- `subsys-pil-tz` 对 `kgsl-hyp` 只有 `invalid resource` / `Failed to iomap base register`（没有
+  reset 控制寄存器），也就是说 **Android 的 ZAP 也完全是 SCM/PAS 驱动的，没有任何 AP 侧
+  GPU 寄存器操作** —— 我们缺的不是“多一步寄存器”。
+
+### 24.2 hyp 日志与 iOS 完全一致
+
+Android 的 `tzdbg/hyp_log`：
+
+```
+HYP Version Info: QC_IMAGE_VERSION_STRING=TZ.BF.4.0.6-00161
+HYP Version Info: IMAGE_VARIANT_STRING=RAGAANAAA
+OEM Version Info: OEM_IMAGE_VERSION_STRING=CRM
+(0)
+SMMU Info: VMID 4 not support
+SMMU Info: VMID 4 not support
+Initializing PIL
+```
+
+与 iOS 侧逐字相同 → **`VMID 4 not support` 是这台机器的正常输出**，不是故障线索（此前
+怀疑的“secure VMID 分配失败”可以正式排除）。
+
+### 24.3 寄存器参考态取不到
+
+- `CONFIG_DEVMEM is not set`：内核没有 `/dev/mem`，`mknod` 出来的节点打不开（SELinux
+  permissive 下仍 EACCES）；`/proc/kcore` 也不存在；
+- kgsl `snapshot/` 目录存在但 `faultcount=0`，没有可读的寄存器快照；
+- 因此**无法**从 Android 用户态拿到 `TRUST_CNTL` / SMMU CB2 / TSB 的参考值。
+
+### 24.4 可用的 TZ 调试接口
+
+`/sys/kernel/debug/tzdbg/`：`boot / general / hyp_general / hyp_log / interrupt / log /
+qsee_log / reset / vmid`。
+
+- `general`：`Version 0x90001`、`Magic Number 0x747a6461`、8 CPUs；
+- `log`：TZ 的**调用轨迹**，格式 `[TZ 地址](代码 参数...)`，无符号表无法翻译；
+- `vmid`：读取为空；
+- 注意 `log` 是“自上次读取以来的新增条目”，读一次即消费。
+
+### 24.5 一个未解释的差异（新线索）
+
+Android 的 `tzdbg/general` 在 `0x146BF720` 读到 magic `0x747a6461`；我们 iOS 侧在**同一物理
+地址**读到的是 `0x14692000`（后续字节也不同），但 `+0x410/+0x414` 的 hyp 指针/长度、以及
+hyp 日志内容都完全正确。
+
+也就是说：**TZ diag 表头在我们这条启动链上被改过**（不是全零，是别的数据）。这不影响已知
+结论，但值得单独查一次：如果我们的 boot 链（UEFI/DarwinBoot）碰了 IMEM，那是一个应该修的
+问题。验证方法：在**尽可能早**的位置（DarwinBoot 内）读一次 `0x146BF720` 的 magic，与 C3
+线程（约 58 s）读到的值对比。
+
+### 24.6 现场恢复
+
+Android 侧临时 `setenforce 0` 已恢复为 `Enforcing`，临时的 `/data/local/tmp/mem` 已删除。

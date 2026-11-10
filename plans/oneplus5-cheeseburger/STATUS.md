@@ -11813,6 +11813,23 @@ P2/P1 探针（auth 前后各拍一次 CP/RBBM 快照、auth 后立刻读一次 
 镜像我 `dy…ee` 见 `diagnostics/build-environment-2026-11-10.md` §23.6；坑见 §23.7
 （PAS 前必须开时钟；大段日志要压缩输出否则整段丢失）。
 
+### Android 参考态（同机 root，2026-11-10）
+
+- 同机 Android 的 kgsl 启动日志：`a540_zap: loading from 0xf6900000 to 0xf6902000` →
+  `Brought out of reset`；`subsys-pil-tz` 对 `kgsl-hyp` **没有任何 GPU 寄存器操作**，
+  也完全靠 SCM/PAS —— 我们缺的不是“多一步寄存器”；
+- Android 的 hyp 日志与 iOS **逐字相同**（含 `SMMU Info: VMID 4 not support`）→ 该消息
+  是本机正常输出，“secure VMID 分配失败”排除；
+- `CONFIG_DEVMEM is not set`、`/proc/kcore` 不存在、kgsl `snapshot/faultcount=0` →
+  **无法**从 Android 用户态取 `TRUST_CNTL`/CB2/TSB 参考值；
+- 可用接口 `/sys/kernel/debug/tzdbg/{log,qsee_log,hyp_log,general,vmid,...}`；`log` 是
+  `[TZ 地址](代码 参数)` 的调用轨迹，无符号表不可译；
+- 新线索：Android 在 `0x146BF720` 读到 magic `0x747a6461`，iOS 侧同一物理地址读到
+  `0x14692000`，但 hyp 指针/长度与 hyp 日志内容都正确 → **diag 表头在我们这条启动链上被改过**，
+  值得在 DarwinBoot 里尽早读一次做对比。
+
+详见 `diagnostics/build-environment-2026-11-10.md` §24。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。
