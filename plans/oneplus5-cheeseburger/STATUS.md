@@ -3,37 +3,24 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
-- 当前阶段：**C3 完成（2026-11-09）。ZAP/PAS 全部 rc=0，但 boot 阶段给不出
-  XNU 能映射的低 4G + 1 MiB 对齐 ZAP 缓冲区。H236bv 按 sagit `stageZap` 把
-  ZAP 移到 kernel window 外的低 4G（`AllocateMaxAddress` 多分配 + 对齐 +
-  UC/XP），并把内核 `.elf` 大小检查修回 `.b02`。H236bv 实测在
-  `0x17ABAC18` 同步异常（>4G 的 Image/Addon pool）；H236bw 去掉 ZAP 的
-  UC/XP 并加 `ZAP LOW`/`WIN`/`IMG`/`COPY DONE` 诊断；firmware
-  `d02b3812…`、boot `4f0a892a…`，待实测。H236bu 的菜单/logo 已达标。**
-  PM8005 S1（FTS426）经 SPMI 在 752 mV 使能 → GX GDSCR PWR_ON → Fabia PLL
-  1028 MHz 锁定 → gfx3d 根 257 MHz → 分支使能 → RBBM 可读
-  （`0x00010042 / 0xb5f00000`）。C3 的内存/CP/GPMU 代码已就位；A540 的
-  `qcom,smmu-v2` 已按厂商 `arm-smmu.c` 路径核对。H236x 的只读 survey 已确认
-  SMMU 几何（3 个 CB、8 个寄存器页、36 位 PA），H236y 用修正后的 kit 参数执行
-  C3（CB0 + SID0 映射 + CP/GPMU）。H236z–H236am 已把 CP halt/VBIF drain、
-  configure、INSTR/RB base 全部读回通过，SMMU 无 fault，但 ME_INIT 不消费；
-  RBBM 软复位在写 1 处挂住。H236an 把脉冲两次写之间的 UFS log flush 去掉，
-  用来区分“复位本身挂总线”和“flush 排在未完成的复位写之后”。基线见
-  `diagnostics/A540-C1-C2-baseline-2026-11-09.md`，SMMU 路径见
-  `diagnostics/A540-C3-smmu-vendor-path-2026-11-09.md`。
-- 当前 gate：**H236bw 的 ZAP/Image 地址诊断。** H236bv 在
-  `0x17ABAC18` 同步异常，`0x17A` 是 >4G 的 Image/Addon pool；H236bw
-  去掉 ZAP 的 UC/XP，并在屏上画 `ZAP LOW`/`WIN`/`IMG`/`COPY DONE`。
-  先看这四行：如果 `IMG` 后异常，下一步把 Image/Addon/Policies 复制到
-  低 4G；如果 `ZAP LOW`/`WIN` 就异常，查 `AllocateLow`/窗口。随后再看
-  `NATIVE_GPU_C3: zap alloc mdt/image`、`zap auth rc=0` 和
-  `zap unsecure … trust=00000000`。256 MiB 仍是单次上限，不再重试。
-  菜单保持 `OnePlus 5 IOS` / `[ios 17.7.11]` / `Restart` / `Shut down`，
-  logo 保留。SMMU 几何和 CP 配置已固定：ID0=48016403、ID1=20008003、
-  ID2=00007511。
-- 基线提交：C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
-- 当前代码提交：本地 UniXNU `main`（H236bv 提交，本文档同批）；
-  NativeMobileDisplay H236bv（`.b02` + `NativeA540AcceleratorStub.cpp`）；
+- 当前阶段：**C3 完成（2026-11-10，H236et）。** A540 的 CP 已离开 secure 模式：
+  `RBBM_SECVID_TRUST_CNTL=0`，`CP_MEM_WRITE`（`0xC0FFEE11`）与 `CACHE_FLUSH_TS`
+  （`0xBEEF1234`）都经 SMMU 落地，可信窗口写（`0xEA57BEEF`）落地，提交冒烟测试
+  `submit test ok`，GPMU 固件到达 `BABEFACE`。
+  **根因**：从未按 kgsl `a5xx_regulator_enable()` 在上电时通过 GPMU 打开 RBCCU 与
+  SP(SPTP) 的 GDSC（`0x778000` + 轮询状态位 20 + SP 时钟开关）。着色器块没电 →
+  a540 的 ZAP（跑在着色器上）无法执行 → `CP_SET_SECURE_MODE(0)` 不被授权 →
+  trust 恒为 1 → 内存写全被丢。§30/§31 的“漂浮读值 / `0x0EC0` 挂总线 / 探针 2.6 s”
+  都是这个根因的症状。
+- 当前 gate：**C4 前置 —— `gpmu_load` 之后 CP 写失效。** H236es 证明 GPMU 加载后 CP
+  仍推进 RPTR，但其写出的内容不再落地；H236et 因此把冒烟提交放在 GPMU 之前。
+  kgsl 的顺序是 `0x66 → gpmu_init → 提交`，说明我们 GPMU 之后还缺一步 CP 恢复/重新
+  初始化。C4 提交真实作业前必须先查清，详见 `diagnostics/build-environment-2026-11-10.md`
+  §33.2。
+- 基线提交：**H236et** kernel `e8868290…`、boot `b0493767…`（C3 完成）；
+  C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
+- 当前代码提交：UniXNU `main` `7f2a4d0`（H236et 文档批次）；
+  NativeMobileDisplay `h103-a540` `8e729a4`（RBCCU/SP GDSC 上电 + 提交探针）；
   设备仓库 `main` `30c3aaf`（菜单/logo 最终版）
 - 远程仓库：
   - UniXNU `https://github.com/lss717/UniXNU`（`main`）
@@ -11970,3 +11957,37 @@ GPMU 之前；kgsl 是 `0x66 → gpmu → 提交`，说明我们 GPMU 之后还�
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。
+
+---
+
+### C3 定稿：验收清单与结论修正（2026-11-10，H236et）
+
+#### 验收清单（全部满足）
+
+| 判据 | 结果 |
+| --- | --- |
+| `RBBM_SECVID_TRUST_CNTL`（`0xF400`） | **0**（与同机 Android 工作态一致） |
+| `CP_MEM_WRITE` 经 SMMU 落到 scratch 页 | `0xC0FFEE11` ✔ |
+| `CACHE_FLUSH_TS` 时间戳落地 | `0xBEEF1234` ✔ |
+| 可信窗口（`0xE9000000`）内的写 | `0xEA57BEEF` ✔ |
+| 提交冒烟测试 | `submit test ok`（`rptr=35/35`，`cpint/hwfault=0`） |
+| GPMU 固件 | `BABEFACE`，`GPMU_GENERAL1=0` |
+| CP 基址/保护/寻址模式 | `CP_RB_BASE`、`CP_PROTECT_CNTL=7`、`CP_ADDR_MODE_CNTL=1` 全部读回 |
+
+#### 关键结论修正（相对此前的“冻结”判断）
+
+1. §27 的“P2/P1 中性”判断成立：auth 前后快照不变、auth 后 trust=1 都不是异常，真正的
+   判据是 **`0x66` 之后 trust 是否变 0**。
+2. **“AP 侧已无可执行变体”是错的**：真正缺的是**块级电源**（RBCCU/SP GDSC），不在寄存器层。
+   正例读数（Android `TRUST_CNTL=0`、TSB 全零）与逐寄存器 diff 是把这条线找出来的关键。
+3. **TSB 窗口**：本机 `mmu.secured == false`，Android 的 TSB 全零；写 `0xE8000000` 是错误方向。
+4. **“SP/3D 块不可访问”不是独立问题**：它是 GDSC 未上电的症状，上电后即消失。
+5. `PAS_AUTH_AND_RESET rc=0` 代表“载荷被真实验签”（坏 `.b02` → `rc=-61` 已证），但
+   **验签通过 ≠ ZAP 执行**；ZAP 能否执行取决于着色器块是否上电。
+
+#### 产物
+
+- 基线：**H236et** kernel `e8868290…`、boot `b0493767…`；
+- 根因补丁：`gpu_reset()` 中的 RBCCU/SP GDSC 上电（`0x778000` + 轮询 bit20 + SP 时钟）；
+- 详细记录：`diagnostics/build-environment-2026-11-10.md` §29（正例读数）、§30（逐寄存器 diff）、
+  §31（SP 块判定）、§32（根因）、§33（C3 完成 + 留给 C4 的副作用）。
