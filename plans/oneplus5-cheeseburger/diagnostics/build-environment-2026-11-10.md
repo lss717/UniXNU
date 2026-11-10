@@ -1033,3 +1033,41 @@ RBBM_STATUS       0x4F5 = 0x800001c1
 
 `/data/local/tmp/kgslfault`（可重跑）与 `/data/local/tmp/snap.txt` 留在设备上；
 一次故障会让 kgsl 复位 GPU，属正常恢复，不影响 Android。
+
+---
+
+## 30. 与 Android 工作态的逐寄存器 diff（H236ek–en，2026-11-10）
+
+### 30.1 做法
+
+把 kgsl snapshot 的寄存器清单（`adreno_a5xx_snapshot.c: a5xx_registers[]`，4145 个 offset）
+原样搬到 C3 里逐个读（排除会挂的 SECVID 区 `0xF001-0xF8FF`，保留 `0xF400`），与 Android 的
+工作态 dump 逐值比较。第一次实现有个 bug：把 dword 索引直接喂给按字节取值的 `rd()`
+（内部又除以 4），整份数据错位，已在 H236el 修正为 `rd(off * 4)`。
+
+### 30.2 结果
+
+| 类别 | 结论 |
+| --- | --- |
+| **CP / RBBM 配置** | **与 Android 逐值一致**（CP_ADDR_MODE=1、CP_PROTECT_CNTL=7、CP_ME_CNTL=0x400、CP_RB_BASE 等），差异只有性能计数器（Android 运行久了有累积值）和 `TRUST_CNTL`（A=0 / O=1） |
+| hwcg (`RBBM_CLOCK_*`) | Android 的 snapshot 里是 0，但 `sysfs hwcg=1` —— 说明 0 是**挂起时清零**的状态，不是“hwcg 关闭”。kgsl 醒着时会写 a540 使能表，所以我们的表（H236ef）与之相符；H236em 的清零是误改，已恢复 |
+| GPUCC / 频率 | 两边 CX/GX GDSC 都 `on=1`，PLL L=53 → 257 MHz；Android `gpuclk=257000000`，与我们的 RCG 一致 |
+| **3D 上下文块 `0xE000-0xEFFF`** | 我们读出来是**每次都不一样的高熵垃圾**；Android 在同一位置是结构化值 |
+| **`0x0EC0` (`SP_DBG_ECO_CNTL`)** | **读它会挂死总线**（`0xE000` 之后继续 dump 时挂在这里）；Android 在故障快照里读它没问题 |
+
+### 30.3 结论与新线索
+
+- AP 侧**没有发现任何配置差异**（除 `TRUST_CNTL` 本身）。这进一步把问题从“寄存器没配对”
+  推向“块级电源/时钟状态”。
+- **新线索**：a540 的 ZAP 是**着色器**，而我们的 `SP`/3D 块读出来是漂浮值、且
+  `SP_DBG_ECO_CNTL` 一读就挂 —— 与“着色器块未上电/未开时钟”一致（对比：Android 在故障时刻
+  能正常读）。但这也可能只是“空闲 vs 活动”的差异（块在空闲时被 power collapse），尚未定论。
+
+### 30.4 镜像
+
+| 版本 | 内容 | kernel | boot |
+| --- | --- | --- | --- |
+| ek | 首次 dump（offset 错位） | `ab52f06d…` | `1ac5e345…` |
+| el | 修正 `off*4` + 块标记 | `9251933b…` | `3a8c4b42…` |
+| em | hwcg 清零（误改） | `cef37b52…` | `208eab1d…` |
+| **en** | 恢复 hwcg、移除 dump（**基线**） | `fa149af7…` | `f6bf7668…` |

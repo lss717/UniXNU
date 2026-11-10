@@ -11891,6 +11891,20 @@ CP_ADDR_MODE_CNTL=1  CP_PROTECT_CNTL=7  CP_ME_CNTL=0x400
 
 方法见 `diagnostics/build-environment-2026-11-10.md` §29（工具 `/data/local/tmp/kgslfault`）。
 
+### 逐寄存器 diff（H236ek–en，2026-11-10）
+
+把 kgsl snapshot 的 4145 个 offset 搬到 C3 逐个读，与 Android 工作态逐值比较
+（首次实现把 dword 索引当字节偏移，整份错位，H236el 已修正）。
+
+- **CP/RBBM 配置与 Android 逐值一致**，差异只有性能计数器和 `TRUST_CNTL`（0 vs 1）；
+- `hwcg`：Android snapshot 里 `RBBM_CLOCK_*=0` 是挂起清零态，`sysfs hwcg=1`——我们的使能表是对的；
+- GPUCC：两边 CX/GX GDSC 都开、PLL 257 MHz，Android `gpuclk=257000000` 与之一致；
+- **新线索**：3D 上下文块 `0xE000-0xEFFF` 我们读到漂浮垃圾，`0x0EC0 (SP_DBG_ECO_CNTL)`
+  一读就挂总线；Android 在故障时刻能正常读。a540 的 ZAP 是着色器 → “着色器块未上电/未开时钟”
+  成为新的可疑点（也可能是空闲 power collapse 的假象，未定论）。
+
+基线：H236en（kernel `fa149af7…`、boot `f6bf7668…`，无 dump、稳定到 `zap unsecure`）。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。
