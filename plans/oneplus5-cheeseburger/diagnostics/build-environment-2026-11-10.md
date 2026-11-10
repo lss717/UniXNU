@@ -1724,3 +1724,26 @@ dpy=8/56/0/0/0  s345=0/0/0  xf=0 fr=0
 2. 重新签名、`pack-adreno-addon.py --trace`、换 payload 的 gpuaddon；
 3. 启动后应出现 `NATIVE_MTL: MTL#…` 行：即产出物 1（方法清单/顺序）与
    产出物 2（参数形状）；最后一行就是产出物 3（放弃点）。
+
+### 45.4 第二次尝试（H236fv）：补回 dylib 后仍不加载
+
+- 用 `-Os`（去掉 `-g`）重编插件、strip、补回 `libvulkan_freedreno.dylib`、
+  重新签名；addon 12,103,700 B（与旧可用 addon 12,125,780 B 同量级），
+  boot 81,149,952 B（与历史一致，未超窗）。
+- 结果与 fu 完全相同：`NATIVE_MTL` 0 行、`open request` 1 次、ABI 0 次、
+  `accel=1/1/1/2`、`dpy=3/18/0/1/0` —— 仍然是“插件不存在”的行为；
+  内核自身正常（C3/fill32 都在跑）。
+
+结论：**重打的 bundle 没有被 CA 当作可用插件加载**。两个候选原因：
+
+1. addon 内容结构变了（新 blob 里没有 `bin/adrenoprobed` 与 `daemons/*.plist`，
+   旧 blob 有），内核侧的 addon 挂载/校验可能因此跳过或拒绝；
+2. 手工 `codesign` 的 bundle 与官方脚本产物的签名/权限不同，dlopen 被拒。
+
+下一步（按成本排序）：
+
+1. 先把 `adrenoprobed` 与 daemon plist 重新生成并放回 addon（恢复旧的文件集合），
+   重打后只观察“是否加载”（有 `NATIVE_MTL` 即成功）；
+2. 若仍不加载，改用官方 `build-adreno-metal-plugin.py` 产出（需要在宿主机装
+   `glslc`，或临时跳过 smoke shader / bridge 重建两步）；
+3. 二者都可时，再继续 A1 的三份产出物。
