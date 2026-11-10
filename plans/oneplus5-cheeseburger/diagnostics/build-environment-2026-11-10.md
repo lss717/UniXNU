@@ -594,3 +594,92 @@ secure SMMU 这条线到此为止；后续如果还要走，需要 TZ 固件侧�
 
 基线仍用 H236db（kgsl 顺序 + `0x0A`）：kernel `87da966b…`、boot `7778cf6f…`，
 它能把 C3 跑到 `zap unsecure` 且不挂总线。
+
+---
+
+## 23. P2/P1 探针、V1 顺序与 TZ 日志（H236dy–ee）
+
+### 23.1 P2：`AUTH_AND_RESET` 不复位 GPU
+
+先后在两种状态下各拍了一次 auth 前后的 CP/RBBM 快照：
+
+| 版本 | auth 时 ME | pre-auth | post-auth |
+| --- | --- | --- | --- |
+| dy（GPMU 已在跑） | 运行 (`me=00000000`) | `me=0 rb=01000000 prot=7 am=1 ahb2=3f trust=1` | **一字不差** |
+| ea（kgsl 冷顺序） | 停机 (`me=00000303`) | `me=303 rb=01000000 prot=7 am=1 ahb2=3f gpmu_rst=1 trust=1` | **一字不差** |
+
+结论：PAS 的 `AUTH_AND_RESET` 不碰 AP 可见的 CP/RBBM 状态，与 kgsl 把 PAS 放在
+`microcode_load`（写完 INSTR/RB 基址、ME 仍停机）里的用法一致。
+
+### 23.2 P1：auth 之后 `TRUST_CNTL` 立刻就是 1
+
+dy/ea 两次都在 auth 返回后**立刻**读 `0xF400*4`（中间只有一个 `GPMU_GENERAL0` 读）：
+
+```
+trust after auth=00000001
+```
+
+结论：TZ 在 auth 时**没有**清 trust。`trust=1` 不是“被我们后面的启动步骤改回去的”。
+
+### 23.3 V1（PAS 先、reset 后）：无效，且实现有缺陷
+
+| 版本 | 结果 |
+| --- | --- |
+| dz | `smmu → PAS → reset → ME_INIT → GPMU → 0x66`：reset 后 `trust=1`，0x66 后仍 `1`、`mem=0` |
+
+缺陷：PAS 跑在 `gpu_reset()` 之前，而**时钟是 `gpu_reset()` 才打开的**，所以 auth
+前后的 CP/RBBM 读数全是 `ffffffff`（不可信）。sagit 的 EFI 桥做 PAS 时 GPU 是上电的，
+要真正复刻 V1 必须先把时钟打开。本轮没有做这一步，V1 只能算“未充分测试”。
+
+### 23.4 TZ / hyp 日志：可以读，但 qsee 环形缓冲是加密的
+
+- `tz-log@146BF720` 的 `+0x410/+0x414` 给出 hyp 日志的物理地址和长度：本轮
+  `ptr=0x85997000 size=0x2000`；
+- **hyp 日志是明文**，8 KiB 里只有启动内容：
+
+```
+HYP Version Info: QC_IMAGE_VERSION_STRING=TZ.BF.4.0.6-00161
+IMAGE_VARIANT_STRING=RAGAANAAA
+OEM Version Info: OEM_IMAGE_VERSION_STRING=CRM
+SMMU Info: VMID 4 not support
+SMMU Info: VMID 4 not support
+Initializing PIL
+```
+
+  之后再无任何条目 —— hyp 没有参与/记录本次 PAS。
+- `0x146BF720` 起的 0x3000 是 qsee 环形缓冲，内容高熵（`tzdbg_t` 里带 key/nonce/tag），
+  **不能直接读成文本**；
+- `0x14692000`（tz 区第一个字指向的地址）是 TZ 的**中断/诊断表**，明文但只有
+  `SPI XPU / CB ISR / Glb Cln / RPM->TZ` 这类条目。
+
+### 23.5 SMMU secure 上下文的非安全视图（只读）
+
+```
+cb0 sctlr=00000000 ttbr=00000000 |
+cb2 sctlr=00000000 ttbr=00000000/00000000 cba2r=00000000 s2cr=000200ff smr=00000000
+```
+
+`0x200ff` 就是驱动自己的注释里记的 FAULT 编码。但 secure CB 在非安全侧通常读作
+RAZ/WI，所以这**不能**证明安全流不存在，只能作为记录。
+
+### 23.6 新增镜像
+
+| 版本 | 内容 | kernel | boot |
+| --- | --- | --- | --- |
+| dy | P2 快照 + P1（GPMU 先） | `e2b1faba…` | `ccf22459…` |
+| dz | V1：PAS 先、reset 后 | `42b6ff84…` | `ef2f73ef…` |
+| ea | kgsl 冷顺序 + CB2 survey | `9fa5255f…` | `558faafc…` |
+| eb | tzlog 探针提前 | `ba38e4d2…` | `e3e7b8f3…` |
+| ec | hyp 日志文本 dump | `e3af39a6…` | `523516ee…` |
+| ed | tzring/tzptr 文本 dump（**挂**） | `e7b424e7…` | `33acc418…` |
+| ee | 压缩 dump（可用） | `0497a513…` | `1c05f0de…` |
+
+### 23.7 坑
+
+1. **PAS 前必须先把 GPU 时钟打开**（`gpu_reset()` 里的 GCC 段），否则 CP/RBBM 读全是
+   `ffffffff`，P2/P1 数据无效。
+2. 一次性 `IOLog` 上百行 99 字符、只在末尾 flush，会在日志路径里**整段丢失**
+   （H236ed 的 `tzring` 一行都没留下，连 `hyplog ptr` 都丢了）。要压缩输出
+   （零区长串折叠、跳过无内容行、每行 flush、每窗口限 48 行）。
+3. 读 `0x146BF720` 前 0x50 字节没问题，但整段 0x3000 逐字节读会让设备挂死
+   （表现为黑屏，重启后日志完好）。

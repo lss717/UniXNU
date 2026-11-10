@@ -11780,14 +11780,38 @@ AP 侧无法参与。剩余方向是找到 TZ 侧切换 GPU secure 状态的接�
 - `CP_SET_SECURE_MODE(0)`（0x66）被 CP 接受（`cpint/hwfault=0`）但不改变
   `RBBM_SECVID_TRUST_CNTL`；secure 模式下只有**经 SMMU 的内存写**被丢，
   type4 寄存器写（GPMU/AGC）正常；
-- AP 直写 `TRUST_CNTL`、读 `SECVID/TSB` 都挂总线；`RESTORE_SEC_CFG(GPU)` 被 TZ 拒绝
-  （`{-2,-4}`，halt 与否相同），device id 遍历会让 SMC 永久阻塞（id=19）；
+- AP 直写 `TRUST_CNTL`、读 `SECVID/TSB` 都挂总线；
+- `RESTORE_SEC_CFG(GPU=18)` 的 `{-2,-4}` **不是 TZ 的裁决**：OP5 的 kgsl SMMU 节点是
+  `qcom,dynamic; qcom,register-save; qcom,skip-init;`，**没有** `qcom,enable-static-cb`，
+  而厂商 `arm_smmu_restore_sec_cfg()` 只对 static-CB SMMU 调用——原厂在 OP5 上从不发
+  这个 SMC，我们调用属于走出平台约定；
+- device id 语义**已由源码确定**（`GPU=18`、`UFS=19`）：H236dv 在 19 挂死是给正在工作的
+  UFS 做 secure 配置，不是“语义未知”；
 - 0x66 的位置、顺序（kgsl/sagit/上游）、TSB 窗口、ZAP resume、GPMU 先行、可信窗口写入
   全部实测无效。
 
-**结论：C3 冻结**。继续需要 TZ/安全世界侧的资料（device id 语义、secure VMID、
-ZAP 完成信号），AP 侧没有剩余可执行的变体。镜像清单见
+**结论**：AP 侧真正未闭合的只剩一点——**ZAP 有没有在 GPU 上执行**（`PAS_AUTH_AND_RESET
+rc=0` 只证明验签通过）。`trust=1` 在启动早期不是异常（同 SoC 的 sagit 也读到 1，靠 0x66
+清零；其 `reset()` 判据是 `TrustControl > 1` 才算错，提交判据才是 `== 0`）。下一步是
+P2/P1 探针（auth 前后各拍一次 CP/RBBM 快照、auth 后立刻读一次 `TRUST_CNTL`），再按
+顺序变体 V1（PAS 先、reset 后）与 V2（mainline 逐字）收敛。详见
+`/home/ls/.opencode/plan/C3-feasibility-2026-11-10.md`。镜像清单见
 `diagnostics/build-environment-2026-11-10.md` §22；路线 C 计划见 §11。
+
+### H236dy–ee：P2/P1 探针与 TZ 日志（2026-11-10）
+
+- **P2**：auth 前后 CP/RBBM 快照**一字不差**（ME 运行/停机两种状态都测），
+  `AUTH_AND_RESET` 不复位 AP 可见的 GPU 状态；
+- **P1**：auth 之后**立刻**读 `TRUST_CNTL` 就是 `1`（中间只有一个 GPMU 寄存器读）——
+  TZ 在 auth 时根本没有清它，`trust=1` 不是被后续步骤改回去的；
+- **V1**（PAS 先、reset 后）未充分测试：PAS 跑在时钟打开之前，读数全是 `ffffffff`；
+- **TZ 日志可读**：hyp 日志（`tz-log+0x410` 指向的物理页）是明文，内容只有
+  `TZ.BF.4.0.6-00161 / RAGAANAAA / CRM / SMMU Info: VMID 4 not support / Initializing PIL`，
+  **没有**任何 PAS/GPU 记录；qsee 环形缓冲（`0x146BF720`）高熵，读不出文本；
+- CP_PROTECT 表、ME_INIT 载荷、`cp_secure_mode` 报文均已与 kgsl 逐字对齐，排除。
+
+镜像我 `dy…ee` 见 `diagnostics/build-environment-2026-11-10.md` §23.6；坑见 §23.7
+（PAS 前必须开时钟；大段日志要压缩输出否则整段丢失）。
 
 ## 更新规则
 
