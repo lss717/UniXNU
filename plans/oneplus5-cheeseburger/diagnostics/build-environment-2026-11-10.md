@@ -2043,3 +2043,45 @@ trace 插件已按同样方式改造：运行时在 `_MTLDevice` 上派生 `A540
 未实现的 selector 会落进 `-doesNotRecognizeSelector:`，正好就是 A1 的方法清单。
 
 （gq 那次启动窗口偏短，只到 `dpy=2/18`，还没走到实例化，需要再跑一次确认。）
+
+### 45.24 A1 达成：插件设备被 Metal 接受，方法清单与放弃点拿到了（gs）
+
+把静态主类改回 `_MTLDevice` 子类，并在 `+load` 里 `class_addProtocol` 补上
+`MTLDevice` 与 `MTLDeviceSPI` 之后（H236gs），Metal 完整地驱动了这个桩设备：
+
+```
+dev#1 initialize loaded=1
+dev#2 cls alloc
+dev#3 initWithAcceleratorPort: port=0x5e0f
+dev#4 initWithAcceleratorPort: device=returned
+dev#5 doesNotRecognize: featureProfile
+dev#6 maxBufferLength
+dev#7 doesNotRecognize: featureProfile
+dev#8 doesNotRecognize: featureProfile
+dev#9 newCommandQueue            ← 返回 nil，Metal 放弃
+```
+
+14 次重复，全部序列一致；`ABI: method=17` 共 31 条，`accel=27/0/140/0`。
+
+**A1 产出物 1（方法清单与首次调用顺序）**：设备建立阶段 Metal 只问 4 个消息——
+
+| 顺序 | selector | 类型 | 说明 |
+| --- | --- | --- | --- |
+| 1 | `-featureProfile` | 私有 SPI 属性 | 连问 3 次（第一次在 `maxBufferLength` 之前，两次在其后） |
+| 2 | `-maxBufferLength` | 公开 | 只问一次 |
+| 3 | `-newCommandQueue` | 公开 | 唯一带副作用的创建调用 |
+
+**A1 产出物 3（放弃点）**：`-newCommandQueue` 返回 nil → Metal 立刻放弃整个设备，
+不会继续问 `newBufferWithLength:options:`、`newRenderPipelineStateWithDescriptor:`
+或任何设备属性。之前所有"在 GetDeviceInfo 阶段放弃"的推测都不成立：真正卡住的是一个
+**命令队列**，而不是设备信息。
+
+**A1 产出物 2（参数形状）**：`newCommandQueue` 与 `maxBufferLength` 都不带参数；
+`featureProfile` 也不带参数（返回的是 SPI 字典）。带参调用要等到队列建立之后才会出现，
+所以下一步是把这两步做实：
+1. `-featureProfile` 返回一个包含 Metal 私有所需键的 `NSDictionary`（可先返回空字典看它是否接受）；
+2. `-newCommandQueue` 返回一个同样是"运行时 `_MTLDevice`…不，是队列对象"的桩，并对它
+   记 `-commandBuffer`、`-setLabel:`、`-insertDebugCaptureBoundary` 等后续调用。
+
+这样放弃点会一步步向后推，直到出现 `newBufferWithLength:options:` 与
+`newRenderPipelineStateWithDescriptor:` 的形状记录。
