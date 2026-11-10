@@ -1894,3 +1894,23 @@ ABI method:        0 次
 3. seed 换进去后用 `MetalPluginName=NativeAdreno` 启动，确认 `NATIVE_MTL`。
 
 这条路径是目前唯一还没试过的“换对地方”：addon 只提供标记、bundle 由 seed 提供。
+
+### 45.13 去掉 libvulkan 后仍超预算；改用 86 KB 的独立 bundle 进 seed
+
+- 去掉 `libvulkan_freedreno.dylib` 并重签后，seed 从 42,087,728 B 降到
+  **25,162,032 B**，但 payload 只剩 ~11 MB、boot image 已顶到 81,149,952 B，
+  仍然放不下。
+- 另有一个命名约束：seed 里的目录名是 `NativeAdrenoMetal.bundle`（21 字符），
+  超过 `_offline-accelerator-plugin` 的 16 字符上限，所以 seed 里的这个名字
+  **本来就无法用 boot-arg 指到**。
+
+结论：seed 路线要用**独立的最小 bundle**——我们的 `A540Trace.bundle` 只有 86 KB
+（`build/a540-trace/A540Trace.bundle`），把它按 `A540Trace.bundle` 放进 seed，
+`MetalPluginName=A540Trace`，seed 几乎不增长，完全放得下。
+
+下一步实现：给 `add-gpu-plugin-data.py` 加一个“把指定 bundle 目录按指定名字写进
+seed”的模式（或写个同构的小脚本），然后：
+
+1. seed 写入 `ngpu/addons/A540Trace.bundle`；
+2. payload 换 seed、`MetalPluginName=A540Trace`；
+3. 启动看 `NATIVE_MTL`。
