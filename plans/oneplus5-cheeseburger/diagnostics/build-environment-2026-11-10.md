@@ -546,3 +546,19 @@ secure 配置恢复: scm_restore_sec_cfg(SVC_MP=0xC, cmd=2, device_id, 0)
 
 secure SMMU 这条线到此为止；后续如果还要走，需要 TZ 固件侧的 device id/调用语义，
 而不是继续在 AP 侧猜。
+
+---
+
+## 21. ZAP 归属与 GPMU 先行（H236dw/dx）
+
+| 版本 | 做法 | 结果 |
+| --- | --- | --- |
+| H236dw | auth 之后 `invalidate` 再读 ZAP 镜像首字 | **读挂总线**（日志停在 `zap post-auth read begin`）——TZ 已接管镜像，PAS 是真实消费 |
+| H236dx | 先 GPMU 到 BABEFACE，再 auth ZAP，再 0x66 | GPMU 在 auth 后仍为 `babeface`；`0x66` 仍 trust=1、`mem=0` |
+
+结论：
+
+- TZ 在 auth 后把镜像页收走（读会挂），说明 ZAP 确实被安全世界加载，PAS 链路没有假成功；
+- “ZAP 在 GPMU 上执行”的假设也不成立（GPMU 先行 + auth 后仍 babeface，仍不生效）；
+- AP 侧能控制的机制（0x66 的位置/时机、TSB 窗口、顺序、resume、SMMU 配置）已经全部试过，
+  剩下的差异只在 TZ/安全世界内部，AP 没有可观测入口。

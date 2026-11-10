@@ -11764,6 +11764,14 @@ AP 侧无法参与。剩余方向是找到 TZ 侧切换 GPU secure 状态的接�
 结论：secure SMMU 配置无法从 AP 侧用这个调用恢复，且 id 遍历危险，停止该方向。
 下一步需要 TZ 固件侧的 device id/调用语义证据，或回到 ZAP 执行可见性的问题。
 
+### H236dw–dx：ZAP 归属与 GPMU 先行（2026-11-10）
+
+- auth 之后读 ZAP 镜像页**挂总线**（TZ 已接管）；PAS 不是假成功。
+- 先 GPMU（BABEFACE）再 auth ZAP，再 `0x66`：auth 后 GPMU 仍 `babeface`，但 trust 仍 1、mem=0。
+- AP 侧可控的变量已全部排除，剩余差异在 TZ/安全世界内部。
+
+镜像：`dw 679165e2…`、`dx 42edaac3…`。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。
