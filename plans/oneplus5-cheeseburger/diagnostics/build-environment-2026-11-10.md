@@ -1747,3 +1747,14 @@ dpy=8/56/0/0/0  s345=0/0/0  xf=0 fr=0
 2. 若仍不加载，改用官方 `build-adreno-metal-plugin.py` 产出（需要在宿主机装
    `glslc`，或临时跳过 smoke shader / bridge 重建两步）；
 3. 二者都可时，再继续 A1 的三份产出物。
+
+### 45.5 第三次尝试（H236fw）：恢复完整文件集合后日志窗口过短
+
+- addon 恢复为 9 个条目（bundle + `adrenoprobed` + 3 个 daemon plist + trace 标记），
+  12,119,420 B；boot 81,149,952 B。
+- 内核正常：`fill32 words=1024 hits=1024`、C3 全通。
+- 但合并日志只到 **163 s**（`NATIVE_FRAME: event=1 … client=0 xfer=0 frames=0` 之后即止），
+  **未覆盖 174 s 起的加速器阶段**，因此这一轮对“插件是否加载”**不可判定**。
+
+下一步：重跑同一镜像并确认日志窗口能到 300 s 以上（或改用 `h103-log-secs`/更长等待），
+再看 `NATIVE_MTL` 是否出现。若窗口仍短，先查 H103 写盘窗口为何在部分启动里只到 ~160 s。
