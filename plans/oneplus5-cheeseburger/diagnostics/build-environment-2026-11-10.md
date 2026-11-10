@@ -809,3 +809,52 @@ ph2: type=1 (PT_LOAD)  off=0x3000  paddr=0x5000  filesz=0x1334 flags=0x08000007 
 AP 侧能给 TZ 的输入已经**逐项对齐**到可执行代码级别，Android 的成功路径里也没有任何我们
 缺失的 AP 侧寄存器操作。剩下的差异只可能在安全世界内部（ZAP 的执行与其完成信号），
 而 AP 侧没有可观测入口（SECVID 读会挂、CB2 在非安全侧读作 RAZ、qsee 日志加密）。
+
+---
+
+## 26. hw-init 全量复刻（H236ef/eg，2026-11-10）
+
+选项 2：把 mainline/vendor `a5xx` 的 hw-init 全部复刻后再做 PAS。
+
+### 26.1 逐项核对
+
+| hw-init 项 | 来源 | 状态 |
+| --- | --- | --- |
+| VBIF 事务表 (`ROUND_ROBIN_QOS_ARB`, `GATE_OFF_WRREQ_EN`) | `a540_vbif[]` | 已有（`0xc124`/`0xc0a8`） |
+| RBBM perfctr / AHB_CNTL0/1/2 / hang int / UCHE / CP 阈值 / PC_DBG_ECO | `a5xx_hw_init` | 已有 |
+| CP_PROTECT 全表（含 SECVID） | `a5xx_protect_init` | 已有且逐条一致 |
+| TSB_CNTL/BASE/SIZE=0、各块 ADDR_MODE=1 | `a5xx_hw_init` | 已有 |
+| ME_INIT 载荷 | `a5xx_send_me_init` | 已有 |
+| LM（AGC 36 payload + 电压/功耗阈值） | `a540_lm_setup` | **已有**（`gpmu_load` 内） |
+| SP/TP power collapse (`PWR_COL_*` 4 个) | `a5xx_pc_init` | **已有**（`gpmu_load` 内） |
+| GPMU 固件（type4/IB + CM3_SYSRESET=0 + BABEFACE） | `a5xx_gpmu_ucode_init/start` | 已有 |
+| **hwcg 时钟门控表（95 条）** | `a540_hwcg_regs` | **本次新增**（H236ef） |
+
+hwcg 表由 `a5xx_reg.h` 的 dword 索引机械换算成字节偏移后写入 `cp_configure`。
+
+### 26.2 结果（H236ef）
+
+```
+pre-auth   me=303 rb=01000000/0 prot=7 am=1 ahb2=3f gpmu_rst=1 trust=1
+auth       rc=0 answer=0
+post-auth  与 pre-auth 一字不差
+trust after auth = 00000001
+cp start   idle=1 (rptr=9)
+trust before 0x66 = 00000001
+0x66       rptr=25/25 done=1  trust=00000001  ts=0:0  mem=0  win=0
+```
+
+**没有任何变化。** 补齐 hwcg 之后 CP 依旧不离开 secure 模式。
+
+### 26.3 副产物：TZ diag 区整段读取会挂总线
+
+H236ed/ee/ef 里对 `0x146BF720`(0x3000) 和 `0x14692000`(0x1000) 的文本 dump 会在读到
+某处时挂死（本次表现为黑屏，系统其余部分仍跑到 1549 s）。H236eg 已把这两段遍历删掉，
+只保留 `tzlog` 头部 20 个字 + hyp 日志指针/长度（这两项读起来是可靠的）。
+
+### 26.4 最终基线
+
+| 版本 | 内容 | kernel | boot |
+| --- | --- | --- | --- |
+| ef | hwcg 全表 + P2/P1 探针 | `83fd023e…` | `606638b6…` |
+| **eg** | ef 去掉危险 TZ dump（**基线**） | `ca13c26c…` | `26f0c53f…` |

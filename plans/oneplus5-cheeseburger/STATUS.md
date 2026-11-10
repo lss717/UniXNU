@@ -11844,6 +11844,19 @@ P2/P1 探针（auth 前后各拍一次 CP/RBBM 快照、auth 后立刻读一次 
 **结论**：AP 侧输入已对齐到可执行代码级别，Android 的成功路径里没有我们缺的 AP 侧寄存器
 操作。剩余差异在安全世界内部，AP 侧无可观测入口。
 
+### hw-init 全量复刻（H236ef/eg，2026-11-10）
+
+把 mainline/vendor `a5xx` 的 hw-init 逐项核对并补齐：VBIF 表、perfctr/AHB/UCHE/CP 阈值、
+CP_PROTECT 全表、TSB=0 与各块 ADDR_MODE、ME_INIT、LM（AGC）、SP/TP collapse、GPMU 固件
+早就有；本次新增 **a540 hwcg 时钟门控表（95 条）**。
+
+结果**没有任何变化**：`trust after auth=1`、`0x66` 后 `trust=1`、`mem=0`。
+
+副产物：整段遍历 `0x146BF720`/`0x14692000` 会挂总线（黑屏），H236eg 已删除；只保留
+tzlog 头 20 字 + hyp 日志指针。
+
+**当前基线**：H236eg，kernel `ca13c26c…`、boot `26f0c53f…`。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。
