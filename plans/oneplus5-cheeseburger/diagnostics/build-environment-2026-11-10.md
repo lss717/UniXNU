@@ -984,3 +984,52 @@ trust before 0x66 = 00000001
 两者都指向同一个可行做法：`fastboot boot` 一份打开了 `CONFIG_DEVMEM` 的 mainline/pmOS
 镜像（只 boot 不 flash），一次拿到 `0x0503D000` / `0x0503E000` 的读数，并且顺便验证
 “没有 secure CB、没有 CPZ、没有 hyp_assign 的 AP 能不能把 trust 变成 0”。
+
+---
+
+## 29. 正例读数：Android 工作态 SECVID（2026-11-10）
+
+### 29.1 方法（可复用）
+
+本机 LineageOS 内核 `CONFIG_DEVMEM is not set`、`CONFIG_MODULE_SIG_FORCE=y`、无 `/proc/kcore`，
+Android 用户态没有任何寄存器读取口。可行路径是 **kgsl snapshot**：
+
+1. a5xx 的 snapshot 寄存器表（`adreno_a5xx_snapshot.c:362`）包含
+   `0xF400, 0xF400, 0xF800, 0xF807`；
+2. 用一个小工具（`/data/local/tmp/kgslfault`，静态 ARM64）走
+   `DRAWCTXT_CREATE(flags=PREAMBLE|NO_GMEM_ALLOC)` → `GPUMEM_ALLOC_ID` → `mmap(id<<12)`
+   → `GPU_COMMAND`（cmdlist 里一条 `CP_MEM_WRITE` 到未映射地址，`obj.flags=CMDLIST_IB`）
+   触发 GPU fault；
+3. kgsl 自动 snapshot（`faultcount=1`，dmesg：`snapshot created at pa … size 818424`）；
+4. `cp /sys/class/kgsl/kgsl-3d0/snapshot/dump /data/local/tmp/snap.txt` 拉出**二进制**转储；
+5. 解析：`{u16 magic=0xABCD, u16 id, u32 size}` 的 section，`id=0x0201` 为寄存器段，
+   载荷是 `{u32 count}` + count 组 `{u32 dword_offset, u32 value}`。
+
+### 29.2 读数（Android，kgsl 正常工作）
+
+```
+TRUST_CNTL       0xF400 = 0x00000000      <- 工作态 trust 是 0
+TSB_TRUSTED_BASE 0xF800 = 0x00000000
+                 0xF801 = 0x00000000
+TSB_TRUSTED_SIZE 0xF802 = 0x00000000
+TSB_CNTL         0xF803 = 0x00000000
+CP_ADDR_MODE_CNTL 0x860 = 1
+CP_PROTECT_CNTL   0x8A0 = 7
+CP_ME_CNTL        0x832 = 0x00000400
+CP_RB_BASE        0x800 = 0xfc060000
+RBBM_STATUS       0x4F5 = 0x800001c1
+```
+
+### 29.3 结论
+
+1. **`trust=0` 是工作态**，我们的 `trust=1` 确实是“仍在 secure 模式”——此前“trust=1 可能
+   是正常态”的怀疑可以关闭；
+2. **Android 的 TSB 全零**，说明本机 `mmu.secured == false`，`_set_secvid()` 什么都不写。
+   我们一直写 0 是对的；H236do 试 `0xE8000000/0x10000000` 是错误方向；
+3. 由此可以排除“TSB 窗口配置不同”这一类假设（此前只是“试过”，现在是有正例对照的排除）；
+4. 另外获得 4145 个寄存器的**工作态全量参考**，可用于后续逐寄存器 diff。
+
+### 29.4 现场
+
+`/data/local/tmp/kgslfault`（可重跑）与 `/data/local/tmp/snap.txt` 留在设备上；
+一次故障会让 kgsl 复位 GPU，属正常恢复，不影响 Android。

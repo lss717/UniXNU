@@ -11874,6 +11874,23 @@ tzlog 头 20 字 + hyp 日志指针。
 `0x0503D000`/`0x0503E000`）与“同机型 mainline 正例”都需要一个 `CONFIG_DEVMEM=y` 的内核
 （本机 LineageOS 没有 `/dev/mem`、也没有 `/proc/kcore`）。
 
+### 正例读数：Android 工作态 SECVID（2026-11-10）
+
+用 kgsl snapshot（触发一次 GPU fault，读 `snapshot/dump` 的二进制寄存器段）拿到
+本机 Android 的**工作态**读数：
+
+```
+TRUST_CNTL 0xF400 = 0        <- 工作态就是 0
+TSB_BASE_LO/HI/SIZE/CNTL 0xF800/1/2/3 = 0/0/0/0
+CP_ADDR_MODE_CNTL=1  CP_PROTECT_CNTL=7  CP_ME_CNTL=0x400
+```
+
+结论：① `trust=1` 确实是“仍在 secure 模式”，不是正常态；② 本机 `mmu.secured==false`，
+`_set_secvid()` 不写任何东西——我们写 TSB=0 是对的，H236do 的 `0xE8000000` 是错误方向，
+该类假设可正式排除；③ 顺带得到 4145 个寄存器的**工作态全量参考**，可做逐寄存器 diff。
+
+方法见 `diagnostics/build-environment-2026-11-10.md` §29（工具 `/data/local/tmp/kgslfault`）。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。
