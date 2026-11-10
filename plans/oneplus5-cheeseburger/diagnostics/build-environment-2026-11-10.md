@@ -1436,3 +1436,42 @@ Mesa `fd5_blitter` 路径）。下一步是决定用最小 blit shader（自建 
 3. 只有确认 GL 路线可行，C6b 才需要真正的渲染器移植；否则 C6 只能走自建 Metal 前端。
 
 这一步是只读/配置级实验，不需要 GPU 代码，是 C6a 最便宜的起点。
+
+---
+
+## 39. C6a-0：Metal 插件开关实验（H236fk / H236fl，2026-11-10）
+
+### 39.1 实验设置
+
+在 `payload` 的 `unixnu.toml` 里改 `_offline-accelerator-plugin`，其余 args 与 kernel（`cd6f3e08…`，C5a）不变：
+
+| 版本 | boot-arg | boot.img |
+| --- | --- | --- |
+| **fk** | 删除该参数 | `fb7b93ce…` |
+| **fl** | `_offline-accelerator-plugin=NoMetalX`（不存在的 bundle） | `719dd204…` |
+
+### 39.2 结果
+
+| 版本 | `MetalPluginName` | 锁屏 | 打开我们的加速器 | ABI 调用 |
+| --- | --- | --- | --- | --- |
+| fj（参考，NativeAdreno） | `NativeAdreno source=arg` | ✅ | ✅ 174 s 起 | ✅ `report backboard s34 e0 v4/4` |
+| **fk**（删除参数） | **`AGXMetalA10 source=default`** | ✅ | 未捕获（日志窗口止于 168 s） | — |
+| **fl**（不存在的 bundle） | `NoMetalX source=arg` | ❌ **没有进入锁屏** | ❌ 0 次 | ❌ 0 次 |
+
+### 39.3 结论
+
+1. 删掉参数**不是“没有插件”**：`NATIVE_UFS_ACCEL` 会回落到默认值 `AGXMetalA10`。
+2. **插件必须能被加载**，CA 才能把 UI 拉起来：bundle 不存在时（fl）锁屏根本不出现，
+   且全程没有一次加速器打开/ABI 调用 → **不存在绕过 Metal 的 GL/软件回退路径**。
+3. 插件能加载但拿不到设备时（fk 的 `AGXMetalA10` 在 Adreno 上），CA 仍能进锁屏——
+   这是**软件渲染**的锁屏，不经过我们的加速器。
+4. 因此“把 CA 引到 GL 渲染器”不是可行的捷径；**C6 的 gate 是给 A540 提供一个真正的
+   Metal 设备（Metal 前端/插件）**。
+
+> 说明：合并日志在 UI 阶段会变稀（dmesg 转静），日志“止于某秒”不等于内核挂起；
+> fl 的“没有锁屏”以现场观察为准。
+
+### 39.4 下一步
+
+先量化 CA 实际用到的 Metal 面：做一个**只记录不实现的 tracing stub 插件**（`MetalPluginName`
+指向它），枚举 CA 调用的 MTL 选择器与参数，再决定自研 Metal 前端的范围。

@@ -12008,6 +12008,18 @@ fill32 words=1024 hits=1024 untouch=1 fence=4 cpint=00000000 hwfault=00000000
   指向 `NativeAdreno`（metal2vulkan→Turnip），Turnip 无 a5xx 后端 → Metal 设备创建不可能成功。
   先做 C6a-0：确认 CA 是否能回退到 GL 渲染器（配置级实验，无 GPU 代码）。
 
+### C6a-0：Metal 插件开关实验（H236fk/fl，2026-11-10）
+
+| 版本 | boot-arg | 锁屏 | 加速器 | 说明 |
+| --- | --- | --- | --- | --- |
+| fj | `NativeAdreno` | ✅ | ✅ | 参考 |
+| fk | 删除 | ✅ | 未捕获 | 默认回落 **AGXMetalA10** |
+| fl | `NoMetalX`（不存在） | ❌ | ❌ | 锁屏不出现 |
+
+结论：插件可加载但无设备时 CA 走**软件渲染**；插件缺失时 UI 根本不启动 →
+**没有 GL 回退捷径**，C6 必须提供 A540 的 Metal 设备（自研前端/插件）。
+下一步：tracing stub 插件枚举 CA 用到的 Metal 面。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。
