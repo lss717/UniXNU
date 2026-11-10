@@ -2000,3 +2000,46 @@ Metal 对插件设备的调用顺序是：
 这解释了为什么之前所有"让桩设备返回 nil 以外的东西"的尝试都会把 backboardd 打死。
 要拿到方法清单，必须交回一个 Metal 真正认的设备（即 C6a 的正路），
 桩设备只能证明"发现路径已经走到这里"。
+
+### 45.21 `_MTLDevice` 没有 `-initWithAcceleratorPort:`（gn）
+
+插件声明该方法后调用 `[super initWithAcceleratorPort:port]`：
+
+```
+dev#3 initWithAcceleratorPort: port=0x690b
+dev#4 doesNotRecognize: initWithAcceleratorPort:
+dev#5 initWithAcceleratorPort: super=nil
+```
+
+→ 真实 `_MTLDevice` **没有**这个实现；设备必须由插件自己造。返回 nil 时进程安然无恙
+（backboardd 退出 0 次）。
+
+### 45.22 纯 NSObject 设备停在 `+initialize`（go/gp）
+
+去掉 `_MTLDevice` 继承后，两次启动都只有 `dev#1 initialize`，**没有 `+alloc`**：
+Metal 在实例化前就用类做了一次检查（很可能是协议/父类检查），不通过就不分配。
+
+### 45.23 abort 的真正原因：设备类必须同时声明 `MTLDevice` 和 `MTLDeviceSPI`（gq）
+
+`NativeBridgeMetalFrontend.mm:1488` 里发布路径的写法就是答案：
+
+```
+Class base = objc_getClass("_MTLDevice");
+if (class_getInstanceSize(base) != 536) return nil;      // iPadOS 17.7.11 ABI
+Class cls = objc_allocateClassPair(base, "NativeBridgeMetalDevice", 0);
+… 拷贝方法表 …
+class_addProtocol(cls, @protocol(MTLDevice));
+if (Protocol *spi = objc_getProtocol("MTLDeviceSPI")) class_addProtocol(cls, spi);
+objc_registerClassPair(cls);
+gDeviceObject = [cls new];
+```
+
+源码注释写得很直白：**"The original registration (`_MTLAddDevice`) asserts that a plugin's
+device conforms to Metal's private device protocol as well"** —— 我们此前交回的静态
+`_MTLDevice` 子类没有声明 `MTLDeviceSPI`，注册断言就是以 SIGABRT 结束的。
+
+trace 插件已按同样方式改造：运行时在 `_MTLDevice` 上派生 `A540TraceRuntimeDevice`，
+拷贝日志方法，加上两个协议，再由 `initWithAcceleratorPort:` 返回 `[cls new]`。
+未实现的 selector 会落进 `-doesNotRecognizeSelector:`，正好就是 A1 的方法清单。
+
+（gq 那次启动窗口偏短，只到 `dpy=2/18`，还没走到实例化，需要再跑一次确认。）
