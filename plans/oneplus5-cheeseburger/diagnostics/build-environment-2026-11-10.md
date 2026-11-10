@@ -1834,3 +1834,25 @@ ABI method:        0 次
    `codesign -d --entitlements` 输出、`Info.plist` 字节；
 2. 用官方 `build-adreno-metal-plugin.py` 全流程产出（装 `glslc` 或临时跳过两步），
    再把 trace 代码合进去，确保签名/权限与 ft 一致。
+
+### 45.10 官方全流程构建（fy）：仍然不加载 → 问题在“重打的二进制”
+
+- 用官方 `build-adreno-metal-plugin.py` 完整构建（对 `glslc` / 桥接归档缺失做容错），
+  产出 4K 签名 bundle + daemon + trust.json，packer `--trace` 打 addon（12,127,340 B）。
+- 结果依旧：`NATIVE_MTL 0 / opens 1 / abi 0`（281 s）。
+
+对照：
+
+| 二进制来源 | 是否加载 |
+| --- | --- |
+| ft：11-08 的原始 bundle | ✅（378 open + Query/GetDeviceInfo） |
+| fu/fv/fw：手工编译（含/不含 dylib） | ❌ |
+| fy：官方脚本重建 | ❌ |
+
+结论：**addon 与签名链路都正常，是重编译出的可执行文件本身没被加载**（主类方法从未被调用，
+连 ABI 自测都没跑）。
+
+下一步（下轮首选）：做**独立的最小 trace 插件**——新 bundle 名（如 `A540Trace`）、
+**不链接 bridge/Turnip**、只含 `A540TraceDevice` + ABI Log 调用；`MetalPluginName=A540Trace`。
+这样排除所有第三方依赖后，若仍不加载，问题就在“bundle 被 CA 接受的条件”本身；
+若加载，则 A1 的三份产出物即可拿到。

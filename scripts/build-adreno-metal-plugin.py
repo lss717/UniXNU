@@ -39,7 +39,14 @@ try:
     subprocess.run(['python3', ROOT / 'scripts/gen-turnip-replay.py'], check=True)
 except subprocess.CalledProcessError:
     print('WARN: host replay not generated on this build host; building without TurnipReplay.h')
-subprocess.run(['python3', ROOT / 'scripts/build-native-metal-bridge.py', '--target', 'ios'], check=True)
+try:
+    subprocess.run(['python3', ROOT / 'scripts/build-native-metal-bridge.py', '--target', 'ios'], check=True)
+except subprocess.CalledProcessError:
+    # H236fy: a host without the bridge toolchain still links the bridge archive
+    # that a previous build produced; the example is the turnip-smoke step.
+    if not (ROOT / 'build/native-metal-bridge/ios/libnative_metal_bridge.a').is_file():
+        raise
+    print('WARN: bridge rebuild failed; linking the existing archive')
 BRIDGE = ROOT / 'build/native-metal-bridge/ios/libnative_metal_bridge.a'
 pm4 = OUT / 'AdrenoPM4.o'
 subprocess.run([*base, '-std=c11', '-c', ROOT / 'kits/AdrenoPM4/AdrenoPM4.c', '-o', pm4], check=True)
