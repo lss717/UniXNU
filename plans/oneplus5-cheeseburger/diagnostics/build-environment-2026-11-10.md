@@ -1914,3 +1914,89 @@ seed”的模式（或写个同构的小脚本），然后：
 1. seed 写入 `ngpu/addons/A540Trace.bundle`；
 2. payload 换 seed、`MetalPluginName=A540Trace`；
 3. 启动看 `NATIVE_MTL`。
+
+### 45.14 根因：AMFI 拒绝 ad-hoc bundle（信任缓存里没有它的 CDHash）
+
+gc 的日志第一次给出明确原因（之前所有"插件没被加载"其实是**加载被拒**）：
+
+```
+AMFI: '/System/Library/Extensions/A540Trace.bundle/A540Trace' is adhoc signed.
+AMFI: ... unsuitable CT policy 0 for this platform/device, rejecting signature.
+Library Validation failed: Rejecting '.../A540Trace' (Team ID: none, platform: no)
+  for process 'backboardd(56)' (Team ID: N/A, platform: yes),
+  reason: mapping process is a platform binary, but mapped file is not
+```
+
+boot 镜像里一直带着 `Payloads/kernel.macho.trustcache`（61,456 B，module 0 = 自建 owner 模块
++ 两个原始 Apple 模块）。**ft 之所以能加载，就是因为那份缓存里有原始插件的 CDHash**；
+我们后来重打的 bundle 换了 CDHash，缓存里没有，于是被拒。
+
+新增 `scripts/add-owner-trust-hash.py BASE HASH OUTPUT`：把新 CDHash 插进 owner 模块并重排
+（不改 Apple 模块，格式按 DarwinBoot `ValidTrustCaches` 自检）。构建机上没有
+`build/original-static-system-trust/original-static-system.bundle`，所以不能重跑
+`make-owner-trust-bundle.py`，只能增量插入。
+
+### 45.15 addon 与 Data seed 都成立，但两者必须是同一份构建
+
+`NATIVE_GPU_ADDON: plugin=A540Trace files=3 written=3` 说明 addon 会**覆盖** seed 里的同名 bundle，
+所以信任缓存里的 CDHash、seed 里的可执行文件、addon 里的可执行文件三者必须字节一致，
+否则又是"签名不匹配"。本轮把 seed 与 addon 都从同一个 `build/a540-trace/A540Trace.bundle` 生成。
+
+### 45.16 独立插件正式加载成功（gf）
+
+```
+NATIVE_MTL: +load tunnel=1 selector=0   ×12
+```
+
+bundle 被 dlopen（每条 +load 都是新进程），ABI 通道可写（tunnel=1），
+但 Metal 从没实例化主类。原因在 gh/gm 才看清。
+
+### 45.17 +load 里调 ABI 会杀掉 backboardd（gg）
+
+`+load` 后紧跟 `NATIVE_EXIT: pid=56 comm=backboardd status=0x6 ns=2 code=0x6`（SIGABRT）。
+把 ABI 调用移到 `+initialize` 后仍然 exit 6 → 不是 ABI 调用本身。
+
+### 45.18 真正崩溃点：返回未初始化的 `_MTLDevice`（gj/gl）
+
+gi/gj 的日志（`+alloc`、`-doesNotRecognizeSelector:` 追踪）给出完整序列：
+
+```
+dev#1 initialize loaded=1
+cls#2 alloc
+dev#3 initWithAcceleratorPort: port=0x8007     ← 方法确实被调用
+（随后 backboardd SIGABRT，约 50 ms 后）
+```
+
+- `+alloc` 改成 `class_createInstance` 后一样崩 → 崩点不在 `_MTLDevice +alloc`。
+- `initWithAcceleratorPort:` 里**只记一行、不碰端口**也崩（gk）→ 崩点在方法返回之后。
+- 结论：`_MTLDevice` 带有 Metal 自己的内部状态；直接分配/初始化的桩实例交回 Metal 后，
+  Metal 立刻在自身代码里中止。
+
+### 45.19 原插件的写法就是答案（gm）
+
+`NativeAdrenoMetal.mm` 的注释（H193）已经写过同一件事：`_MTLDevice -init` 对插件自建实例
+返回 nil。把 `initWithAcceleratorPort:` 改成**记完就 `return nil`**（与原插件一致）后：
+
+```
+dev#1 initialize loaded=1
+cls#2 alloc
+dev#3 initWithAcceleratorPort: port=0x8107
+dev#4 dealloc                     ← Metal 放手，不再崩在自身代码里
+（9 次；backboardd 退出次数从 15 降到 9；accel opens=27 abi=45）
+```
+
+### 45.20 A1 的第三份产出物：放弃点已确定
+
+Metal 对插件设备的调用顺序是：
+
+1. `NSBundle` 载入 → `+load`
+2. `NSClassFromString(NSPrincipalClass)` → `+initialize`
+3. `+alloc`
+4. `-initWithAcceleratorPort:(unsigned)` ← **唯一一个带参调用**
+5. 若从此方法拿不到**可用的**设备实例，就 `-dealloc` 并放弃（不会调用 `name`、
+   `registryID`、`newCommandQueue`、`newBufferWithLength:options:` 等任何方法）
+
+所以 A1 的"放弃点"是第 4 步本身的返回值，而不是某个 GetDeviceInfo/属性查询；
+这解释了为什么之前所有"让桩设备返回 nil 以外的东西"的尝试都会把 backboardd 打死。
+要拿到方法清单，必须交回一个 Metal 真正认的设备（即 C6a 的正路），
+桩设备只能证明"发现路径已经走到这里"。

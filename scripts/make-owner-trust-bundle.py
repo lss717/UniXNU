@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import struct
+import sys
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,7 +17,7 @@ count = struct.unpack_from('<I', original)[0]
 assert count == 2
 offsets = struct.unpack_from('<2I', original, 4)
 originals = [original[offsets[0]:offsets[1]], original[offsets[1]:]]
-trust = json.loads((ROOT / 'build/adreno-metal-plugin/trust.json').read_text())
+trust = json.loads(Path(sys.argv[1] if len(sys.argv) > 1 else ROOT / 'build/adreno-metal-plugin/trust.json').read_text())
 # DarwinBoot's ValidTrustCaches (and the kernel's binary search) need the hashes of a module in strictly ascending order.
 # H181: a plugin with no daemon/turnip binaries ships a plain cdhashes list.
 if 'cdhashes' in trust:
@@ -58,9 +59,9 @@ def valid_like_the_loader(data):
 
 if not valid_like_the_loader(bundle):
     raise SystemExit('The trust bundle would be refused by the boot loader')
-out = ROOT / 'build/adreno-metal-plugin/owner-trust.bundle'
+out = Path(sys.argv[2] if len(sys.argv) > 2 else ROOT / 'build/adreno-metal-plugin/owner-trust.bundle')
 out.write_bytes(bundle)
-(ROOT / 'build/adreno-metal-plugin/owner-trust.json').write_text(json.dumps(dict(
+out.with_suffix('.json').write_text(json.dumps(dict(
     bundle_sha256=hashlib.sha256(bundle).hexdigest(), own_cdhashes=[h.hex() for h in hashes], original_modules_unchanged=True,
     apple_trust_chain_verified=False, purpose='owner trust for the Adreno Metal plugin only'), indent=2) + '\n')
 print('PASS: owner trust bundle (own module + both original modules)', hashlib.sha256(bundle).hexdigest())

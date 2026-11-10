@@ -7,6 +7,7 @@ build/a540-trace/A540Trace.bundle plus the addon image given on the command
 line (addons/A540Trace.bundle/...), which the kernel mounts over
 /System/Library/Extensions.
 """
+import json
 import plistlib
 import struct
 import subprocess
@@ -45,6 +46,14 @@ def main() -> int:
     subprocess.run(['codesign', '--force', '--sign', '-', '--pagesize', '4096',
                     '--identifier', 'org.blu-sharky.A540Trace', str(BUNDLE)], check=True)
     subprocess.run(['codesign', '--verify', '--strict', str(BUNDLE)], check=True)
+    detail = subprocess.run(['codesign', '--display', '--verbose=4', str(BUNDLE)],
+                            capture_output=True, text=True, check=True).stderr
+    cdhash = next(line.split('=')[1].strip() for line in detail.splitlines() if line.startswith('CDHash='))
+    # make-owner-trust-bundle.py reads this shape; AMFI only accepts the bundle
+    # when its CDHash is in the boot trust cache (H236gc: ad-hoc alone is not
+    # enough, backboardd's Library Validation rejects it).
+    (OUT / 'trust.json').write_text(json.dumps({'cdhashes': [cdhash], 'plugin': 'A540Trace',
+                                                'purpose': 'standalone Metal trace plugin'}, indent=2) + '\n')
     files = []
     for path in sorted(p for p in BUNDLE.rglob('*') if p.is_file()):
         mode = 0o755 if path.name == 'A540Trace' else 0o644

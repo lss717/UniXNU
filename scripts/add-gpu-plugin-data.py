@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Stage the owner-built Adreno Metal plugin into a copy of a packed Data seed.
 
-  add-gpu-plugin-data.py [--publish] [--clients NAME,...] BASE.dbr OUTPUT.dbr
+  add-gpu-plugin-data.py [--publish] [--clients NAME,...] [--bundle DIR] [--name NAME.bundle] BASE.dbr OUTPUT.dbr
+
+--bundle stages another bundle directory (default build/adreno-metal-plugin/NativeAdrenoMetal.bundle) and
+--name gives it the directory name it gets under /private/var/ngpu/addons (default NativeAdrenoMetal.bundle;
+keep the stem within 16 characters so _offline-accelerator-plugin can name it).
 
 With --publish the seed also carries /private/var/ngpu/addons/NativeAdrenoMetal.publish: the plugin then returns the native Metal device to the original
 discovery in backboardd (NativeAdrenoMetalPlugin.mm), so the render server composites through it. Without the file the plugin only runs its tests.
@@ -38,13 +42,30 @@ def main():
         del args[at:at + 2]
         if not clients or any(not all(c.isalnum() or c in '._-*' for c in name) for name in clients):
             sys.exit('--clients takes process names separated by commas')
+    bundle, name = BUNDLE, 'NativeAdrenoMetal.bundle'
+    for flag in ('--bundle', '--name'):
+        if flag in args:
+            at = args.index(flag)
+            if at + 1 >= len(args):
+                sys.exit(flag + ' takes a value')
+            value = args[at + 1]
+            del args[at:at + 2]
+            if flag == '--bundle':
+                bundle = Path(value).resolve()
+            else:
+                name = value
+    if '/' in name or not name.endswith('.bundle') or name.startswith('.'):
+        sys.exit('--name takes a plain <name>.bundle')
+    stem = name[:-len('.bundle')]
+    if len(stem) > 16:
+        print('WARN: %s exceeds the 16-character _offline-accelerator-plugin limit' % stem)
     if len(args) != 2:
         sys.exit(__doc__)
     base, output = Path(args[0]).resolve(), Path(args[1]).resolve()
     if output.exists():
         sys.exit('Refuse to overwrite ' + str(output))
-    if not (BUNDLE / 'NativeAdrenoMetal').is_file():
-        sys.exit('Build the plugin first: python3 scripts/build-adreno-metal-plugin.py')
+    if not (bundle / stem).is_file():
+        sys.exit('%s has no %s executable; build the plugin first' % (bundle, stem))
     blob = base.read_bytes()
     logical, extents = packed_ramdisk.regions(blob)
     with tempfile.TemporaryDirectory(prefix='data-seed-', dir=str(ROOT / 'build')) as td:
@@ -63,17 +84,17 @@ def main():
         try:
             if not (mount / 'mobile').is_dir():
                 sys.exit('The Data seed has no /mobile; wrong base image?')
-            target = mount / 'ngpu/addons/NativeAdrenoMetal.bundle'
+            target = mount / 'ngpu/addons' / name
             if target.exists():
                 shutil.rmtree(target)
             target.parent.mkdir(parents=True)
             for directory in (mount / 'ngpu', mount / 'ngpu/addons'):
                 os.chmod(directory, 0o755)
-            shutil.copytree(BUNDLE, target, symlinks=False)
+            shutil.copytree(bundle, target, symlinks=False)
             if clients:
-                (mount / 'ngpu/addons/NativeAdrenoMetal.clients').write_text('\n'.join(clients) + '\n')
-                os.chmod(mount / 'ngpu/addons/NativeAdrenoMetal.clients', 0o644)
-            marker = mount / 'ngpu/addons/NativeAdrenoMetal.publish'
+                (mount / 'ngpu/addons' / (stem + '.clients')).write_text('\n'.join(clients) + '\n')
+                os.chmod(mount / 'ngpu/addons' / (stem + '.clients'), 0o644)
+            marker = mount / 'ngpu/addons' / (stem + '.publish')
             if publish:
                 marker.write_text('1\n')
                 os.chmod(marker, 0o644)
@@ -83,9 +104,12 @@ def main():
                     shutil.rmtree(directory)
                 directory.mkdir(parents=True)
                 os.chmod(directory, 0o755)
-            shutil.copyfile(BUNDLE.parent / 'adrenoprobed', bin_dir / 'adrenoprobed')
-            os.chmod(bin_dir / 'adrenoprobed', 0o755)
-            for plist in sorted(BUNDLE.parent.glob('*.plist')):
+            # The probe daemon ships with the full plugin; a standalone trace
+            # bundle has no daemon and simply stages the bundle.
+            if (bundle.parent / 'adrenoprobed').is_file():
+                shutil.copyfile(bundle.parent / 'adrenoprobed', bin_dir / 'adrenoprobed')
+                os.chmod(bin_dir / 'adrenoprobed', 0o755)
+            for plist in sorted(bundle.parent.glob('*.plist')):
                 if plist.name.endswith('-entitlements.plist'):
                     continue   # build input, not a launchd job
                 shutil.copyfile(plist, daemon_dir / plist.name)
@@ -104,7 +128,7 @@ def main():
                     file.write_bytes(plistlib.dumps(values, fmt=plistlib.FMT_BINARY))
                     os.chmod(file, 0o644)
             for path in [target, *target.rglob('*')]:
-                os.chmod(path, 0o755 if path.is_dir() or path.name in ('NativeAdrenoMetal', 'libvulkan_freedreno.dylib') else 0o644)
+                os.chmod(path, 0o755 if path.is_dir() or path.name in (stem, 'libvulkan_freedreno.dylib') else 0o644)
             print('staged', target.relative_to(mount), sorted(p.name for p in target.iterdir()))
         finally:
             subprocess.run(['hdiutil', 'detach', device], check=True)
