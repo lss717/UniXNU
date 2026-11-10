@@ -11943,6 +11943,30 @@ GPMU firmware reached BABEFACE trust=00000000
 **trust 首次变成 0，CP 的内存写与可信窗口写全部落地，GPMU 固件首次 BABEFACE。**
 C3 的 secure 位阻塞解除。遗留：`submit_probe` 自己的探针序列仍未落地（探针自身问题）。
 
+### C3 完成（H236et，2026-11-10）
+
+```
+gdsc rbbu=00140000(1) sp=00140000(1)
+zap unsecure ... trust=00000000 ts=00a540c3 mem=deadbeef win=ea57beef
+submit write ... ts=00000000beef1234 value=c0ffee11 done=1
+submit test ok
+GPMU firmware reached BABEFACE trust=00000000
+```
+
+- `TRUST_CNTL = 0`：CP 已离开 secure 模式；
+- `CP_MEM_WRITE`（`0xC0FFEE11`）与 `CACHE_FLUSH_TS`（`0xBEEF1234`）都落地，可信窗口写
+  （`0xEA57BEEF`）也落地 → **SMMU 数据通路可用**；
+- GPMU 到达 `BABEFACE`，`cpint/hwfault=0`。
+
+**根因**：从未按 kgsl `a5xx_regulator_enable()` 打开 RBCCU/SP(SPTP) GDSC
+（`0x778000` + 轮询 bit20 + SP 时钟）。着色器块没电 → ZAP（跑在着色器上）无法执行 →
+`0x66` 不被授权 → trust 恒为 1。§30/§31 的漂浮读值、`0x0EC0` 挂总线都是症状。
+
+**留给 C4**：`gpmu_load` 之后 CP 仍推进 RPTR 但写不落地（H236es 已证），冒烟提交必须放在
+GPMU 之前；kgsl 是 `0x66 → gpmu → 提交`，说明我们 GPMU 之后还缺一步 CP 恢复。
+
+基线：H236et（kernel `e8868290…`、boot `b0493767…`）。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。

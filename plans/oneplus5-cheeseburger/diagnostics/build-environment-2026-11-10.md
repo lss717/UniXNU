@@ -1169,3 +1169,53 @@ gpmu load -> GPMU firmware reached BABEFACE trust=00000000
 `submit_probe` 仍然 `fail step 30`：它自己那条 `CACHE_FLUSH_TS`/`CP_MEM_WRITE` 序列没有落地
 （读到的 ts 还是上一步的 `0xa540c3`），但同一时刻 `zap_unsecure` 的写是成功的。属于探针自身
 的问题（protected-mode 包裹/顺序），不影响结论：**secure 位已解除，数据通路已打通**。
+
+---
+
+## 33. C3 完成（H236et，2026-11-10）
+
+在 §32 的 GDSC 上电基础上，把提交冒烟测试放到 `gpmu_load` **之前**（原因见 33.2），C3 全流程通过：
+
+```
+gdsc rbbu=00140000(1) sp=00140000(1)
+zap auth rc=0
+zap unsecure rptr=25/25 done=1 trust=00000000 ts=00a540c3 mem=deadbeef win=ea57beef
+submit write rptr=35/35 ts=00000000beef1234 value=c0ffee11 done=1
+submit diag cpint=00000000 hwfault=00000000 fsr=00000400 rbbm=00000001 trust=00000000 me=00000000
+submit test ok
+GPMU firmware reached BABEFACE trust=00000000
+```
+
+判据全部满足：
+
+- `RBBM_SECVID_TRUST_CNTL = 0`（CP 已离开 secure 模式）；
+- `CP_MEM_WRITE` 在 scratch 页落地（`0xC0FFEE11`）且 `CACHE_FLUSH_TS` 时间戳落地
+  （`0xBEEF1234`）——**经 SMMU 的数据通路可用**；
+- 可信窗口（`0xE9000000`）内的写也落地（`0xEA57BEEF`）；
+- GPMU 固件到达 `BABEFACE`；
+- `cpint/hwfault = 0`，无错误。
+
+### 33.1 根因回顾
+
+C3 从 H236s 起卡了几十个镜像，真正缺的只有一件事：**没有像 kgsl
+`a5xx_regulator_enable()` 那样，在上电时通过 GPMU 打开 RBCCU 与 SP(SPTP) 的 GDSC**
+（`0x778000` + 轮询状态位 20 + SP 时钟开关）。着色器块没电 → a540 的 ZAP（跑在着色器上）
+无法执行 → `CP_SET_SECURE_MODE(0)` 不被授权 → `trust` 恒为 1 → 经 SMMU 的内存写全被丢。
+
+§30/§31 观察到的“`0xE000+` 漂浮读值、`0x0EC0` 一读就挂、探针 2.6 s”都是这个根因的**症状**，
+不是独立问题。
+
+### 33.2 发现的副作用（留给 C4）
+
+`gpmu_load` 之后，CP 仍会推进 RPTR，但它写出的内容**不再落地**（H236es：`value` 读到的是
+上一步的旧值、时间戳不更新）。所以冒烟提交必须放在 `gpmu_load` 之前。kgsl 的顺序是
+`0x66 → gpmu_init → 提交`，说明我们的 `gpmu_load` 之后还缺一步 CP 重新初始化/恢复 —— C4
+提交真实作业前必须先查清。
+
+### 33.3 镜像
+
+| 版本 | 内容 | kernel | boot |
+| --- | --- | --- | --- |
+| eq | 加 RBCCU/SP GDSC 上电（突破） | `9ccfc4ca…` | `de9938ec…` |
+| es | 提交探针简化（写落地但 GPMU 后失效） | `638b4de2…` | `fbeb472e…` |
+| **et** | 提交放在 GPMU 之前（**C3 完成**） | `e8868290…` | `b0493767…` |
