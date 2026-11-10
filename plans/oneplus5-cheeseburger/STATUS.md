@@ -12,8 +12,9 @@
   a540 的 ZAP（跑在着色器上）无法执行 → `CP_SET_SECURE_MODE(0)` 不被授权 →
   trust 恒为 1 → 内存写全被丢。§30/§31 的“漂浮读值 / `0x0EC0` 挂总线 / 探针 2.6 s”
   都是这个根因的症状。
-- 当前 gate：**C4（真实 GPU 作业提交）**。C3 已按 kgsl 顺序 `0x66 → gpmu → 提交` 全通
-  （H236ez：`ts=beef1234`、`value=c0ffee11`、`submit test ok`）。
+- 当前 gate：**C5（最小提交）**。C4-B 已完成两步：step 1 真 BO + 间接缓冲（H236fb），
+  step 2 用户态 ABI 端到端（H236fd，backboardd 报告 `s34 e0 v4/4`）。
+  C4-B 的加固项（多客户端/队列隔离、BO 池扩容、fence 故障语义）登记为并行待办。
   此前记录的“GPMU 之后 CP 写失效”已更正为探针问题：RPTR 前进只代表取指，回读前必须等
   `RBBM_STATUS & 0x7e` 清零再给 20 ms，详见
   `diagnostics/build-environment-2026-11-10.md` §34。
