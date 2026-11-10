@@ -372,11 +372,16 @@ _me_init_ucode_workarounds(): A540v1 = 0x0A（我们原来传 0）
 改动：`zap_unsecure` 在 `trust != 0` 时只打印
 `zap unsecure continuing with trust=…`，**不再 fail**，继续 GPMU + submit probe。
 
-判读：
+实测（H236de）：
 
-- `submit write ... ts=<非0> value=deadbeef ring=cafebabe done=1` → trust=1 是 ZAP 路径
-  的正常值（与 sagit `trust>1` 判据一致），问题只是之前根本没跑到 submit；
-- `ts=0 value=0 ring=0` → CP 数据路径确实被 secure 挡住，回到 B / secure 解锁。
+```text
+zap unsecure rptr=17/17 done=1 trust=00000001 ts=00000000:00000000
+zap unsecure continuing with trust=00000001
+gpmu load
+fail step 21 (gpmu packets)
+```
+
+→ trust=1 **确实**挡住 CP：GPMU 包都发不进去。假设 2（trust=1 可接受）排除。
 
 ### B（H236df）：让 CP 写 trust 寄存器（a4xx 风格）
 
@@ -390,7 +395,17 @@ CP_WAIT_FOR_IDLE
 + CACHE_FLUSH_TS 时间戳 + 2 s trust 轮询
 ```
 
-判读：`trust=00000000` → CP 写寄存器可行；仍为 1 → 该寄存器在 TZ 侧被锁，CP 也写不进。
+实测（H236df）：
+
+```text
+zap unsecure rptr=22/22 done=1 trust=00000001 ts=00000000:00000000
+fail step 44 (zap unsecure)
+```
+
+CP 执行了 `CP_SET_PROTECTED_MODE(0) → CP_WIDE_REG_WRITE(0xF400,0) →
+CP_SET_PROTECTED_MODE(1)`（RPTR 从 17 到 22），但 trust 位不变。
+→ `RBBM_SECVID_TRUST_CNTL` 对 AP 和 CP 都是 secure-only，只有安全世界
+（TZ/PAS）能改。两条最便宜的路径都排除，下一步必须解决 PAS 是否真的认证成功。
 
 产物：
 
