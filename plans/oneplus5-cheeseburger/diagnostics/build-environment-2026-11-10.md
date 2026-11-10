@@ -1103,3 +1103,69 @@ RBBM_STATUS       0x4F5 = 0x800001c1
 
 探针已从源码移除，源码回到 `98e518c`；基线镜像仍是 H236en
 （kernel `fa149af7…`、boot `f6bf7668…`，已验证稳定）。
+
+---
+
+## 32. C3 突破：缺失的 RBCCU/SP GDSC 上电（H236eq，2026-11-10）
+
+### 32.1 根因
+
+kgsl 的 `a5xx_regulator_enable()` 在**每次上电**时都会通过 GPMU 打开两个 GDSC，并轮询
+状态位 20（`_poll_gdsc_status`，`PWR_RETRY=100`）：
+
+```c
+kgsl_regwrite(device, A5XX_GPMU_RBCCU_POWER_CNTL, 0x778000);   // SW_COLLAPSE=0
+udelay(3);
+_poll_gdsc_status(..., A5XX_GPMU_RBCCU_PWR_CLK_STATUS, 1);
+kgsl_regwrite(device, A5XX_GPMU_SP_POWER_CNTL, 0x778000);
+_poll_gdsc_status(..., A5XX_GPMU_SP_PWR_CLK_STATUS, 1);
+// 关/开 SP 时钟 + hwcg
+kgsl_regrmw(device, A5XX_GPMU_GPMU_SP_CLOCK_CONTROL, CNTL_IP_CLK_ENABLE(=BIT(0)), 0);
+a5xx_hwcg_set(adreno_dev, true);
+kgsl_regrmw(device, A5XX_GPMU_GPMU_SP_CLOCK_CONTROL, CNTL_IP_CLK_ENABLE, 1);
+```
+
+我们**从来没有做过这一步**。后果：着色器（SP/SPTP）块一直处于塌陷状态 —— 这正是
+§30/§31 观察到的“`0xE000+` 读出来是漂浮垃圾、`0x0EC0` 一读就挂总线、探针耗时 2.6 s”。
+
+而 a540 的 ZAP 是**跑在着色器上的**：SP 块没电 → TZ 无法执行 ZAP → `CP_SET_SECURE_MODE(0)`
+不被授权 → trust 恒为 1 → 经 SMMU 的内存写全部被丢。
+
+### 32.2 修改
+
+在 `gpu_reset()` 里、GCC 时钟打开之后，按上面的顺序加入：
+
+```c
+wr(0xa887 * R, 0x00778000u);   /* GPMU_RBCCU_POWER_CNTL */
+poll rd(0xa88d * R) & (1u << 20);
+wr(0xa881 * R, 0x00778000u);   /* GPMU_SP_POWER_CNTL */
+poll rd(0xa88b * R) & (1u << 20);
+wr(0xa880 * R, rd(0xa880 * R) & ~1u);   /* SP 时钟 */
+wr(0xa880 * R, rd(0xa880 * R) | 1u);
+```
+
+### 32.3 结果（H236eq）
+
+```
+gdsc rbbu=00140000(1) sp=00140000(1)        <- 两个 GDSC 的 bit20 都置起
+sp clk ctl=00008ff1
+zap auth rc=0 answer=0
+trust after auth=00000001
+trust before 0x66=00000001
+zap unsecure rptr=25/25 done=1 trust=00000000 ts=00a540c3:00000000 mem=deadbeef win=ea57beef
+gpmu load -> GPMU firmware reached BABEFACE trust=00000000
+```
+
+**关键变化**：
+
+- `trust` 从恒为 1 变成 **0**（`0x66` 终于生效）；
+- `CP_MEM_WRITE` 在 scratch 页落地：`mem=deadbeef`；
+- 可信窗口内的写也落地：`win=ea57beef`;
+- `CACHE_FLUSH_TS` 时间戳落地：`ts=00a540c3`；
+- GPMU 固件首次到达 `BABEFACE`（此前一直 `fail step 21`）。
+
+### 32.4 遗留
+
+`submit_probe` 仍然 `fail step 30`：它自己那条 `CACHE_FLUSH_TS`/`CP_MEM_WRITE` 序列没有落地
+（读到的 ts 还是上一步的 `0xa540c3`），但同一时刻 `zap_unsecure` 的写是成功的。属于探针自身
+的问题（protected-mode 包裹/顺序），不影响结论：**secure 位已解除，数据通路已打通**。

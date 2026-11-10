@@ -11919,6 +11919,30 @@ CP_ADDR_MODE_CNTL=1  CP_PROTECT_CNTL=7  CP_ME_CNTL=0x400
 
 源码已回到 `98e518c`，基线仍为 H236en（kernel `fa149af7…`、boot `f6bf7668…`）。
 
+### C3 突破：缺失的 RBCCU/SP GDSC 上电（H236eq，2026-11-10）
+
+kgsl 在每次上电时都会通过 GPMU 打开 RBCCU 与 SP(SPTP) 两个 GDSC：
+
+```
+GPMU_RBCCU_POWER_CNTL = 0x778000 -> 轮询 RBCCU_PWR_CLK_STATUS bit20
+GPMU_SP_POWER_CNTL    = 0x778000 -> 轮询 SP_PWR_CLK_STATUS    bit20
+SP 时钟关/开 + hwcg
+```
+
+**我们从来没做过这一步**，导致着色器块一直塌陷（§30/§31 的漂浮读值和 `0x0EC0` 挂总线都是
+它的表现）。而 a540 的 ZAP 跑在着色器上 → ZAP 无法执行 → `0x66` 不生效 → trust 恒为 1。
+
+补齐后（H236eq）：
+
+```
+gdsc rbbu=00140000(1) sp=00140000(1)
+zap unsecure ... trust=00000000 ts=00a540c3 mem=deadbeef win=ea57beef
+GPMU firmware reached BABEFACE trust=00000000
+```
+
+**trust 首次变成 0，CP 的内存写与可信窗口写全部落地，GPMU 固件首次 BABEFACE。**
+C3 的 secure 位阻塞解除。遗留：`submit_probe` 自己的探针序列仍未落地（探针自身问题）。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。
