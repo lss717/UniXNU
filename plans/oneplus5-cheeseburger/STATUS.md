@@ -11743,6 +11743,18 @@ B kernel ea5ff5d5…  boot 69005908…  boot-H236df.img
 结论：限制不在 kgsl 的 TSB 窗口，而在 secure 访问所用的 SMMU secure context（CB2/TZ 表），
 AP 侧无法参与。剩余方向是找到 TZ 侧切换 GPU secure 状态的接口，或证明 ZAP 未真正运行。
 
+### H236dr–ds：上游顺序与 secure SID（2026-11-10）
+
+- 上游 msm a5xx 顺序（`TSB=0` → `ME_INIT` → PAS/ZAP → `0x66` → GPMU）实测仍 trust=1、mem=0。
+- 把 ZAP/PAS 放到 `smmu_setup` 之前（H236ds）同样无效，排除“重配 SMMU 破坏 secure 路径”。
+- 查上游与 vendor PIL：ZAP 用普通 DMA 内存即可（工作设备日志 `a540_zap: loading from
+  0xf6500000 to 0xf6502000`），**carveout 不是必须**；`SCM BOOT 0xA` 只用于保留态。
+- 新线索：OnePlus 5 DT 的 `gfx3d_secure { iommus = <&kgsl_smmu 2>; }`，secure GPU
+  访问走 **SID 2** 的 TZ context。我们的 CB0/SID0 覆盖不到它；这能解释“读 ring 正常、
+  内存写全丢”。下一步确认 ABL/TZ 是否配置了 SID2，以及 DarwinBoot 是否需要保留它。
+
+镜像：`dr 09eade35…`、`ds 873422d6…`。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。

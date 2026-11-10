@@ -474,3 +474,45 @@ B boot   69005908bd5ed6f6be74c18bc0f4a857dcb51ce740978643e539a27eaeebd16b  boot-
 1. 找到 TZ 侧把 GPU 从 secure 切走的接口（SCM 或 ZAP 的 mailbox），而不是让 CP 自己切。
 2. 若没有该接口，则必须让 ZAP “真正运行”；需要证据表明它当前没有运行（例如 ZAP 的执行痕迹/
    GPMU 状态），再决定 carveout。
+
+---
+
+## 19. 上游 msm 顺序、PIL 与 secure SID（H236dr–ds）
+
+从上游 Linux（`drivers/gpu/drm/msm/adreno/a5xx_gpu.c` v5.2）查到的关键事实：
+
+- `a5xx_hw_init()` 写 **`TSB_CNTL=0`、`TRUSTED_BASE/SIZE=0`**（“we don't support secure
+  memory rendering”），**不是** kgsl 的 0xE8000000 窗口；然后 `ME_INIT`，之后才
+  `a5xx_zap_shader_init()`（PAS），最后 `CP_SET_SECURE_MODE(0)`。
+- `zap_shader_load_mdt()` 要求 DT 的 `zap-shader` 子节点 + `memory-region`；但 vendor
+  PIL（`peripheral-loader.c`）用 `dma_alloc_attrs` 分配普通 DMA 内存（OnePlus 5 的
+  `kgsl-hyp` 节点没有 memory-region），所以 **carveout 不是必须的**。
+- 工作设备的日志：`kgsl-hyp: a540_zap: loading from 0xf6500000 to 0xf6502000`
+  —— ZAP 就是普通低 4G 物理页。
+- `SCM SIP BOOT 0x0A {0,13}` 只在“ZAP 已保留、本次重新上电”时由 kgsl 调用。
+
+实测：
+
+| 版本 | 做法 | 结果 |
+| --- | --- | --- |
+| H236dr | 上游顺序：TSB=0 → ME_INIT → PAS/ZAP → 0x66 → GPMU | trust=1，mem=0，GPMU 失败 |
+| H236ds | ZAP/PAS 在 `smmu_setup` **之前**（避免重配 SMMU 破坏 secure 路径） | 同样失败 |
+
+### 新证据：secure SID
+
+OnePlus 5 的 `msm8998-gpu.dtsi`：
+
+```text
+kgsl_msm_iommu: qcom,kgsl-iommu {
+    qcom,secure_align_mask = <0xfff>;
+    qcom,hyp_secure_alloc;
+    gfx3d_secure { iommus = <&kgsl_smmu 2>; };   // secure 流 = SID 2
+};
+```
+
+secure GPU 访问绑定在 **SID 2** 的 TZ 管理 context 上；我们的 CB0/SID0 配置天然覆盖不到它。
+如果 ZAP 没完成，CP 的写会落到 secure 流并被丢（读 ring 仍走 SID0，所以 RPTR 正常）——
+这和“只有内存写失败、寄存器写正常”完全一致。
+
+下一步候选：确认 SID 2 的 secure context 在 XNU 启动链里是否由 ABL/TZ 配置；
+需要时让 DarwinBoot 保留/恢复 bootloader 留下的 SMMU secure stream，而不是只建 CB0。
