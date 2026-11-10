@@ -1812,3 +1812,25 @@ ABI method:        0 次
    说明问题在 addon 挂载这一层。
 2. **二进制/签名**：用官方 `build-adreno-metal-plugin.py` 全流程产出（需 `glslc`，
    或临时跳过 smoke shader 与 bridge 重建两步），与手工编译产物对比。
+
+### 45.9 判别结果（fx）：addon 机制没问题，是**重打的 bundle 不加载**
+
+- fx 用“原始 bundle + publish/trace 两个标记”的 addon（手工在 ft 的 blob 后追加条目），
+  结果 `MTL 0 / opens 1 / abi 0` —— 与“无插件”一致；
+- 但 **ft**（packer 正常产出、只有 publish 标记、12,125,860 B）当时是**成功加载**的
+  （378 次 open + Query/GetDeviceInfo 成对）。
+
+所以：
+
+| 结论 | 依据 |
+| --- | --- |
+| addon 挂载/替换机制可用 | ft 用同一路径成功加载了插件 |
+| 失败的是**重打的 bundle 本身** | fu/fv/fw（重编译的 trace bundle）全部表现为“无插件” |
+| fx 不可作证据 | 手工追加条目的 blob 很可能格式不合法（追加后 repair 段/尺寸需同步） |
+
+下一步聚焦“重打的 bundle 为何不加载”：
+
+1. 对比 ft 的 bundle 与 fu 的 bundle：文件集合（旧的有 `adrenoprobed`/`libvulkan`/`_CodeSignature`）、
+   `codesign -d --entitlements` 输出、`Info.plist` 字节；
+2. 用官方 `build-adreno-metal-plugin.py` 全流程产出（装 `glslc` 或临时跳过两步），
+   再把 trace 代码合进去，确保签名/权限与 ft 一致。
