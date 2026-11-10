@@ -1343,3 +1343,54 @@ C3 侧的 `bo submit done=1 ... hits=4` 同样保持通过。
 
 C4-B 的接口层已通。剩余：每连接/多队列隔离、BO 动态扩容（预映射池）、fence 语义与故障隔离，
 然后进入 **C5（Fill32/Barrier/Copy32 回读）**。
+
+---
+
+## 37. C5a：Fill32 整页填充（H236fe–fj，2026-11-10）
+
+### 37.1 做法
+
+用 BO 槽 2 作 IB、槽 3 作目标（各 4 KiB，SMMU 已映射）：
+
+1. IB 里放 `CP_MEM_WRITE` 包，把 `0xF1E2xxxx` 模式写进目标；
+2. `native_a540_submit_bo(2, words, &fence)`：`CP_INDIRECT_BUFFER_PFE` 从 BO 取 IB
+   → `CACHE_FLUSH_TS`（单调 fence）→ `CP_WAIT_MEM_WRITES` → 等 RPTR + 空闲 + 20 ms；
+3. `wait_fence` 后 `dc ivac`，逐字回读。
+
+### 37.2 结果
+
+```
+fill32 words=1024 hits=1024 untouch=1 fence=4 cpint=00000000 hwfault=00000000 fsr=00000400
+```
+
+- 4 KiB 目标全部命中（1024/1024）；
+- 范围外的第一个字保持未写（`untouch=1`）；
+- 4 次提交的 fence 递增到 4；
+- 无 CP 中断/硬件故障。
+
+### 37.3 发现的 IB 尺寸约束
+
+| IB dwords | 结果 |
+| --- | --- |
+| 64（16 包） | 通过 |
+| 256（64 包） | 通过 |
+| **1024（256 包，正好一整页）** | **不执行**（fence 落地、目标全 0、无 fault） |
+
+先用 256 字/次 ×4 次提交完成整页，作为 C5a 的验收。**1024 字 IB 为何不跑未定论**
+（可能是 CP 预取越过 4 KiB BO 边界；后续可把 IB BO 扩到 8 KiB 再测）。
+
+### 37.4 镜像
+
+| 版本 | 内容 | kernel | boot |
+| --- | --- | --- | --- |
+| fe/ff | fill32 首测（就绪标志/大 IB） | `b7c226bd…` / `b3b54634…` | `409c0322…` / `fb77c69a…` |
+| fg | 诊断（cpint/hwfault/fsr） | `e8021dfc…` | `b238b594…` |
+| fh | 16 字 IB（通过） | `9b5ce31a…` | `0722813f…` |
+| fi | 256 字 IB（通过） | `edd4f03c…` | `7c24f915…` |
+| **fj** | 4×256 字 = 整页（**通过**） | `cd6f3e08…` | `ea9bc45a…` |
+
+### 37.5 下一步（C5b）
+
+C5 还剩 **Copy32**：a5xx 没有 2D/拷贝引擎，真正的 Copy32 需要一次 blit（着色器或
+Mesa `fd5_blitter` 路径）。下一步是决定用最小 blit shader（自建 PM4 + 着色器）还是先接受
+"Fill32+Barrier+fence" 作为 C5 的第一段验收，把 Copy32 推到 C6 前端之后。
