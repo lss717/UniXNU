@@ -12012,13 +12012,14 @@ fill32 words=1024 hits=1024 untouch=1 fence=4 cpint=00000000 hwfault=00000000
 
 | 版本 | boot-arg | 锁屏 | 加速器 | 说明 |
 | --- | --- | --- | --- | --- |
-| fj | `NativeAdreno` | ✅ | ✅ | 参考 |
-| fk | 删除 | ✅ | 未捕获 | 默认回落 **AGXMetalA10** |
-| fl | `NoMetalX`（不存在） | ❌ | ❌ | 锁屏不出现 |
+| fj | `NativeAdreno` | ❌ | ✅ | 参考 |
+| fk | 删除 | ❌ | 未捕获 | 默认回落 **AGXMetalA10** |
+| fl | `NoMetalX`（不存在） | ❌ | ❌ | 插件不加载 |
 
-结论：插件可加载但无设备时 CA 走**软件渲染**；插件缺失时 UI 根本不启动 →
-**没有 GL 回退捷径**，C6 必须提供 A540 的 Metal 设备（自研前端/插件）。
-下一步：tracing stub 插件枚举 CA 用到的 Metal 面。
+结论（已修正）：三种配置都没有锁屏——UI 的阻塞点仍是 display provider，与 GPU 无关，
+不能用“有没有锁屏”判断插件行为。有效结论是：CA 只通过 `MetalPluginName` 的插件
+bundle 访问我们的加速器（fj 有、fl 无），没有第二条路径；删参数会回落到默认
+`AGXMetalA10`。下一步：并行查帧通路（display provider）与 tracing stub 插件定 Metal 面。
 
 ## 更新规则
 

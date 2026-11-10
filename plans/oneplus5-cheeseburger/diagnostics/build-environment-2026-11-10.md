@@ -1454,24 +1454,32 @@ Mesa `fd5_blitter` 路径）。下一步是决定用最小 blit shader（自建 
 
 | 版本 | `MetalPluginName` | 锁屏 | 打开我们的加速器 | ABI 调用 |
 | --- | --- | --- | --- | --- |
-| fj（参考，NativeAdreno） | `NativeAdreno source=arg` | ✅ | ✅ 174 s 起 | ✅ `report backboard s34 e0 v4/4` |
-| **fk**（删除参数） | **`AGXMetalA10 source=default`** | ✅ | 未捕获（日志窗口止于 168 s） | — |
-| **fl**（不存在的 bundle） | `NoMetalX source=arg` | ❌ **没有进入锁屏** | ❌ 0 次 | ❌ 0 次 |
+| fj（参考，NativeAdreno） | `NativeAdreno source=arg` | ❌ | ✅ 174 s 起 | ✅ `report backboard s34 e0 v4/4` |
+| **fk**（删除参数） | **`AGXMetalA10 source=default`** | ❌ | 未捕获（窗口止于 168 s） | — |
+| **fl**（不存在的 bundle） | `NoMetalX source=arg` | ❌ | ❌ 0 次 | ❌ 0 次 |
 
-### 39.3 结论
+### 39.3 结论（已修正）
 
-1. 删掉参数**不是“没有插件”**：`NATIVE_UFS_ACCEL` 会回落到默认值 `AGXMetalA10`。
-2. **插件必须能被加载**，CA 才能把 UI 拉起来：bundle 不存在时（fl）锁屏根本不出现，
-   且全程没有一次加速器打开/ABI 调用 → **不存在绕过 Metal 的 GL/软件回退路径**。
-3. 插件能加载但拿不到设备时（fk 的 `AGXMetalA10` 在 Adreno 上），CA 仍能进锁屏——
-   这是**软件渲染**的锁屏，不经过我们的加速器。
-4. 因此“把 CA 引到 GL 渲染器”不是可行的捷径；**C6 的 gate 是给 A540 提供一个真正的
-   Metal 设备（Metal 前端/插件）**。
+> 初版把 fk 现场反馈误读成“进了锁屏”，据此推断“插件可加载时 CA 走软件渲染”。
+> 实际三种配置**都没有锁屏**：当前 UI 的阻塞点仍是 backboardd 拿不到 display
+> provider（屏幕只有 GOP 测试图案），与 GPU 无关。因此“锁屏是否出现”不能用来
+> 判断插件行为。以下为修正后的结论。
 
-> 说明：合并日志在 UI 阶段会变稀（dmesg 转静），日志“止于某秒”不等于内核挂起；
-> fl 的“没有锁屏”以现场观察为准。
+1. 删掉参数**不是“没有插件”**：`NATIVE_UFS_ACCEL` 会回落到默认值 `AGXMetalA10`
+   （`source=default`）。
+2. CA 访问我们的 `IOAcceleratorES` **只经由 `MetalPluginName` 指定的插件 bundle**：
+   插件可加载（fj）时 174 s 起有 `NATIVE_A540_ACCEL` 打开与 ABI 调用；插件不存在
+   （fl）时 0 次。没有第二条到达加速器的路径。
+3. “CA 回退到 GL”既未证实也未证伪：内核日志看不到 CA 内部的渲染器选择，而 UI
+   本来就不出帧，所以这条不能用现场表现来判定；它也不构成可依赖的捷径。
+4. 本次实验**没有改变**当前 gate：帧通路（display provider）和 GPU 前端是两条
+   独立的待办。
 
 ### 39.4 下一步
 
-先量化 CA 实际用到的 Metal 面：做一个**只记录不实现的 tracing stub 插件**（`MetalPluginName`
-指向它），枚举 CA 调用的 MTL 选择器与参数，再决定自研 Metal 前端的范围。
+两条并行：
+
+1. **帧通路**：查 backboardd 为何不取/不用我们的 Legacy display provider（这是
+   “frames>0”的直接阻塞，和 GPU 无关）；
+2. **GPU 前端**：做一个只记录不实现的 tracing stub 插件（`MetalPluginName` 指向它），
+   枚举 CA 实际调用的 MTL 选择器与参数，用来给自研 Metal 前端定范围。
