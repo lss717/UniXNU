@@ -916,3 +916,71 @@ Android 用户态**无法**用 `devmem` 读这些地址。可行路径只有：
 Android 的 `tzbsp` 驱动能读它。未试过：**失败启动后不断电重启回 Android**，再读
 `/sys/kernel/debug/tzdbg/log`（本机的节点名）。若缓冲区不清零，就能看到 TZ 对那次
 PAS/`0x66` 的记录。这比“找带调试的 TZ 固件”便宜两个数量级。
+
+---
+
+## 28. 三个负控制/对照实验（H236eh–ej，2026-11-10）
+
+### 28.1 A：完全不跑 PAS，直接 `0x66`（H236eh）
+
+只把 `zap_load()` 从流程里摘掉，其余不变（`0x66` 是 H236ba 之后才引入的，这条从未测过）。
+
+```
+PAS SKIPPED (control)
+cp start          idle=1 (rptr=9)
+trust before 0x66 = 00000001
+0x66              rptr=25/25 done=1  trust=00000001  ts=0:0  mem=0  win=0
+```
+
+**与有 PAS 时完全一致。** 含义：
+
+- `0x66` 失效**不是** PAS 的顺序或交互造成的（全新的 CP、从未调用 PAS，行为一样）；
+- “ZAP 是 `0x66` 生效的唯一前置条件”这个假设**至少不完整**——要么 ZAP 在两种情况下都没跑，
+  要么 `0x66` 的失效还有别的共同原因。
+
+### 28.2 B：合法 metadata + 改坏的 `.b02`（H236ei）
+
+metadata 不动，只把代码段第 `0x40` 个 dword 翻转一个 bit：
+
+```
+zap image CORRUPTED word[0x40]=8a01fcfd
+zap auth call b02=4916
+zap auth rc=-61 answer=0
+fail step 43 (zap auth and reset)
+```
+
+**auth 被拒绝（`-61`）。** 这保护了核心前提：
+
+- TZ **确实在验载荷内容**，不是只验 metadata 的签名；
+- 之前“好镜像 `rc=0`”确实代表“这段代码被 TZ 接受”。
+
+### 28.3 C：auth 前 clean + invalidate（H236ej）
+
+`cleanDcache` 之后再 `invalidateDcache` + `dsb`，杜绝 TZ 接管后仍有脏 cache 行回写。
+
+```
+zap auth rc=0
+trust after auth = 00000001
+trust before 0x66 = 00000001
+0x66  rptr=25/25 done=1  trust=00000001  mem=0
+```
+
+**无变化。** ZAP 页的 cache 归属不是原因；该维护保留（属于正确做法）。
+
+### 28.4 镜像
+
+| 版本 | 内容 | kernel | boot |
+| --- | --- | --- | --- |
+| eh | 无 PAS 的 `0x66` 对照 | `c229847c…` | `02f19d1a…` |
+| ei | 坏 `.b02` 负控制（auth `-61`） | `8d2c3e80…` | `1792c6a8…` |
+| ej | clean+invalidate 后 auth | `5713443e…` | `847e6326…` |
+
+### 28.5 仍未做的两项（都卡在同一个前提上）
+
+- **正例 SECVID 读数**（Android 的 trust / TSB）：本机 LineageOS `CONFIG_DEVMEM is not set`，
+  `/proc/kcore` 也不存在 → 用户态读不到；
+- **同机型 mainline 正例**：同样需要一个能读物理内存的内核。
+
+两者都指向同一个可行做法：`fastboot boot` 一份打开了 `CONFIG_DEVMEM` 的 mainline/pmOS
+镜像（只 boot 不 flash），一次拿到 `0x0503D000` / `0x0503E000` 的读数，并且顺便验证
+“没有 secure CB、没有 CPZ、没有 hyp_assign 的 AP 能不能把 trust 变成 0”。

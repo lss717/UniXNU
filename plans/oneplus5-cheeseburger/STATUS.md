@@ -11862,6 +11862,18 @@ tzlog 头 20 字 + hyp 日志指针。
 
 **当前基线**：H236eg，kernel `ca13c26c…`、boot `26f0c53f…`。
 
+### 三个对照实验（H236eh–ej，2026-11-10）
+
+- **无 PAS 的 `0x66`（eh）**：与有 PAS 时**完全一致**（`trust=1`、`mem=0`）→ 0x66 失效不是
+  PAS 顺序/交互造成的，“ZAP 是唯一前置条件”至少不完整；
+- **坏 `.b02` + 合法 metadata（ei）**：auth `rc=-61` 被拒 → **TZ 确实验载荷内容**，
+  “好镜像 rc=0 = 代码被接受”这一前提成立；
+- **auth 前 clean+invalidate（ej）**：无变化 → cache 归属不是原因。
+
+镜像见 `diagnostics/build-environment-2026-11-10.md` §28.4。仍缺的“正例读数”（Android 的
+`0x0503D000`/`0x0503E000`）与“同机型 mainline 正例”都需要一个 `CONFIG_DEVMEM=y` 的内核
+（本机 LineageOS 没有 `/dev/mem`、也没有 `/proc/kcore`）。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。
