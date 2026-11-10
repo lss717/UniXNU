@@ -11691,7 +11691,13 @@ boot     86348bcac054cf6e3627a4344e83378597961b3c0be15f51ccaab08ccdb42ab7  boot-
 对照 kgsl `a5xx_set_unsecured_mode()`：有 content protection 才走
 `CP_SET_SECURE_MODE(0)`，否则在上电时直写寄存器。本端口直写不可用；CP 路径
 命令被执行但状态不变。已发现 `cp_init` 把 `RBBM_SECVID_TSB_*` 全部清零，
-可能是 secure 转换被拒的原因，下一步优先验证。
+可能是 secure 转换被拒的原因；H236dd 改成保留 TSB 原值 + `ADDR_MODE_CNTL=1`
+后仍是 `trust=1 ts=0`，因此 TSB 也被排除。
+
+至此 CP 路径的变量已试遍（timestamp、GPMU 顺序、ME_INIT 0x0A、TSB），
+AP 直写在任何时机都挂总线。剩余假设集中在：
+a540 是否真的启用 content protection（决定 CP 路径是否有效）、以及
+TZ 对 SECVID 的锁定/解锁时机（PAS shutdown 前后、上电前后）。
 
 ## 更新规则
 
