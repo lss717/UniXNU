@@ -1877,3 +1877,20 @@ ABI method:        0 次
    写进 payload 的 `scratch-data.img`（Data seed）；
 2. `MetalPluginName=A540Trace`，addon 里只放标记/不需要的旧 bundle 都可以；
 3. 启动后应出现 `NATIVE_MTL: dev#…`，即 A1 三份产出物。
+
+### 45.12 Data seed 更新（下一步的第一步，遇到体积问题）
+
+- 从 `payload-H236ga.img` 取出 `Payloads/scratch-data.img`（3,219,600 B），
+  在 Mac 上跑 `scripts/add-gpu-plugin-data.py ~/seed-ga.img ~/seed-trace.img`
+  → 输出 **42,087,728 B**（因为要写入 `NativeAdrenoMetal.bundle` 的 21.7 MB 可执行文件
+  与 17 MB `libvulkan_freedreno.dylib`）。
+- payload 镜像当前只剩 ~11 MB 余量、boot image 已到 81,149,952 B，直接换 seed 会**超限**。
+
+下一步（按顺序）：
+
+1. trace 路径并不需要 Turnip：把 `libvulkan_freedreno.dylib` 从
+   `NativeAdrenoMetal.bundle` 里去掉（或单独准备一个不含它的 bundle 目录）后重跑 seed 更新；
+2. 若仍超限，则精简 payload 其它内容或按设备仓库的 payload 布局扩容；
+3. seed 换进去后用 `MetalPluginName=NativeAdreno` 启动，确认 `NATIVE_MTL`。
+
+这条路径是目前唯一还没试过的“换对地方”：addon 只提供标记、bundle 由 seed 提供。
