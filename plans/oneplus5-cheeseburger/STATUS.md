@@ -11905,6 +11905,20 @@ CP_ADDR_MODE_CNTL=1  CP_PROTECT_CNTL=7  CP_ME_CNTL=0x400
 
 基线：H236en（kernel `fa149af7…`、boot `f6bf7668…`，无 dump、稳定到 `zap unsecure`）。
 
+### SP/3D 块可达性（H236eo，2026-11-10）
+
+写图案再读回的三步判定（`CP_MEQ_THRESHOLDS` 对照 → `0xE140` → `0xEC0`）结果：
+
+- 探针日志被日志路径成段丢弃，但时间戳显示 `sp_probe()` 耗时约 **2.6 s**——访问 SP 块时的
+  **总线超时**；随后黑屏（与 dump 到 `0x0EC0` 的挂死一致）；
+- Android 在故障时刻的 snapshot 能正常读同一批寄存器。
+
+结论：SP/3D 块在我们这里**访问即停总线**；原因尚未定论（空闲 power collapse 的正常现象，
+还是块级电源/时钟确实没配上）。要继续需要：把探针结果放进不会丢的 record/heartbeat 通道，
+并先显式拉起 SP/3D 块再测。
+
+源码已回到 `98e518c`，基线仍为 H236en（kernel `fa149af7…`、boot `f6bf7668…`）。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。
