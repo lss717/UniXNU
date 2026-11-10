@@ -21,9 +21,11 @@ def pad(data: bytes) -> bytes:
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
+    args = [a for a in sys.argv[1:] if not a.startswith('--')]
+    flags = {a for a in sys.argv[1:] if a.startswith('--')}
+    if len(args) != 1 or flags - {'--trace', '--publish'}:
         sys.exit(__doc__)
-    output = Path(sys.argv[1]).resolve()
+    output = Path(args[0]).resolve()
     if output.exists():
         sys.exit('Refuse to overwrite ' + str(output))
     if not (BUNDLE / 'NativeAdrenoMetal').is_file():
@@ -32,15 +34,19 @@ def main() -> int:
     for path in sorted(p for p in BUNDLE.rglob('*') if p.is_file()):
         mode = 0o755 if path.name in ('NativeAdrenoMetal', 'libvulkan_freedreno.dylib') else 0o644
         files.append(('addons/' + ADDON_NAME + '/' + path.relative_to(BUNDLE).as_posix(), mode, path.read_bytes()))
-    files.append(('bin/adrenoprobed', 0o755, (PLUGIN / 'adrenoprobed').read_bytes()))
+    if (PLUGIN / 'adrenoprobed').is_file():
+        files.append(('bin/adrenoprobed', 0o755, (PLUGIN / 'adrenoprobed').read_bytes()))
     # H236ft: the plugin returns the native Metal device only when this marker
     # sits beside the bundle in /System/Library/Extensions (the addons/ tree is
     # mounted there by zzy-native-gpu-addon-mount). Without it the principal
     # class runs the ABI test and returns nil, so CoreAnimation never gets a
     # device.
-    files.append(('addons/NativeAdrenoMetal.publish', 0o644, b'1\n'))
+    if '--publish' in flags:
+        files.append(('addons/NativeAdrenoMetal.publish', 0o644, b'1\n'))
+    if '--trace' in flags:
+        files.append(('addons/NativeAdrenoMetal.trace', 0o644, b'1\n'))
     for plist in sorted(PLUGIN.glob('*.plist')):
-        if not plist.name.endswith('-entitlements.plist'):
+        if not plist.name.endswith('-entitlements.plist') and plist.is_file():
             files.append(('daemons/' + plist.name, 0o644, plist.read_bytes()))
     body = b''
     for name, mode, data in files:

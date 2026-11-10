@@ -25,7 +25,13 @@ VULKAN_INCLUDE = ROOT / '.cache/mesa-work/include'
 TURNIP = ROOT / 'build/mesa-tu-ios/src/freedreno/vulkan/libvulkan_freedreno.dylib'
 if not TURNIP.is_file():
     raise SystemExit('Build Turnip first: python3 scripts/build-turnip-darwin.py --target ios')
-subprocess.run(['python3', ROOT / 'scripts/gen-turnip-smoke-shaders.py'], check=True)
+try:
+    subprocess.run(['python3', ROOT / 'scripts/gen-turnip-smoke-shaders.py'], check=True)
+except subprocess.CalledProcessError:
+    # H236fu: the smoke shaders are Turnip's test payload; a host without glslc
+    # (shaderc) still builds the plugin, the trace device and the bridge. The
+    # replay header is optional in the same way.
+    print('WARN: glslc missing; building without the Turnip smoke shaders')
 # Turnip's first submission, recorded on the host, for the plugin's prefix replay (build/turnip-smoke/TurnipReplay.h).
 # The recorder compiles the AArch64 kernel sources for the host and runs them, so it needs an arm64 Mac; the header is optional
 # (NativeAdrenoUserTest.h includes it only with __has_include), so an Intel build host skips it instead of failing.

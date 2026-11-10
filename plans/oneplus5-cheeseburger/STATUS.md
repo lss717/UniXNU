@@ -12079,6 +12079,14 @@ fs 版移除 `sheng-disable-jobs=…` 后（args 874，C3 正常）复测，`sel
 没有 a5xx 后端 → **GPU 前端必须自研**（自实现 `_MTLDevice` 子类直连 ABI，或给 Turnip
 加 a5xx）。
 
+### A1 追踪设备落地（H236fu，2026-11-10）
+
+- ABI 新增 `NativeAdrenoMethodLog=17` + 插件 `A540TraceDevice`（`NativeAdrenoMetal.trace` 标记），
+  内核 `3f29aec7…`；`pack-adreno-addon.py --trace/--publish` 可选标记。
+- 首跑（fu）**没有** `NATIVE_MTL` 行：`accel=1/1/1/2`、`dpy=3/18/0/1/0`，与无插件一致 →
+  重编译的 bundle 缺 `libvulkan_freedreno.dylib`，dlopen 失败。
+- 下一步：把该 dylib 放回 bundle、重新签名打包，即可拿到 CA 的 Metal 方法清单/参数/放弃点。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。

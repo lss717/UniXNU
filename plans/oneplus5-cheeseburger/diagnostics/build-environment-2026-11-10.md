@@ -1692,3 +1692,35 @@ dpy=8/56/0/0/0  s345=0/0/0  xf=0 fr=0
 现有 metal2vulkan/Turnip 通路在 a5xx 上走不通，publish 模式只能把失败点从
 “返回 nil”推进到“查完设备信息后放弃”。**GPU 前端只能自研**：自己实现
 `_MTLDevice` 子类，直接接我们的 ABI，或给 Turnip 加 a5xx 后端。
+
+---
+
+## 45. A1 追踪设备（H236fu，2026-11-10）
+
+### 45.1 已落地
+
+- **内核日志通道**：ABI 新增 `NativeAdrenoMethodLog = 17`
+  （`NativeAdrenoAbiLog{bytes,reserved,text[184]}`），分发到
+  `IOLog("NATIVE_MTL: %s")`，换行被替换、最多 1200 行；内核 `3f29aec7…`。
+- **插件追踪设备**：`A540TraceDevice : _MTLDevice`，由
+  `NativeAdrenoMetal.trace` 标记启用；把 CA 的 `name/registryID/maxBufferLength/
+  supportsFeatureSet:/supportsFamily:/newCommandQueue/newBufferWithLength:options:/
+  newTextureWithDescriptor:/newRenderPipelineStateWithDescriptor:error:/…`
+  逐条写进内核日志（`MTL#<seq> <class> <selector> <detail>`，预算 600 行）。
+- **打包**：`pack-adreno-addon.py --trace`（标记）、`--publish`（旧路径），
+  并容忍缺失的 `adrenoprobed`/daemon plist。
+
+### 45.2 首次结果（fu，298 s）：追踪设备没有跑起来
+
+- `NATIVE_MTL` **0 行**；`NATIVE_A540_ACCEL: open request` 仅 **1** 次、
+  无 ABI 调用；`dpy=3/18/0/1/0`、`accel=1/1/1/2` —— 与“插件不存在”时完全一致。
+- 判断：重编译的 bundle **缺少 `libvulkan_freedreno.dylib`**（旧 bundle 里有），
+  dlopen 失败 → CA 拿不到任何 Metal 设备，行为退回无插件状态。
+
+### 45.3 下一步（A1 收尾）
+
+1. 把 `build/mesa-tu-ios/src/freedreno/vulkan/libvulkan_freedreno.dylib` 复制进
+   bundle（或改为 trace 模式不需要它再做一次编译开关）；
+2. 重新签名、`pack-adreno-addon.py --trace`、换 payload 的 gpuaddon；
+3. 启动后应出现 `NATIVE_MTL: MTL#…` 行：即产出物 1（方法清单/顺序）与
+   产出物 2（参数形状）；最后一行就是产出物 3（放弃点）。
