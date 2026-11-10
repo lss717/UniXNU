@@ -1394,3 +1394,45 @@ fill32 words=1024 hits=1024 untouch=1 fence=4 cpint=00000000 hwfault=00000000 fs
 C5 还剩 **Copy32**：a5xx 没有 2D/拷贝引擎，真正的 Copy32 需要一次 blit（着色器或
 Mesa `fd5_blitter` 路径）。下一步是决定用最小 blit shader（自建 PM4 + 着色器）还是先接受
 "Fill32+Barrier+fence" 作为 C5 的第一段验收，把 Copy32 推到 C6 前端之后。
+
+---
+
+## 38. C5 结项与 C6a 入口（2026-11-10）
+
+### 38.1 C5 验收（按“Fill32 段”结项）
+
+| 项 | 结果 |
+| --- | --- |
+| Fill32（`CP_MEM_WRITE`） | ✅ 1024/1024 字整页校验（H236fj） |
+| Barrier（`CP_WAIT_MEM_WRITES`） | ✅ |
+| 真实 fence（`CACHE_FLUSH_TS`） | ✅ 递增到 4，`WaitFence` 轮询 |
+| GPU 写回、CPU 可读 | ✅ `dc ivac` 后全量比对 |
+| Copy32 | ⏸ **移交 C6a** |
+
+**Copy32 移交理由**：a5xx 的 PM4 没有内存到内存的拷贝命令；同 SoC 正例（sagit）的
+`Copy32` 最终落到内置 `blit_copy_words` 着色器程序（`QcomGPUNative.cpp` 的
+`encoder.copy()`），即必须走 3D/blit 管线。真正的阻塞点是 **a5xx 着色器 ISA 工具链**
+（Mesa ir3 需离线编译，或手写 ISA），与 C6a 的“最小 3D 管线”是同一件事，重复拆开做没有收益。
+
+### 38.2 C6a 入口现状
+
+- CA/backboardd 已经会打开我们的 `IOAcceleratorES` 并发起 ABI 调用
+  （日志里多种 `user client type=…` 的 open，以及 `report backboard s34 e0 v4/4`）；
+- 但 `MetalPluginName` 当前指向 `NativeAdreno`（metal2vulkan → Turnip），而 Turnip
+  **没有 a5xx 后端**，所以 Metal 设备创建不可能在这条路上成功；
+- 因此 C6a 的第一件事不是写代码，而是**定前端路线**：
+  1. 自建 Metal 前端（sagit `QcomMTL` 量级，~9k 行）；
+  2. 让 CA 走 GL 渲染器（需要确认这版 CA 的开关与可用性）；
+  3. 其它（不推荐移植 Turnip）。
+
+### 38.3 建议的最小实验（C6a-0）
+
+在**不改渲染栈**的前提下，先确认 CA 在找不到可用 Metal 设备时是否回退到 GL：
+
+1. 把 `_offline-accelerator-plugin` 置空/指向不存在的插件，观察 CA 的日志与
+   `CA::Render` 的选择；
+2. 若存在 `CA_ENABLE_OGL`/`CA_DISPLAY_TYPE` 一类的偏好开关（历史研究见 STATUS 的
+   ios-sweet 段），测试其是否被这版 iOS 接受；
+3. 只有确认 GL 路线可行，C6b 才需要真正的渲染器移植；否则 C6 只能走自建 Metal 前端。
+
+这一步是只读/配置级实验，不需要 GPU 代码，是 C6a 最便宜的起点。

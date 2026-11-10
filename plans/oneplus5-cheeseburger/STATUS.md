@@ -11998,6 +11998,16 @@ fill32 words=1024 hits=1024 untouch=1 fence=4 cpint=00000000 hwfault=00000000
 
 镜像：**fj** `cd6f3e08…`/`ea9bc45a…`。下一步 C5b：Copy32（a5xx 无拷贝引擎，需 blit）。
 
+### C5 结项 / C6a 入口（2026-11-10）
+
+- **C5（Fill32 段）完成**：`fill32 words=1024 hits=1024 untouch=1 fence=4`，Barrier/fence/
+  回读闭环（H236fj）；
+- **Copy32 移交 C6a**：a5xx 无拷贝 PM4；sagit 的 Copy32 是 blit 着色器（`encoder.copy()`），
+  阻塞点是 a5xx 着色器 ISA 工具链，与 C6a 的最小 3D 管线是同一件事；
+- **C6a 入口**：CA 已能打开我们的 `IOAcceleratorES` 并跑通自研 ABI，但 `MetalPluginName`
+  指向 `NativeAdreno`（metal2vulkan→Turnip），Turnip 无 a5xx 后端 → Metal 设备创建不可能成功。
+  先做 C6a-0：确认 CA 是否能回退到 GL 渲染器（配置级实验，无 GPU 代码）。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。
