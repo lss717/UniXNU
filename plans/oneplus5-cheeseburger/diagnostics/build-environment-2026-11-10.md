@@ -1597,3 +1597,15 @@ boot-arg（`offline-legacy-dot-pitch`，默认 401）试扫。
 这次 args 加到 1022 字节，`check-bootargs-fit.py` 报 `+ zap-base` 后 1042 > 1024
 （超 18 字节）。**args 必须留出 ~30 字节给 `zap-base=0x…`**，否则 ZAP 基址会被截断。
 本次只做 display 实验，GPU 侧不受影响。
+
+### 42.5 复测（H236fs，args 修正后）
+
+fr 的 args 超限，日志里出现 `zap-base missing or invalid`，追加在末尾的
+`offline-legacy-dot-pitch=163` 很可能被截断，所以 42.2 不能作为结论。
+
+fs 版把 `sheng-disable-jobs=…` 移除（省 ~150 字节），args 874 字节，
+`+ zap-base` 902/1024 通过；C3 正常（`fill32 words=1024 hits=1024`，说明 args 完整）。
+
+结果：`selector=8` **仍是 438,780**，`dpy=3/18/0/1/0 s345=0/0/0 xf=0 fr=0` 不变。
+
+**结论（这次有效）**：438×780 与 dot-pitch 无关，点数换算假设关闭。

@@ -12048,6 +12048,8 @@ dot-pitch 做成 boot-arg（`offline-legacy-dot-pitch`，默认 401）。`dot-pi
 `selector=8` 仍是 **438,780**，`dpy=3/18/0/1/0 s345=0/0/0 xf=0 fr=0` 与 fp 一致 →
 **438×780 不是 dot-pitch 推导**，点数几何假设关闭。附带：args 加到 1022 字节时
 `+ zap-base` 会超过 1024，args 必须留 ~30 字节给 ZAP 基址。
+fs 版移除 `sheng-disable-jobs=…` 后（args 874，C3 正常）复测，`selector=8` 仍是
+**438,780**——dot-pitch 与报告尺寸无关，假设正式关闭。
 
 ## 更新规则
 
