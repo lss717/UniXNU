@@ -1609,3 +1609,50 @@ fs 版把 `sheng-disable-jobs=…` 移除（省 ~150 字节），args 874 字节
 结果：`selector=8` **仍是 438,780**，`dpy=3/18/0/1/0 s345=0/0/0 xf=0 fr=0` 不变。
 
 **结论（这次有效）**：438×780 与 dot-pitch 无关，点数换算假设关闭。
+
+---
+
+## 43. C6a 阶段小结：display 侧暂停，转回 GPU 前端（2026-11-10）
+
+### 43.1 本轮镜像与结果
+
+| 版本 | 变量 | kernel | boot | 结果 |
+| --- | --- | --- | --- | --- |
+| fk | 删除 `_offline-accelerator-plugin` | `cd6f3e08…` | `fb7b93ce…` | 回落到默认 **AGXMetalA10**；只跑到 168 s |
+| fl | `NoMetalX`（不存在的 bundle） | `cd6f3e08…` | `719dd204…` | 只跑到 155 s（等待不足，结论作废） |
+| fm | 同上，重跑等 5 分钟 | `cd6f3e08…` | `719dd204…` | 到 279.9 s；`selector 6` 一次（swap id，不是交换） |
+| fn | swap kick / guard 追踪 | `3ecc7160…` | `e08eb125…` | `kickSwapQueue` 0 次、3/4/5 0 次、`xfer=0 frames=0`，到 393 s |
+| fo | 通知端口注册日志 | `02f80582…` | `981b3bc2…` | `NATIVE_LEGACY: reg` 0 条；到 336 s |
+| fp | 重建 UfsProbe 归档 + display 心跳 | `2dbddebe…` | `eb3b6f26…` | `dpy=3/18/0/1/0 s345=0/0/0`，345→415 s 完全静止 |
+| fr | dot-pitch=163（args 超限） | `0c578859…` | `2bef009e…` | **无效**：`zap-base missing`，参数被截断 |
+| fs | dot-pitch=163（args 修正） | `0c578859…` | `0833d08e…` | 仍 438×780 → dot-pitch 与尺寸无关 |
+
+### 43.2 站得住的结论
+
+1. **`MetalPluginName` 是 CA 访问我们加速器的唯一通道**：插件可加载时 174 s 起有
+   `NATIVE_A540_ACCEL` 与 ABI 调用；插件不存在时 0 次。
+2. 删掉参数会回落到**默认 `AGXMetalA10`**，不是“无插件”。
+3. **CA 从不提交交换**：`selector 3/4/5` 在所有配置下都是 0 次；`kickSwapQueue`
+   与传输/帧计数也全为 0——不是我们丢帧。
+4. display 客户端在握手后**永久静默**（18 次调用、0 次通知端口注册），
+   说明 CA 主动放弃了该显示，而不是在等渲染器/轮询。
+5. `selector=8` 报 **438×780**（canvas 1080×1920），与 dot-pitch 无关。
+6. 参考实现（sagit）的关键 gate 是 **MobileGestalt 的屏幕记录**（其旧缓存
+   `1080,1920,429,scale=0` 会让 FBS 拒绝；删缓存重算 scale=3 后 CADisplay 正常）。
+   我们的 Data 是每次重建的 RAM disk，MG 理论上每次重算，但**结果在 userland 不可见**。
+
+### 43.3 已排除 / 作废
+
+- “删插件会让 CA 回退 GL”（现场无锁屏，无法判定，且 UI 本来就不出帧）；
+- “CA 在没有插件时会走软件渲染并交换”（fm 证明 `selector 6` 不是交换）；
+- “dot-pitch 决定报告尺寸”（fs 有效复测）；
+- fl/fk 的“没打开加速器”（等待时间不足，非结论）。
+
+### 43.4 决定
+
+display 侧暂停，转回 **GPU 前端**：内核可见信号已用尽，而 GPU 前端有自研 ABI，
+每一步可度量。display 的未解问题原样记录：
+
+- 报告尺寸 438×780 的来源（与 canvas/dot-pitch 均无关）；
+- MobileGestalt 屏幕记录的实际值（需要 userland 可见性）；
+- 通知端口从不注册的原因。

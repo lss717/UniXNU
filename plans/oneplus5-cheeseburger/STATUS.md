@@ -12051,6 +12051,24 @@ dot-pitch 做成 boot-arg（`offline-legacy-dot-pitch`，默认 401）。`dot-pi
 fs 版移除 `sheng-disable-jobs=…` 后（args 874，C3 正常）复测，`selector=8` 仍是
 **438,780**——dot-pitch 与报告尺寸无关，假设正式关闭。
 
+### C6a 小结：display 暂停，转回 GPU 前端（2026-11-10）
+
+本轮 fk→fs 九个镜像（详见 build-environment §43）：
+
+| 结论 | 证据 |
+| --- | --- |
+| `MetalPluginName` 是 CA 访问加速器的唯一通道 | 插件有/无 时 ABI 调用 174 s 起 vs 0 次 |
+| 删参数回落默认 `AGXMetalA10` | `source=default` |
+| CA 从不提交交换 | 3/4/5 = 0，`kickSwapQueue` = 0，`xfer=0 frames=0` |
+| display 握手后永久静默 | 18 次调用、0 次通知端口注册、345→415 s 不变 |
+| 报告尺寸 438×780 与 dot-pitch 无关 | fs 有效复测 |
+
+作废：fl/fk 的“没打开加速器”（等待不足）、“selector 6 是交换”、
+“dot-pitch 决定尺寸”（fr 无效、fs 否决）。
+
+**决定**：display 侧暂停（未解：438×780 来源、MobileGestalt 屏幕记录、
+通知端口不注册），转回 **GPU 前端**。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。
