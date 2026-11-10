@@ -516,3 +516,33 @@ secure GPU 访问绑定在 **SID 2** 的 TZ 管理 context 上；我们的 CB0/S
 
 下一步候选：确认 SID 2 的 secure context 在 XNU 启动链里是否由 ABL/TZ 配置；
 需要时让 DarwinBoot 保留/恢复 bootloader 留下的 SMMU secure stream，而不是只建 CB0。
+
+---
+
+## 20. secure SMMU 配置探测（H236dt/du/dv）
+
+按厂商 `arm-smmu.c` 的 static-CB 路径做探测：
+
+```text
+micro-MMU ctrl = SMMU base + 0x6000 (qcom,micro-mmu-control)
+  bit2 = LOCAL_HALT_REQ, bit3 = IDLE
+halt/resume 必须经 TZ: scm_io_write(SVC_IO=5, cmd=2, phys, value)  (atomic)
+secure 配置恢复: scm_restore_sec_cfg(SVC_MP=0xC, cmd=2, device_id, 0)
+```
+
+| 版本 | 做法 | 结果 |
+| --- | --- | --- |
+| H236dt | SMMU 运行中直接 `restore_sec_cfg(TZ_DEVICE_GPU=18)` | `rc=-2 answer=-4` |
+| H236du | 先用 `scm_io_write` 停 micro-MMU（`idle=1`）再 restore | **仍 `rc=-2 answer=-4`**；resume 正常 |
+| H236dv | 遍历 device id 0–31 找 TZ 认的编号 | `id=18` 仍是 -4；**`id=19` 的 SMC 不再返回**，显示/ USB 挂死（系统其余部分仍在跑） |
+
+结论：
+
+- 这个 TZ 不接受 GPU 的 `RESTORE_SEC_CFG`（即使 SMMU 已 halt），要么该调用不适用于
+  GPU SMMU，要么 device id 编号与内核头文件不同；
+- **不要遍历 device id**：某些 id（显示/UFS 相关）会让 SMC 永久阻塞，代价是黑屏；
+- 厂商路径里 `arm_smmu_is_static_cb()` 为假时根本不会调用它，Android 的成功并不能
+  证明该调用对 GPU 有效。
+
+secure SMMU 这条线到此为止；后续如果还要走，需要 TZ 固件侧的 device id/调用语义，
+而不是继续在 AP 侧猜。
