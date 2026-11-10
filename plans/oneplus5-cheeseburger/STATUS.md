@@ -12042,6 +12042,13 @@ o 版（NoMetalX，336 s）：`NATIVE_LEGACY: reg` 0 条（从未注册通知端
 区分“显示不可用”与“缺渲染器”。踩坑：`NativeUfsProbe.cpp` 链接的是预编译归档，
 `run-h103n-build.sh` 不会重建它，本轮心跳缺 `dpy=` 字段。
 
+### dot-pitch 扫参（H236fq/fr，2026-11-10）
+
+dot-pitch 做成 boot-arg（`offline-legacy-dot-pitch`，默认 401）。`dot-pitch=163` 下
+`selector=8` 仍是 **438,780**，`dpy=3/18/0/1/0 s345=0/0/0 xf=0 fr=0` 与 fp 一致 →
+**438×780 不是 dot-pitch 推导**，点数几何假设关闭。附带：args 加到 1022 字节时
+`+ zap-base` 会超过 1024，args 必须留 ~30 字节给 ZAP 基址。
+
 ## 更新规则
 
 每次工作结束追加一行日志，并更新“当前阶段/下一步/待实测/阻塞”。构建产物哈希、日志路径和失败现象记录在日志里；私有文件只放 `.cache/firmware/`，不提交。

@@ -1569,3 +1569,31 @@ display 侧的“握手 + swap id”都完成了，但 CA 既没注册通知端�
 1. 重建 `NativeUfsProbe` 归档，让心跳带上 `dpy=`（每客户端 calls/fails/sel6/regs/3/4/5），
    至少能在 UI 静默期持续观察；
 2. 若仍无法区分，则按“渲染器缺失”处理，回到 GPU 前端（stub/自研 Metal）。
+
+---
+
+## 42. dot-pitch 扫参实验（H236fq/fr，2026-11-10）
+
+### 42.1 动机
+
+参考实现（sagit，同为 A540）的 CADisplay 是 **1080×1920、pointScale=3、60 Hz**；
+我们的 `selector=8` 返回 **438×780**，怀疑是点数换算，于是把 `dot-pitch` 做成
+boot-arg（`offline-legacy-dot-pitch`，默认 401）试扫。
+
+### 42.2 结果（fr，`dot-pitch=163`，281 s）
+
+- `selector=8` 仍是 **438,780**，未随 dot-pitch 变化；
+- `dpy=3/18/0/1/0`、`s345=0/0/0`、`xf=0 fr=0`，与 fp 完全一致；
+- 新加的 `NATIVE_LEGACY: dot-pitch=…` 行未出现（该打印位于 nub 创建路径，
+  日志窗口未覆盖），但内核确为 `0c578859…`（含参数字符串）。
+
+### 42.3 结论
+
+**438×780 不是由 dot-pitch 推导的**，几何换算假设关闭。修改点数不会让 CA
+多走一步（18 次调用后依旧静止）。
+
+### 42.4 附带踩坑
+
+这次 args 加到 1022 字节，`check-bootargs-fit.py` 报 `+ zap-base` 后 1042 > 1024
+（超 18 字节）。**args 必须留出 ~30 字节给 `zap-base=0x…`**，否则 ZAP 基址会被截断。
+本次只做 display 实验，GPU 侧不受影响。
