@@ -2464,3 +2464,25 @@ forward: supportsVertexAmplificationCount:          ×10
 
 镜像：`/tmp/opencode/boot-H236hp.img`，sha256 见提交记录；插件 cdhash
 `dc2c6689…` 已写入信任缓存。**尚未上机。**
+
+### 45.43 `-commandBufferDidComplete:startTime:completionTime:error:` 的真实签名（已反汇编确认）
+
+```
+-[_MTLCommandQueue commandBufferDidComplete:startTime:completionTime:error:]  0x187A8A380
+187a8a394: mov x21, x5      ; error            (第 4 个对象参数)
+187a8a398: mov x22, x4      ; completionTime   ← 整数寄存器
+187a8a39c: mov x23, x3      ; startTime        ← 整数寄存器
+187a8a3a0: mov x20, x2      ; commandBuffer
+```
+
+两个时间参数走 **x 寄存器**，所以是 `uint64_t`，**不是 `double`**（double 会走 d0/d1）。
+下一版做真队列/命令缓冲时按此签名写：
+
+```objc
+- (void)commandBufferDidComplete:(id)buffer
+                       startTime:(unsigned long long)start
+                  completionTime:(unsigned long long)completion
+                           error:(id)error;
+```
+
+（`§45.40` 里写的“两个 double”据此更正。）
