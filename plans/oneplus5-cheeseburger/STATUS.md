@@ -46,6 +46,15 @@
   `(apply-protobox)`/`protobox collection`/`sandbox.protobox.index`，`zalloc.h` 无本地改动）。
   审计全文：`diagnostics/H240-LSD-IPC-AUDIT.md`。**下一步**：把采样名单换成
   SpringBoard / lsd / containermanager，沿链继续走到底（不改 policy、不加 allow）。
+- **H250（已证实，推翻旧说法）**：50 ms 突发的 4 秒窗口里 SpringBoard 有 **12 个不同 pc、
+  132 次变化**，符号化为 `libobjc` 容器遍历、`_CFHash`、**`UIKitServices+0x17a20
+  __getFBProcessManagerClass_block_invoke`**、`libsqlite3`——它在**应用/场景注册查询阶段**
+  真实执行用户态代码，只是 10 s 慢采样几乎总抓到 trap。仍无 QuartzCore/Metal pc、
+  无显示/GPU 设备打开。见 `diagnostics/H240-LSD-IPC-AUDIT.md` §11.6。
+- **H251（已构建，待上机）**：突发改为 **5 次 × 4 秒、间隔 60 秒**（150–410 s），
+  并保存**同一 tid 的有序 pc 序列**（RLE 打印 `NATIVE_SBSEQ`），用于区分"推进"与"打转"。
+  镜像 `boot-H251.img` = `46d78eef…`，内核 `b6a5e674…`；补丁
+  `patches/xnu/zzzzzzzzzzzz-h251-sbseq.patch`（已把 H248 的 bootstrap 捕获一并纳入补丁集）。
 - **H248（放宽 bootstrap 捕获）**：仍然 **0 行** `NATIVE_BOOTSTRAP`；SpringBoard 连续两次自然启动
   （H247/H248，各约 10 分钟）都保持 4–5 线程、pc 恒定 4 个内核 stub、从未打开显示/GPU。
   取证路径判定：**服务名不在内联消息体里**，不再沿此路线投入。下一步改为 20 ms 高频 pc 采样

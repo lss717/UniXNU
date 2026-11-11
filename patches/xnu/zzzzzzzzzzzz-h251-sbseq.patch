@@ -1,0 +1,488 @@
+diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
+index 24be557..ed23b62 100644
+--- a/osfmk/kern/task.c
++++ b/osfmk/kern/task.c
+@@ -10491,6 +10491,7 @@ struct native_sb_probe {
+ 	unsigned srights;
+ 	unsigned mscount;
+ 	int pid;
++	uint64_t port;          /* H242: port object, compared only */
+ };
+ static struct native_sb_probe native_sb_rcv;
+ static struct native_sb_probe native_sb_req;
+@@ -10499,8 +10500,35 @@ static unsigned native_sb_rcv_name;
+ static int native_sb_hdr_ok;
+ static uint32_t native_sb_hdr[6];
+ static int native_sb_capture;
++static int native_sb_pid;
+ static task_t native_sb_task;
+ 
++/* H245: every thread of the sampled process, not only the blocked ones, so the
++ * offline pass can tell whether SpringBoard ever runs inside QuartzCore (L2) or
++ * Metal/AGX (L3) instead of only waiting in libsystem_kernel. */
++struct native_sb_allrow {
++	uint64_t tid;
++	uint32_t state;
++	uint64_t pc;
++	uint64_t lr;
++};
++static struct native_sb_allrow native_sb_all[24];
++static unsigned native_sb_alln;
++
++/* H251: during a burst keep the *ordered* (tid, pc) sequence.  The SBTHR set
++ * below answers "which pcs", but not whether the thread advances or spins. */
++struct native_sb_seq_ent {
++	uint64_t tid;
++	uint64_t pc;
++};
++#define NATIVE_SB_SEQ_MAX 1536
++static struct native_sb_seq_ent native_sb_seq[NATIVE_SB_SEQ_MAX];
++static unsigned native_sb_seq_n;
++static int native_sb_seq_on;
++static int native_sb_quiet;
++static uint64_t native_sb_lastpcs[12];
++static unsigned native_sb_lastn;
++
+ static void
+ native_sb_probe_name(ipc_space_t space, unsigned name, struct native_sb_probe *out)
+ {
+@@ -10525,6 +10553,7 @@ native_sb_probe_name(ipc_space_t space, unsigned name, struct native_sb_probe *o
+ 		    (entry->ie_bits & MACH_PORT_TYPE_PORT_OR_DEAD) != 0 &&
+ 		    entry->ie_object != IP_NULL) {
+ 			port = (ipc_port_t)entry->ie_object;
++			out->port = (uint64_t)(uintptr_t)port;
+ 			out->srights = port->ip_srights;
+ 			out->mscount = port->ip_mscount;
+ 			/* Takes the port queue lock itself and reports the pid of the
+@@ -10546,6 +10575,7 @@ native_sb_collect(struct proc *p, void *arg)
+ 	if (strncmp(comm, native_sb_name, strlen(native_sb_name)) != 0) {
+ 		return 0;
+ 	}
++	native_sb_pid = proc_getpid(p);
+ 	struct task *t = proc_task(p);
+ 	if (!t) {
+ 		native_sb_note = "no-task";
+@@ -10568,6 +10598,18 @@ native_sb_collect(struct proc *p, void *arg)
+ 		if (pc < 0x100000000ULL || pc >= 0x8000000000ULL) {
+ 			continue;
+ 		}
++		if (native_sb_alln < sizeof(native_sb_all) / sizeof(native_sb_all[0])) {
++			native_sb_all[native_sb_alln].tid = thread_tid(th);
++			native_sb_all[native_sb_alln].state = th->state;
++			native_sb_all[native_sb_alln].pc = pc;
++			native_sb_all[native_sb_alln].lr = get_saved_state_lr(state);
++			native_sb_alln++;
++		}
++		if (native_sb_seq_on && native_sb_seq_n < NATIVE_SB_SEQ_MAX) {
++			native_sb_seq[native_sb_seq_n].tid = thread_tid(th);
++			native_sb_seq[native_sb_seq_n].pc = pc;
++			native_sb_seq_n++;
++		}
+ 		/* Mach traps carry a NEGATIVE syscall number in x16
+ 		 * (osfmk/arm64/bsd_arm64.c: assert(call_number < 0) then
+ 		 * call_number = -call_number), so mach_msg2_trap is -47. */
+@@ -10605,6 +10647,14 @@ native_sb_collect(struct proc *p, void *arg)
+ 	return 1;
+ }
+ 
++static void native_xpc_register(uint64_t port, int pid, const char *owner, char role);
++static void native_xpc_dump(unsigned sample);
++static void native_xpc_emit(unsigned sample, unsigned budget);
++static int native_xpc_pids[3];
++static char native_xpc_names[24][64];
++static unsigned native_xpc_names_n;
++static unsigned native_xpc_names_printed;
++
+ void
+ native_sb_pc_sample(const char *name, unsigned sample)
+ {
+@@ -10621,7 +10671,19 @@ native_sb_pc_sample(const char *name, unsigned sample)
+ 	memset(&native_sb_rcv, 0, sizeof native_sb_rcv);
+ 	memset(&native_sb_req, 0, sizeof native_sb_req);
+ 	memset(native_sb_hdr, 0, sizeof native_sb_hdr);
++	native_sb_alln = 0;
+ 	proc_iterate(1U | 4U, native_sb_collect, NULL, NULL, NULL);
++	if (native_sb_pid > 0) {
++		if (strncmp(name, "SpringBoard", 11) == 0) {
++			native_xpc_pids[0] = native_sb_pid;
++		} else if (strncmp(name, "lsd", 3) == 0) {
++			native_xpc_pids[1] = native_sb_pid;
++		} else if (strncmp(name, "containermanager", 16) == 0) {
++			native_xpc_pids[2] = native_sb_pid;
++		}
++	}
++	native_xpc_emit(sample, 25);
++	if (!native_sb_quiet) {
+ 	printf("NATIVE_SBPC: sample=%u comm=%s n=%u note=%s\n", sample, name, native_sb_count, native_sb_note);
+ 	for (unsigned i = 0; i < native_sb_count; i++) {
+ 		printf("NATIVE_SBPC: sample=%u comm=%s tid=%llu pc=0x%llx lr=0x%llx wait=0x%llx\n", sample, name,
+@@ -10652,9 +10714,57 @@ native_sb_pc_sample(const char *name, unsigned sample)
+ 		    (unsigned)(uint32_t)(dr >> 32), (unsigned)(uint32_t)rp,
+ 		    (unsigned long long)native_sb_rows[i].x7);
+ 	}
++	}
++	if (strncmp(name, "SpringBoard", 11) == 0) {
++		uint64_t uniq[12];
++		unsigned un = 0;
++		int changed = 0;
++		for (unsigned i = 0; i < native_sb_alln && un < 12; i++) {
++			unsigned j;
++			for (j = 0; j < un; j++) {
++				if (uniq[j] == native_sb_all[i].pc) {
++					break;
++				}
++			}
++			if (j == un) {
++				uniq[un++] = native_sb_all[i].pc;
++			}
++		}
++		if (un != native_sb_lastn) {
++			changed = 1;
++		} else {
++			for (unsigned i = 0; i < un; i++) {
++				if (uniq[i] != native_sb_lastpcs[i]) {
++					changed = 1;
++					break;
++				}
++			}
++		}
++		for (unsigned i = 0; i < un; i++) {
++			native_sb_lastpcs[i] = uniq[i];
++		}
++		native_sb_lastn = un;
++		if (!changed) {
++			if (!native_sb_quiet) {
++				printf("NATIVE_SBTHR: sample=%u unchanged threads=%u uniq=%u\n",
++				    sample, native_sb_alln, un);
++			}
++			goto sbthr_done;
++		}
++		printf("NATIVE_SBTHR: sample=%u comm=%s threads=%u\n", sample, name, native_sb_alln);
++		for (unsigned i = 0; i < native_sb_alln; i++) {
++			printf("NATIVE_SBTHR: sample=%u tid=%llu st=0x%x pc=0x%llx lr=0x%llx\n",
++			    sample, (unsigned long long)native_sb_all[i].tid,
++			    native_sb_all[i].state,
++			    (unsigned long long)native_sb_all[i].pc,
++			    (unsigned long long)native_sb_all[i].lr);
++		}
++sbthr_done:
++		;
++	}
+ 	/* H239: the buffer of a mach_msg2 call still holds the header of the
+ 	 * message that was sent last, so read it back and describe both ports. */
+-	if (native_sb_task != TASK_NULL) {
++	if (!native_sb_quiet && native_sb_task != TASK_NULL) {
+ 		if (native_sb_buf != 0 &&
+ 		    vm_map_read_user(get_task_map(native_sb_task),
+ 		    (vm_offset_t)native_sb_buf, native_sb_hdr,
+@@ -10689,7 +10799,310 @@ native_sb_pc_sample(const char *name, unsigned sample)
+ 		    (unsigned long long)native_sb_req.ie_bits,
+ 		    native_sb_req.srights, native_sb_req.mscount,
+ 		    native_sb_req.pid, native_sb_qname2);
++		native_xpc_register(native_sb_rcv.port, native_sb_pid, name, 'r');
++		native_xpc_register(native_sb_req.port, native_sb_pid, name, 'q');
++		native_xpc_dump(sample);
+ 		task_deallocate(native_sb_task);
+ 		native_sb_task = TASK_NULL;
+ 	}
+ }
++
++/* H251: burst helpers.  quiet keeps the ring log readable at 20 Hz, and the
++ * trace dump prints the ordered sequence as run-length pairs so a thread that
++ * advances through new code looks different from one that spins on a stub. */
++void
++native_sb_set_quiet(int on)
++{
++	native_sb_quiet = on;
++}
++
++void
++native_sb_trace_start(void)
++{
++	native_sb_seq_n = 0;
++	native_sb_seq_on = 1;
++}
++
++void
++native_sb_trace_dump(unsigned burst)
++{
++	uint64_t tids[16];
++	unsigned nt = 0;
++
++	native_sb_seq_on = 0;
++	for (unsigned i = 0; i < native_sb_seq_n; i++) {
++		unsigned j;
++		for (j = 0; j < nt; j++) {
++			if (tids[j] == native_sb_seq[i].tid) {
++				break;
++			}
++		}
++		if (j == nt && nt < 16) {
++			tids[nt++] = native_sb_seq[i].tid;
++		}
++	}
++	printf("NATIVE_SBSEQ: burst=%u entries=%u tids=%u\n", burst, native_sb_seq_n, nt);
++	for (unsigned t = 0; t < nt; t++) {
++		uint64_t last = 0;
++		unsigned run = 0, runs = 0, total = 0, shown = 0, off = 0;
++		char line[192];
++
++		line[0] = 0;
++		for (unsigned i = 0; i <= native_sb_seq_n; i++) {
++			if (i < native_sb_seq_n) {
++				if (native_sb_seq[i].tid != tids[t]) {
++					continue;
++				}
++				total++;
++				if (run != 0 && native_sb_seq[i].pc == last) {
++					run++;
++					continue;
++				}
++			}
++			if (run != 0) {
++				if (shown < 10 && off + 40 < sizeof line) {
++					off += (unsigned)snprintf(line + off, sizeof line - off,
++					    "%s%llx*%u", shown ? "," : "",
++					    (unsigned long long)last, run);
++					shown++;
++				}
++				runs++;
++			}
++			if (i < native_sb_seq_n) {
++				last = native_sb_seq[i].pc;
++				run = 1;
++			}
++		}
++		printf("NATIVE_SBSEQ: burst=%u tid=%llu n=%u runs=%u seq=%s%s\n",
++		    burst, (unsigned long long)tids[t], total, runs, line,
++		    (runs > shown) ? ",..." : "");
++	}
++}
++
++
++/* H242: request lifecycle tracing for the SpringBoard -> lsd -> containermanager
++ * chain.  The sampler learns the port objects (pointer only, never dereferenced),
++ * so the send hook is a plain pointer comparison in the hottest path of the IPC
++ * layer: no locks, no allocations, no port lookups.  A message counted as "to"
++ * a tracked port is exactly the request/reply we care about. */
++struct native_xpc_port {
++	uint64_t port;
++	int pid;
++	char owner[17];
++	char role;
++	unsigned long long from;
++	unsigned long long to;
++};
++#define NATIVE_XPC_PORTS 8
++static struct native_xpc_port native_xpc_ports[NATIVE_XPC_PORTS];
++static unsigned native_xpc_port_count;
++static unsigned native_xpc_seq;
++
++static void
++native_xpc_register(uint64_t port, int pid, const char *owner, char role)
++{
++	if (port == 0) {
++		return;
++	}
++	for (unsigned i = 0; i < native_xpc_port_count; i++) {
++		if (native_xpc_ports[i].port == port) {
++			native_xpc_ports[i].pid = pid;
++			strlcpy(native_xpc_ports[i].owner, owner,
++			    sizeof native_xpc_ports[i].owner);
++			native_xpc_ports[i].role = role;
++			return;
++		}
++	}
++	if (native_xpc_port_count >= NATIVE_XPC_PORTS) {
++		return;
++	}
++	native_xpc_ports[native_xpc_port_count].port = port;
++	native_xpc_ports[native_xpc_port_count].pid = pid;
++	strlcpy(native_xpc_ports[native_xpc_port_count].owner, owner,
++	    sizeof native_xpc_ports[native_xpc_port_count].owner);
++	native_xpc_ports[native_xpc_port_count].role = role;
++	native_xpc_port_count++;
++}
++
++/* Called from ipc_kmsg_send() right after the header is fetched and before any
++ * lock is taken; 'remote' is the destination port object stored in the header. */
++void
++native_xpc_send_hook(void *remote, unsigned bits, unsigned size, unsigned id)
++{
++	uint64_t port = (uint64_t)(uintptr_t)remote;
++	char from[17];
++	int pid;
++
++	if (port == 0 || native_xpc_port_count == 0) {
++		return;
++	}
++	pid = proc_getpid(current_proc());
++	for (unsigned i = 0; i < native_xpc_port_count; i++) {
++		if (native_xpc_ports[i].pid == pid) {
++			native_xpc_ports[i].from++;
++			break;
++		}
++	}
++	for (unsigned i = 0; i < native_xpc_port_count; i++) {
++		if (native_xpc_ports[i].port != port) {
++			continue;
++		}
++		native_xpc_ports[i].to++;
++		proc_name(pid, from, sizeof from);
++		printf("NATIVE_XPC: #%u send from=%s(%d) to=%s/%c bits=0x%x size=%u id=0x%x\n",
++		    ++native_xpc_seq, from, pid, native_xpc_ports[i].owner,
++		    native_xpc_ports[i].role, bits, size, id);
++		return;
++	}
++}
++
++static void
++native_xpc_dump(unsigned sample)
++{
++	printf("NATIVE_XPC: sample=%u ports=%u", sample, native_xpc_port_count);
++	for (unsigned i = 0; i < native_xpc_port_count; i++) {
++		printf(" [%s/%c p=0x%llx f=%llu t=%llu]",
++		    native_xpc_ports[i].owner, native_xpc_ports[i].role,
++		    (unsigned long long)native_xpc_ports[i].port,
++		    native_xpc_ports[i].from, native_xpc_ports[i].to);
++	}
++	printf("\n");
++}
++
++
++/* H244: full sender/receiver annotation.  The hook runs with the destination port
++ * already locked by ipc_kmsg_send(), so the receiver task/pid can be read safely
++ * with the kernel's own ipc_port_get_receiver_task_locked().  Only messages where
++ * either side is one of the tracked processes are recorded, and nothing is printed
++ * from the IPC path: entries go into a small ring and the sampler prints them. */
++#include <ipc/ipc_kmsg.h>
++
++struct native_xpc_note {
++	unsigned from;
++	unsigned to;
++	unsigned bits;
++	unsigned size;
++	unsigned id;
++};
++#define NATIVE_XPC_RING 512
++static struct native_xpc_note native_xpc_ring[NATIVE_XPC_RING];
++static unsigned native_xpc_written;
++static unsigned native_xpc_printed;
++static unsigned native_xpc_lost;
++static unsigned long long native_xpc_sb_out, native_xpc_sb_in, native_xpc_sb_other;
++static unsigned long long native_xpc_p_out, native_xpc_p_in, native_xpc_p_other;
++
++static int
++native_xpc_tracked(int pid)
++{
++	if (pid <= 0) {
++		return 0;
++	}
++	for (int i = 0; i < 3; i++) {
++		if (native_xpc_pids[i] == pid) {
++			return 1;
++		}
++	}
++	return 0;
++}
++
++void
++native_xpc_note(ipc_kmsg_t kmsg, ipc_port_t port)
++{
++	mach_msg_header_t *hdr = ikm_header(kmsg);
++	int from = proc_getpid(current_proc());
++	int to = ipc_port_get_receiver_task_locked(port, NULL);
++	unsigned w;
++	struct native_xpc_note *e;
++
++	if (!native_xpc_tracked(from) && !native_xpc_tracked(to)) {
++		return;
++	}
++	if ((unsigned)from == (unsigned)native_xpc_pids[0]) {
++		native_xpc_sb_out++;
++	} else if ((unsigned)to == (unsigned)native_xpc_pids[0]) {
++		native_xpc_sb_in++;
++	} else {
++		native_xpc_sb_other++;
++	}
++	w = native_xpc_written;
++	if (w - native_xpc_printed >= NATIVE_XPC_RING) {
++		native_xpc_lost++;
++		w = native_xpc_printed;          /* keep the window sliding */
++	}
++	e = &native_xpc_ring[w % NATIVE_XPC_RING];
++		/* H247: bootstrap look-ups carry the service name inline.  Record only
++	 * that string (never any other message body), from SpringBoard only. */
++	if ((unsigned)hdr->msgh_id == 0x40000324u ||
++	    (unsigned)hdr->msgh_id == 0x40000325u) {
++		const char *base = (const char *)hdr;
++		unsigned msize = (unsigned)hdr->msgh_size;
++		char cfrom[17];
++		int want = 0;
++		proc_name(from, cfrom, sizeof cfrom);
++		if ((unsigned)from == (unsigned)native_xpc_pids[0]) {
++			want = 1;
++		} else if (strncmp(cfrom, "SpringBoard", 11) == 0) {
++			want = 1;
++		}
++		for (unsigned off = 24; want && off + 11 < msize; off++) {
++			char name[48];
++			unsigned len = 0;
++			if (memcmp(base + off, "com.apple.", 10) != 0) {
++				continue;
++			}
++			while (len < sizeof name - 1 && off + len < msize) {
++				char c = base[off + len];
++				if (c < 0x21 || c > 0x7e) {
++					break;
++				}
++				name[len] = c;
++				len++;
++			}
++			name[len] = 0;
++			if (len < 11) {
++				break;
++			}
++			unsigned k;
++			for (k = 0; k < native_xpc_names_n; k++) {
++				if (strncmp(native_xpc_names[k], name, sizeof name) == 0) {
++					break;
++				}
++			}
++			if (k == native_xpc_names_n && native_xpc_names_n < 24) {
++				snprintf(native_xpc_names[native_xpc_names_n], sizeof name,
++				    "%s id=0x%x", name, (unsigned)hdr->msgh_id);
++				native_xpc_names_n++;
++			}
++			break;
++		}
++	}
++e->from = (unsigned)from;
++	e->to = (unsigned)to;
++	e->bits = (unsigned)hdr->msgh_bits;
++	e->size = (unsigned)hdr->msgh_size;
++	e->id = (unsigned)hdr->msgh_id;
++	native_xpc_written = w + 1;
++}
++
++static void
++native_xpc_emit(unsigned sample, unsigned budget)
++{
++	(void)budget;
++	if (native_xpc_sb_out == native_xpc_p_out &&
++	    native_xpc_sb_in == native_xpc_p_in &&
++	    native_xpc_sb_other == native_xpc_p_other) {
++		return;
++	}
++	printf("NATIVE_XPC3: sample=%u sb_out=%llu sb_in=%llu other=%llu lost=%u\n", sample,
++	    native_xpc_sb_out - native_xpc_p_out, native_xpc_sb_in - native_xpc_p_in,
++	    native_xpc_sb_other - native_xpc_p_other, native_xpc_lost);
++	while (native_xpc_names_printed < native_xpc_names_n) {
++		printf("NATIVE_BOOTSTRAP: sample=%u name=%s\n", sample,
++		    native_xpc_names[native_xpc_names_printed]);
++		native_xpc_names_printed++;
++	}
++	native_xpc_p_out = native_xpc_sb_out;
++	native_xpc_p_in = native_xpc_sb_in;
++	native_xpc_p_other = native_xpc_sb_other;
++}

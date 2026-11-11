@@ -473,3 +473,29 @@ NATIVE_XPC3:  sample=25 sb_out=0 sb_in=0 other=186 lost=3
 2. 对 `FBProcessManager` 相关调用做定点取证：在突发中把**同一批 tid 的连续 pc 序列**记下来
    （当前每 4 秒只保留去重后的集合，丢掉顺序）；
 3. 若 `FBProcessManager` 之后出现 `FrontBoard`/`QuartzCore` 的 pc，则转 H246 的"图形服务连接"路线。
+
+### 11.7 H251：五次 4 秒突发 + 有序 pc 序列（已构建，待上机）
+
+针对 §11.6 的三条建议，H251 只改"怎么采"，不改任何策略：
+
+1. **突发重复 5 次**：150 s 起，每轮 4 s（80 × 50 ms），轮间隔 60 s → 窗口覆盖
+   150–410 s；之后仍有 10 轮 10 s 的慢序列（其他守护进程）。
+2. **保留顺序**：新增内核侧 `native_sb_seq[]`（`struct {tid, pc}`，1536 项），
+   突发期间每次采样都按发生顺序追加；`native_sb_trace_dump(burst)` 按 tid 分组、
+   用 **RLE（`pc*次数`）** 打印，一眼区分"推进"和"原地打转"。
+3. **静默模式**：突发期间关闭 `NATIVE_SBPC` 逐线程打印、`SBTHR unchanged` 行与
+   `SBPORT` 的用户内存读取（每 50 ms 一次 `vm_map_read_user` 本就没必要），
+   只保留"pc 集合变化"时的完整线程表，避免 400 次采样把环形日志冲掉。
+
+新增输出行样例：
+
+```
+NATIVE_SBSEQ: burst=2 tid=301 n=80 runs=4 seq=1eb3888c0*37,1b5915a20*2,1a7a8500c*1,1eb388aec*40
+```
+
+- 镜像 `boot-H251.img` = `46d78eef…`，内核 `b6a5e674…`，插件与信任缓存不变（6 项）。
+- 补丁：`patches/xnu/zzzzzzzzzzzz-h251-sbseq.patch`（**同时包含** H248 放宽后的
+  bootstrap 捕获代码，使补丁集重新自洽；已验证：pinned xnu + h103 + h251 应用后
+  与构建树 `osfmk/kern/task.c` 完全一致）。
+- 判读：某 tid 的 RLE 序列在 5 轮之间**变长/出现新 pc** → 路径在推进；每轮都是
+  同几条 `*40`/`*80` → 该线程整轮没动。

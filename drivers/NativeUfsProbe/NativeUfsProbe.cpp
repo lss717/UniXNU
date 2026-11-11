@@ -450,6 +450,9 @@ h103MaybeRestartSpringBoard (uint32_t displayClients)
 // driver only names the processes.  Kept in a dedicated thread exactly like il (which boots) and
 // only the name list grew, so a boot failure here points at the list, not at a new mechanism.
 extern "C" void native_sb_pc_sample (const char *name, unsigned sample);
+extern "C" void native_sb_set_quiet (int on);
+extern "C" void native_sb_trace_start (void);
+extern "C" void native_sb_trace_dump (unsigned burst);
 
 // H241/H242: the first three are sampled every round.  The comm of the container daemon is
 // "containermanager" (not "containermanagerd"), which is why earlier rounds never matched it.
@@ -465,15 +468,24 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
   // life (it is killed by the plugin's restart probe at ~243 s).  Only SpringBoard repeats;
   // the other names are useful once and would otherwise push the ring log out.
   IOSleep (150000);
-  // H250 burst: 50 ms cadence for four seconds FIRST, so the high-rate window is
-  // always inside a normal boot (the 10 s series alone runs for minutes).
-  IOLog ("NATIVE_SBPC: burst start\n");
-  for (unsigned b = 0; b < 80; ++b) {
-    native_sb_pc_sample ("SpringBoard", 100 + b);
-    IOSleep (50);
+  // H251: five 4 s bursts one minute apart (150 s .. 410 s), each keeping the
+  // ordered (tid, pc) sequence; then a short slow series for the other daemons.
+  for (unsigned burst = 0; burst < 5; ++burst) {
+    IOLog ("NATIVE_SBPC: burst=%u start\n", burst);
+    native_sb_trace_start ();
+    native_sb_set_quiet (1);
+    for (unsigned b = 0; b < 80; ++b) {
+      native_sb_pc_sample ("SpringBoard", 100 + burst * 100 + b);
+      IOSleep (50);
+    }
+    native_sb_set_quiet (0);
+    native_sb_trace_dump (burst);
+    IOLog ("NATIVE_SBPC: burst=%u done\n", burst);
+    if (burst < 4) {
+      IOSleep (60000);
+    }
   }
-  IOLog ("NATIVE_SBPC: burst done\n");
-  for (unsigned sample = 0; sample < 20; ++sample) {
+  for (unsigned sample = 0; sample < 10; ++sample) {
     for (unsigned index = 0; index < sizeof a540SbNames / sizeof a540SbNames[0]; ++index) {
       if (index > 2 && sample >= 2) {
         continue;
