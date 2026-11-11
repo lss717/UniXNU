@@ -2634,3 +2634,51 @@ the wrong class"` 同理。
 kext 的 `__PRELINK_DATA` 在缓存里约 83% 为零（bind fixup 在开机时做），vtable 内容读不到。
 要拿到真实布局只能**运行期 hexdump** 一次；按 §45.46，清零是本族当前策略，而 79 不是“是否
 headless”的唯一候选，所以先不动它。
+
+### 45.48 离线反汇编：backboardd 的 headless 判决在 QuartzCore，不在 IOKit
+
+对象 `/tmp/opencode/os-mnt/usr/libexec/backboardd`（1,220,560 B，arm64，stripped：
+`LC_SYMTAB` 只剩 750 个 undefined + `__mh_execute_header`，函数身份靠代码恢复）。
+
+**判决点只有一个**：`BKDisplayStartWindowServer`（`0x10003472c` 处的全局 block）在
+
+```
+0x100034888  +[CADisplay mainDisplay]              -> x21
+0x1000348a4  -[CAWindowServer displayWithDisplayId:] -> x22
+0x100034904  cbz x21, 0x100034cf4   ; CADisplay.mainDisplay == nil  -> headless
+0x100034908  cbz x22, 0x100034cf4   ; 该 id 的 server display == nil -> headless
+```
+
+之后就 `__os_log_error_impl` 打出 `"StartWindowServer: headless (display:%{BOOL}u/server:%{BOOL}u)"`
+（格式串 `0x1000d5c01`）。**没有** `IOServiceOpen`、没有注册表属性、没有 boot-arg、
+没有 `IONotificationPort*` 参与这个判断。
+
+`BKDisplayIsHeadless`（`0x100007e38`）只是读全局 `BKDisplayInfo`（`0x10010da10`，
+`os_unfair_lock` `0x10010da18`）的 `-windowServerDisplay` 是否为 nil；若
+`BKDisplayStartWindowServer` 还没跑过会直接 `NSAssert`（`"please invoke BKDisplayStartWindowServer
+before BKDisplayIsHeadless"`，`BKDisplay.m:670`），不是返回 headless。
+
+**backboardd 根本不匹配任何显示类服务**（全二进制只有 4 处 `IOServiceMatching`）：
+
+| 站点 | 类名 | 用途 |
+|---|---|---|
+| `0x1000581f8` | `AppleTetheredDevice` | tether demo card |
+| `0x100058930` | `AppleH1CLCD` | IOMFB *debug flags* |
+| `0x100058950` | `AppleM2CLCD` | 同上 |
+| `0x100058e10` | `IOEthernetInterface` | tether |
+
+唯一的 `_IOMobileFramebufferOpen` 在 `0x100058980`，只有 `AppleH1CLCD`/`AppleM2CLCD` 匹配成功才
+走到，用来 `IOMobileFramebufferSetDebugFlags(..., 0x20)`——我们的服务不叫这两个名字，**这条路
+永远不执行**。整个二进制**没有** `IONotificationPortCreate` / `IOServiceAddMatchingNotification`
+导入，所以 §45.46 里“registerNotificationPort = 0”本来就是正常的，不是缺陷。
+
+真正的发现逻辑是纯 ObjC（`0x10005a45c`）：`+[CAWindowServer serverIfRunning]` →
+`-[CAWindowServer displays]` → 空表就 `"We seeem to be headless"`（`0x1000d88be`）并返回空数组。
+backboardd **只消费** QuartzCore 已经发布的 `+[CADisplay displays]`，自己不建 display。
+
+**结论（诊断重心转移）**：那 3 次打开 / 18 次调用是 **backboardd 进程内的 QuartzCore** 通过
+`IOMobileFramebuffer.framework` 发的；QuartzCore 拿到全部 `status=0`，却**一个 display 都没发布**。
+因此这条 gate 不在 IOKit 服务可见性、不在类名、不在 sandbox、不在 boot-arg，而在
+**QuartzCore 的 `CADisplay` 实例化条件**。下一步去反汇编 dyld 缓存里的 QuartzCore /
+IOMobileFramebuffer.framework（Mac `~/dsc-work/ext` 已有导出），把 9 个 selector 的 API 名、
+1580 字节结构的字段、以及放弃分支的判据都读出来。
