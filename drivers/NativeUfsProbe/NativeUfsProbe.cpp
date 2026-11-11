@@ -19,6 +19,13 @@
 #include <IOKit/IOWorkLoop.h>
 #include <sys/types.h>
 #include <sys/param.h>
+// This file is C++: XNU's smr.h uses the result of an assignment to a volatile
+// pointer, which clang 16 reports as deprecated; the warning is not ours and the
+// kernel build promotes warnings to errors.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-volatile"
+#include <sys/proc_internal.h>
+#pragma clang diagnostic pop
 #include <kern/debug.h>
 #include <kern/task.h>
 #include <kern/thread.h>
@@ -377,6 +384,63 @@ h103MaybeSetAcceleratorPlugin (void)
   done = 1;
 }
 
+// H236hw: SpringBoard asks QuartzCore for the main CADisplay before backboardd's render server
+// exists, and QuartzCore caches that empty answer for the life of the process (ensure_displays'
+// static flag, QuartzCore 0x18948d2c0).  On this board launchd starts SpringBoard at ~115 s but
+// backboardd only at ~131 s, whose window server builds the IOMFB display at ~150 s.  One
+// SIGTERM makes launchd relaunch SpringBoard after the server publishes displays (it publishes
+// LCD/primary plus five wireless ones).  Gated on the GOP display being the active backend.
+extern "C" void psignal (proc_t, int);
+
+static int
+springboard_filter (proc_t p, void *)
+{
+  return p && strncmp (p->p_comm, "SpringBoard", MAXCOMLEN) == 0;
+}
+
+static int
+springboard_restart (proc_t p, void *)
+{
+  IOLog ("NATIVE_RESTART: SpringBoard pid=%d sigterm\n", proc_pid (p));
+  psignal (p, SIGTERM);
+  return PROC_RETURNED;
+}
+
+static void
+h103MaybeRestartSpringBoard (uint32_t displayClients)
+{
+  static int enabled = -1, sawClient, waited, done;
+  if (done) {
+    return;
+  }
+  if (enabled < 0) {
+    int gop = 0;
+    PE_parse_boot_argn ("offline-legacy-gop", &gop, sizeof gop);
+    enabled = gop == 1;
+    IOLog ("NATIVE_RESTART: gate=%d\n", enabled);
+  }
+  if (!enabled) {
+    done = 1;
+    return;
+  }
+  if (!displayClients) {
+    return;
+  }
+  if (!sawClient) {
+    sawClient = 1;
+    IOLog ("NATIVE_RESTART: display client seen\n");
+    return;
+  }
+  // three 10 s beats after backboardd opened the display: its window server has finished the
+  // IOMFB handshake by then (the opens and the Metal device both happen inside it).
+  if (++waited < 3) {
+    return;
+  }
+  done = 1;
+  proc_iterate (PROC_ALLPROCLIST, springboard_restart, NULL, springboard_filter, NULL);
+  IOLog ("NATIVE_RESTART: sent\n");
+}
+
 static void
 heartbeatThread (void *, wait_result_t)
 {
@@ -406,6 +470,7 @@ heartbeatThread (void *, wait_result_t)
     uint32_t dpc=0,dca=0,dfa=0,ds6=0,drg=0,ds3=0,ds4=0,ds5=0;
     if (native_legacy_client_stats)
       native_legacy_client_stats (&dpc,&dca,&dfa,&ds6,&drg,&ds3,&ds4,&ds5);
+    h103MaybeRestartSpringBoard (dpc);
     IOLog ("NATIVE_ACCEL_HB: accel=%u/%u/%u/%u abi=%d/%d/%d rep=%.31s gc=%d:%08x "
            "dpy=%u/%u/%u/%u/%u s345=%u/%u/%u val=%u xf=%u fr=%u\n",
            (unsigned) native_a540_open_count, (unsigned) native_a540_open_type,
