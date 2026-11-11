@@ -2365,3 +2365,55 @@ hn：把转发器扩展到“任意带参数 selector”，预期越过 blit 拷
 注意：hm/hl 两次运行结束时屏幕停在 `panic: initproc exited`，但同一段日志窗口里
 没有 panic 记录（`grep panic` 为空），launchd 的 `NATIVE_EXIT` 也只有早期正常那次；
 初步判断是跑完之后系统收尾，暂不作为插件回归。
+
+### 45.37 子代理第二轮：为什么第三个编码器之后静默
+
+反汇编确认（Metal 镜像内**没有**这些实现，它们是驱动方法）：
+
+- `-renderCommandEncoderWithDescriptor:`、`-commandBuffer`、`-device` 在 Metal 里都不存在实现；
+- `_MTLCommandBuffer` 的 `_queue`（ivar 0x20）**只在**
+  `-initWithQueue:retainedReferences:synchronousDebugMode:` `0x187A7C318` 里写入；
+  `_queue == nil` 时 `commit`/`enqueue` 是**静默 no-op**；
+- `-waitUntilCompleted` `0x187AC6180` 在 `_status`(0x108) 上等条件变量，只有真实提交才会置 2；
+  CA 有三帧缓冲，耗尽后永久等待 —— 这正好解释“无消息、无退出”。
+- 命令缓冲/纹理/编码器**没有类身份闸门**（整个 Metal 里 0 处 `isKindOfClass:`），
+  但 `commitCommandBuffer:wake:` 会校验 `[queue device] == [cmdbuf device]`。
+
+### 45.38 ho：自完成命令缓冲让整条渲染管线跑起来了
+
+ho 让命令缓冲**自完成**（`-commit` 记一行、`-status` 返回 2、`-waitUntilCompleted` 立即返回），
+并显式实现 `-device`/`-commandQueue`/`-error`。结果（`bb exits 0`，全程无崩溃）：
+
+```
+newTextureWithDescriptor: ×N
+renderCommandEncoderWithDescriptor: → endEncoding → dealloc   (反复多次)
+blitCommandEncoder
+  forward: copyFromTexture:sourceSlice:…            ×16
+  forward: generateMipmapsForTexture:               ×3
+forward: replaceRegion:mipmapLevel:slice:withBytes:… ×3
+forward: supportsVertexAmplificationCount:          ×10
+```
+
+也就是说 CA **已经在跑真正的合成流程**（离屏纹理、render pass、blit 拷贝、mipmap 生成、
+区域上传）。目前仍未看到 `commit`/`presentDrawable`。
+
+### 45.39 通用转发器的边界
+
+`supportsVertexAmplificationCount:` 这类**返回标量**的 selector 也落进了通用转发，
+被当成 `v@:@`（void、一个对象参数）——返回值是垃圾。所以：
+
+- 转发器只适合真正 void 的 SPI；
+- 所有返回 BOOL/NSUInteger/id 的 selector 必须显式实现（`-device`、`-status`、`-error`、
+  `-width`、`-height`、`-pixelFormat`、`supportsVertexAmplificationCount:` …）。
+
+### 45.40 下一步（有据可依，不需要再盲试）
+
+1. 按子代理给出的链路做**真正的队列/命令缓冲**：
+   - 队列：`_MTLCommandQueue` 子类 + `-initWithDevice:descriptor:`；
+   - 命令缓冲：`-initWithQueue:retainedReferences:synchronousDebugMode:`（这样 `_queue` 才会被写），
+     实现 `-device`，并在我们自己的提交点之后调用
+     `-commandBufferDidComplete:startTime:completionTime:error:` `0x187A8A380`，让 `_status`→2；
+   - 编码器：`-renderCommandEncoderWithDescriptor:` 里创建 `_MTLRenderCommandEncoder` 子类并调用
+     `-[_MTLCommandEncoder initWithCommandBuffer:]`，这样 `endEncoding` 才会把当前编码器清掉。
+2. 把返回标量的 selector 从转发器里摘出来，逐个显式实现。
+3. 之后再谈“把 commit 接到我们驱动的 Submit”——那时才是第一帧真正进入 GPU 的时刻。
