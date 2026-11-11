@@ -2802,3 +2802,39 @@ SpringBoard 没有 display → 不建窗口 → 不提交图层
 因果链并给出了可用的规避方案（让 SpringBoard 在 backboardd 之后启动）。
 
 镜像：`/tmp/opencode/boot-H236hu.img`，sha256 `0739918f…`；插件 cdhash `00ffc2f8…`。
+
+### 45.53 hu 实测：display 列表确认是 “LCD/primary”，但 SpringBoard 的重启被沙箱挡住
+
+`ca#N` 行（本轮）：
+
+```
+ca#200 probe timer class=1 main=1 list=6 server=6 port=0x621b kr=0x0
+ca#201 display list[0] name=LCD       device=primary
+ca#202 display list[1] name=Wireless  device=wireless0
+ca#203..206 display list[2..5] name=Wireless-1..4 device=wireless1..4
+```
+
+- **`list[0] name=LCD device=primary`**：`mainDisplay` 就是这块面板，§45.51 的推断成立
+  （其余 5 个是 Wireless 虚拟屏）；
+- `list=6` 在 187 s / 219 s / 221 s / 234 s / 251 s 全部一致，是稳定状态，不是瞬时值。
+
+重启实验失败在沙箱：
+
+```
+Sandbox: backboardd(56) deny(1) process-info-listpids
+ca#228 restart restart springboard=none
+```
+
+`proc_listpids` 被拒绝，`springboard=none` 不是“没找到”，而是“根本不让枚举”。
+
+### 45.54 hv：逐 pid 查询绕开 process-info-listpids，并在日志里带边界
+
+- `find_process()` 改成对 pid 1..400 逐个调 `proc_name()`（不同的沙箱检查），
+  **拒绝次数也写进日志**（`springboard=none refused=N`），所以下次能区分“被拒”和“没有该进程”；
+- `ca#N display` 增加 `bounds`（经 KVC 取 `NSValue`，避开结构体返回 ABI），
+  用来确认 LCD 这个 display 的尺寸不是 0×0——如果是 0，CA 不会往里画。
+
+> 记录一个坑：`CGRectZero` 是外部符号，bundle 没有链接 CoreGraphics 会链接失败；
+> 用 `memset` 清零本地 `CGRect` 即可，只用到类型不需要框架。
+
+镜像：`/tmp/opencode/boot-H236hv.img`，sha256 `3fea6784…`；插件 cdhash `0ed22582…`。
