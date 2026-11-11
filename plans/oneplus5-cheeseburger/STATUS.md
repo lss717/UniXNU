@@ -34,6 +34,10 @@
   锁内快照解锁后打印**（`osfmk/kern/task.c: native_sb_pc_sample`，驱动侧
   `NativeUfsProbe` 的采样线程调用）。判据是“同一 tid 的 pc 是否移动”，不是单次快照。
   栈回溯（FP 链）留到第 1 步显示“pc 停在非 trap 位置”时再做。
+- **会话交接（2026-11-11，最新）**：`diagnostics/SESSION-HANDOFF-2026-11-11.md` —— 现状、
+  已证实结论、已排除项、下一步（读 SpringBoard 同步消息的 `msgh_id`）、镜像清单与全部操作细节。
+  当前开放项：**SpringBoard 卡在 `mach_msg2_trap` 等一个没人回的回复**，对端未定位；
+  渲染服务器侧一切正常（`LCD/primary 1080x1920`、18 pass / 0 draw / 0 swap）。
 - 打包与信任缓存的踩坑单独成文：
   `plans/oneplus5-cheeseburger/diagnostics/gpu-display-pitfalls-2026-11-11.md`（P1–P10 + 自检清单）。
 - 上一阶段：**C3 完成（2026-11-10，H236et→ez）。** A540 的 CP 已离开 secure 模式：

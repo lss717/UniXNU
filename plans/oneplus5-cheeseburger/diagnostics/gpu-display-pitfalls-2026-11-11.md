@@ -326,3 +326,27 @@ xcrun nm build/native-ufs-probe/libNativeUfsProbe.a | grep -c <新符号>       
 ```
 
 四项都对再构建；任何一项不对，构建出来的东西都不代表仓库当前状态。
+
+## P17 内核构建不可复现，且“改几行再重建”会踩到 OSMetaClass panic
+
+- 用**完全相同源码**重建两次，`kernel.macho` 的 sha256 不同（`0e432507…` vs `a7cef136…`）。
+  所以“某版能启动、某版 panic”不能直接归因到源码差异。
+- 三次连续构建（`im/in/io`）都在 `OSMetaClass::addInstance +0x30`（`far=0`）崩，紧跟在
+  `NATIVE_UFS_CACHE: … read-ahead=` 之后；而 `il` 能稳定启动。属于“类注册/链接顺序”那一族
+  （H103fp/fq/fr）。
+- **做法**：内核侧改动要成批做、一次验证；一旦新内核 panic，立刻刷回最后一版已知可启动的镜像
+  （本轮是 `boot-H236il.img`，sha `fce46cb5…`），不要在这一版上继续改。
+
+## P18 `com.apple.lsd` 不是服务名（假线索）
+
+`com.apple.lsd` 查出来是 `0x44e`（UNKNOWN SERVICE），会让人以为 Launch Services 没起来。
+实际从系统镜像的 `System/Library/LaunchDaemons/com.apple.lsd.plist` 读到的 `MachServices` 是：
+
+```
+com.apple.lsd.mapdb / .modifydb / .xpc / .open / .openurl / .installation
+com.apple.lsd.icons / .personaobserver / .diagnostics / .plugin / .rebuild / .extensions
+```
+
+而且 `com.apple.lsd.mapdb` 实测 `kr=0x0`，说明 lsd 的监听是好的。
+**做法**：探测服务名之前，先从 `com.apple.<x>.plist` 的 `MachServices` 取真实名字，
+不要按进程名猜。
