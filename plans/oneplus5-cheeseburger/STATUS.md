@@ -12124,3 +12124,23 @@ fs 版移除 `sheng-disable-jobs=…` 后（args 874，C3 正常）复测，`sel
 - 根因补丁：`gpu_reset()` 中的 RBCCU/SP GDSC 上电（`0x778000` + 轮询 bit20 + SP 时钟）；
 - 详细记录：`diagnostics/build-environment-2026-11-10.md` §29（正例读数）、§30（逐寄存器 diff）、
   §31（SP 块判定）、§32（根因）、§33（C3 完成 + 留给 C4 的副作用）。
+
+## A1 Metal 插件追踪：加载根因与设备清单（2026-11-11）
+
+- **插件不被加载的根因是 boot 信任缓存**，不是 addon 挂载或 Data seed：
+  重打的 bundle 是 ad-hoc 签名，AMFI 对 `backboardd`（platform binary）报
+  "unsuitable CT policy 0 / Library Validation failed"。把 CDHash 增量写进
+  `Payloads/kernel.macho.trustcache` 的 owner 模块（`scripts/add-owner-trust-hash.py`）后，
+  bundle 立即被 dlopen。
+- 主类必须满足三条，否则 Metal 不实例化或直接 SIGABRT：
+  1. 是 `_MTLDevice` 子类（纯 `NSObject` 时连 `+alloc` 都不会收到）；
+  2. 在 `+load` 里 `class_addProtocol` 声明 `MTLDevice` **和** `MTLDeviceSPI`
+     （注册断言 "a plugin's device conforms to Metal's private device protocol"）；
+  3. `initWithAcceleratorPort:` 返回该实例；`_MTLDevice` 自身没有这个实现。
+- 追踪到的设备/队列调用顺序（逐轮推进放弃点）：
+  `+initialize` → `+alloc` → `-initWithAcceleratorPort:` → `-featureProfile`(nil×3) →
+  `-maxBufferLength` → `-newCommandQueue` → `queue -setLabel:` → `-setSubmissionQueue:` →
+  `-setCompletionQueue:` → `queue -device` → `-newDepthStencilStateWithDescriptor:` →
+  `-supportsFamily:1001`×2。
+- 纪律：`-featureProfile` 返回空字典会让 Metal **更早**放弃，必须保持"未实现=nil"。
+- 待验证镜像 `boot-H236gx.img`（`supportsFamily:` 改回 NO），手机改接 **192.168.8.58** 后上机。

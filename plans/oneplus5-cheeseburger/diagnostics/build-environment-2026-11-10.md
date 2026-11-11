@@ -2124,3 +2124,29 @@ dev  -supportsFamily: 1001 ×2        (Apple1；桩返回 YES)
 现在最后一个失败点在 `supportsFamily:1001` 之后：桩对所有 family 都回 YES，
 Metal 随后进入只有真设备才有的内部路径并以 SIGABRT 结束（每轮恰好 1 次 backboardd 退出）。
 下一步：让 `supportsFamily:` 只对**已知为空**的 family 回 NO，看 Metal 走兼容回退时还会问什么。
+
+### 45.26 `supportsFamily:` 改为回 NO（gx，待上机验证）
+
+gw 的最后一次崩溃发生在 `supportsFamily:1001` 之后：桩对所有 family 都回 YES，
+Metal 于是进入只有真设备才有的内部路径并以 SIGABRT 结束（每轮恰好 1 次 backboardd 退出）。
+gx 让 `supportsFamily:` 一律回 **NO**，预期 renderer 走兼容回退分支，把询问继续下去。
+
+镜像：`/tmp/opencode/boot-H236gx.img`（81,149,952 B，sha256 `59f9d426be972425b6628ce24691ef16…`），
+插件 cdhash `3933175c1ad4676963c18209d8a281ce82c495e7` 已写入信任缓存。**尚未上机。**
+
+### 45.27 下一台设备主机：192.168.8.58（重要）
+
+手机上机的宿主主机从 `ls@192.168.10.225`（Windows/PowerShell）换成 **`192.168.8.58`**。
+需要同步调整：
+
+- `/tmp/opencode/rssh.sh` / `rscp.sh` 指向的是 Mac（`192.168.10.103`），**不变**；
+- `/tmp/opencode/rwin`、`askpass-win.sh`、`known_hosts_win` 用的是 10.225，**换成 8.58**；
+- 部署/抓日志的三段式不变：
+  1. scp `boot-H236*.img` 到手机宿主的 `D:/Users/ls/Documents/OnePlus5_ios/`（或新主机上的同一路径，
+     上机前先确认路径与 fastboot/adb 可执行文件位置）；
+  2. `adb reboot bootloader` → `fastboot boot <img>`；
+  3. TWRP 下 `blockdev --flushbufs` + `dd` 拉 `userdata_ios` 的日志区，再用 `scripts/h103-log-pull.py` 解析。
+- 用户会在**手机连好 8.58 之后通知**，收到通知再部署，不要提前假设在线。
+
+上机后要做的第一件事：确认 gx 的 `NATIVE_MTL` 序列是否出现新的 selectors
+（预期在 `supportsFamily:1001` 之后继续，且不再每轮 SIGABRT）。
