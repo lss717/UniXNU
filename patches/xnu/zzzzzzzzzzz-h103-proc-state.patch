@@ -2,7 +2,7 @@ diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
 index 5dcf00e..999c217 100644
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -10285,3 +10285,282 @@ task_best_name(task_t task, char *buf, size_t size)
+@@ -10285,3 +10285,285 @@ task_best_name(task_t task, char *buf, size_t size)
  	char *name = proc_best_name(task_get_proc_raw(task));
  	strlcpy(buf, name, size);
  }
@@ -267,7 +267,10 @@ index 5dcf00e..999c217 100644
 +	 * voucher port and msgh_id, desc count/rcv name, rcv size/priority. */
 +	for (unsigned i = 0; i < native_sb_count; i++) {
 +		uint64_t bs, rl, vi, dr, rp;
-+		if (native_sb_rows[i].x16 != 47) {
++		/* Mach traps carry a NEGATIVE syscall number in x16
++		 * (osfmk/arm64/bsd_arm64.c: assert(call_number < 0) then
++		 * call_number = -call_number), so mach_msg2_trap is -47. */
++		if ((int32_t)(uint32_t)native_sb_rows[i].x16 != -47) {
 +			continue;
 +		}
 +		bs = native_sb_rows[i].x2;
