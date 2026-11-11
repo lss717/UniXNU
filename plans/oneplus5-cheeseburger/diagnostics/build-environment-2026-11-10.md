@@ -3038,3 +3038,33 @@ payload 里仍是 hw 那一版的插件，其 CDHash 已不在新信任缓存里
 4. 用 `NATIVE_MTL` + `NATIVE_ACCEL_HB` 的 `accel=` 计数区分“没加载”和“加载了没日志”（P4）；
 5. LaunchDaemon 需要 root 属主、本机没有 per-user launchd、没有 sudo（P5/P6/P7）；
 6. 日志窗口只有约 61 个快照，关键行要重复写（P9）。
+
+### 45.63 ib：重启链路确认可用；ic 改为读 SpringBoard 自己的日志
+
+ib（payload 里已换成新插件）恢复了全部日志（`NATIVE_MTL` 258 行，`accel=50/0/273/0 abi=272/17/0`），
+并且这次 `ca#N restart` 落在日志窗口内，把 §45.56 的疑问一次答清：
+
+```
+ca#228 restart restart scan=27 refused=0     ← 逐 pid 的 proc_name 可用（拒绝数 0）
+ca#229 restart restart kill pid=27 status=0  ← kill 成功
+[218.35] NATIVE_EXIT: pid=27 comm=SpringBoard status=0xf   ← SIGTERM
+[218.42] SpringBoard[119] exec                             ← launchd 立即重启
+```
+
+也就是说：**扫描、发信号、launchd 重启都没有问题**；新 SpringBoard（119）启动时渲染服务器
+已经在发布 `LCD/primary 1080x1920`。但 230 s 之后依旧零 `NATIVE_MTL`、`s345=0/0/0`。
+
+所以问题被完全逼进 **SpringBoard 自己的初始化**里，而我们看不到它的 stderr。
+ic 因此加了两件事，都是插件侧、不改内核：
+
+1. **`OSLogStore` 读 SpringBoard 的统一日志**（iOS 15+ 公开 API）：重启后 +30 s，
+   `+[OSLogStore localStoreAndReturnError:]` → `entriesEnumeratorWithOptions:position:predicate:error:`，
+   谓词 `process == "SpringBoard"`，最近 420 s，最多打印 48 条 `composedMessage`
+   （`sblog#N sb …`），结尾再打 `total=/shown=` 和 `no-class/no-store/no-enumerator/exception`，
+   失败也要留痕；
+2. **客户端计数改问窗口服务器一侧**：`+[CADisplay displays]` 返回的是客户端对象（没有 `contexts`），
+   §45.61 的探测因此什么都没打印。ic 改为取 `-[CAWindowServer serverIfRunning] -displays` 的第一个
+   `CAWindowServerDisplay`，再试 `contexts`/`contextIds`/`clients`/`currentState`。
+
+镜像：`/tmp/opencode/boot-H236ic.img`，sha256 `d0745f52…`（与上一张 `3ae6cf4a…` 确认不同）；
+插件 cdhash `cd36bb18…`，cadprobe `8fded1a6…`（两者都在信任缓存里）。
