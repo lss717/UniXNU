@@ -2587,3 +2587,50 @@ MobileGestaltHelper: 8(=1080x1920) | 28(=163)
 **因此下一轮不再加 Metal 桩**：要把 18 次探测里被清零的 57/22/33/79/74 按真实语义答复，
 证据来源是 iPad7,1 kernelcache 里 `IOMobileFramebufferLegacy` 的 user client 分发表
 （离线反汇编，正在做）。
+
+### 45.47 离线反汇编：`IOMobileFramebufferLegacy` 的 user client 分发表（iPad7,1 kernelcache）
+
+来源 `/tmp/opencode/h96/kernelcache.arm64`；kext `com.apple.iokit.IOMobileGraphicsFamily`
+（`_PrelinkExecutableLoadAddr 0xfffffff0055f5780`，代码在 `__PLK_TEXT_EXEC`
+≈`0xfffffff006767000`–`0xfffffff00678c000`）。
+
+- 分发表 **`0xfffffff006f354c0`**（文件 `0x27094c0`），90 项 × 24 B，`index = selector`，**基址 0**；
+  `IOMobileFramebufferUserClient::externalMethod` 在 `0xfffffff006778d40`，
+  `subs w8,w8,#0x5a` 之后 `cset w8,lo` → selector ≥ 90 返回 `0xe0000001`。
+- 条目布局（24 B）：`+0x00` handler、`+0x08` scalarIn、`+0x0c` structIn、`+0x10` scalarOut、
+  `+0x14` structOut。
+- **特例**：selector `0x44..0x55`（68…85）用跳转表 `0x6778f4c` 在调用前改写复制出来的条目；
+  68/85 用 `args->scalarInputCount` / `structureInputSize`，**79 用 `scalarInputCount` 与
+  `structureOutputSize`**（`0x6778e90`）。这就是表里 79 写 0/0、而运行期是 2/1580 的原因。
+- 空槽：**59–65、70、71**；保留槽跳到 `0xfffffff00677af74`，打印
+  `"IOMFB: WARNING: reserved user client function called"` 并返回 `0xe00002c7`。
+- 每次调用前还有一道预检：provider 槽 **`+0x5b0`**（`0x6778dbc`，视为“是否 open/可用”），
+  非零状态会原样返回给 0–89 的**每一个** selector。
+
+backboardd 这轮实际调到的 9 个 selector：
+
+| sel | handler | sIn | stIn | sOut | stOut | 备注 |
+|---|---|---|---|---|---|---|
+| 8 | `0xfffffff00677966c` | 0 | 0 | 2 | 0 | 写 `(1080,1920)`，与日志 `out=438,780` 一致 |
+| 15 | `0xfffffff00677a014` | 2 | 0 | 1 | 0 | |
+| 22 | `0xfffffff00677a2e4` | 1 | 0 | 0 | 0 | 转发 provider `+0x5b8`，只回状态 |
+| 29 | `0xfffffff00677a5ac` | 0 | 0 | 0 | 8 | |
+| 33 | `0xfffffff00677a770` | 1 | 0 | 0 | 0 | 转发 provider `+0x740`，只回状态 |
+| 57 | `0xfffffff00677a200` | 0 | 0 | 1 | 0 | 转发 `+0x670`，**局部 u32 预置 6** |
+| 74 | `0xfffffff00677a718` | 1 | 0 | 2 | 64 | 与日志 `struct=64` 一致 |
+| 79 | `0xfffffff0067799b4` | 2* | 0 | 0 | 1580* | 转发 provider `+0x700`，输出整块缓冲 |
+| 88 | `0xfffffff00677adb0` | 1 | 0 | 0 | 0 | |
+
+（`*` 运行期由 `args` 改写。）另外 3/4/5 的条目确实存在（3 用 2 个 scalar in、4 用 0 个、
+5 用 1288 字节 structIn），所以“没有 3/4/5”不是分发表缺项，而是客户端根本没调。
+
+**这四个 handler 都不做 provider 类检查**：79/57/33/22 只是取 `this+0xd8` 的 provider 对象、
+调它 vtable 上的一格。`"provider was not AppleARMIODevice"`（`0xfffffff0055fc213`）只在
+`IOMobileFramebufferLegacy::start` 里，**只打印、不失败**；`"IOSurfaceRoot not available or of
+the wrong class"` 同理。
+
+**79 的 1580 字节结构无法离线取到**：常数 `0x62c` 在整份镜像里不存在（它是 backboardd 自己的
+缓冲区大小，由 `args->structureOutputSize` 传进来），填充逻辑在 provider vtable `+0x700`，而
+kext 的 `__PRELINK_DATA` 在缓存里约 83% 为零（bind fixup 在开机时做），vtable 内容读不到。
+要拿到真实布局只能**运行期 hexdump** 一次；按 §45.46，清零是本族当前策略，而 79 不是“是否
+headless”的唯一候选，所以先不动它。
