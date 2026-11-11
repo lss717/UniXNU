@@ -2448,3 +2448,19 @@ forward: supportsVertexAmplificationCount:          ×10
 `presentDrawable:` 也没有 → CA 连“可呈现表面”都没建。这与显示侧“CA 从不提交 swap
 （selector 3/4/5 = 0）”是同一件事的两面：Metal 的 present 与 display 的 swap 卡在同一个判断上。
 因此 queue/cmdbuf 做到真提交也不等于有帧上屏——两条线应作为**同一个 gate** 设计。
+
+### 45.42 hp（待上机）：显式标量访问器 + pipeline descriptor 内容
+
+按 §45.41 的顺序做了前两步：
+
+- 桩对象（纹理/缓冲/管线/编码器）的标量回答改为**侧表**（`TraceStorage`）：
+  `newTextureWithDescriptor:` 把 `width/height/pixelFormat/textureType/storageMode/
+  mipmapLevelCount/sampleCount/usage/arrayLength` 存进去，`newBufferWithLength:options:`
+  存 `length`；访问器 `-width/-height/-pixelFormat/-length/-contents/-gpuAddress…` 从侧表读，
+  不再落到未初始化的真实基类实现上（这正是 ho 里"返回值不可信且无日志"的来源）。
+- `newRenderPipelineStateWithDescriptor:error:` 现在打印
+  `vs=<函数名|nil> fs=<函数名|nil> fmt0=<附件0像素格式> samples=<光栅采样数>`，
+  直接判定着色器是不是当前的拦路点。
+
+镜像：`/tmp/opencode/boot-H236hp.img`，sha256 见提交记录；插件 cdhash
+`dc2c6689…` 已写入信任缓存。**尚未上机。**
