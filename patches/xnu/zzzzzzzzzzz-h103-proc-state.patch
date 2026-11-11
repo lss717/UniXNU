@@ -1,8 +1,8 @@
 diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
-index 5dcf00e..4d78fec 100644
+index 5dcf00e..4750a5a 100644
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -10285,3 +10285,601 @@ task_best_name(task_t task, char *buf, size_t size)
+@@ -10285,3 +10285,631 @@ task_best_name(task_t task, char *buf, size_t size)
  	char *name = proc_best_name(task_get_proc_raw(task));
  	strlcpy(buf, name, size);
  }
@@ -224,6 +224,18 @@ index 5dcf00e..4d78fec 100644
 +static int native_sb_pid;
 +static task_t native_sb_task;
 +
++/* H245: every thread of the sampled process, not only the blocked ones, so the
++ * offline pass can tell whether SpringBoard ever runs inside QuartzCore (L2) or
++ * Metal/AGX (L3) instead of only waiting in libsystem_kernel. */
++struct native_sb_allrow {
++	uint64_t tid;
++	uint32_t state;
++	uint64_t pc;
++	uint64_t lr;
++};
++static struct native_sb_allrow native_sb_all[24];
++static unsigned native_sb_alln;
++
 +static void
 +native_sb_probe_name(ipc_space_t space, unsigned name, struct native_sb_probe *out)
 +{
@@ -293,6 +305,13 @@ index 5dcf00e..4d78fec 100644
 +		if (pc < 0x100000000ULL || pc >= 0x8000000000ULL) {
 +			continue;
 +		}
++		if (native_sb_alln < sizeof(native_sb_all) / sizeof(native_sb_all[0])) {
++			native_sb_all[native_sb_alln].tid = thread_tid(th);
++			native_sb_all[native_sb_alln].state = th->state;
++			native_sb_all[native_sb_alln].pc = pc;
++			native_sb_all[native_sb_alln].lr = get_saved_state_lr(state);
++			native_sb_alln++;
++		}
 +		/* Mach traps carry a NEGATIVE syscall number in x16
 +		 * (osfmk/arm64/bsd_arm64.c: assert(call_number < 0) then
 +		 * call_number = -call_number), so mach_msg2_trap is -47. */
@@ -351,6 +370,7 @@ index 5dcf00e..4d78fec 100644
 +	memset(&native_sb_rcv, 0, sizeof native_sb_rcv);
 +	memset(&native_sb_req, 0, sizeof native_sb_req);
 +	memset(native_sb_hdr, 0, sizeof native_sb_hdr);
++	native_sb_alln = 0;
 +	proc_iterate(1U | 4U, native_sb_collect, NULL, NULL, NULL);
 +	if (native_sb_pid > 0) {
 +		if (strncmp(name, "SpringBoard", 11) == 0) {
@@ -391,6 +411,16 @@ index 5dcf00e..4d78fec 100644
 +		    (unsigned)(uint32_t)vi, (unsigned)(uint32_t)(vi >> 32),
 +		    (unsigned)(uint32_t)(dr >> 32), (unsigned)(uint32_t)rp,
 +		    (unsigned long long)native_sb_rows[i].x7);
++	}
++	if (strncmp(name, "SpringBoard", 11) == 0) {
++		printf("NATIVE_SBTHR: sample=%u comm=%s threads=%u\n", sample, name, native_sb_alln);
++		for (unsigned i = 0; i < native_sb_alln; i++) {
++			printf("NATIVE_SBTHR: sample=%u tid=%llu st=0x%x pc=0x%llx lr=0x%llx\n",
++			    sample, (unsigned long long)native_sb_all[i].tid,
++			    native_sb_all[i].state,
++			    (unsigned long long)native_sb_all[i].pc,
++			    (unsigned long long)native_sb_all[i].lr);
++		}
 +	}
 +	/* H239: the buffer of a mach_msg2 call still holds the header of the
 +	 * message that was sent last, so read it back and describe both ports. */
