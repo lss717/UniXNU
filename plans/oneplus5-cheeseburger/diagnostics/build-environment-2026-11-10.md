@@ -2510,3 +2510,28 @@ newRenderPipelineStateWithDescriptor:error:
 于是永远走不到 commit。这与显示侧记录的“CA 从不提交 swap（selector 3/4/5 = 0）”是同一个判断的两面，
 **必须按同一个 gate 去解**：让 CA 认为这块 A540 设备拥有一个可提交的显示表面（IOSurface + 显示服务），
 而不是继续在 Metal 侧加桩。
+
+### 45.45 hs：可呈现表面（iosurface 纹理 + presentDrawable），并且 ho 的 render pass 里没有一次 draw
+
+按 §45.44 的顺序做了第一步，同时把 ho 的完整计数补齐（此前只统计了 `forward:` 行）：
+
+- `-newTextureWithDescriptor:iosurface:plane:`：**新实现**。返回 `_MTLTexture` 运行时子类，
+  侧表记录 `width/height/pixelFormat/iosurface/plane`，日志带 `IOSurfaceGetID/…` 的真实值
+  （`IOSurfaceGet*` 用 `dlsym` 取，bundle 不链接 IOSurface 框架）。
+- `-iosurface` / `-iosurfacePlane` / `-bytesPerRow` 从侧表回答（此前落到未初始化的真实基类上）。
+- `-presentDrawable:`、`-presentDrawable:atTime:`、`-presentDrawable:afterMinimumDuration:`：
+  记录 drawable 的 surface（`[drawable texture]` → `-iosurface`），**每启动一次**向显示侧
+  GPU 交接探一次（tunnel `0x7000` MODE、`0x7001` PRESENT），然后把结果写进日志，最后按
+  `uint64_t` 签名调队列的 `-commandBufferDidComplete:startTime:completionTime:error:`。
+- 工具函数 `abi_call_rc()` 返回原始 `IOReturn`（原来的 `abi_call()` 只给 0/-1），
+  交接的拒绝原因现在可读。
+
+**ho 的完整计数（此前漏掉的）**：18 个 `renderCommandEncoderWithDescriptor:` 之后，
+**没有任何一次 `setRenderPipelineState:` / `drawPrimitives:`**——转发器只收到
+`copyFromTexture:`×16、`supportsVertexAmplificationCount:`×10、`replaceRegion:`×3、
+`generateMipmapsForTexture:`×3、`setGPUPriority:`×1。也就是说渲染服务器虽然建了 18 个
+render pass，**编码进去的绘制指令是 0**，18 个 pass 全是清屏/空 pass，真正的像素只经过 blit。
+这与“场景里没有客户端的可见层”一致：`SpringBoard`（pid 27）从未向我们的设备建过队列，
+backboardd 的合成器拿到的是一个空图层树。
+
+镜像：`/tmp/opencode/boot-H236hs.img`，sha256 `16c8accf…`；插件 cdhash `1a319fef…`。
