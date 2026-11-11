@@ -1,8 +1,8 @@
 diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
-index 5dcf00e..999c217 100644
+index 5dcf00e..241c7d6 100644
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -10285,3 +10285,411 @@ task_best_name(task_t task, char *buf, size_t size)
+@@ -10285,3 +10285,511 @@ task_best_name(task_t task, char *buf, size_t size)
  	char *name = proc_best_name(task_get_proc_raw(task));
  	strlcpy(buf, name, size);
  }
@@ -212,6 +212,7 @@ index 5dcf00e..999c217 100644
 +	unsigned srights;
 +	unsigned mscount;
 +	int pid;
++	uint64_t port;          /* H242: port object, compared only */
 +};
 +static struct native_sb_probe native_sb_rcv;
 +static struct native_sb_probe native_sb_req;
@@ -220,6 +221,7 @@ index 5dcf00e..999c217 100644
 +static int native_sb_hdr_ok;
 +static uint32_t native_sb_hdr[6];
 +static int native_sb_capture;
++static int native_sb_pid;
 +static task_t native_sb_task;
 +
 +static void
@@ -246,6 +248,7 @@ index 5dcf00e..999c217 100644
 +		    (entry->ie_bits & MACH_PORT_TYPE_PORT_OR_DEAD) != 0 &&
 +		    entry->ie_object != IP_NULL) {
 +			port = (ipc_port_t)entry->ie_object;
++			out->port = (uint64_t)(uintptr_t)port;
 +			out->srights = port->ip_srights;
 +			out->mscount = port->ip_mscount;
 +			/* Takes the port queue lock itself and reports the pid of the
@@ -267,6 +270,7 @@ index 5dcf00e..999c217 100644
 +	if (strncmp(comm, native_sb_name, strlen(native_sb_name)) != 0) {
 +		return 0;
 +	}
++	native_sb_pid = proc_getpid(p);
 +	struct task *t = proc_task(p);
 +	if (!t) {
 +		native_sb_note = "no-task";
@@ -325,6 +329,9 @@ index 5dcf00e..999c217 100644
 +	}
 +	return 1;
 +}
++
++static void native_xpc_register(uint64_t port, int pid, const char *owner, char role);
++static void native_xpc_dump(unsigned sample);
 +
 +void
 +native_sb_pc_sample(const char *name, unsigned sample)
@@ -410,7 +417,100 @@ index 5dcf00e..999c217 100644
 +		    (unsigned long long)native_sb_req.ie_bits,
 +		    native_sb_req.srights, native_sb_req.mscount,
 +		    native_sb_req.pid, native_sb_qname2);
++		native_xpc_register(native_sb_rcv.port, native_sb_pid, name, 'r');
++		native_xpc_register(native_sb_req.port, native_sb_pid, name, 'q');
++		native_xpc_dump(sample);
 +		task_deallocate(native_sb_task);
 +		native_sb_task = TASK_NULL;
 +	}
++}
++
++
++/* H242: request lifecycle tracing for the SpringBoard -> lsd -> containermanager
++ * chain.  The sampler learns the port objects (pointer only, never dereferenced),
++ * so the send hook is a plain pointer comparison in the hottest path of the IPC
++ * layer: no locks, no allocations, no port lookups.  A message counted as "to"
++ * a tracked port is exactly the request/reply we care about. */
++struct native_xpc_port {
++	uint64_t port;
++	int pid;
++	char owner[17];
++	char role;
++	unsigned long long from;
++	unsigned long long to;
++};
++#define NATIVE_XPC_PORTS 8
++static struct native_xpc_port native_xpc_ports[NATIVE_XPC_PORTS];
++static unsigned native_xpc_port_count;
++static unsigned native_xpc_seq;
++
++static void
++native_xpc_register(uint64_t port, int pid, const char *owner, char role)
++{
++	if (port == 0) {
++		return;
++	}
++	for (unsigned i = 0; i < native_xpc_port_count; i++) {
++		if (native_xpc_ports[i].port == port) {
++			native_xpc_ports[i].pid = pid;
++			strlcpy(native_xpc_ports[i].owner, owner,
++			    sizeof native_xpc_ports[i].owner);
++			native_xpc_ports[i].role = role;
++			return;
++		}
++	}
++	if (native_xpc_port_count >= NATIVE_XPC_PORTS) {
++		return;
++	}
++	native_xpc_ports[native_xpc_port_count].port = port;
++	native_xpc_ports[native_xpc_port_count].pid = pid;
++	strlcpy(native_xpc_ports[native_xpc_port_count].owner, owner,
++	    sizeof native_xpc_ports[native_xpc_port_count].owner);
++	native_xpc_ports[native_xpc_port_count].role = role;
++	native_xpc_port_count++;
++}
++
++/* Called from ipc_kmsg_send() right after the header is fetched and before any
++ * lock is taken; 'remote' is the destination port object stored in the header. */
++void
++native_xpc_send_hook(void *remote, unsigned bits, unsigned size, unsigned id)
++{
++	uint64_t port = (uint64_t)(uintptr_t)remote;
++	char from[17];
++	int pid;
++
++	if (port == 0 || native_xpc_port_count == 0) {
++		return;
++	}
++	pid = proc_getpid(current_proc());
++	for (unsigned i = 0; i < native_xpc_port_count; i++) {
++		if (native_xpc_ports[i].pid == pid) {
++			native_xpc_ports[i].from++;
++			break;
++		}
++	}
++	for (unsigned i = 0; i < native_xpc_port_count; i++) {
++		if (native_xpc_ports[i].port != port) {
++			continue;
++		}
++		native_xpc_ports[i].to++;
++		proc_name(pid, from, sizeof from);
++		printf("NATIVE_XPC: #%u send from=%s(%d) to=%s/%c bits=0x%x size=%u id=0x%x\n",
++		    ++native_xpc_seq, from, pid, native_xpc_ports[i].owner,
++		    native_xpc_ports[i].role, bits, size, id);
++		return;
++	}
++}
++
++static void
++native_xpc_dump(unsigned sample)
++{
++	printf("NATIVE_XPC: sample=%u ports=%u", sample, native_xpc_port_count);
++	for (unsigned i = 0; i < native_xpc_port_count; i++) {
++		printf(" [%s/%c p=0x%llx f=%llu t=%llu]",
++		    native_xpc_ports[i].owner, native_xpc_ports[i].role,
++		    (unsigned long long)native_xpc_ports[i].port,
++		    native_xpc_ports[i].from, native_xpc_ports[i].to);
++	}
++	printf("\n");
 +}

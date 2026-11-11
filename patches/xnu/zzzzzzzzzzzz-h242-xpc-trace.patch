@@ -1,0 +1,17 @@
+diff --git a/osfmk/ipc/ipc_kmsg.c b/osfmk/ipc/ipc_kmsg.c
+index 390f5c3..29f8390 100644
+--- a/osfmk/ipc/ipc_kmsg.c
++++ b/osfmk/ipc/ipc_kmsg.c
+@@ -5250,6 +5250,12 @@ ipc_kmsg_send(
+ #endif /* IMPORTANCE_INHERITANCE */
+ 
+ 	hdr = ikm_header(kmsg);
++	{
++		extern void native_xpc_send_hook(void *, unsigned, unsigned, unsigned);
++		native_xpc_send_hook((void *)(uintptr_t)hdr->msgh_remote_port,
++		    (unsigned)hdr->msgh_bits, (unsigned)hdr->msgh_size,
++		    (unsigned)hdr->msgh_id);
++	}
+ 	/* don't allow the creation of a circular loop */
+ 	if (hdr->msgh_bits & MACH_MSGH_BITS_CIRCULAR) {
+ 		ipc_kmsg_destroy(kmsg, IPC_KMSG_DESTROY_ALL);
