@@ -452,13 +452,21 @@ h103MaybeRestartSpringBoard (uint32_t displayClients)
 // task_lock_try + queue_iterate pattern that this repo uses for wait-state dumps.
 extern "C" void native_sb_pc_sample (const char *name, unsigned sample);
 
+// H236ik: SpringBoard's only abnormal wait is a synchronous Mach reply (mach_msg2_trap), so the
+// sampler covers the daemons it could be waiting on.  Six samples keep the log window intact.
+static const char *const a540SbNames[] = {
+  "SpringBoard", "keybagd", "runningboardd", "containermanagerd", "usermanagerd", "backboardd",
+};
+
 static void
 a540SpringBoardSamplerThread (void *, wait_result_t)
 {
   // SpringBoard is exec'd between ~115 s and ~190 s on this board, after a slow launchd phase.
   IOSleep (170000);
-  for (unsigned sample = 0; sample < 10; sample++) {
-    native_sb_pc_sample ("SpringBoard", sample);
+  for (unsigned sample = 0; sample < 6; sample++) {
+    for (unsigned index = 0; index < sizeof a540SbNames / sizeof a540SbNames[0]; ++index) {
+      native_sb_pc_sample (a540SbNames[index], sample);
+    }
     IOSleep (1000);
   }
   IOLog ("NATIVE_SBPC: done\n");

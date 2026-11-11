@@ -1,8 +1,8 @@
 diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
-index 5dcf00e..82b5da0 100644
+index 5dcf00e..999c217 100644
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -10285,3 +10285,237 @@ task_best_name(task_t task, char *buf, size_t size)
+@@ -10285,3 +10285,240 @@ task_best_name(task_t task, char *buf, size_t size)
  	char *name = proc_best_name(task_get_proc_raw(task));
  	strlcpy(buf, name, size);
  }
@@ -168,8 +168,7 @@ index 5dcf00e..82b5da0 100644
 + * the mach_msg trap every healthy thread sits in.  Only TH_WAIT threads are read (kernel threads
 + * have no user state, a thread running on a CPU carries the state of its last trap), the state is
 + * validated, and the pc must look like a user address.  The thread queue is walked under
-+ * task_lock_try() and nothing is printed while the lock is held (IOLog can block).
-+ * Reached from the UFS driver through the same extern "C" channel as native_legacy_client_stats. */
++ * task_lock_try() and nothing is printed while the lock is held (IOLog can block). */
 +#include <mach/arm/thread_status.h>
 +extern struct arm_saved_state *get_user_regs(thread_t);
 +
@@ -177,6 +176,7 @@ index 5dcf00e..82b5da0 100644
 +	uint64_t tid;
 +	uint64_t pc;
 +	uint64_t lr;
++	uint64_t wait;
 +};
 +static struct native_sb_row native_sb_rows[16];
 +static unsigned native_sb_count;
@@ -188,6 +188,7 @@ index 5dcf00e..82b5da0 100644
 +{
 +	char comm[17];
 +
++	(void)arg;
 +	proc_name(proc_getpid(p), comm, sizeof comm);
 +	if (strncmp(comm, native_sb_name, strlen(native_sb_name)) != 0) {
 +		return 0;
@@ -218,6 +219,7 @@ index 5dcf00e..82b5da0 100644
 +			native_sb_rows[native_sb_count].tid = thread_tid(th);
 +			native_sb_rows[native_sb_count].pc = pc;
 +			native_sb_rows[native_sb_count].lr = get_saved_state_lr(state);
++			native_sb_rows[native_sb_count].wait = (uint64_t)(uintptr_t)th->wait_event;
 +			native_sb_count++;
 +		}
 +	}
@@ -232,11 +234,12 @@ index 5dcf00e..82b5da0 100644
 +	native_sb_note = "-";
 +	native_sb_name = name;
 +	proc_iterate(1U | 4U, native_sb_collect, NULL, NULL, NULL);
-+	printf("NATIVE_SBPC: sample=%u n=%u note=%s\n", sample, native_sb_count, native_sb_note);
++	printf("NATIVE_SBPC: sample=%u comm=%s n=%u note=%s\n", sample, name, native_sb_count, native_sb_note);
 +	for (unsigned i = 0; i < native_sb_count; i++) {
-+		printf("NATIVE_SBPC: sample=%u tid=%llu pc=0x%llx lr=0x%llx\n", sample,
++		printf("NATIVE_SBPC: sample=%u comm=%s tid=%llu pc=0x%llx lr=0x%llx wait=0x%llx\n", sample, name,
 +		    (unsigned long long)native_sb_rows[i].tid,
 +		    (unsigned long long)native_sb_rows[i].pc,
-+		    (unsigned long long)native_sb_rows[i].lr);
++		    (unsigned long long)native_sb_rows[i].lr,
++		    (unsigned long long)native_sb_rows[i].wait);
 +	}
 +}
