@@ -1,0 +1,260 @@
+# H240 / H241 lsd IPC 审计（2026-11-11）
+
+调查对象：`/usr/libexec/lsd`（Launch Services）在启动后长时间等待，以及 backboardd 对
+`com.apple.lsd.modifydb`、`com.apple.iconservices`、`com.apple.iconservices.store` 的 Mach lookup 被拒。
+
+本轮只做静态源码/镜像审计、日志关联和符号解析；未改源码、未改 policy、未刷写新镜像。
+镜像基线：
+
+| 镜像 | boot sha256（前 8） | 内核 sha256（前 8） | 用途 |
+|---|---|---|---|
+| H240 | `234ee539` | `513a0b29` | SpringBoard 端口快照（port set 守卫后） |
+| H241 | `9053d015` | `9897c1c5` | 增加 lsd 每轮采样 |
+
+标记：**[已证实]** 有本轮可直接复现的证据；**[推断]** 由证据支持但未直接验证；**[待确认]** 无证据。
+
+---
+
+## 0. 结论摘要
+
+1. **[已证实]** SpringBoard 的 `mach_msg2` 是**纯接收**（`bits=0`、`ssz=0`、16 KB、无超时），
+   接收端口是它自己的回复端口（`SEND|RECEIVE`、`sr=1`），而缓冲区里残留的消息头远端端口属于 **lsd**。
+2. **[已证实]** lsd 本身健康：6 条线程全部是正常空闲/接收，**没有死锁**；但它同样停在一次纯接收上，
+   其缓冲区残留头远端端口属于 **containermanager(62)** —— 这是一条**嵌套的同步 XPC 链**。
+3. **[已证实]** `Protobox` 不是我 fork 新加的：原版 iPad kernelcache 里就有 `(apply-protobox)`、
+   `protobox collection`、`sandbox.protobox.index`，`osfmk/kern/zalloc.h` 在 xnu-work 里 `git diff` 为空。
+   因此三条 deny 的**策略来源是 Apple 原生 profile**，而不是我们改过的规则。
+
+---
+
+## 1. 时间线
+
+| 时间 | 事件 | 证据 |
+|---|---|---|
+| 139.6 s（H240）/ 144.3 s（H241） | `lsd` 由 launchd 启动，pid=92 | `NATIVE_EXEC: comm=lsd argv0=/usr/libexec/lsd` |
+| 140.1 s | lsd 容器路径解析成功 | `ustate: caching container path {'com.apple.lsd' : '/private/var/containers/Data/System/D1606350-…'}` |
+| 161.4 s | lsd `threads=4 run=1` | `NATIVE_WAIT: pid=92 comm=lsd …` |
+| 201.8 s | 采样器第一次看到 lsd（n=2） | `NATIVE_SBPC: sample=0 comm=lsd n=2` |
+| 201.8 s | lsd tid 642 位于 `InstalledContentLibrary -[MIDaemonConfiguration …]` | `pc=0x1bdf1c104 lr=0x1bdf1c0e4` → 符号化见 §3 |
+| 218.8 s | lsd n=6，tid 642 进入 `mach_msg2` | `NATIVE_SBPC: sample=1 comm=lsd n=6` |
+| 282–333 s | SpringBoard / lsd 的 `SBPORT` 三行稳定不变 | §4 |
+| 301.4 s | `systemgroup.com.apple.lsd` 容器解析成功 | `ustate: caching container path {'systemgroup.com.apple.lsd' : …}` |
+
+---
+
+## 2. P0：`fffffff007bbd909` 符号化
+
+**[已证实]** 该地址不属于任何函数：它落在 **`__MergedGlobals`**（内核数据段）内部，偏移 `+0x49`：
+
+```
+0xfffffff007bbd8c0 _object_bypasses / __MergedGlobals   ← 区间起点
+0xfffffff007bbdcf0 _last                                ← 区间终点
+0xfffffff007bbd909 → __MergedGlobals + 0x49
+```
+
+对照符号：
+
+```
+_ipc_mqueue_full     = 0xfffffff007b00320   (D/S)
+_ipc_mqueue_receive  = 0xfffffff0072862a4
+```
+
+**[已证实]** 它既不是 `_ipc_mqueue_full`，也不是 `_ipc_mqueue_receive_continue`（后者
+`0xfffffff0072861f0`，正是同一轮里 SpringBoard tid 290 的 `continuation` 值，说明快照的
+`continuation` 字段读取是正确的）。
+
+**[已证实]** 产生该值的字段是 `th->wait_event`，类型 `event64_t`（`osfmk/kern/thread.h:392`
+`event64_t wait_event; /* wait queue event */`）——所以它是一个**事件值**，不是返回地址，也不是指令地址。
+
+**[待确认]** 该事件值低 3 位为 `001`，不是对齐指针，因此**不能**仅凭符号表把它命名为某个具体 waitq/event；
+需要额外打印 `th->waitq`、`th->wq_state` 或改用 `waitq` 相关符号才能定性。本轮不猜测。
+
+---
+
+## 3. P1：lsd 的四/六条线程（H241 实测）
+
+采样样本（sample=11，333.6 s），用的 cache slide 由同轮
+`NATIVE_TRAP_IMAGE_ROW base=0x1c73f5000 / SessionSyncEngine vmaddr=0x1c18d9000` 推出：
+
+| tid | pc | lr | 状态结论 |
+|---|---|---|---|
+| 480 | `_kevent_id +0x8` | `__dispatch_kq_poll +0xe4` | libdispatch 事件循环在 kqueue 上等待（**[已证实]** 空闲） |
+| 638 | `___ulock_wait +0x8` | `__dlock_wait +0x34` | dispatch 锁等待（**[已证实]** 空闲） |
+| 641 | `___ulock_wait +0x8` | `__dlock_wait +0x34` | 同上 |
+| 642 | `_mach_msg2_trap +0x8` | `_mach_msg2_internal +0x4c` | XPC 接收等待（**[已证实]**） |
+| 1008 | `___workq_kernreturn +0x8` | `__pthread_wqthread +0x168` | 空闲 workqueue worker（**[已证实]**） |
+
+补充（**[已证实]**）：
+
+- 201.8 s 时 lsd 只有 2 条等待线程，其中 tid 642 在
+  `InstalledContentLibrary` 的 `-[MIDaemonConfiguration …]` 内（`pc=…+0x1f104`，`lr=…+0x1f0e4`）；
+  218.8 s 起才转入 `mach_msg2`。**lsd 不是启动即卡死**，它先做了实际初始化工作。
+- 全部线程均为"等待/空闲"，没有互斥锁互相持有的迹象；`__dlock_wait` 与
+  `__dispatch_kq_poll` 是 libdispatch 的正常空转形态。**[已证实]** 无死锁证据。
+- **[待确认]** 线程调用栈：当前快照只取 pc/lr，没有用户栈；要回答"哪一行代码发起这次接收"需要
+  额外用 `vm_map_read_user()` 读栈（下一轮可加）。
+
+> 注意：H240 里 lsd 主线程是 tid=472，H241 里是 tid=480 —— 跨轮次 tid 会变，不能直接套用旧值。
+
+---
+
+## 4. P2：SpringBoard → lsd 的同步请求链
+
+**SpringBoard 侧（H240 sample 7–11 / H241 sample 11，数值稳定）[已证实]**
+
+```
+comm=SpringBoard buf=0x16f604120 hdr=1 bits=0x0 size=0 rport=0x5803 lport=0 vport=0 id=0
+rcv name=0x2103 set=0 ie=0x3030001 sr=1 ms=1 peer=120/SpringBoard
+req name=0x5803 set=0 ie=0x3610001 sr=2 ms=0 peer=92/lsd
+```
+
+- 接收端口 `0x2103` 的**持有者是 SpringBoard 自己**（`ie=0x3030001` 含 `MACH_PORT_TYPE_SEND|RECEIVE`，
+  `sr=1` 表示有 1 个发送权在别人手里）→ 这是典型的"同步调用带出去的回复端口"。
+- 缓冲区里残留头的远端端口 `0x5803` 的接收者是 **lsd（pid 92）**，端口仍然存活（`sr=2`）。
+- **[已证实]** 不是端口集（`set=0`），因此不是"运行循环在端口集上空等"。
+
+**lsd 侧（H241 sample 11）[已证实]**
+
+```
+comm=lsd buf=0x16f385ae0 hdr=1 bits=0x0 size=0 rport=0x5e0b lport=0 vport=0 id=0
+rcv name=0x221f set=0 ie=0x1f030001 sr=1 ms=1 peer=92/lsd
+req name=0x5e0b set=0 ie=0xbe10001 sr=1 ms=0 peer=62/containermanager
+```
+
+**链条**
+
+```
+SpringBoard ──(port 0x5803)──▶ lsd(92) ──(port 0x5e0b)──▶ containermanager(62) ──▶ …
+```
+
+**[推断]** 每一层都是 libxpc 的同步调用：先发出请求（把回复端口作为发送权带过去），
+然后在**自己的回复端口**上做纯接收。三层的 `opt` 完全相同（`0x40700420e`：`MACH_RCV_MSG` +
+`MACH_RCV_LARGE` + 16 KB 缓冲 + 无超时），符合同一段 libxpc 代码。
+
+**逐项回答审计要求**
+
+| 问题 | 结论 |
+|---|---|
+| 请求的 Mach Service 名称 | **[待确认]** 只能确定目的**端口**属于 lsd；具体服务名（`lsd.mapdb`/`lsd.open`/…）无法从残留头得到 |
+| 对应的 XPC 接口/消息类型 | **[待确认]** 残留头 `bits=0/ssz=0/id=0`，`msgh_id` 已被覆盖为 0，取不到 |
+| lookup 是否成功 | **[已证实]** 本轮日志里 lsd 侧对 `com.apple.lsd.xpc`/`lsd.open` 的 lookup 返回 `kr=0x0`（H240:184.1 s、184.6 s）；SpringBoard 侧**没有**任何 lsd 相关的 sandbox deny |
+| 请求是否真正送达 lsd | **[待确认]** 端口仍在 lsd 的 IPC 空间里（`peer=92/lsd`），但"缓冲区里有残留头"只能证明**曾经准备/发送过**该目的端口，不能证明投递与出队 |
+| lsd 是否进入请求处理 | **[待确认]**（需要 lsd 侧的用户栈或 XPC 回调断点） |
+| lsd 是否发送 reply | **[待确认]** |
+| 最后可证实的阶段 | **[已证实]** SpringBoard 停在纯接收、lsd 停在向 containermanager 的纯接收、containermanager 尚未采样 |
+
+---
+
+## 5. P3：三条 Sandbox deny
+
+### 5.1 服务注册者 **[已证实]**
+
+从本机 IPSW（`044-76040-038.dmg`，21H461）的 LaunchDaemons 里直接读取：
+
+| 服务 | 注册者 | 证据 |
+|---|---|---|
+| `com.apple.lsd.modifydb` | `/usr/libexec/lsd` | `com.apple.lsd.plist` 的 `MachServices`（共 13 个：icons/rebuild/diagnostics/plugin/extensions/xpc/openurl/**modifydb**/mapdb/personaobserver/installation/advertisingidentifiers/open） |
+| `com.apple.iconservices` | `iconservicesagent` | `com.apple.iconservices.iconservicesagent.plist` 的 `MachServices` 只有这一项 |
+| `com.apple.iconservices.store` | **无 plist 注册** | 在 `System/Library/LaunchDaemons`、`LaunchAgents` 中 grep 无结果 → **[待确认]** 运行时 `bootstrap_check_in` 或由 lsd 内部创建 |
+
+### 5.2 策略来源：`Protobox` 是 Apple 原生机制 **[已证实]**
+
+```
+$ git -C out/cheeseburger/tree/.cache/xnu-work diff --stat -- osfmk/kern/zalloc.h
+（空）
+$ strings -a out/ipsw/21H461/kernelcache.decompressed | grep -i protobox
+(apply-protobox)
+Protobox
+protobox
+sandbox.protobox.index
+protobox collection
+"failed to initialize protobox collection: %d" @%s:%d
+```
+
+- `zalloc.h` 里有 `ZC_RO_ID_PROTOBOX` / `ZONE_ID_PROTOBOX`，且**没有本地改动**；
+- 原版 kernelcache 里就带全部 `protobox` 字符串；
+- 日志里的 `(apply-protobox)` 紧贴在 `NATIVE_EXEC:` 之前、同一行内，是 sandbox kext 在 exec
+  时打印的（无换行），不是我们驱动打印的。
+
+**[推断]** 因此 backboardd / lsd 上的 "Sandbox:" 与 "Protobox:" 两种前缀，是 Apple 在同一台设备上
+对不同 profile 的日志前缀；这三条 deny **不是**本 fork 新增的 allow/deny 规则差异。
+
+### 5.3 deny 统计（H241，整轮）
+
+```
+37 × Sandbox: backboardd(56) deny
+35 × Sandbox: mediaserverd(29) deny
+ 6 × Protobox: lsd(92) deny(1) syscall-mig …（63 / 139）
+```
+
+- **backboardd** 被拒的主要是 `mach-lookup`：`com.apple.iconservices`、`com.apple.iconservices.store`、
+  `com.apple.lsd.modifydb`、`com.apple.mobile.keybagd`、`com.apple.springboard.services`、
+  `com.apple.UIKit.keyboard-management-service`。
+  **[推断]** 其中 `iconservices*` 与图标渲染直接相关（backboardd 的合成器要画图标），属于
+  "可能有正当需求但未被 profile 允许"；`lsd.modifydb` 是写 Launch Services 数据库，backboardd 不应需要。
+- **mediaserverd** 被拒的关键一条：`iokit-open-user-client AGXDeviceUserClient`（MACF 拒绝），
+  与 GPU 侧直接相关，记入下一轮参考，不在本审计范围内展开。
+- **[待确认]** `Protobox: lsd(92) deny(1) syscall-mig 63 / 139` 的具体含义：XNU 的 mach trap 表里
+  `/* 63 */` 是 `kern_invalid`，而 139 超出 `mach_trap_table` 范围，说明这两个数字**不是**直接用
+  mach trap 编号，可能来自 sandbox 内部的 MIG 分类表；要做结论必须静态分析 sandbox kext 的映射表。
+- **[待确认]** 这三条 deny 在**同版本真机**上是否同样出现。本轮只能证明策略来自原版镜像，
+  不能证明"原版行为一致"，因为 entitlements/容器状态可能不同。
+
+**约束遵守**：本轮没有添加任何 `mach-lookup` 通配 allow，也没有修改任何 `.sb`/plist。
+
+---
+
+## 6. P4：lsd 的初始化依赖
+
+| 依赖 | 证据 | 结论 |
+|---|---|---|
+| 容器路径（Data/System） | `ustate: caching container path {'com.apple.lsd' : '/private/var/containers/Data/System/D1606350-…'}`（H240:140.1 s） | **[已证实]** 解析成功 |
+| 系统组容器 | `{'systemgroup.com.apple.lsd' : '/private/var/containers/Shared/SystemGroup/55659046-…'}`（H241:301.4 s） | **[已证实]** 解析成功（较晚） |
+| AppleMobileFileIntegrity | `NATIVE_IOKIT: op=open comm=lsd cls=AppleMobileFileIntegrity ok=0`（H241:189.3 s） | **[待确认]** 我们的 IOKit trace 里 `ok=0` 表示"未匹配到该服务"，不等于打开失败 |
+| 自身 MachServices | `lsd.xpc` / `lsd.open` lookup `kr=0x0` | **[已证实]** 服务名可用 |
+| Launch Services 数据库文件 | 日志不覆盖 os_log 层，ring 里没有 lsd 的文件错误 | **[待确认]** |
+| dyld / framework 加载 | 同上 | **[待确认]** |
+| 实际工作痕迹 | 201.8 s 在 `InstalledContentLibrary -[MIDaemonConfiguration …]` | **[已证实]** 初始化确实在推进 |
+
+---
+
+## 7. 仍然未知
+
+1. **链条终点**：`containermanager(62)` 在等谁？（这是当前最可能的根因方向）
+2. 每层请求的 XPC 接口名 / `msgh_id`（残留头已被清零）。
+3. SpringBoard 在 UI 之前为什么先走这条链（触发点）。
+4. `syscall-mig 63/139` 的确切语义（需要 sandbox kext 的映射表）。
+5. 任何线程的用户态调用栈（本轮没有采集）。
+
+---
+
+## 8. 下一轮最小化实验（H242）
+
+只改采样名单，不改 policy、不加 allow、不动 plist：
+
+1. 名单改为 `SpringBoard`、`lsd`、`containermanager`（每轮），其余保持首两轮；
+2. 保持 `SBPORT` 三行输出，链条会自然延伸到下一层；
+3. 若 `containermanager` 也在等下一层 → 继续沿链走；若它卡在锁/文件/syscall 上 → 直接定位；
+4. 可选增强：给 `mach_msg2` 线程加 16 帧用户栈（`vm_map_read_user` + `pc/lr`），把"哪行代码发起调用"
+   变成可证实的证据。
+
+---
+
+## 附录：本轮引用的原始日志行
+
+```
+[   144.333873]: /usr/libexec/lsd[92] ==> (apply-protobox)NATIVE_EXEC: pid=92 ppid=1 comm=lsd argv0=/usr/libexec/lsd argv1=
+[   201.804123]: NATIVE_SBPC: sample=0 comm=lsd n=2 note=-
+[   218.851122]: NATIVE_SBPC: sample=1 comm=lsd n=6 note=-
+[   333.650306]: NATIVE_SBPC: sample=11 comm=lsd n=5 note=-
+[   275.281241]: NATIVE_SBMSG2: sample=6 comm=lsd tid=642 opt=0x40700420e bits=0x0 ssz=0 rport=0x760b lport=0x0 vport=0x0 id=0x0 rcvname=0x221f rcvsz=16384 to=0
+[   333.650165]: NATIVE_SBPORT: sample=11 comm=SpringBoard buf=0x16f604120 hdr=1 bits=0x0 size=0 rport=0x5803 lport=0x0 vport=0x0 id=0x0
+[   333.650185]: NATIVE_SBPORT: sample=11 rcv name=0x2103 seen=1 set=0 ie=0x3030001 sr=1 ms=1 peer=120/SpringBoard
+[   333.650201]: NATIVE_SBPORT: sample=11 req name=0x5803 seen=1 set=0 ie=0x3610001 sr=2 ms=0 peer=92/lsd
+[   333.650420]: NATIVE_SBPORT: sample=11 comm=lsd buf=0x16f385ae0 hdr=1 bits=0x0 size=0 rport=0x5e0b lport=0x0 vport=0x0 id=0x0
+[   333.650470]: NATIVE_SBPORT: sample=11 rcv name=0x221f seen=1 set=0 ie=0x1f030001 sr=1 ms=1 peer=92/lsd
+[   333.650486]: NATIVE_SBPORT: sample=11 req name=0x5e0b seen=1 set=0 ie=0xbe10001 sr=1 ms=0 peer=62/containermanager
+[   150.294011]: Protobox: DumpPanic(49) deny(1) syscall-mig 46
+[   185.049125]: Sandbox: backboardd(56) deny(1) mach-lookup com.apple.lsd.installation
+[   293.265178]: Protobox: lsd(92) deny(1) syscall-mig 139
+```

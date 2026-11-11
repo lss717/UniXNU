@@ -34,9 +34,20 @@
   锁内快照解锁后打印**（`osfmk/kern/task.c: native_sb_pc_sample`，驱动侧
   `NativeUfsProbe` 的采样线程调用）。判据是“同一 tid 的 pc 是否移动”，不是单次快照。
   栈回溯（FP 链）留到第 1 步显示“pc 停在非 trap 位置”时再做。
-- **会话交接（2026-11-11，最新）**：`diagnostics/SESSION-HANDOFF-2026-11-11.md` —— 现状、
-  已证实结论、已排除项、下一步（读 SpringBoard 同步消息的 `msgh_id`）、镜像清单与全部操作细节。
-  当前开放项：**SpringBoard 卡在 `mach_msg2_trap` 等一个没人回的回复**，对端未定位；
+- **H237–H241 结果（2026-11-11，现在的权威取证）**：内核采样把 `mach_msg2_trap` 的打包参数
+  读了出来（arm64 的 Mach trap 号在 x16 里是**负数**，`mach_msg2_trap` = **-47**）：
+  SpringBoard 的等待是 `opt=0x40700420e`、`bits=0/ssz=0`、16 KB、**无超时的纯接收**，
+  接收端口是它**自己的回复端口**（`SEND|RECEIVE`、`sr=1`），缓冲区残留头的远端端口属于
+  **lsd**；lsd 自己同样停在一次纯接收上，其远端端口属于 **containermanager(62)**——
+  即 **SpringBoard → lsd → containermanager 的嵌套同步 XPC 链**。lsd 本身健康（6 线程、
+  `_kevent_id`/`__dlock_wait`/`mach_msg2`/`workq` 全是正常空闲），**没有死锁**。
+  三条 backboardd 的 `mach-lookup` deny（iconservices / iconservices.store / lsd.modifydb）
+  与 `Protobox:` 前缀都来自 **Apple 原生** profile（原版 kernelcache 里就有
+  `(apply-protobox)`/`protobox collection`/`sandbox.protobox.index`，`zalloc.h` 无本地改动）。
+  审计全文：`diagnostics/H240-LSD-IPC-AUDIT.md`。**下一步**：把采样名单换成
+  SpringBoard / lsd / containermanager，沿链继续走到底（不改 policy、不加 allow）。
+- **会话交接（2026-11-11）**：`diagnostics/SESSION-HANDOFF-2026-11-11.md` —— 现状、
+  已证实结论、已排除项、镜像清单与全部操作细节（其"下一步"一节已被上面这条取代）。
   渲染服务器侧一切正常（`LCD/primary 1080x1920`、18 pass / 0 draw / 0 swap）。
 - 打包与信任缓存的踩坑单独成文：
   `plans/oneplus5-cheeseburger/diagnostics/gpu-display-pitfalls-2026-11-11.md`（P1–P10 + 自检清单）。
