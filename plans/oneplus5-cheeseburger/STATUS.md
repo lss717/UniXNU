@@ -3,7 +3,18 @@
 - 计划：`plans/oneplus5-cheeseburger/PLAN.md`
 - 线路：B — UniXNU / 4K
 - 路线/目标：iPad7,1 / iPadOS 17.7.11（21H461）
-- 当前阶段：**C3 完成（2026-11-10，H236et→ez）。** A540 的 CP 已离开 secure 模式：
+- 当前阶段（2026-11-11）：**C6a-MTL — Metal 前端**。自研的独立插件
+  `A540Trace.bundle` 已被 Metal 接受并驱动，`ho` 是权威前沿：
+  设备/队列注册通过（`featureProfile=1`）、渲染管线被真实调度
+  （18 个 render pass、5 个 blit、23 张纹理、16 次 `copyFromTexture:`、3 次
+  `generateMipmapsForTexture:`、3 次 `replaceRegion:`），**零崩溃**；
+  但 **8 次 `newRenderPipelineStateWithDescriptor:error:` 全部返回 nil**、
+  **零次 `commit`/`presentDrawable:`**、**零张 IOSurface 纹理**——
+  CA 把每一帧都丢弃了。前沿镜像 `boot-H236ho.img`
+  sha256 `f18a2904…`；详见 `diagnostics/build-environment-2026-11-10.md` §45.37–§45.41。
+  同一 gate 的另一半：显示侧记录的 "CA 从不提交 swap（selector 3/4/5 = 0）" 与此同源
+  ——Metal 的 present 与 display 的 swap 卡在同一个判断上，必须合并设计。
+- 上一阶段：**C3 完成（2026-11-10，H236et→ez）。** A540 的 CP 已离开 secure 模式：
   `RBBM_SECVID_TRUST_CNTL=0`，`CP_MEM_WRITE`（`0xC0FFEE11`）与 `CACHE_FLUSH_TS`
   （`0xBEEF1234`）都经 SMMU 落地，可信窗口写（`0xEA57BEEF`）落地，提交冒烟测试
   `submit test ok`，GPMU 固件到达 `BABEFACE`。
@@ -12,7 +23,13 @@
   a540 的 ZAP（跑在着色器上）无法执行 → `CP_SET_SECURE_MODE(0)` 不被授权 →
   trust 恒为 1 → 内存写全被丢。§30/§31 的“漂浮读值 / `0x0EC0` 挂总线 / 探针 2.6 s”
   都是这个根因的症状。
-- 当前 gate：**C5（最小提交）**。C4-B 已完成两步：step 1 真 BO + 间接缓冲（H236fb），
+- 当前 gate：**C6a-MTL（Metal 前端第一帧）**。`ho` 之后的顺序（有代码证据）：
+  ① 显式实现标量访问器（纹理 width/height/pixelFormat/…、buffer length/contents、
+  queue/cmdbuf/encoder label）——目前这些走的是未初始化基类的实现，返回垃圾且不留日志；
+  ② 打印 render pipeline descriptor 的真实内容（函数名、附件像素格式、sampleCount）；
+  ③ 再按 §45.40 做真队列/命令缓冲（`-initWithQueue:retainedReferences:synchronousDebugMode:`、
+  `-commandBufferDidComplete:startTime:completionTime:error:`），让 `_status` 能真正置 2。
+  上一 gate：**C5（最小提交）**。C4-B 已完成两步：step 1 真 BO + 间接缓冲（H236fb），
   step 2 用户态 ABI 端到端（H236fd，backboardd 报告 `s34 e0 v4/4`）。
   C4-B 的加固项（多客户端/队列隔离、BO 池扩容、fence 故障语义）登记为并行待办。
   此前记录的“GPMU 之后 CP 写失效”已更正为探针问题：RPTR 前进只代表取指，回读前必须等

@@ -2417,3 +2417,34 @@ forward: supportsVertexAmplificationCount:          ×10
      `-[_MTLCommandEncoder initWithCommandBuffer:]`，这样 `endEncoding` 才会把当前编码器清掉。
 2. 把返回标量的 selector 从转发器里摘出来，逐个显式实现。
 3. 之后再谈“把 commit 接到我们驱动的 Submit”——那时才是第一帧真正进入 GPU 的时刻。
+
+### 45.41 ho 归档与后续顺序（2026-11-11，权威前沿）
+
+- 镜像：`/tmp/opencode/boot-H236ho.img`（81,149,952 B），
+  sha256 `f18a290466f214fec78dcbfcb703c233a90c618cf9fae1fba90e3044f093656f`；
+  插件 cdhash `8ece0bfc8624a34c4c6c74174b2d193a864f4de9`（已在 boot 信任缓存中）。
+- 原始日志：Windows 宿主 `D:/Users/ls/Documents/OnePlus5_ios/h103log-H236ho.bin`
+  （Linux 侧 `/tmp/opencode/h103log-H236ho.bin`，解析文本 `/tmp/opencode/ho-clean.txt`）。
+- 代码：`NativeMetal` `f18ec59`（超级仓库指针同步提交），`UniXNU` 见本提交。
+- ho 的实测计数（200 行窗口，`bb exits 0`）：18 个 render pass、5 个 blit、
+  23 张纹理、3 个 272 B buffer、`copyFromTexture:` ×16、`generateMipmapsForTexture:` ×3、
+  `replaceRegion:` ×3；**8 次 `newRenderPipelineStateWithDescriptor:error:` 全 nil**；
+  **零 `commit`/`presentDrawable:`**；**零 `newTextureWithDescriptor:iosurface:plane:`**。
+
+**顺序修正（采纳评审意见）**：先消掉“不可信返回值”这个变量，再谈提交语义。
+
+1. 显式标量访问器（成本最低）：`trace_object_of()` 目前只把 `A540TraceObject` 的方法拷到
+   运行时子类上（转发器/dealloc/commit/status/device），**没有** `width`/`height`/
+   `pixelFormat`/`length`/`contents`/`gpuAddress`；这些走真实基类实现，读的是从未初始化的
+   ivar → 返回 0 或垃圾，且不经过转发器（所以 ho 里一行日志都没有）。
+   做法：在 `newTextureWithDescriptor:`/`newBufferWithLength:options:` 里把这些值从
+   descriptor 存到桩对象上，并显式实现访问器。
+2. 打印 pipeline descriptor 的真实内容（函数是否 nil、`-name`、`colorAttachments[0].pixelFormat`、
+   `sampleCount`）——这一步决定“着色器是不是现在就挡路”。
+3. 再做真队列/命令缓冲（§45.40）。注意 `-commandBufferDidComplete:startTime:completionTime:error:`
+   的两个 double 签名**必须从反汇编确认**（缓存已导出、`macho-resolve.py` 可用），猜错是静默无效。
+
+**耦合关系（必须记）**：ho 里 `newTextureWithDescriptor:iosurface:plane:` 一次都没出现、
+`presentDrawable:` 也没有 → CA 连“可呈现表面”都没建。这与显示侧“CA 从不提交 swap
+（selector 3/4/5 = 0）”是同一件事的两面：Metal 的 present 与 display 的 swap 卡在同一个判断上。
+因此 queue/cmdbuf 做到真提交也不等于有帧上屏——两条线应作为**同一个 gate** 设计。
