@@ -2150,3 +2150,17 @@ gx 让 `supportsFamily:` 一律回 **NO**，预期 renderer 走兼容回退分�
 
 上机后要做的第一件事：确认 gx 的 `NATIVE_MTL` 序列是否出现新的 selectors
 （预期在 `supportsFamily:1001` 之后继续，且不再每轮 SIGABRT）。
+
+### 45.28 设备主机切换的落地状态（2026-11-11）
+
+- `192.168.8.58` 的 SSH **在线**，但用旧主机的账号/口令（`ls` / askpass 里的口令）
+  认证失败：`Permission denied (publickey,password,keyboard-interactive)`。
+  上机前需要用户确认：用户名、口令、以及手机镜像目录（旧主机是
+  `D:/Users/ls/Documents/OnePlus5_ios/`）与 adb/fastboot 路径。
+- 已把本地助手改成可切换主机（都在 `/tmp/opencode`，不在仓库里）：
+  - `rwin`：读 `WIN_HOST`（默认 192.168.10.225）；
+  - `rwin8`：`WIN_HOST=192.168.8.58` 的包装；
+  - `rwscp LOCAL REMOTE`：按同一主机把文件推到宿主的 `REMOTE`。
+  认证凭据确认后只需改 `askpass-win.sh`，无需改命令。
+- 已经打包好、**只等上机**的镜像：`/tmp/opencode/boot-H236gx.img`
+  （81,149,952 B，sha256 `59f9d426…`，插件 cdhash `3933175c…` 已在信任缓存中）。
