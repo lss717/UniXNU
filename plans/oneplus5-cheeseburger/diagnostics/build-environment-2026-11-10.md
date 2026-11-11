@@ -3521,3 +3521,32 @@ UsePersonaManifestVersion / UsePersonaGenerationID / UserPersonaDictionary
 1. **重跑一次 `it`**（一次上机）：若停滞复现，persona 文件就是嫌疑；若不复现，按偶发处理；
 2. 离线反汇编 `usermanagerd` 里读 `UsePersonaManifestVersion` 之后的比较常量，确认 iOS 17 期望的
    版本号（我们目前写 1）。
+
+### 45.82 it 重跑：停滞是偶发；persona 就位但没有改变 SpringBoard
+
+第二次 `it`（同一镜像 `0532e3ec…`）跑到 ~355 s，**停滞没有复现**：
+
+```
+persona#264 present exists bytes=133      ← 插件确认 seed 里的文件已就位
+svc#211 file path /private/var/keybags/persona.kb rc=0 bytes=133
+ca#290 restart restart scan=26 refused=0
+ca#291 restart restart kill pid=26 status=0
+```
+
+但 SpringBoard 的行为**没有任何变化**：
+
+```
+s345=0/0/0            ← 仍然零 swap
+dpy=3/18/0/1/0        ← 仍然是 3 个 display 客户端、18 次调用
+（315 s 重启之后没有任何 dev#/cmdbuf 之类的合成活动）
+```
+
+也就是说：persona manifest 这条线（参考实现里的容器链）**不是本机的阻塞点**，
+至少在“SpringBoard 连不上渲染服务器”这个现象上没有影响。
+
+至此已排除：默认 surface 链、MG 调用/缓存、IOSurface 属性、候选服务缺失、persona manifest、
+会话/命名空间（只有一个 launchd）。剩下唯一未定位的是 **SpringBoard 那条同步消息的对端是谁**。
+
+**下一步（需要内核）**：采样时把 `mach_msg2_trap` 线程的**消息头指针**（`saved_state->x[0]/x[1]`）
+取出来并 `copyin` 前 16 字节，读 `msgh_id` —— 它直接指向 MIG/XPC 的例程编号，
+是识别对端最便宜的办法。风险：内核构建近期不可复现（§45.79），需要接受一次失败的可能。
