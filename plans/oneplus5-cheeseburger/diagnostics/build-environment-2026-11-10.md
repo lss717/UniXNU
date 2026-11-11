@@ -3421,3 +3421,33 @@ SessionSyncEngine 的 cache vmaddr = 0x1c18d9000  →  cache slide = 0x1ab08000
 下一步（ik）：把采样扩到它可能等的几个 daemon（`keybagd`、`runningboardd`、`containermanagerd`、
 `usermanagerd`、`backboardd`），并同时打印 `th->wait_event`，看是否有**同一对象**在两进程里成对出现
 （发送方等回复 / 接收方阻塞在同一 mqueue）。
+
+### 45.78 im/in：可复现 panic，落在 `OSMetaClass::addInstance`
+
+`im`（采样在独立线程、6 个进程）与 `in`（采样移到心跳）两版都**必现**同一处 panic，
+`il`（线程 + 1 个进程）能正常启动：
+
+```
+NATIVE_UFS_CACHE: OS read-ahead=131
+panic(cpu 0 caller 0xfffffff007a3611c): Kernel data abort
+  at pc 0xfffffff0078608d0, lr 0xfffffff007860904
+  esr: 0x96000005   far: 0x0
+```
+
+**符号化**（用 `nm -n` 对 prelinked kernel，而不是 `LC_FUNCTION_STARTS`）：
+
+```
+0xfffffff0078608d0 -> __ZNK11OSMetaClass11addInstanceEPK8OSObjectb +0x30
+0xfffffff007a3611c -> _sleh_synchronous_sp1 +0x0     （panic 的调用点）
+```
+
+两次崩溃的 pc 随构建变化（`0x70688d0` → `0x78608d0`），但都落在同一函数。也就是说：
+**不是采样逻辑踩空**（采样要 170 s 才跑），而是在 UFS cache read-ahead 之后创建某个 IOKit
+对象时 metaclass 为空——与 H103fp/fq/fr 记录的“类注册/链接顺序不匹配”同一族。
+
+**方法教训**：这轮先入为主地用函数起点表判断“pc 不在代码段”，得出过错误结论。
+内核 pc 应该先用 `nm -n --defined-only` 二分定位（这次正是靠它找到 `OSMetaClass::addInstance`）；
+`scripts/symbolicate-pc.py` 的 `LC_FUNCTION_STARTS` 更适合用户态镜像，
+内核对它会把 `__text` 之前的区域判成“不是代码”。
+
+顺带：`il` 现在仍在跑且正常，说明镜像/设备链路没有坏，回归只在这两版构建里。
