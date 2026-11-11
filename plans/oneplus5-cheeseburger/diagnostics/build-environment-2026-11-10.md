@@ -2838,3 +2838,57 @@ ca#228 restart restart springboard=none
 > 用 `memset` 清零本地 `CGRect` 即可，只用到类型不需要框架。
 
 镜像：`/tmp/opencode/boot-H236hv.img`，sha256 `3fea6784…`；插件 cdhash `0ed22582…`。
+
+### 45.55 离线反汇编：空 display 列表是**永久缓存**的（根因确认）
+
+`QuartzCore` `ensure_displays`（`0x18948d294`）：
+
+```
+18948d2c8  ldrb w8, [x19, #0x4c0]     ; static bool displays_queried
+18948d2cc  tbnz w8, #0x0, 0x18948d2dc ; 已查过 → 永久跳过
+18948d2d0  bl   0x189549038           ; query_displays
+18948d2d4  mov  w8, #1
+18948d2d8  strb w8, [x19, #0x4c0]     ; 置位，进程内不会再查
+```
+
+`query_displays` 在 `CARenderServerGetServerPort(0) == 0` 时直接返回空表且**不打印任何日志**。
+所以一个进程只要在渲染服务器存在之前问过一次 `+[CADisplay mainDisplay]`，它这一辈子都拿不到 display。
+
+配合 §45.51 的进程次序（SpringBoard 115 s，backboardd 131 s，渲染服务器 ~150 s），
+**这解释了我们从 C6a 到现在的全部现象**：
+
+```
+SpringBoard 先问 → 空表被缓存 → 没有 display → 不建窗口 → 不提交图层
+→ backboardd 合成空图层树（18 pass、0 draw）→ 没有内容 → 不 swap（s345=0/0/0）→ 无帧
+```
+
+这不是 IOMFB 应答问题（§45.49 已排除），也不是 Metal 设备问题（§45.46 已排除）。
+
+### 45.56 hv/hw 与构建环境：内核路线暂时走不通，改走框架 API
+
+hv（逐 pid `proc_name`）的 `restart` 行落在日志窗口之外（内核环只留 61 个快照），
+无法判定是否被拒；但可以确定 `proc_listpids` 是**被沙箱拒绝**的
+（`Sandbox: backboardd(56) deny(1) process-info-listpids`）。
+
+于是尝试了内核侧一次性 SIGTERM（`proc_iterate` + `psignal`，按 `p_comm` 匹配），
+**但 Mac 的构建环境当前不完整，内核重建做不出来**，记录如下（下次先修环境）：
+
+| 症状 | 处置 |
+|---|---|
+| `ModuleNotFoundError: tomllib` | 用 `~/.local/bin/python3.12` 跑 `./unixnu` |
+| `cmake not found` / `ninja not found` | MacPorts 在 `/opt/local/bin`，`PATH` 前置即可（Homebrew 已被清空） |
+| `PermissionError: unlink .../tree/refer/libdispatch` | `refer/` 下有几个是**真实目录**（旧 treecopy 残留），`_link()` 只会 unlink 链接 → 组装中断 |
+| `patch does not apply: iokit/KernelConfigTables.cpp` | 工作树已是打过补丁的状态 → `XNU_SKIP_PATCH_LOOP=1` |
+| `NativeRamBlock requires ... prelink closure` | 需要 `XNU_OWNER_DATA_MOUNT=1 XNU_OWNER_DATA_VOLATILE=1 XNU_OWNER_DATA_VOLUME_UUID=1A4CE9DF-…` |
+| 归档步骤 `nm: bsd_init.o No such file` | 内核对象被删过，先跑一遍脚本生成对象，再跑完整流程 |
+| 链接 `Undefined _proc_iterate` | C++ 里需要 C 链接（`extern "C"` 包住 `proc_internal.h`） |
+| 链接 `Undefined _native_a540_*` / `_native_legacy_client_calls` | 归档没有进入链接集，属环境问题，未解决 |
+
+因为这条路线当天不可用，**hw 改为纯插件方案**：backboardd 有系统框架的权限，
+用 `dlopen` 载入 `FrontBoardServices`，调
+`-[FBSSystemService terminateApplication:forReason:andReport:withDescription:]`
+（`com.apple.springboard`，reason 1）重启 SpringBoard；每次尝试都写一行 `ca#N restart`，
+并先打 `scan=<pid> refused=<n>` 说明 `proc_name` 扫描的结果。
+若框架调用也不成，下一轮再回到内核路线并先修上表。
+
+镜像：`/tmp/opencode/boot-H236hw.img`，sha256 `a6ac043d…`；插件 cdhash `e3fdadca…`。
