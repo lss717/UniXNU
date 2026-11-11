@@ -3318,3 +3318,36 @@ mgcache#247 …/mobilegestaltcache/Library/Caches        absent
 
 `adb`/`fastboot` 在新机器上位于 `C:\Users\ls\AppData\Local\Android\Sdk\platform-tools`，
 镜像目录仍是 `D:\Users\ls\Documents\OnePlus5_ios`。
+
+### 45.75 离线反汇编：默认 surface 不是第一帧的前提（B 的前提被推翻）
+
+对 iPad7,1 kernelcache 定向反汇编（kext `com.apple.iokit.IOMobileGraphicsFamily`）结果：
+
+| 项 | 地址/结论 |
+|---|---|
+| `create_default_fb_surface` | `0xfffffff006793694`，`void`、只有一个 `this` 参数 |
+| `default_fb_surface`（user client 侧） | `0xfffffff006777464`，返回 `0` 或 `kIOReturnError` |
+| 该函数是否需要 provider 属性 | **不需要**；不读 EDT、不要求 `AppleARMIODevice` |
+| 真正的依赖 | `this+0x1780 != 0`、`this+0x16b0/+0x16b4` = 面板宽高、`this+0x1600` = `IOCoreSurfaceRoot`，并需要 IOSurface 内存域 `PurpleGfxMem` |
+
+关键否证有两条：
+
+1. **`+0x1780` 与 `+0x16b0/0x16b4` 只有 `AppleMobileDispH9G` 会写**（`0x6bf4d40`，需要
+   `disp0,t8010/t8011` 节点、`IOClass=AppleCLCD`、`IOProviderClass=AppleARMIODevice`）。我们的
+   `IOMobileFramebufferLegacy` shim 走不到那条路径，所以 `this+0x1620` 永远是空。
+2. **整个镜像里没有任何 `bl` 调用 `create_default_fb_surface`**，它的唯一引用是
+   `AppleMobileDispH9G` 三个 vtable 的 slot 299；user client 的 selector **3** 才是“取默认 surface”
+   的入口，没有 surface 时打印 `"No Default FB Surface found. Return error"` 并返回 `kIOReturnError`。
+
+而我们的实测是：**CA 从来没有调用 selector 3**（`client io … selector=3` 零次、`s345=0/0/0`）。
+加上 `surface_complete()` 会在第一帧完成时主动释放 `+0x1620`（默认 surface 本来就是临时的），
+**“没有默认 surface”并不是第一帧的前提**——所以 §45.72/§45.73 里“surface → pixel → pointScale → FBS 拒绝”
+这条链在我们这台**没有得到证据支持**（那是 sagit 的日志症状，不是我们的）。
+
+顺带纠正一个设计错误：`default_fb_surface` **不是注册表属性**，它只存在于 ivar `+0x1620`，
+通过 selector 3 的 out 参数暴露。§45.71 里想用 `IORegistryEntryCreateCFProperty` 去读它，
+读不到是必然的（而且那次整字典读取还把线程卡住了）。
+
+`get_user_regs(thread)` 在 arm64 上是可用的（`osfmk/kern/backtrace.c:459` 就用它拿
+`arm_saved_state`），所以在内核里 dump SpringBoard 每个线程的用户 PC 是可行的——
+这是目前唯一还没被排除、又能直接回答“SpringBoard 卡在哪一步”的取证手段。
