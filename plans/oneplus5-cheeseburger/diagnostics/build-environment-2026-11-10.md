@@ -2535,3 +2535,55 @@ render pass，**编码进去的绘制指令是 0**，18 个 pass 全是清屏/�
 backboardd 的合成器拿到的是一个空图层树。
 
 镜像：`/tmp/opencode/boot-H236hs.img`，sha256 `16c8accf…`；插件 cdhash `1a319fef…`。
+
+### 45.46 hs 实测：CA 从不 present，可呈现表面这一步“实现完毕但未被调用”
+
+hs（§45.45 的可呈现表面代码）`bb exits 0`，MTL 行 160。结果与 hr 完全一致的那部分：
+
+```
+dev#13 newCommandQueue process=backboardd
+dev#36 newCommandQueue process=backboardd
+18 × renderCommandEncoderWithDescriptor: 后接 endEncoding      （draw 指令 0 条）
+ 5 × blitCommandEncoder（copyFromTexture: ×16、replaceRegion: ×3、generateMipmaps ×3）
+16 × newTextureWithDescriptor:            （无一张 iosurface）
+ 0 × newTextureWithDescriptor:iosurface:plane:
+ 0 × presentDrawable:
+ 0 × display 交接探测（因为 present 从未发生）
+```
+
+即：新加的入口**一次都没被调用**，不是实现有误——是 CoreAnimation 从来没有 drawable 可交给我们。
+`server`、`present`、`display` 三条新日志一行都没有，说明“怎么把 surface 送到面板”这个问题
+在本轮根本还没到。
+
+**同一次启动的显示侧**（`NATIVE_ACCEL_HB` 末值）：
+
+```
+accel=49/0/215/2  abi=214/17/0  dpy=3/18/0/1/0  s345=0/0/0  xf=0 fr=0
+```
+
+- `dpy=3/18/0/1/0`：3 次 display 客户端打开、18 次调用、0 失败、selector 6 一次（swap id）、
+  **registerNotificationPort 0 次**；
+- `s345=0/0/0`：3/4/5（SwapBegin/SetLayer/SwapEnd）依然是 **0**，`xf=0 fr=0`；
+- 但对照 H162：`op=match comm=backboardd d=AGXAccelerator ok=1` —— 加速器匹配**已经成功**，
+  这不再是 `IOAcceleratorES ok=0` 的那道墙。
+
+backboardd 的显示客户端 18 次调用（全部 status=0）为：
+
+```
+88 | 57(fixup→0, 1 scalar out) | 15 | 22(fixup) | 8(=1080x1920 via 438,780) | 29(struct=8)
+   | 33(fixup) | 79(fixup, struct=1580, in=[77,0]) | 74(fixup, struct=64)
+MobileGestaltHelper: 8(=1080x1920) | 28(=163)
+```
+
+其中 **57/22/33/79/74 是“未实现→清零输出→返回成功”**（H164 照抄 ios-sweet 0046 的策略）。
+结论与 H103 §44.10 一致且更精确：**backboardd 在卖家探测阶段就判定这display不可用
+（BKDisplayStartWindowServer 走 headless），于是既没有 drawable、也不建 display link、
+更不会 swap**。Metal 侧的 present 与显示侧的 swap 是**同一个判决**的两面，本轮把这句话落到了
+可复现的计数上。
+
+镜像：`/tmp/opencode/boot-H236hs.img`，sha256 `16c8accf…`；日志
+`D:/Users/ls/Documents/OnePlus5_ios/h103log-H236hs.bin`（Linux `/tmp/opencode/hs-clean.txt`）。
+
+**因此下一轮不再加 Metal 桩**：要把 18 次探测里被清零的 57/22/33/79/74 按真实语义答复，
+证据来源是 iPad7,1 kernelcache 里 `IOMobileFramebufferLegacy` 的 user client 分发表
+（离线反汇编，正在做）。
