@@ -2,7 +2,7 @@ diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
 index 5dcf00e..999c217 100644
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -10285,3 +10285,432 @@ task_best_name(task_t task, char *buf, size_t size)
+@@ -10285,3 +10285,411 @@ task_best_name(task_t task, char *buf, size_t size)
  	char *name = proc_best_name(task_get_proc_raw(task));
  	strlcpy(buf, name, size);
  }
@@ -174,6 +174,10 @@ index 5dcf00e..999c217 100644
 +
 +#include <ipc/ipc_port.h>
 +
++#include <ipc/ipc_port.h>
++
++#include <ipc/ipc_port.h>
++
 +struct native_sb_row {
 +	uint64_t tid;
 +	uint64_t pc;
@@ -203,12 +207,11 @@ index 5dcf00e..999c217 100644
 + * task or proc is dereferenced while the port lock is held. */
 +struct native_sb_probe {
 +	int seen;
++	int is_set;
 +	uint64_t ie_bits;
-+	uint64_t io_bits;
 +	unsigned srights;
 +	unsigned mscount;
-+	unsigned qlimit;
-+	uint64_t receiver;
++	int pid;
 +};
 +static struct native_sb_probe native_sb_rcv;
 +static struct native_sb_probe native_sb_req;
@@ -218,9 +221,6 @@ index 5dcf00e..999c217 100644
 +static uint32_t native_sb_hdr[6];
 +static int native_sb_capture;
 +static task_t native_sb_task;
-+static uint64_t native_sb_name_target;
-+static int native_sb_name_found;
-+static char native_sb_name_out[17];
 +
 +static void
 +native_sb_probe_name(ipc_space_t space, unsigned name, struct native_sb_probe *out)
@@ -229,6 +229,7 @@ index 5dcf00e..999c217 100644
 +	ipc_port_t port;
 +
 +	memset(out, 0, sizeof(*out));
++	out->pid = -1;
 +	if (space == IS_NULL || name == MACH_PORT_NULL) {
 +		return;
 +	}
@@ -236,50 +237,24 @@ index 5dcf00e..999c217 100644
 +	entry = ipc_entry_lookup(space, (mach_port_name_t)name);
 +	if (entry != IE_NULL) {
 +		out->ie_bits = (uint64_t)entry->ie_bits;
-+		port = (ipc_port_t)entry->ie_object;
-+		if (port != IP_NULL) {
-+			ip_lock(port);
-+			out->io_bits = (uint64_t)((ipc_object_t)port)->io_bits;
++		/* A port set's ie_object is an ipc_pset, NOT an ipc_port: passing it
++		 * to ipc_port_get_receiver_task() locks the wrong object and the
++		 * later free trips zone_require (H239 panic).  Only a real port is
++		 * probed, and only when the entry still carries a port right. */
++		out->is_set = (entry->ie_bits & MACH_PORT_TYPE_PORT_SET) != 0;
++		if (!out->is_set &&
++		    (entry->ie_bits & MACH_PORT_TYPE_PORT_OR_DEAD) != 0 &&
++		    entry->ie_object != IP_NULL) {
++			port = (ipc_port_t)entry->ie_object;
 +			out->srights = port->ip_srights;
 +			out->mscount = port->ip_mscount;
-+			out->qlimit = port->ip_qlimit;
-+			if (port->ip_receiver != IS_NULL) {
-+				out->receiver = (uint64_t)(uintptr_t)
-+				    port->ip_receiver->is_task;
-+			}
-+			ip_unlock(port);
++			/* Takes the port queue lock itself and reports the pid of the
++			 * task that holds the receive right (safe, no hand locking). */
++			out->pid = ipc_port_get_receiver_task(port, NULL);
 +		}
 +	}
 +	is_write_unlock(space);
 +	out->seen = 1;
-+}
-+
-+static int
-+native_sb_name_match(struct proc *p, void *arg)
-+{
-+	(void)arg;
-+	if (native_sb_name_target != 0 &&
-+	    (uint64_t)(uintptr_t)proc_task(p) == native_sb_name_target) {
-+		proc_name(proc_getpid(p), native_sb_name_out, sizeof native_sb_name_out);
-+		native_sb_name_found = 1;
-+		return 1;
-+	}
-+	return 0;
-+}
-+
-+static void
-+native_sb_name_of(uint64_t taskptr, char *out, size_t size)
-+{
-+	strlcpy(out, "-", size);
-+	if (taskptr == 0) {
-+		return;
-+	}
-+	native_sb_name_target = taskptr;
-+	native_sb_name_found = 0;
-+	proc_iterate(1U | 4U, native_sb_name_match, NULL, NULL, NULL);
-+	if (native_sb_name_found) {
-+		strlcpy(out, native_sb_name_out, size);
-+	}
 +}
 +
 +static int
@@ -354,8 +329,8 @@ index 5dcf00e..999c217 100644
 +void
 +native_sb_pc_sample(const char *name, unsigned sample)
 +{
-+	char rname[17];
-+	char qname[17];
++	char native_sb_qname1[17];
++	char native_sb_qname2[17];
 +
 +	native_sb_count = 0;
 +	native_sb_note = "-";
@@ -408,29 +383,33 @@ index 5dcf00e..999c217 100644
 +			native_sb_hdr_ok = 1;
 +		}
 +		native_sb_probe_name(native_sb_task->itk_space, native_sb_rcv_name, &native_sb_rcv);
-+		native_sb_name_of(native_sb_rcv.receiver, rname, sizeof rname);
++		native_sb_qname1[0] = '-'; native_sb_qname1[1] = 0;
++		if (native_sb_rcv.pid > 0) {
++			proc_name(native_sb_rcv.pid, native_sb_qname1, sizeof native_sb_qname1);
++		}
 +		if (native_sb_hdr_ok) {
 +			native_sb_probe_name(native_sb_task->itk_space, native_sb_hdr[2], &native_sb_req);
-+			native_sb_name_of(native_sb_req.receiver, qname, sizeof qname);
++			native_sb_qname2[0] = '-'; native_sb_qname2[1] = 0;
++			if (native_sb_req.pid > 0) {
++				proc_name(native_sb_req.pid, native_sb_qname2, sizeof native_sb_qname2);
++			}
 +		} else {
-+			strlcpy(qname, "-", sizeof qname);
++			native_sb_qname2[0] = '-'; native_sb_qname2[1] = 0;
 +		}
 +		printf("NATIVE_SBPORT: sample=%u comm=%s buf=0x%llx hdr=%d bits=0x%x size=%u rport=0x%x lport=0x%x vport=0x%x id=0x%x\n",
 +		    sample, name, (unsigned long long)native_sb_buf, native_sb_hdr_ok,
 +		    native_sb_hdr[0], native_sb_hdr[1], native_sb_hdr[2],
 +		    native_sb_hdr[3], native_sb_hdr[4], native_sb_hdr[5]);
-+		printf("NATIVE_SBPORT: sample=%u rcv name=0x%x seen=%d ie=0x%llx io=0x%llx sr=%u ms=%u ql=%u peer=%s\n",
-+		    sample, native_sb_rcv_name, native_sb_rcv.seen,
++		printf("NATIVE_SBPORT: sample=%u rcv name=0x%x seen=%d set=%d ie=0x%llx sr=%u ms=%u peer=%d/%s\n",
++		    sample, native_sb_rcv_name, native_sb_rcv.seen, native_sb_rcv.is_set,
 +		    (unsigned long long)native_sb_rcv.ie_bits,
-+		    (unsigned long long)native_sb_rcv.io_bits,
 +		    native_sb_rcv.srights, native_sb_rcv.mscount,
-+		    native_sb_rcv.qlimit, rname);
-+		printf("NATIVE_SBPORT: sample=%u req name=0x%x seen=%d ie=0x%llx io=0x%llx sr=%u ms=%u ql=%u peer=%s\n",
-+		    sample, native_sb_hdr[2], native_sb_req.seen,
++		    native_sb_rcv.pid, native_sb_qname1);
++		printf("NATIVE_SBPORT: sample=%u req name=0x%x seen=%d set=%d ie=0x%llx sr=%u ms=%u peer=%d/%s\n",
++		    sample, native_sb_hdr[2], native_sb_req.seen, native_sb_req.is_set,
 +		    (unsigned long long)native_sb_req.ie_bits,
-+		    (unsigned long long)native_sb_req.io_bits,
 +		    native_sb_req.srights, native_sb_req.mscount,
-+		    native_sb_req.qlimit, qname);
++		    native_sb_req.pid, native_sb_qname2);
 +		task_deallocate(native_sb_task);
 +		native_sb_task = TASK_NULL;
 +	}
