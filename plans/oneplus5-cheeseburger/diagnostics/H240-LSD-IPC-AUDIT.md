@@ -258,3 +258,43 @@ protobox collection
 [   185.049125]: Sandbox: backboardd(56) deny(1) mach-lookup com.apple.lsd.installation
 [   293.265178]: Protobox: lsd(92) deny(1) syscall-mig 139
 ```
+
+---
+
+## 9. H243 追加：本报告 §4 的「同步链」推断**已被推翻**
+
+H243 在 `ipc_kmsg_send()` 里按**端口对象指针**跟踪了 SpringBoard 的接收端口与"请求端口"，
+并给每个登记进程记了 `from`（发出）/`to`（收到）计数。结果：
+
+```
+NATIVE_XPC: sample=4 ports=4 [SpringBoard/r p=0xfffffff5795101a0 f=94 t=37]
+NATIVE_XPC: sample=5 ports=4 [SpringBoard/r p=0xfffffff5795101a0 f=97 t=37]
+NATIVE_XPC: send from=lsd(92) to=SpringBoard/q bits=0x110011 size=92 id=0x402
+NATIVE_XPC: send from=notifyd(82) to=SpringBoard/r bits=0x12 size=56 id=0x463
+```
+
+**[已证实]** 新事实：
+
+1. SpringBoard **没有卡住**：它的发送计数在观测窗口内持续增长（94 → 97），且在 `r` 上收到 37 条外部消息；
+2. 被 §4 当作"请求目的端口"的那个端口，实际收到来自 powerd / nfcd / thermalmonitord /
+   backboardd / mediaserverd / liveactivitiesd / containermanager / lsd / wifid / timed /
+   keybagd / cfprefsd 等 **十几个进程**的消息；lsd 发往它的 8 条消息 id 为
+   `0x3f4/0x3f8/0x3ff/0x401/0x402`，与 notifyd 的 `0x463/0x465/0x458` 同属 **notify(3) 协议 id 段**。
+
+**[推断]** 因此这个端口是 **SpringBoard 注册给 notifyd 的通知令牌端口**，
+不是"lsd 请求的回复端口"；§4 里"SpringBoard → lsd"的链条建立在一个不可靠的信号上
+（残留缓冲区里最后一条**已接收**消息的 `msgh_remote_port`，那是发送方的回复/通知端口，
+并不是"即将发出的请求的目的地"）。
+
+**结论修正**：`bits=0/ssz=0/16KB/无超时` 的纯接收是 **libnotify/libxpc 的正常空闲形态**；
+H240/H241 的"嵌套同步 XPC 链"不成立。**SpringBoard 是活的、在正常收发消息，只是没有进入 UI 初始化。**
+
+这不改变 §5/§6 的结论（它们不依赖 §4）。
+
+### 9.1 下一步（H244，已实现）
+
+改为在 `ipc_kmsg_send()` **持有目的端口锁之后**调用
+`ipc_port_get_receiver_task_locked(port, NULL)` 取真实接收者 pid，只记录
+"发送方或接收方属于 {SpringBoard, lsd, containermanager}" 的消息，
+写入 512 项环形缓冲，采样时批量打印（`NATIVE_XPC2: from=… to=… bits=… size=… id=…`）。
+这样得到的是**真实收发双方**，不再依赖任何残留缓冲区。

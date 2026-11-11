@@ -1,17 +1,15 @@
 diff --git a/osfmk/ipc/ipc_kmsg.c b/osfmk/ipc/ipc_kmsg.c
-index 390f5c3..29f8390 100644
+index 390f5c3..5512891 100644
 --- a/osfmk/ipc/ipc_kmsg.c
 +++ b/osfmk/ipc/ipc_kmsg.c
-@@ -5250,6 +5250,12 @@ ipc_kmsg_send(
- #endif /* IMPORTANCE_INHERITANCE */
- 
- 	hdr = ikm_header(kmsg);
+@@ -5262,6 +5262,10 @@ ipc_kmsg_send(
+ 	port = hdr->msgh_remote_port;
+ 	assert(IP_VALID(port));
+ 	ip_mq_lock(port);
 +	{
-+		extern void native_xpc_send_hook(void *, unsigned, unsigned, unsigned);
-+		native_xpc_send_hook((void *)(uintptr_t)hdr->msgh_remote_port,
-+		    (unsigned)hdr->msgh_bits, (unsigned)hdr->msgh_size,
-+		    (unsigned)hdr->msgh_id);
++		extern void native_xpc_note(ipc_kmsg_t, ipc_port_t);
++		native_xpc_note(kmsg, port);
 +	}
- 	/* don't allow the creation of a circular loop */
- 	if (hdr->msgh_bits & MACH_MSGH_BITS_CIRCULAR) {
- 		ipc_kmsg_destroy(kmsg, IPC_KMSG_DESTROY_ALL);
+ 
+ 	/*
+ 	 * If the destination has been guarded with a reply context, and the
