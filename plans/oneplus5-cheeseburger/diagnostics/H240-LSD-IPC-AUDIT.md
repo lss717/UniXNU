@@ -298,3 +298,79 @@ H240/H241 的"嵌套同步 XPC 链"不成立。**SpringBoard 是活的、在正�
 "发送方或接收方属于 {SpringBoard, lsd, containermanager}" 的消息，
 写入 512 项环形缓冲，采样时批量打印（`NATIVE_XPC2: from=… to=… bits=… size=… id=…`）。
 这样得到的是**真实收发双方**，不再依赖任何残留缓冲区。
+
+---
+
+## 10. L1 / L2 / L3 分层结论（H244–H246）
+
+### 10.1 L1：SpringBoard → backboardd —— **发生过（双向）** [已证实]
+
+H244（`to`/`from` 由 `ipc_port_get_receiver_task_locked()` 在持锁的发消息路径上取得）：
+
+```
+27 → 56 : 7 条        56 → 27 : 9 条
+27 → 56  bits=0x111211 size=48  id=0x9d28
+56 → 27  bits=0x80000012 size=460 id=0x9d8c     ← 同一窗口内成对出现 6 次
+27 → 1   : 29 条（id=0x40000324/0x40000325 = bootstrap 服务查找）
+```
+
+**[推断]** SpringBoard 确实连到了 backboardd（不是"从未连过"），并出现了重复的请求/回复；
+`0x9d28/0x9d8c` 这对 id 的语义未确定（**[待确认]**）。
+
+### 10.2 L2：是否进入 QuartzCore/CoreAnimation —— **无正面证据** [待确认]
+
+H245/H246 对 SpringBoard 全部线程做了 `st/pc/lr` 采样（150–530 s，26 轮）：
+**所有样本的 pc 只有 4 个不同值**，全部是 libsystem_kernel 的 stub
+（`___workq_kernreturn`、`___ulock_wait2`、`_mach_msg2_trap`、`___ulock_wait`），
+没有一次落在 QuartzCore / CoreAnimation / FrontBoard。
+
+方法学限制：被采到的几乎都是阻塞线程（保存的是 trap 时刻的 pc），
+**这个结果不能证明 L2 没发生**，只能说"没抓到它在 CA 里运行"。**[待确认]**
+
+### 10.3 L3：是否使用 GPU / 显示 —— **没有发生** [已证实]
+
+530 s 内驱动侧只记录到 3 次显示客户端进入：
+
+```
+MobileGestaltHelper / IOMFB_FDR_Loader / backboardd
+```
+
+**没有一次 `comm=SpringBoard`**；`NATIVE_A540_ACCEL: open request … comm=` 与
+`NATIVE_DISPLAY_OPEN: process=` 也从未出现 SpringBoard。**[已证实]** SpringBoard 从未打开
+显示设备或 GPU 加速器。
+
+### 10.4 时间线与线程形态（H246）[已证实]
+
+| 时间 | 事件 |
+|---|---|
+| 131.3 s | SpringBoard pid=27 exec |
+| 187.5 s | threads=4，pc 集合稳定在 4 个内核 stub |
+| 206.2 s | threads=**10**（首次出现 `__dlock_wait` 工作线程） |
+| 237.5 s | **插件主动重启**：pid=27 被 SIGTERM，237.6 s 起 pid=120 |
+| 256–530 s | 新实例 threads 稳定在 4–5，pc 集合**再未变化**（`unchanged uniq=4`） |
+
+**[推断]** 我们自己的"重启 SpringBoard"探针在 237 s 强行重置了启动流程；
+之后新实例进入与旧实例相同的静止形态。要观察"自然启动"，必须关掉这个重启探针。
+
+### 10.5 本轮的方法学缺陷（已知并已修复一半）
+
+H246 的 `native_xpc_emit()` 只打印**聚合计数**、不再推进 `native_xpc_printed`，
+导致环形缓冲在记录满 512 条后停止计数：
+
+```
+NATIVE_XPC3: sample=1 sb_out=205 sb_in=28 other=278 lost=206
+（之后再无 XPC3 行）
+```
+
+**[已证实]** 206 s 之后的 IPC 数据缺失；L1 的结论只覆盖 150–206 s。
+下一轮必须先修这个（丢弃时也要推进计数）。
+
+### 10.6 下一轮最小实验（H247）
+
+1. **关掉插件的重启探针**（`restart_springboard("restart")`，A540TracePlugin.mm:606），
+   让 SpringBoard 自然启动并跑满 8 分钟；
+2. 修 ring 计数（`lost` 也要推进），恢复 IPC 可见性；
+3. **L2 的正面证据**：对 SpringBoard → launchd 的 bootstrap 查找
+   （`msgh_id = 0x40000324/0x40000325`）只解析**服务名字符串**（不记录其它消息体），
+   看是否出现 `com.apple.CARenderServer`、`com.apple.backboard.hid` 等图形服务名；
+   出现即 L2 已发生，未出现即 UI 初始化前就停了。

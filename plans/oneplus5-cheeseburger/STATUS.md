@@ -46,6 +46,12 @@
   `(apply-protobox)`/`protobox collection`/`sandbox.protobox.index`，`zalloc.h` 无本地改动）。
   审计全文：`diagnostics/H240-LSD-IPC-AUDIT.md`。**下一步**：把采样名单换成
   SpringBoard / lsd / containermanager，沿链继续走到底（不改 policy、不加 allow）。
+- **L1/L2/L3 分层结论（H244–H246）**：**L1 已发生**（SpringBoard↔backboardd 双向 7/9 条，
+  含成对请求/回复；另有 29 次 bootstrap 查找）；**L3 未发生**（530 s 内 SpringBoard 从未打开
+  显示设备或 GPU 加速器，驱动侧只记录到 MobileGestaltHelper/IOMFB_FDR_Loader/backboardd 三个客户端）；
+  **L2 无正面证据**（pc 采样只抓到 4 个内核 stub 地址，方法学上不能证明没发生）。
+  另已证实：插件自身的"重启 SpringBoard"探针在 237.5 s 强行重置了启动流程，后续观测必须关掉它。
+  详见 `diagnostics/H240-LSD-IPC-AUDIT.md` §10。
 - **会话交接（2026-11-11）**：`diagnostics/SESSION-HANDOFF-2026-11-11.md` —— 现状、
   已证实结论、已排除项、镜像清单与全部操作细节（其"下一步"一节已被上面这条取代）。
   渲染服务器侧一切正常（`LCD/primary 1080x1920`、18 pass / 0 draw / 0 swap）。
