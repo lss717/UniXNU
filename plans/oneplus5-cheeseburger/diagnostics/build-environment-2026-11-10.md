@@ -3489,3 +3489,35 @@ il  : kernel.macho 0e4325070ea8a22080eacc4604a3952a6cb09b54a2a8bf93287031a19887d
 
 因此下一步转到用户态、不碰内核：在插件里对一批候选服务做 `bootstrap_look_up`，把**缺失的服务名**
 列出来（这是 SpringBoard 的同步调用可能指向的对象），与 SpringBoard 那一条 `mach_msg2` 等待对照。
+
+### 45.81 it：persona 文件被沙箱挡住 → 改为 seed 里 stage；但该镜像在 ~194 s 停滞
+
+`is`（插件尝试创建 persona.kb）：
+
+```
+Sandbox: backboardd(56) deny(1) file-write-create /private/var/keybags/persona.kb
+persona#264 create create failed errno=1
+```
+
+backboardd 的沙箱不允许写 `/private/var/keybags`。于是 `it` 改为**把文件放进 Data seed**
+（`/private/var` 就是 Data 卷根）：`keybags/persona.kb`，133 字节，
+`UsePersonaManifestVersion=1 / UsePersonaGenerationID=1 / UserPersonaDictionary={}`（binary plist，0600）。
+
+**结果**：`it` 的持久日志停在 **~194 s**，而且插件的 `ca#` 探针一行都没有（插件本身加载了，
+`slide=` 与 `abi=214` 都在）。这和 `ip/iq/ir` 能跑到 230 s+ 的正常形态不同。
+
+**关键旁证**：把本机 IPSW 里的 `/usr/libexec/usermanagerd` 取出来看字符串，iOS 17 版本里
+**同样存在**这几个键与同一路径：
+
+```
+UsePersonaManifestVersion / UsePersonaGenerationID / UserPersonaDictionary
+/private/var/keybags/persona.kb
+```
+
+也就是说结构不是 iOS 18 专属的，我们的字段名与路径是对的；剩下的未知只是**版本号取值**
+（以及 `it` 的停滞是否真由它引起，还是又一次偶发）。
+
+下一步两条，按代价排序：
+1. **重跑一次 `it`**（一次上机）：若停滞复现，persona 文件就是嫌疑；若不复现，按偶发处理；
+2. 离线反汇编 `usermanagerd` 里读 `UsePersonaManifestVersion` 之后的比较常量，确认 iOS 17 期望的
+   版本号（我们目前写 1）。
