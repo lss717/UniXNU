@@ -451,8 +451,9 @@ h103MaybeRestartSpringBoard (uint32_t displayClients)
 // only the name list grew, so a boot failure here points at the list, not at a new mechanism.
 extern "C" void native_sb_pc_sample (const char *name, unsigned sample);
 
+// H241: lsd is second so it is sampled every round as well; the rest only in the first rounds.
 static const char *const a540SbNames[] = {
-  "SpringBoard", "keybagd", "runningboardd", "containermanagerd", "usermanagerd", "backboardd",
+  "SpringBoard", "lsd", "keybagd", "runningboardd", "containermanagerd", "usermanagerd", "backboardd",
 };
 
 static void
@@ -465,7 +466,7 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
   IOSleep (170000);
   for (unsigned sample = 0; sample < 12; ++sample) {
     for (unsigned index = 0; index < sizeof a540SbNames / sizeof a540SbNames[0]; ++index) {
-      if (index != 0 && sample >= 2) {
+      if (index > 1 && sample >= 2) {
         continue;
       }
       IOLog ("NATIVE_SBPC: call name=%s sample=%u\n", a540SbNames[index], sample);

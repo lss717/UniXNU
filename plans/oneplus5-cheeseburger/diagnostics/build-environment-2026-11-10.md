@@ -3550,3 +3550,45 @@ dpy=3/18/0/1/0        ← 仍然是 3 个 display 客户端、18 次调用
 **下一步（需要内核）**：采样时把 `mach_msg2_trap` 线程的**消息头指针**（`saved_state->x[0]/x[1]`）
 取出来并 `copyin` 前 16 字节，读 `msgh_id` —— 它直接指向 MIG/XPC 的例程编号，
 是识别对端最便宜的办法。风险：内核构建近期不可复现（§45.79），需要接受一次失败的可能。
+
+### 45.83 H237–H240：SpringBoard 的同步等待终于定位到 lsd（以及两个内核坑）
+
+**H237** 让采样器把 `mach_msg2_trap` 的打包参数打出来，但一行没有——因为 arm64 的 **Mach trap 号在 x16
+里是负数**（`osfmk/arm64/bsd_arm64.c`：`assert(call_number < 0); call_number = -call_number;`），
+`mach_msg2_trap` 是 **-47**。
+
+**H238**（-47 修正）拿到 10 组样本，10 秒级稳定不变：
+
+```
+NATIVE_SBMSG2: tid=290 opt=0x40700420e bits=0x0 ssz=0 rport=0x350b lport=0 vport=0 id=0 rcvname=0x1f03 rcvsz=16384 to=0
+```
+
+`bits=0 / ssz=0` → **纯接收**（不是 send+receive），缓冲 16 KB、无超时。符号化（`macho-resolve.py` +
+`nm`）确认 pc=`_mach_msg2_trap +0x8`、lr=`_mach_msg2_internal +0x4c`；同进程其余 5 条线程全是
+`__workq_kernreturn` / `__ulock_wait2` / `__dlock_wait`——SpringBoard 当时**只有 6 条线程**。
+
+**H239**（读回消息缓冲区 + 解析端口）第一次上机在 157.8 s 后挂起（无 panic），第二次**panic**：
+
+```
+zone_require failed: address in unexpected zone id 21 (ipc port sets)
+expected: ipc ports @zalloc.c:1431
+```
+
+原因：`ipc_entry_lookup()` 的 `ie_object` 可能是 **ipc_pset**（端口集），我把它当 `ipc_port_t` 传给
+`ipc_port_get_receiver_task()`，锁错了对象，之后释放时 zone 校验失败。
+
+**H240**（port set 守卫）成功，样本 7–11：
+
+```
+NATIVE_SBPORT: buf=0x16f658120 hdr=1 bits=0x0 size=0 rport=0x5f03 lport=0 vport=0 id=0
+NATIVE_SBPORT: rcv name=0x2703 set=0 ie=0x3030001 sr=1 ms=1 peer=119/SpringBoard
+NATIVE_SBPORT: req name=0x5f03 set=0 ie=0x3210001 sr=2 ms=0 peer=92/lsd
+```
+
+- 接收端口 `0x2703` 是 **SpringBoard 自己的**（SEND|RECEIVE，`sr=1`）——即"发出去的请求里带的回复端口"；
+- 缓冲区里残留的那张消息头，远端端口 `0x5f03` 属于 **lsd（pid 92）**，端口仍然活着（`sr=2`）；
+- `set=0`：**不是端口集**，所以不是"运行循环空等"，确实是**在等一个具体的对端回复**；
+- lsd 在 139.6 s 启动（pid 92，4 线程），160 s 起 `run=0`、主线程 `st=9` 长等——**它没有回复**。
+
+结论：这条链是 **SpringBoard → lsd（Launch Services）→ 没有回复**。`lsd.mapdb` 之前查到 `kr=0x0`
+只说明服务名注册着，不代表 lsd 在工作。下一轮（H241）把采样器直接对准 lsd。
