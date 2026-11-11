@@ -3390,3 +3390,34 @@ Mach receive” 一致。新增 `scripts/symbolicate-pc.py`：读 `LC_FUNCTION_S
 
 镜像：`/tmp/opencode/boot-H236ij.img`，sha256 `b1b164ea…`；
 kernel `a9350a05…`；插件 cdhash `091e9c47…`。已上机。
+
+### 45.77 il：采样成功，SpringBoard 只有一个异常阻塞线程（等 Mach 回复）
+
+补丁完整后 il 正常启动（`kernel.macho` `0e432507…`，`native-skip-root-auth` 已在 `bsd_init.c` 里），
+采样线程按预期输出（`NATIVE_SBPC: start rc=0`，样本 n=6~9）。**同一 tid 的 pc 在 10 次采样间完全不动**
+——是阻塞，不是空转。
+
+**符号化方法（关键）**：不能用插件打印的 `slide=`（那是主可执行文件的 slide）。正确做法是拿**同一轮**
+日志里的 `NATIVE_TRAP_IMAGE_ROW` 反推：
+
+```
+NATIVE_TRAP_IMAGE_ROW: base=0x1dc3e1000 delta=0x1d4f8 … SessionSyncEngine
+SessionSyncEngine 的 cache vmaddr = 0x1c18d9000  →  cache slide = 0x1ab08000
+```
+
+然后 `scripts/macho-resolve.py` 的等价扫描（用 `~/dsc-work/ext`）把这些 pc 落回镜像：
+
+| pc（runtime） | 镜像 + 偏移 | 符号 | 判读 |
+|---|---|---|---|
+| `0x1e628ebdc` | `libsystem_kernel + 0x7bdc` | `__ulock_wait`（lr 在 libdispatch） | 等 dispatch 锁/信号量 |
+| `0x1e6288970` | `libsystem_kernel + 0x1970` | `__ulock_wait2` | 等 unfair lock |
+| `0x1e62888e8` | `libsystem_kernel + 0x18e8` | `__workq_kernreturn`（lr `_pthread_wqthread`） | 4 个 dispatch worker **正常挂起** |
+| `0x1e6288b58` | `libsystem_kernel + 0x1b58` | **`mach_msg2_trap`**（lr `mach_msg2_internal`） | **tid=290 在等一个 Mach 回复** |
+
+结论：SpringBoard 的 9 个等待线程里，**只有 tid=290 卡在同步 Mach 消息（等回复）**，
+其余都是正常的 workqueue 挂起 / 等锁。也就是说 SpringBoard 卡在一次**同步 XPC/Mach 调用**上，
+对端没有回。这与 sagit 记录里“containermanagerd ↔ usermanagerd persona XPC 不返回”的形态同类。
+
+下一步（ik）：把采样扩到它可能等的几个 daemon（`keybagd`、`runningboardd`、`containermanagerd`、
+`usermanagerd`、`backboardd`），并同时打印 `th->wait_event`，看是否有**同一对象**在两进程里成对出现
+（发送方等回复 / 接收方阻塞在同一 mqueue）。
