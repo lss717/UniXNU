@@ -200,3 +200,11 @@ launchd 直接忽略；`status=2`（ENOENT）来自覆盖层里缺少 sentinel
 
 **做法**：先确认当初那套设置（问人/翻 Mac 的命令历史/以前录下来的 `out/cheeseburger/.config`），
 再动内核；不要靠临时 `export` 猜。
+
+## P13 `IORegistryEntryCreateCFProperties` 也会把 backboardd 卡住
+
+想“从用户态读驱动属性”时用了 `IOServiceGetMatchingService` + 整字典
+`IORegistryEntryCreateCFProperties`，结果是探针线程同样一去不回（没有 trap、没有日志）。
+
+**做法**：只读需要的单个 key（`IORegistryEntryCreateCFProperty`），并在前后各打一个标记行，
+这样卡住时能定位到具体是哪一步；整字典读取在 backboardd 里不要用。

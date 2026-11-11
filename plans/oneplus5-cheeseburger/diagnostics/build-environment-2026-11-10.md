@@ -3227,3 +3227,52 @@ ig 把 MG 的键改成 `CFStringRef` 之后不再 SIGSEGV，但换成了更坏�
 **结论**：内核路线要恢复，得先拿到当初那套构建设置（或补一个能同时产出 late 归档、且先于
 归档步骤生成对象的脚本）。在那之前不要再指望“临时 export 几个变量”就能构建成功。
 Mac 上的 `out/cheeseburger/.config` 已按原样恢复，`scripts/unixnu/tree.py` 也已还原。
+
+### 45.71 ih 结果：`displayScale = 0`，与驱动发布的 3 不一致
+
+安全的探针给出两条数据：
+
+```
+ca#201 mode  1080x1920 px=0x0 hz=60.000        ← bounds 对、像素 0、刷新率对
+ca#202 scale displayScale=0.000                ← CADisplay 自己的 pointScale
+```
+
+驱动侧在同一轮里发布的是：
+
+```
+NATIVE_LEGACY: dims 1080x1920 canvas=1:1080,1:1920 dotpitch=1:163
+NATIVE_LEGACY: unit-scale status=0 requested=3 chosen=3 rot=0
+```
+
+也就是说 **驱动说 scale=3，QuartzCore 算出来是 0**。这两者正好构成
+`pixelWidth = 0 → pointScale = 0` 这条链，而 §45.58 里参考端口的 SpringBoard 就是被
+`preferredScale == 0` 的 `BSFloatIsZero` 拒绝掉的。**这很可能就是 SpringBoard 不建 UI 的直接原因。**
+
+`ca#N props` 这一行没有出现——`IOServiceGetMatchingService` +
+`IORegistryEntryCreateCFProperties` 读整个属性字典在 backboardd 里同样把线程卡住了
+（与 MG 一样是“挂住”而不是报错）。下一版改为只读单个属性
+（`IORegistryEntryCreateCFProperty`），并且放一个“进入/返回”标记，便于区分卡在哪一步。
+
+`NATIVE_LEGACY_STATE` 这一轮没有打印，无法据此判断 `surface` 有无。
+
+### 45.72 现在的判断：需要动驱动（=需要内核构建）
+
+把证据串起来：
+
+```
+驱动发布 canvas=1080x1920 / unit-scale=3        （33.6 s）
+   ↓
+CADisplay: bounds 1080x1920、pixelWidth/Height = 0、refreshRate 60、pointScale 0
+   ↓
+SpringBoard 的 FBSDisplayMode 校验要求 preferredScale != 0（参考端口实测）
+   ↓
+SpringBoard 不建 UI → 不提交图层 → backboardd 合成空树（18 pass / 0 draw）→ 0 swap
+```
+
+`pointScale` 的来源在 backboardd 侧是 `BKDisplayInfo` / `BKSDisplayServicesGetScreenScale()`，
+最终落到 MobileGestalt 的 `MainScreenScale`；我们的驱动虽然把 `/chosen/display-scale=3` 写进去了，
+但 MG 的读取/缓存发生在 33.6 s 之前（或根本没读这条）。**这件事只能在驱动启动早期发布，
+或者在驱动里直接把默认 surface 建出来供合成器使用——两者都是内核侧改动。**
+
+参考端口（sagit）的解法是“让 MG/BKS/CADisplay 的 scale 变成 3”，代价也是改驱动 + 重建 MG 缓存。
+我们的 Data seed 里**没有** MobileGestalt 缓存文件（已挂载检查，`count 0`），所以从用户态改缓存这条路不成立。
