@@ -2164,3 +2164,32 @@ gx 让 `supportsFamily:` 一律回 **NO**，预期 renderer 走兼容回退分�
   认证凭据确认后只需改 `askpass-win.sh`，无需改命令。
 - 已经打包好、**只等上机**的镜像：`/tmp/opencode/boot-H236gx.img`
   （81,149,952 B，sha256 `59f9d426…`，插件 cdhash `3933175c…` 已在信任缓存中）。
+
+### 45.29 gx 的真正失败原因是缺四个 `_MTLAddDevice` 初始化器（gz）
+
+gx 的日志把崩溃点钉死了：
+
+```
+dev#15 supportsFamily: family=1001
+dev#16 supportsFamily: family=1001
+NATIVE_TRAP: pid=56 comm=backboardd exc=1 code=0x1 sub=0x0 sig=11
+NATIVE_EXIT: pid=56 ... status=0xb ns=2 code=0xb
+```
+
+既不是"selector 没答"（`doesNotRecognize:` 一行都没有），也不是 `supportsFamily:` 返回值的
+问题（回 YES 和回 NO 都是同一个崩点）。
+
+答案在**我们自己的桥**里（`NativeBridgeMetalFrontend.mm:1243`）：
+
+> "The original discovery (`_MTLAddDevice`) runs these four on every device it registers."
+> `-initLimits` / `-initFeatureQueries` / `-initGPUFamilySupport` / `-initWorkarounds`
+
+目标机的这四个实现会从 `featureProfile` 和 Apple GPU 表里**填基类的 limits/feature 表**。
+桩设备没有实现它们 → 走 `_MTLDevice` 基类实现 → 基类读它自己未初始化的表 →
+`supportsFamily:` 时 SIGSEGV。桥设备把这四个实现成空体，正是为了避开这件事。
+
+gz 的做法：`_MTLDevice` 基类 + 四个空初始化器（并各记一行），`supportsFamily:` 仍回 NO。
+这是有据可依的修复，不是试错。
+
+镜像：`/tmp/opencode/boot-H236gz.img`（81,149,952 B，sha256 `aee8ac9d…`，
+插件 cdhash `94e43329…` 已入信任缓存）。
