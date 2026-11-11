@@ -2257,3 +2257,54 @@ dev#13 -newDepthStencilStateWithDescriptor: descriptor=1
 收益评估：即使拿到 `featureProfile` 的键表，桩设备仍要为 A540 **编造**功能数值——
 这与 turnip 的死结同类（声明了不支持的能力，后续绘制必然失败）。因此 A 计划到此为止，
 不再投入反汇编时间；结论与 §45.30 一致：桩设备的上限就是 Metal 自己的设备表。
+
+### 45.32 目标机 Metal 的反汇编结论（子代理，离线）
+
+在 Mac 上用 Xcode 自带的 `dsc_extractor.bundle`（`dyld_shared_cache_extract_dylibs_progress`）
+把 `/tmp/osvol2` 的缓存整份导出，Metal 变成真正的 Mach-O（4 MB，18,711 个符号）后反汇编。
+Metal 镜像基址 `0x187A78000`。要点：
+
+1. **发现流程**（`_MTLRegisterDevices` `0x187AA48E8`）：
+   `IOMasterPort` → `IOServiceMatching("IOAcceleratorES")` → 逐个
+   `getMetalPluginClassForService` → `objc_alloc(cls)` → `[cls initWithAcceleratorPort:svc]`
+   → `MTLAddDevice(dev)`。传入的是**原始 io_object_t**。
+2. **类名解析**（`getMetalPluginClassForService` `0x187AA49D8`）：先读注册表属性
+   `MetalPluginName` / `MetalPluginClassName`（CFString），拼成
+   `/System/Library/Extensions/<name>.bundle`，取 `classNamed:`；**取不到才回退**
+   `principalClass`，然后 `[cls isSubclassOfClass:<0x1E648E70 的类>]` 作为闸门。
+3. **注册顺序**（`_MTLAddDevice` `0x187AA4B7C`）：
+   `conformsToProtocol:MTLDevice` → `conformsToProtocol:MTLDeviceSPI`（各有断言）→
+   `initLimits` → `initFeatureQueries` → `initWorkarounds` → `_deviceWrapper` →
+   `_deviceArray addObject:`。它自己**不写**任何 `_MTLDevice` ivar。
+4. **`featureProfile` 是 NSUInteger（profile 位掩码），不是字典**。Metal 没有它的实现，
+   由插件提供；`initLimits`/`initFeatureQueries`/`initGPUFamilySupport` 都读它。
+   `initWorkarounds` 是裸 `ret`。
+5. **`-[_MTLDevice supportsFamily:]`（`0x187A813AC`）直接
+   `ldr x9,[x0,#0x110]; ldp x8,x9,[x9]; ...`** —— 走 ivar+0x110 的内联
+   `std::vector<MTLGPUFamily>`，**没有空指针检查**。向量由
+   `initFeatureQueries`→`initGPUFamilySupport` 填充；我们之前把这两个做成空体，
+   正是 gx/gz/hd 崩溃（sig=11）的原因。
+6. `newCommandQueueWithDescriptor:` 在基类里就是 `return nil`；参考实现是
+   `-[MTLIOAccelDevice newCommandQueueWithDescriptor:]` `0x187B67290`。
+
+### 45.33 B 线：插件自己在 backboardd 里跑通了 ABI 到 GPU 的大部分路径
+
+hb/hc/hd/he 连续四版，把“插件能不能真正驱动 GPU”这件事一条条测出来：
+
+| 步骤 | 结果 |
+| --- | --- |
+| `Query` | ✅ `abi=0x1 in=32 out=40 maxbo=268435456` |
+| `GetDeviceInfo` | ✅ `chip=0x5040000 gmem=0 va=0x2000000+0x8000` |
+| `BoAlloc` ×2 | ✅ |
+| `BoMap` ×2 | ✅ |
+| `BoCpuMap` ×2 | ✅ |
+| `IOConnectMapMemory64` | ❌ 传 0 时失败；改成 `kIOMapAnywhere|kIOMapInhibitCache` **✅（ib=4096 target=4096）** |
+| `Submit`（CP_MEM_WRITE ×3 的 48 字节 IB） | ✅ 返回 fence |
+| `WaitFence` | ❌ **超时**（约 1 s） |
+| 回读校验 | 未到达 |
+
+也就是说：**backboardd 的沙箱允许完整的 BO 分配/映射/提交路径**，唯一卡住的是 CP 不推进。
+下一版在超时分支里补记 `GetTimestamp`（前后两次）与 `GetStatus`（faults/suspends），
+用来判断是“CP 根本没跑（GPU 掉电/环未启动）”还是“fence 语义不符”。
+
+注意：本节的 map 选项是实测结论，之前 `IOConnectMapMemory64(..., 0)` 失败并不是沙箱拒绝。

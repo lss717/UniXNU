@@ -37,6 +37,7 @@ def main() -> int:
                     '-Os', '-Wall', '-Wextra', '-Werror', '-fstack-protector-strong',
                     '-std=c++17', '-fobjc-arc', '-bundle',
                     '-framework', 'Foundation', '-framework', 'IOKit', '-framework', 'Metal',
+                    '-I', str(ROOT / 'drivers/NativeAdreno'),
                     str(ROOT / 'drivers/NativeMetal/A540TracePlugin.mm'), '-o', str(executable)], check=True)
     subprocess.run(['strip', '-x', str(executable)], check=True)
     (BUNDLE / 'Info.plist').write_bytes(plistlib.dumps(dict(
