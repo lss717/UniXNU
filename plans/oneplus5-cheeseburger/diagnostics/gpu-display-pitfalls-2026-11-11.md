@@ -186,20 +186,38 @@ launchd 直接忽略；`status=2`（ENOENT）来自覆盖层里缺少 sentinel
 **做法**：探针里不要用 MobileGestalt。要 scale 就用 `CADisplay -pointScale`，并且把它排在
 任何可能阻塞的调用**之前**，先打印再继续。
 
-## P12 内核构建：镜像配置不在仓库里
+## P12 内核构建：一条命令，别猜 export（2026-11-11 更正）
 
-`cheeseburger_defconfig` 里 `CONFIG_XNU_NATIVE_LEGACY_DISPLAY` 与
-`CONFIG_XNU_NATIVE_MOBILE_DISPLAY` 都是 **not set**，但跑在机器上的镜像显然包含
-`NativeLegacyDisplay`。也就是说那批内核是用**仓库外的设置**构建的。
+**结论先行**：内核的构建设置就是仓库里的 **`scripts/macos-build-kernel.sh`**（tracked，
+H236cn 起替代 host-local 的 `~/run-h103n-build.sh`）。在 Mac 上：
 
-- 打开 `LEGACY_DISPLAY=y` 才能让 `libNativeLegacyDisplay.late.a` 被 `-force_load`
-  （`_native_a540_*` 只在这个归档里）；
-- `MOBILE_DISPLAY=y` 还要求一个并不存在的 `libNativeMobileDisplay.late.a`；
-- 归档步骤需要 `bsd/*.o`，而对象由 XNU 构建产生，上一次失败会把对象清掉 → 循环依赖，
-  只能靠 bootstrap pass 打破，而它当前又生成不了 `startup.o.json` 记录。
+```sh
+bash scripts/macos-build-kernel.sh          # 树已打补丁时自动 XNU_SKIP_PATCH_LOOP=1
+bash scripts/macos-build-kernel.sh --clean  # 删 .cache/xnu-work 全量重建
+```
 
-**做法**：先确认当初那套设置（问人/翻 Mac 的命令历史/以前录下来的 `out/cheeseburger/.config`），
-再动内核；不要靠临时 `export` 猜。
+它导出 `XNU_NATIVE_LEGACY_DISPLAY=1`、`XNU_NATIVE_MOBILE_DISPLAY=0`、
+`XNU_OWNER_DATA_*`、`XNU_SHENG_PMGR=1` 等，然后直接 `exec bash
+scripts/build-xnu-4k-baseline.sh`。
+
+我之前把下面三件事都判断错了，这里留作教训：
+
+1. **`CONFIG_XNU_*` 只是 `./unixnu defconfig` 写 `.config` 的默认值**，
+   真正决定内核内容的是导出给基线脚本的 `XNU_*`。wrapper 直接 export 后 exec 基线脚本，
+   完全跳过 defconfig，所以「defconfig 说没有、跑着的内核里有」**是设计如此，不是配置丢失**。
+   本机的 `out/cheeseburger/.config` 是 2026-10-22 的 B3 最小集残留，从来不是镜像的来源。
+2. **bootstrap pass 不带归档是预期的**——`Undefined _native_a540_*` 出现在 bootstrap pass
+   完全正常（P7 最后一行就是这么写的）。正确做法是给**最终链接**设 `NATIVE_LEGACY_DISPLAY=1`，
+   wrapper 正是这么做的。「打开 LEGACY_DISPLAY=y 才能消除未定义」这个目标本身是错的。
+3. **不存在「归档 ↔ XNU 对象」的循环依赖**：`libNativeLegacyDisplay.late.a` 由
+   `scripts/build-op5-legacy-display.py` 在内核链接**之前**用 iPhoneOS SDK 编到原始 kernelcache
+   上，不依赖内核产物；内核只 `-force_load` 它并校验 `build-report.json`（归档 sha + 每个源文件 sha）。
+   源改了不重建会报 `Rebuild the owned Legacy archive after changing <file>`。
+
+- **不要开 `XNU_NATIVE_MOBILE_DISPLAY`**：全仓库没有脚本生成 `libNativeMobileDisplay.late.a`，
+  成功镜像里它也是 0。
+- 唯一的外部依赖：`~/UniXNU/out/ipsw/21H461/kernelcache.decompressed`（`DEFAULT_KC`，
+  可用 `OP5_KERNELCACHE`/`--kernelcache` 覆盖）。这个文件不在，归档脚本才会失败。
 
 ## P13 `IORegistryEntryCreateCFProperties` 也会把 backboardd 卡住
 
@@ -208,3 +226,30 @@ launchd 直接忽略；`status=2`（ENOENT）来自覆盖层里缺少 sentinel
 
 **做法**：只读需要的单个 key（`IORegistryEntryCreateCFProperty`），并在前后各打一个标记行，
 这样卡住时能定位到具体是哪一步；整字典读取在 backboardd 里不要用。
+
+## P14 `macos-build-kernel.sh` 只重建 legacy display 归档，驱动归档要手动重建
+
+wrapper 里只有一段：
+
+```sh
+if [ ! -f "$DISPLAY_ARCHIVE" ] || [ -n "$(find -L .../drivers/NativeMobileDisplay -newer "$DISPLAY_ARCHIVE")" ]; then
+  SDKROOT=… python3 scripts/build-op5-legacy-display.py
+fi
+```
+
+它**不**重建 `build/native-ufs-probe/libNativeUfsProbe.a`、`build/native-adreno-accelerator/…`
+等驱动归档。于是改了 `drivers/**/*.cpp` 之后直接跑 wrapper：
+
+- 内核链接用的是**旧归档**，代码改动静默不生效（没有任何报错）；
+- 表现可以是“新加的日志一行都没有”，也可以是“上次修好的未定义符号又回来了”。
+
+**做法**：改过驱动源码后，先重建对应归档再构建内核：
+
+```sh
+cd ~/UniXNU/out/cheeseburger/tree
+SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)" python3 scripts/build-arm-driver.py NativeUfsProbe
+# 其它驱动同理：build-arm-driver.py <模块名>；legacy display 用 build-op5-legacy-display.py
+bash ~/UniXNU/scripts/macos-build-kernel.sh
+```
+
+自检：`xcrun nm -g build/<模块>/lib<模块>.a | grep <新符号>` 必须能查到，否则就是没重建。
