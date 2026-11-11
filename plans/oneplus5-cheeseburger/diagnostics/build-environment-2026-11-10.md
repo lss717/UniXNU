@@ -3276,3 +3276,45 @@ SpringBoard 不建 UI → 不提交图层 → backboardd 合成空树（18 pass 
 
 参考端口（sagit）的解法是“让 MG/BKS/CADisplay 的 scale 变成 3”，代价也是改驱动 + 重建 MG 缓存。
 我们的 Data seed 里**没有** MobileGestalt 缓存文件（已挂载检查，`count 0`），所以从用户态改缓存这条路不成立。
+
+### 45.73 ii 结果：MG 缓存**不存在**，缓存理论被否证
+
+插件直接看文件（不调用 MG）：
+
+```
+mgcache#244 systemgroup.com.apple.mobilegestaltcache absent
+mgcache#245 com.apple.mobilegestalt.plist              absent
+mgcache#246 com.apple.MobileGestalt.plist              absent
+mgcache#247 …/mobilegestaltcache/Library/Caches        absent
+```
+
+`ca#204 scale displayScale=0.000` 依旧。
+
+结合驱动侧的实测（`unit-scale status=0 requested=3 chosen=3`，写的是
+`IORegistryEntry::fromPath("/chosen", gIODTPlane)`，读回 u32 = 3）：
+
+- **“旧缓存里 scale=0 顶住了 `/chosen`”这条在我們这台不成立**——本机 scratch Data 上
+  MG 根本不落盘，每次现读；
+- 因此 `CADisplay.pointScale == 0` 不是缓存问题，也不是 `/chosen` 没写进去的问题。
+
+剩下最合理的解释只有一个：`pointScale` 是 QuartzCore 从**像素尺寸**推出来的
+（`pixelWidth/pixelHeight == 0` → `pointScale == 0`），而像素尺寸来自显示对象的
+**默认 surface**。也就是说 §45.72 里的那条链仍然成立，只是起点是 surface 而不是 MG。
+
+`NATIVE_LEGACY_STATE` 这一轮仍未打印，无法从驱动状态行判断 `surface` 有无，
+所以下一步用离线反汇编确认 `IOMobileFramebufferLegacy::create_default_fb_surface`
+需要什么、在什么时机被调用、失败时返回什么。
+
+### 45.74 设备侧访问方式变更（记录）
+
+手机改到 `ls@192.168.10.225`，远程 shell 是 **PowerShell**（不是 cmd），密码文件是
+`/tmp/opencode/askpass-win.sh`。带引号的 cmd 风格命令会报 `ParserError`，
+因此新增 `/tmp/opencode/ps225`：把 PowerShell 脚本用 UTF-16LE + base64 通过
+`-EncodedCommand` 传过去，彻底绕开引号问题。
+
+```sh
+./ps225 "Set-Location 'C:\Users\ls\AppData\Local\Android\Sdk\platform-tools'; .\adb.exe devices"
+```
+
+`adb`/`fastboot` 在新机器上位于 `C:\Users\ls\AppData\Local\Android\Sdk\platform-tools`，
+镜像目录仍是 `D:\Users\ls\Documents\OnePlus5_ios`。
