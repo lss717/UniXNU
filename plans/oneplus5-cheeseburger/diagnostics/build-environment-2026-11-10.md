@@ -2193,3 +2193,43 @@ gz 的做法：`_MTLDevice` 基类 + 四个空初始化器（并各记一行）�
 
 镜像：`/tmp/opencode/boot-H236gz.img`（81,149,952 B，sha256 `aee8ac9d…`，
 插件 cdhash `94e43329…` 已入信任缓存）。
+
+### 45.30 gz：四个初始化器让注册走通了，但 Metal 仍在"设备内部状态"上 SIGSEGV
+
+gz 的序列（16 次重复，完全一致）：
+
+```
+dev#1  +initialize
+dev#2  +alloc
+dev#3  -initWithAcceleratorPort: port=0x470b
+dev#4  -initWithAcceleratorPort: device=returned
+dev#5  -initLimits empty
+dev#6  -initFeatureQueries empty
+dev#7  -initWorkarounds empty
+dev#8  -newCommandQueue queue=stub
+queue#9  -setLabel:
+queue#10 -setSubmissionQueue:
+queue#11 -setCompletionQueue:
+queue#12 -device
+dev#13 -newDepthStencilStateWithDescriptor: descriptor=1
+（38 ms 后）NATIVE_TRAP: pid=56 comm=backboardd exc=1 code=0x1 sub=0x0 sig=11
+```
+
+要点：
+
+1. **四个初始化器确实被 `_MTLAddDevice` 调用**（`initLimits` / `initFeatureQueries` /
+   `initWorkarounds` 各一次；`initGPUFamilySupport` 在 featureProfile 为空时不会被调用）。
+   这解释并修正了 gx 的判断。
+2. 有了它们之后，Metal **不再问** `featureProfile` / `maxBufferLength` / `supportsFamily:`
+   ——注册阶段直接通过，随后去建队列、建深度模板状态。
+3. 崩点只是**向后移动**了：`-newDepthStencilStateWithDescriptor:` 返回 nil 之后 38 ms，
+   仍然是 backboardd 的 `sig=11`，而且全过程**没有一条 `doesNotRecognize:`**。
+   也就是说，崩溃发生在 Metal 自己内部（读设备的功能/限制表），不是我们能回答的消息。
+
+**结论（A1 收尾）**：桩设备能走到的最远处就是这里。Metal 在设备注册之后要求设备具备真实的
+功能表（limits/features，来自 `featureProfile` 与 Apple GPU 表）；没有它，Metal 自己的代码
+就会解引用空表。继续用桩去"答消息"不会前进——A1 的方法清单已经完整，剩下的属于 C6a 本体
+（真正实现设备/队列/命令缓冲，而不是桩）。
+
+数据来源补记：`featureProfile` 的键表在目标机的 Metal（dyld shared cache 内）里，
+本地只有 `os-mnt` 的资源文件，缓存本身没有提取，所以暂时无法离线解析这个字典。
