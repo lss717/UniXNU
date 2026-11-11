@@ -2892,3 +2892,48 @@ hv（逐 pid `proc_name`）的 `restart` 行落在日志窗口之外（内核环
 若框架调用也不成，下一轮再回到内核路线并先修上表。
 
 镜像：`/tmp/opencode/boot-H236hw.img`，sha256 `a6ac043d…`；插件 cdhash `e3fdadca…`。
+
+### 45.57 hw 实测：SpringBoard 重启成功，但它依然没连上渲染服务器
+
+```
+[126.61] SpringBoard[27] exec
+[141.16] backboardd[56] exec
+[218.74] NATIVE_EXIT: pid=27 comm=SpringBoard status=0xf ns=2 code=0xf   ← SIGTERM，我们的重启生效
+[219.23] SpringBoard[117] exec                                          ← launchd 立即重启
+```
+
+重启确实发生了（不管走的是 `kill` 还是 FrontBoardServices），而重启时刻渲染服务器**已经在发布**
+`LCD/primary 1080x1920`（`ca#221 probe … list=6`，218.36 s）。但之后：
+
+- **219 s 之后再也没有任何 `NATIVE_MTL` 行**——backboardd 的 CoreAnimation 完全没有新动作，
+  说明新 SpringBoard **没有连上渲染服务器**，也没有提交图层；
+- `s345=0/0/0`、`fr=0` 不变，仍然零 swap；
+- 新 SpringBoard（pid 117）只做了 `IOServiceMatching("AppleKeyStore")`（`ok=0`，注册表里没有这个
+  服务）×若干，然后安静下来。
+
+也就是说：**“CADisplay 被缓存成空表”这个根因成立，但重启 SpringBoard 并不能解决**——它在
+更早的一步就停住了，根本没走到 display 查询。
+
+### 45.58 参考资料（`/tmp/opencode/sagit-ios-port/docs/display/README.md`，同一路线、iOS 18）
+
+这份记录里有几条与我们现在状态**逐字对应**的事实：
+
+1. **同一组 display**：`+[CADisplay displays]` 返回 **6 个对象，主显示 `LCD primary`**，
+   另有 5 个未连接的 wireless —— 与我们 `ca#N display` 的输出完全一致。所以“6 个 display”是这条
+   Legacy 路线的正常形态，不是异常。
+2. **查询取决于会话/环境**：root Bash 里 `CARenderServer lookup` 返回 `0x44e`
+   （`BOOTSTRAP_UNKNOWN_SERVICE`），CADisplay 为 nil；确认 user sessions 启用、前台 UID 501、
+   **按用户 lookup 成功**，并且在首次查询前设置 `CA_SYSTEM_SESSION_CLIENT=1` 之后，
+   原生 QuartzCore 才返回那 6 个 display。
+3. **它们的 SpringBoard 死在 FBSDisplayMode 校验**：62 份崩溃都停在
+   `preferredScale == 0` 时的 `BSFloatIsZero` 拒绝（保留尺寸 1242×2208，硬件是 1080×1920）。
+   我们的 SpringBoard 没有崩溃循环（只有我们发的那一次 SIGTERM），所以这一点在我们这不成立。
+4. 另有整条容器/persona 链（`/private/var/keybags/persona.kb` 缺失导致 containermanagerd 的
+   Sandbox 容器 RPC 不返回、backboardd 卡在 Mach receive）。我们会话里 backboardd 是正常跑起来的，
+   但 SpringBoard 可能卡在同类同步 XPC 上——这正是“先 AppleKeyStore、然后安静”的形态。
+
+**由此得到的下一步**：必须拿到 **SpringBoard 自己那个会话里的 CADisplay/bootstrap 视图**，
+而不是继续从 backboardd 里猜。最省事、不需要重建内核的办法是往 Data seed 里放一个
+LaunchAgent（用户会话）和一个小探针程序，由它打印
+`bootstrap_look_up("com.apple.CARenderServer")` 的结果与 `+[CADisplay displays]` 计数；
+参照 §45.58 第 2 条，还可以在首次查询前设 `CA_SYSTEM_SESSION_CLIENT=1` 做对照。
