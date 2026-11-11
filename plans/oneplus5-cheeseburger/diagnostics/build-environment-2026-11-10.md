@@ -3451,3 +3451,41 @@ panic(cpu 0 caller 0xfffffff007a3611c): Kernel data abort
 内核对它会把 `__text` 之前的区域判成“不是代码”。
 
 顺带：`il` 现在仍在跑且正常，说明镜像/设备链路没有坏，回归只在这两版构建里。
+
+### 45.79 io 也崩 + 内核构建不可复现：先停止重建内核
+
+`io`（`il` 的源码结构，仅进程名从 1 个扩到 6 个）**同样**在 `OSMetaClass::addInstance` 崩。
+于是做了决定性实验：用 **`il` 的完全相同源码**（`git show 4df3cc7:drivers/NativeUfsProbe/NativeUfsProbe.cpp`）
+重建，得到
+
+```
+il  : kernel.macho 0e4325070ea8a22080eacc4604a3952a6cb09b54a2a8bf93287031a19887d994
+重建: kernel.macho a7cef1366f12a2f5fea782e62ca9e37935a446eb8df4783d42b6e6aff6c50b62
+```
+
+**同源码 → 不同二进制**，说明这个内核构建本身不可复现。结合“崩溃点在
+`OSMetaClass::addInstance`（`far=0`）、紧跟 UFS read-ahead 的 configure 日志、且只有部分构建能启动”，
+更合理的解释是**既有的时序/布局脆弱性**（H103fp/fq/fr 同族），而不是我们加的那几行采样代码。
+
+**决定**：暂停重建内核。继续用能稳定启动的 `il` 内核（它已经带 SpringBoard 采样）。
+
+### 45.80 零成本补到 daemon 侧数据：`il` 日志里的 `NATIVE_WAIT` 全量符号化
+
+内核补丁本来就会给每个进程打一行 `NATIVE_WAIT`（主线程的等待 continuation）。把 `il` 日志里的
+223 条取出来，用 `nm -n` 符号化，得到“每个 daemon 的等待点”：
+
+| 等待点 | 次数 | 含义 |
+|---|---|---|
+| `_ipc_mqueue_receive_continue` | 23 | 正常的 runloop 等消息 |
+| `_thread_preempted` | 8 | 采样时正在跑 |
+| `_workq_unpark_continue` | 5 | 工作队列挂起 |
+| `_psynch_cvcontinue` | 3 | 等条件变量 |
+| `__sleep_continue` | 3 | `msleep`/定时睡眠 |
+| `_ulock_wait_continue` | 2 | 等 ulock |
+| `_filt_wlwait_continue` / `_task_wait_to_return` / `_vm_pageout_continue` | 各 1 | 事件过滤/等 task 退出/页回收 |
+
+**关键判读**：**没有任何 daemon 卡在异常的内核原语上**。也就是说 SpringBoard 那条同步消息没有回音，
+不是因为对端“被别的锁卡住”，更像是**对端根本没在接收**（端口没注册 / 服务没起来 / 消息投递丢了）。
+
+因此下一步转到用户态、不碰内核：在插件里对一批候选服务做 `bootstrap_look_up`，把**缺失的服务名**
+列出来（这是 SpringBoard 的同步调用可能指向的对象），与 SpringBoard 那一条 `mach_msg2` 等待对照。
