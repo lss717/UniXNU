@@ -3095,3 +3095,30 @@ ca#N mode <w>x<h> px=<pw>x<ph> hz=<refreshRate> prefHz=<preferredMode.refreshRat
 
 镜像：`/tmp/opencode/boot-H236id.img`，sha256 `20e22b28…`；插件 cdhash `21128ef4…`，
 cadprobe `8fded1a6…`，两者都在信任缓存里（已按 P1 串加、P2/P3 三件套一起换）。
+
+### 45.65 id 结果：两个探针都“抛异常”，原因已定位（离线确认）
+
+```
+ca#201 mode exception
+ca#202 clients server none
+sblog#256 oslog exception NSInvalidArgumentException:
+          +[OSLogStore localStoreAndReturnError:]: unrecognized selector sent to class 0x2043f3180
+```
+
+两条都不是权限问题，是**接口选错**：
+
+1. **`OSLogStore` 的工厂**：拿本机 dyld 缓存里的
+   `System/Library/Frameworks/OSLog.framework/OSLog` 查字符串，它只有
+   `storeWithScope:error:` / `storeWithURL:error:` / `storeWithArchiveURL:`，
+   **没有** `localStoreAndReturnError:`（那是 macOS 的写法），并且带有
+   `"Invalid direct use of -[OSLogStore init] (use factory instead)"`。
+   `+storeWithScope:` 的 scope 0 是系统存储，正好能读到别的进程。
+2. **`CADisplay` 的 KVC**：iOS SDK 里根本没有公开的 `CADisplay.h`（只有
+   `CADisplayLink.h`/`CAMetalDisplayLink.h`），KVC 走 `valueForKey:` 在这套私有类上会抛
+   `NSException`。改成 `respondsToSelector:` + `objc_msgSend` 直接调
+   `-currentMode` 以及 `CADisplayMode` 的 `width/height/pixelWidth/pixelHeight/refreshRate`，
+   并把异常名与 reason 打进行里。
+
+ie 已按这两条重写：`sblog` 先用 `+storeWithScope:error:`（scope 0），失败再退回
+`localStoreAndReturnError:`；`ca#N mode` 改为直接 getter。镜像
+`/tmp/opencode/boot-H236ie.img`，sha256 `23f4f640…`；插件 cdhash `0fb67058…`。
