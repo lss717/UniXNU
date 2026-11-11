@@ -46,6 +46,11 @@
   `(apply-protobox)`/`protobox collection`/`sandbox.protobox.index`，`zalloc.h` 无本地改动）。
   审计全文：`diagnostics/H240-LSD-IPC-AUDIT.md`。**下一步**：把采样名单换成
   SpringBoard / lsd / containermanager，沿链继续走到底（不改 policy、不加 allow）。
+- **H247（自然启动，无我们重启干扰，130–708 s）**：SpringBoard 全程只有一次 exec、**没有被杀**，
+  线程数恒定 4–5、pc 集合恒定 4 个内核 stub，显示/GPU 驱动侧**从未出现 SpringBoard** →
+  它**从未推进到图形初始化**（不是连上后卡住）。bootstrap 服务名捕获本轮**未命中**（0 行），
+  原因待查（更加可能在 150 s 前完成、或名字不在前 240 B 内联区）。见
+  `diagnostics/H240-LSD-IPC-AUDIT.md` §11。
 - **L1/L2/L3 分层结论（H244–H246）**：**L1 已发生**（SpringBoard↔backboardd 双向 7/9 条，
   含成对请求/回复；另有 29 次 bootstrap 查找）；**L3 未发生**（530 s 内 SpringBoard 从未打开
   显示设备或 GPU 加速器，驱动侧只记录到 MobileGestaltHelper/IOMFB_FDR_Loader/backboardd 三个客户端）；

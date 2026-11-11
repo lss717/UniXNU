@@ -374,3 +374,40 @@ NATIVE_XPC3: sample=1 sb_out=205 sb_in=28 other=278 lost=206
    （`msgh_id = 0x40000324/0x40000325`）只解析**服务名字符串**（不记录其它消息体），
    看是否出现 `com.apple.CARenderServer`、`com.apple.backboard.hid` 等图形服务名；
    出现即 L2 已发生，未出现即 UI 初始化前就停了。
+
+---
+
+## 11. H247：关掉重启后的自然启动观测（130–708 s）
+
+配置：插件重启探针已关闭（`restart_springboard` → `caller("ca","restart","skipped-h247")`），
+内核新增 bootstrap 服务名捕获，IPC 计数改为滑动窗口，采样 150 s 起 40 轮。
+镜像 `boot-H247.img` = `50ffab1e…`，内核 `3f5d4da8…`，插件 CDHash `0fc26f08…`（信任缓存 6 项）。
+
+### 11.1 已证实
+
+| 观察 | 证据 |
+|---|---|
+| **SpringBoard 不再被我们杀掉** | 全日志只有一次 `NATIVE_EXEC: pid=26 comm=SpringBoard`（130.4 s），**没有** `NATIVE_EXIT`，`restart scan` 计数 0 |
+| 插件本身正常加载并工作 | `NATIVE_ACCEL_HB: accel=167 abi=379`，`NATIVE_MTL` 67 行 |
+| 观测窗口覆盖 130–708 s（约 10 分钟） | 日志末行 `[708.9]` |
+| SpringBoard 线程形态**始终不变** | `NATIVE_SBTHR: unchanged threads=4–5 uniq=4`（到 507 s 仍如此），4 个 pc 全部是内核 stub |
+| 显示/GPU 侧仍然**没有** SpringBoard | 驱动侧客户端仍只有 backboardd / IOMFB_FDR_Loader / MobileGestaltHelper |
+| 后期仍有 IPC 活动 | `NATIVE_XPC3: sample=25 sb_out=7 sb_in=11 other=75` |
+
+### 11.2 未达成：bootstrap 服务名捕获失败 [待确认]
+
+`NATIVE_BOOTSTRAP` 行数为 **0**。内核里确有该字符串（`kernel.macho` 中 1 处），说明代码已编入，
+但过滤条件没有命中。可能原因（按可能性排序）：
+
+1. SpringBoard 的 bootstrap 查找集中在 **150 s 之前**（采样器 150 s 才开始设置 pid 表）；
+2. 服务名不在消息体前 240 字节内联区（可能走 OOL 描述符）；
+3. `msgh_id` 不是 `0x40000324/0x40000325`（那可能是 reply/其它例程）。
+
+本轮**不猜测**：需要把过滤条件放宽（例如对所有 `to=launchd` 的消息扫描 `com.apple.` 前缀），
+或在 **exec 时就**登记 SpringBoard 的 pid（而不是等第一次采样）。
+
+### 11.3 当前最强结论
+
+**在完全没有外部干扰的约 10 分钟里，SpringBoard 始终维持 4–5 条线程、停在 4 个内核 stub 上，
+从未打开显示设备或 GPU 加速器。** 因此它不是"连上图形服务后卡住"，而是**从未推进到图形初始化**。
+L2 的正面证据仍未取得（见 11.2），这是下一轮唯一要补的东西。
