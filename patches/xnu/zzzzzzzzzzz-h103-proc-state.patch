@@ -1,8 +1,8 @@
 diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
-index 5dcf00e..1727089 100644
+index 5dcf00e..dcadbaf 100644
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -10285,3 +10285,677 @@ task_best_name(task_t task, char *buf, size_t size)
+@@ -10285,3 +10285,723 @@ task_best_name(task_t task, char *buf, size_t size)
  	char *name = proc_best_name(task_get_proc_raw(task));
  	strlcpy(buf, name, size);
  }
@@ -355,6 +355,9 @@ index 5dcf00e..1727089 100644
 +static void native_xpc_dump(unsigned sample);
 +static void native_xpc_emit(unsigned sample, unsigned budget);
 +static int native_xpc_pids[3];
++static char native_xpc_names[16][48];
++static unsigned native_xpc_names_n;
++static unsigned native_xpc_names_printed;
 +
 +void
 +native_sb_pc_sample(const char *name, unsigned sample)
@@ -643,18 +646,6 @@ index 5dcf00e..1727089 100644
 +	if (!native_xpc_tracked(from) && !native_xpc_tracked(to)) {
 +		return;
 +	}
-+	w = native_xpc_written;
-+	if (w - native_xpc_printed >= NATIVE_XPC_RING) {
-+		native_xpc_lost++;
-+		return;
-+	}
-+	e = &native_xpc_ring[w % NATIVE_XPC_RING];
-+	e->from = (unsigned)from;
-+	e->to = (unsigned)to;
-+	e->bits = (unsigned)hdr->msgh_bits;
-+	e->size = (unsigned)hdr->msgh_size;
-+	e->id = (unsigned)hdr->msgh_id;
-+	native_xpc_written = w + 1;
 +	if ((unsigned)from == (unsigned)native_xpc_pids[0]) {
 +		native_xpc_sb_out++;
 +	} else if ((unsigned)to == (unsigned)native_xpc_pids[0]) {
@@ -662,6 +653,56 @@ index 5dcf00e..1727089 100644
 +	} else {
 +		native_xpc_sb_other++;
 +	}
++	w = native_xpc_written;
++	if (w - native_xpc_printed >= NATIVE_XPC_RING) {
++		native_xpc_lost++;
++		w = native_xpc_printed;          /* keep the window sliding */
++	}
++	e = &native_xpc_ring[w % NATIVE_XPC_RING];
++		/* H247: bootstrap look-ups carry the service name inline.  Record only
++	 * that string (never any other message body), from SpringBoard only. */
++	if ((unsigned)from == (unsigned)native_xpc_pids[0] &&
++	    ((unsigned)hdr->msgh_id == 0x40000324u ||
++	    (unsigned)hdr->msgh_id == 0x40000325u)) {
++		const char *base = (const char *)hdr;
++		unsigned msize = (unsigned)hdr->msgh_size;
++		for (unsigned off = 24; off + 11 < msize && off < 240; off++) {
++			char name[48];
++			unsigned len = 0;
++			if (memcmp(base + off, "com.apple.", 10) != 0) {
++				continue;
++			}
++			while (len < sizeof name - 1 && off + len < msize) {
++				char c = base[off + len];
++				if (c < 0x21 || c > 0x7e) {
++					break;
++				}
++				name[len] = c;
++				len++;
++			}
++			name[len] = 0;
++			if (len < 11) {
++				break;
++			}
++			unsigned k;
++			for (k = 0; k < native_xpc_names_n; k++) {
++				if (strncmp(native_xpc_names[k], name, sizeof name) == 0) {
++					break;
++				}
++			}
++			if (k == native_xpc_names_n && native_xpc_names_n < 16) {
++				strlcpy(native_xpc_names[native_xpc_names_n], name, sizeof name);
++				native_xpc_names_n++;
++			}
++			break;
++		}
++	}
++e->from = (unsigned)from;
++	e->to = (unsigned)to;
++	e->bits = (unsigned)hdr->msgh_bits;
++	e->size = (unsigned)hdr->msgh_size;
++	e->id = (unsigned)hdr->msgh_id;
++	native_xpc_written = w + 1;
 +}
 +
 +static void
@@ -676,6 +717,11 @@ index 5dcf00e..1727089 100644
 +	printf("NATIVE_XPC3: sample=%u sb_out=%llu sb_in=%llu other=%llu lost=%u\n", sample,
 +	    native_xpc_sb_out - native_xpc_p_out, native_xpc_sb_in - native_xpc_p_in,
 +	    native_xpc_sb_other - native_xpc_p_other, native_xpc_lost);
++	while (native_xpc_names_printed < native_xpc_names_n) {
++		printf("NATIVE_BOOTSTRAP: sample=%u name=%s\n", sample,
++		    native_xpc_names[native_xpc_names_printed]);
++		native_xpc_names_printed++;
++	}
 +	native_xpc_p_out = native_xpc_sb_out;
 +	native_xpc_p_in = native_xpc_sb_in;
 +	native_xpc_p_other = native_xpc_sb_other;
