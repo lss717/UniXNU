@@ -2308,3 +2308,60 @@ hb/hc/hd/he 连续四版，把“插件能不能真正驱动 GPU”这件事一�
 用来判断是“CP 根本没跑（GPU 掉电/环未启动）”还是“fence 语义不符”。
 
 注意：本节的 map 选项是实测结论，之前 `IOConnectMapMemory64(..., 0)` 失败并不是沙箱拒绝。
+
+### 45.34 崩溃点定位方法：信号处理器 + slide + 导出缓存（hi）
+
+插件在 `+load` 里装 SIGABRT/SIGSEGV/SIGILL 处理器，把 `pc / lr / sp / fp 链`
+经 ABI Log 写进内核日志，并记录 `_dyld_get_image_vmaddr_slide(0)`（同一进程所有镜像共用）。
+离线用 `scripts/macho-resolve.py`（新增，读缓存导出目录的 Mach-O `__TEXT` vmaddr）
+把运行时地址换算成“镜像+偏移”：
+
+```
+signal=6 pc=0x1d1adef74 → libsystem_kernel.dylib + 0xbf74      (abort)
+frame → Metal + 0x14ef54  = _MTLReportFailure.cold.1
+frame → Metal + 0xa3e4    = +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]
+```
+
+### 45.35 断言真相：`[device targetDeviceArchitecture]` 为 nil（hk）
+
+反汇编 `+[MTLLoader sliceIDForDevice:…]`（hk 前那一版崩溃的调用点）：
+
+```arm64
+bl 0x187c79060 <_objc_msgSend$targetDeviceArchitecture>
+cbz x0, 0x187b783d0        ; nil → _MTLReportFailure(第 666 行)
+```
+
+CA 在读预编译 metallib（MTLBinaryArchive）时用这个 SPI 选 slice。多请求场景下
+插件实现 `-targetDeviceArchitecture`，返回以 `MTLTargetDeviceArchitecture` 为基类的
+运行时子类（`cpuType=CPU_TYPE_ARM64`、`subType`、`driverVersion`、`versionCombined`）。
+**断言消失，Metal 继续往下走。**
+
+### 45.36 从此开始的通用转发（hl/hm/hn）
+
+之后 Metal 送的是一串没人文档化的消息，逐个实现不可持续，于是插件改为：
+
+- `-methodSignatureForSelector:`：对任何**尚未实现**、且带参数的 selector，
+  按“冒号个数 = 参数个数”合成 `v@:@@@…` 的签名；
+- `-forwardInvocation:`：记一行 `forward: <selector>` 后正常返回。
+
+这条在 hl 上第一次生效：`setGPUPriority:` 之后不再 SIGILL。
+hm 上继续越过并首次进入渲染路径：
+
+```
+dev#18 newDepthStencilStateWithDescriptor:
+dev#19 targetDeviceArchitecture → arch cpuType/subType/driverVersion/versionCombined
+queue#35 forward: setGPUPriority:
+dev#36 newCommandQueue          ← CA 建了第二个队列
+queue#37 commandBuffer          ← 第一次拿到命令缓冲
+dev#38..#40 newTextureWithDescriptor:   ← drawable 纹理
+cmdbuf#51 renderCommandEncoderWithDescriptor: → encoder endEncoding (×3)
+cmdbuf#60 blitCommandEncoder
+encoder#61 copyFromTexture:…   ← 下一个未实现项
+```
+
+hn：把转发器扩展到“任意带参数 selector”，预期越过 blit 拷贝、出现
+`presentDrawable:` 与 `commit`。
+
+注意：hm/hl 两次运行结束时屏幕停在 `panic: initproc exited`，但同一段日志窗口里
+没有 panic 记录（`grep panic` 为空），launchd 的 `NATIVE_EXIT` 也只有早期正常那次；
+初步判断是跑完之后系统收尾，暂不作为插件回归。
