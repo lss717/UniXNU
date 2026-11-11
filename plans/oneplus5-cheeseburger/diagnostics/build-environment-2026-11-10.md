@@ -2085,3 +2085,42 @@ dev#9 newCommandQueue            ← 返回 nil，Metal 放弃
 
 这样放弃点会一步步向后推，直到出现 `newBufferWithLength:options:` 与
 `newRenderPipelineStateWithDescriptor:` 的形状记录。
+
+### 45.25 A1 完整清单（逐步推进）：设备 → 队列 → 深度模板 → 能力查询
+
+每接受一个私有 setter，放弃点就后退一步（每轮 13 次重复，顺序完全一致）：
+
+| 版本 | 新增实现 | 新的放弃点 |
+| --- | --- | --- |
+| gs | — | `newCommandQueue` 返回 nil |
+| gu | `newCommandQueue` 返回桩队列 | `queue -setLabel:` 之后 `-setSubmissionQueue:` |
+| gv | `-setSubmissionQueue:` | `-setCompletionQueue:` |
+| gw | `-setCompletionQueue:`（及同类 void setter） | 队列建立完成，回到设备：`-newDepthStencilStateWithDescriptor:` → `-supportsFamily:1001` ×2 后进程退出 |
+
+gw 的完整序列（14 个消息，5 次重复）：
+
+```
+dev  +initialize
+dev  +alloc
+dev  -initWithAcceleratorPort:(port)
+dev  -featureProfile                  (nil，3 次)
+dev  -maxBufferLength                (一次性)
+dev  -newCommandQueue                → 桩队列
+queue -setLabel:
+queue -setSubmissionQueue:           (私有：IO 提交队列)
+queue -setCompletionQueue:           (私有：IO 完成队列)
+queue -device                        (回指)
+dev  -newDepthStencilStateWithDescriptor:   （带 descriptor，返回 nil）
+dev  -supportsFamily: 1001 ×2        (Apple1；桩返回 YES)
+```
+
+**A1 产出物 2（参数形状）**已经有两条：
+- `-newDepthStencilStateWithDescriptor:` 接受一个 descriptor 对象（非 nil）；
+- `-supportsFamily:` 的参数是 `MTLGPUFamily` 枚举，render server 先问 **1001（Apple1）**。
+
+`-featureProfile` 若返回空字典，Metal 反而更早放弃（gt）；必须先保持"未实现=返回 nil"，
+它才会走到 `maxBufferLength` 与队列创建。
+
+现在最后一个失败点在 `supportsFamily:1001` 之后：桩对所有 family 都回 YES，
+Metal 随后进入只有真设备才有的内部路径并以 SIGABRT 结束（每轮恰好 1 次 backboardd 退出）。
+下一步：让 `supportsFamily:` 只对**已知为空**的 family 回 NO，看 Metal 走兼容回退时还会问什么。
