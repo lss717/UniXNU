@@ -3163,3 +3163,26 @@ ca#N scale mg scale=… static=… class=… orientation=… displayScale=…
 | `mg scale=0/1` | 驱动 `unit-scale` 没真正进到 MG（或被缓存），要在驱动侧修 |
 
 镜像：`/tmp/opencode/boot-H236if.img`，sha256 `1b091b3a…`；插件 cdhash `457bee9d…`。
+
+### 45.68 if 结果：探针把 backboardd 打崩了（MG 的键必须传 CFStringRef）
+
+if 的本意是读 scale，但日志里只有 `mode` 没有 `scale`，紧接着是：
+
+```
+ca#201 mode 1080x1920 px=0x0 hz=60.000
+NATIVE_TRAP: pid=56 comm=backboardd exc=1 code=0x1 sub=0x36e696158 sig=11
+NATIVE_MTL: signal=11 addr=0x36e696158 pc=0x19c33ec14 lr=0x1a40f6e80
+NATIVE_EXIT: pid=56 comm=backboardd status=0xb
+```
+
+同一形态出现两次（186 s 与 264 s，第二次是重启后的新 backboardd）——**是我的探针崩的**，
+不是系统本身：`MGGetFloat32Answer` 的键类型是 **CFStringRef**，我传了 C 字符串，callee 把它当
+CFString 解引用 → SIGSEGV。
+
+顺带说明两件事：
+1. 插件的崩溃上报与内核的 `NATIVE_TRAP` 都好用，能直接把“谁崩的、崩在哪”落进日志；
+2. backboardd 被崩掉后 launchd 会重建（194 s 有新 `slide=`），所以这种崩不会把机器搞坏，
+   但会让同一轮里的 `dpy=` 计数看起来“变多”（那是新实例的）。
+
+ig 已改为 `CFSTR("MainScreenScale")` 等 CFString 键。镜像 `boot-H236ig.img`，
+sha256 `0afd79f9…`；插件 cdhash `94aee03f…`。
