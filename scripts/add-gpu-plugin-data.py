@@ -42,6 +42,9 @@ def main():
         del args[at:at + 2]
         if not clients or any(not all(c.isalnum() or c in '._-*' for c in name) for name in clients):
             sys.exit('--clients takes process names separated by commas')
+    persona = '--persona' in args
+    if persona:
+        args.remove('--persona')
     bundle, name = BUNDLE, 'NativeAdrenoMetal.bundle'
     for flag in ('--bundle', '--name'):
         if flag in args:
@@ -111,16 +114,44 @@ def main():
                 os.chmod(bin_dir / 'adrenoprobed', 0o755)
             # H236hx: the standalone CADisplay probe that reports through the ABI log, so a session
             # view of the render server can be read from the kernel log (the Data volume is APFS).
+            # H236it: the initial persona manifest cannot be created from backboardd (its sandbox
+            # denies file-write-create in /private/var/keybags, H236is), so it is staged instead.
+            # /private/var is the Data volume root, hence keybags/persona.kb here.  Fields and format
+            # follow the reference port: version 1, generation 1, empty user dictionary, binary plist.
+            if persona:
+                keybags = mount / 'keybags'
+                keybags.mkdir(parents=True, exist_ok=True)
+                os.chmod(keybags, 0o700)
+                manifest = keybags / 'persona.kb'
+                if not manifest.exists():
+                    manifest.write_bytes(plistlib.dumps({
+                        'UsePersonaManifestVersion': 1,
+                        'UsePersonaGenerationID': 1,
+                        'UserPersonaDictionary': {},
+                    }, fmt=plistlib.FMT_BINARY))
+                    print('staged keybags/persona.kb (%d bytes)' % manifest.stat().st_size)
+                os.chmod(manifest, 0o600)
             if (bundle.parent / 'cadprobe').is_file():
                 shutil.copyfile(bundle.parent / 'cadprobe', bin_dir / 'cadprobe')
                 os.chmod(bin_dir / 'cadprobe', 0o755)
-                (daemon_dir / 'com.unixnu.cadprobe.plist').write_bytes(plistlib.dumps({
+                # A LaunchDaemon plist here would be ignored: /System/Library/LaunchDaemons requires root
+                # ownership and these files are staged as the build user.  The user session is the
+                # interesting one anyway (SpringBoard lives there), and its launchd agent directory lives
+                # in the user's home, which this staging owns.
+                job = {
                     'Label': 'com.unixnu.cadprobe',
                     'ProgramArguments': ['/private/var/ngpu/bin/cadprobe'],
                     'RunAtLoad': True,
                     'StandardOutPath': '/dev/null',
-                    'StandardErrorPath': '/dev/null',
-                }))
+                    'StandardErrorPath': '/private/var/tmp/cadprobe.err',
+                }
+                agents = mount / 'mobile/Library/LaunchAgents'
+                agents.mkdir(parents=True, exist_ok=True)
+                os.chmod(agents, 0o755)
+                (agents / 'com.unixnu.cadprobe.plist').write_bytes(plistlib.dumps(job))
+                os.chmod(agents / 'com.unixnu.cadprobe.plist', 0o644)
+                # Kept for the system session too: a launchd that does accept it will run it as root.
+                (daemon_dir / 'com.unixnu.cadprobe.plist').write_bytes(plistlib.dumps(job))
                 os.chmod(daemon_dir / 'com.unixnu.cadprobe.plist', 0o644)
             for plist in sorted(bundle.parent.glob('*.plist')):
                 if plist.name.endswith('-entitlements.plist'):

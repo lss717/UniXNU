@@ -446,14 +446,11 @@ h103MaybeRestartSpringBoard (uint32_t displayClients)
   IOLog ("NATIVE_RESTART: sent\n");
 }
 
-// H236ij: where SpringBoard is stuck.  The sampling itself lives in the kernel
-// (osfmk/kern/task.c, native_sb_pc_sample): the driver cannot see struct thread or TH_WAIT
-// (<kern/thread.h> resolves to the SDK's Mach header here), while task.c already has the
-// task_lock_try + queue_iterate pattern that this repo uses for wait-state dumps.
+// H236im: the sampling itself lives in the kernel (osfmk/kern/task.c, native_sb_pc_sample); the
+// driver only names the processes.  Kept in a dedicated thread exactly like il (which boots) and
+// only the name list grew, so a boot failure here points at the list, not at a new mechanism.
 extern "C" void native_sb_pc_sample (const char *name, unsigned sample);
 
-// H236ik: SpringBoard's only abnormal wait is a synchronous Mach reply (mach_msg2_trap), so the
-// sampler covers the daemons it could be waiting on.  Six samples keep the log window intact.
 static const char *const a540SbNames[] = {
   "SpringBoard", "keybagd", "runningboardd", "containermanagerd", "usermanagerd", "backboardd",
 };
@@ -463,8 +460,9 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
 {
   // SpringBoard is exec'd between ~115 s and ~190 s on this board, after a slow launchd phase.
   IOSleep (170000);
-  for (unsigned sample = 0; sample < 6; sample++) {
+  for (unsigned sample = 0; sample < 6; ++sample) {
     for (unsigned index = 0; index < sizeof a540SbNames / sizeof a540SbNames[0]; ++index) {
+      IOLog ("NATIVE_SBPC: call name=%s sample=%u\n", a540SbNames[index], sample);
       native_sb_pc_sample (a540SbNames[index], sample);
     }
     IOSleep (1000);
@@ -3468,8 +3466,6 @@ NativeUfsProbe::start (IOService *provider)
   if (heartbeatRet == KERN_SUCCESS) {
     thread_deallocate (heartbeat);
   }
-  // H236ij: the SpringBoard user-PC sampler runs on its own thread so the ten one-second
-  // samples do not stall the heartbeat (which also feeds the log writer).
   {
     thread_t sbSampler = THREAD_NULL;
     kern_return_t sbRet = kernel_thread_start (a540SpringBoardSamplerThread, nullptr, &sbSampler);
