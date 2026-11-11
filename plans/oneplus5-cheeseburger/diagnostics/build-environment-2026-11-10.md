@@ -2233,3 +2233,27 @@ dev#13 -newDepthStencilStateWithDescriptor: descriptor=1
 
 数据来源补记：`featureProfile` 的键表在目标机的 Metal（dyld shared cache 内）里，
 本地只有 `os-mnt` 的资源文件，缓存本身没有提取，所以暂时无法离线解析这个字典。
+
+### 45.31 A 计划（离线分析目标机 Metal）进展与边界
+
+已完成的部分（全部离线，零上机）：
+
+1. 从本地 IPSW 取出 `044-76040-038.dmg`（5.1 GB）→ Mac `hdiutil attach`，确认它是
+   **系统根卷**，其 `System/Cryptexes/OS` 是指向 preboot 的符号链接（该 dmg 里没有 cryptex）。
+2. 真正带 **dyld shared cache** 的是另一张盘：Mac 上已有的 `~/h96/044-76034-038.dmg`
+   （3.3 GB）。挂到 `/tmp/osvol2` 后得到
+   `System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64{,.01..}` 共 54 个分片。
+3. `dyld_info` 能对缓存列导出符号：`_MTLAddDevice` 位于
+   `System/Library/Frameworks/Metal.framework/Versions/A/Metal`，镜像内偏移 `0x2110`；
+   `initLimits` / `initFeatureQueries` / `initGPUFamilySupport` / `initWorkarounds` /
+   `featureProfile` 的 selector 字符串也都在缓存里（与 gz 的实测一致）。
+
+边界：`dyld_info -objc` 对共享缓存直接报
+`cannot print live objc info from dylibs in dyld shared cache`，系统也没有随附
+`dsc_extractor`。要继续反汇编 `_MTLAddDevice` 必须先用 dyld 源码
+（`/tmp/opencode/dyld-src`，含 `other-tools/dsc_extractor.cpp`）在 Mac 上自建提取器，
+再从缓存里导出 Metal 镜像。
+
+收益评估：即使拿到 `featureProfile` 的键表，桩设备仍要为 A540 **编造**功能数值——
+这与 turnip 的死结同类（声明了不支持的能力，后续绘制必然失败）。因此 A 计划到此为止，
+不再投入反汇编时间；结论与 §45.30 一致：桩设备的上限就是 Metal 自己的设备表。
