@@ -447,3 +447,29 @@ NATIVE_XPC3:  sample=25 sb_out=0 sb_in=0 other=186 lost=3
 修正（下一步）：把突发段放到**长序列之前**（150 s 后立刻执行 80×50 ms），
 长序列缩短到 20 轮。注意：脚本化的"移动代码块"因缩进/转义不匹配而失败，
 下一次要直接改文件而不是用字符串替换。
+
+### 11.6 H250：50 ms 突发**成功**——SpringBoard 确实在跑用户态代码（L2 部分证据）
+
+排程修正后（160 次快照集中在 150 s 之后 4 秒窗口），突发期间 `NATIVE_SBTHR` 出现
+**12 个不同 pc、132 次变化**（此前 10 s 档只有 4 个内核 stub）。符号化结果：
+
+| 运行地址 | 符号 | 说明 |
+|---|---|---|
+| `libobjc.A.dylib+0x143e8` | `list_array_tt<…>::iteratorImpl::skipEmptyLists` | objc 类/协议列表遍历 |
+| `CoreFoundation+0xc00c` | `_CFHash` | CF 容器哈希（字典/集合） |
+| **`UIKitServices+0x17a20`** | **`__getFBProcessManagerClass_block_invoke`** | **UIKitServices 在解析 FrontBoard 的 `FBProcessManager`** |
+| `libsqlite3+0x4e8e4` | `sqlite3_progress_handler` 邻域 | SQLite 查询执行 |
+
+**结论（已证实）**：SpringBoard **不是静止的**，它在执行 objc/CF 容器遍历、UIKitServices 的
+`FBProcessManager` 类解析、以及 SQLite 查询——即**应用/场景注册查询阶段**。
+**仍然没有** QuartzCore / CoreAnimation / Metal 的 pc，也没有任何显示/GPU 设备打开记录。
+
+**停点定位（有证据支持）**：`UIKitServices → FrontBoard (FBProcessManager)` 这条进程/场景管理
+路径，位于图形后端初始化之前。
+
+**下一轮（H251）建议**：
+1. 把突发窗口从 150 s 起延长/重复（例如每 60 s 一次 4 秒突发，共 5 次），观察这条路径**能走多远、
+   在哪一步停下**；
+2. 对 `FBProcessManager` 相关调用做定点取证：在突发中把**同一批 tid 的连续 pc 序列**记下来
+   （当前每 4 秒只保留去重后的集合，丢掉顺序）；
+3. 若 `FBProcessManager` 之后出现 `FrontBoard`/`QuartzCore` 的 pc，则转 H246 的"图形服务连接"路线。
