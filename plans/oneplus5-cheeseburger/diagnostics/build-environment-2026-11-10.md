@@ -2682,3 +2682,68 @@ backboardd **只消费** QuartzCore 已经发布的 `+[CADisplay displays]`，�
 **QuartzCore 的 `CADisplay` 实例化条件**。下一步去反汇编 dyld 缓存里的 QuartzCore /
 IOMobileFramebuffer.framework（Mac `~/dsc-work/ext` 已有导出），把 9 个 selector 的 API 名、
 1580 字节结构的字段、以及放弃分支的判据都读出来。
+
+### 45.49 离线反汇编：QuartzCore 里 9 个 selector 的真实身份，以及“谁也改不了 headless”
+
+来源 Mac `~/dsc-work/ext`：`IOMobileFramebuffer`（私有框架，`0x1b63cf000`，94 208 B）、
+`QuartzCore`（`0x189429000`，5 160 960 B）。
+
+**selector → API**（`_kern_*` 是真正发 trap 的函数，公开 API 是 `IOMobileFramebufferOpen`
+填进 vtable 的那一格）：
+
+| sel | 公开 API | trap | in | out |
+|---|---|---|---|---|
+| 8 | `IOMobileFramebufferGetDisplaySize` | Scalar | 0 | 2 u64 → CGSize |
+| 15 | `SetDebugFlags` | Scalar | 2 | 1 |
+| 22 | `SetDisplayDevice` | Scalar | 1（idx ≤ 4，否则 `e00002c2`） | 0 |
+| 29 | `GetDisplayArea` | **Struct** | 0 | 8 B = 2×float（mm） |
+| 33 | `EnableDisableVideoPowerSavings` | Scalar | 1 | 0 |
+| 57 | `GetColorRemapMode` | Scalar | 0 | 1 u64（库在出错时**代入 6**） |
+| 74 | `SupportedFrameInfo` | IOConnectCallMethod | 1（mask=0） | 2 u64 + 64 B tag blob |
+| 79 | **`GetBlock`** | IOConnectCallMethod | `{block_id, offset}` | 分块，`min(len-offset, 0x1000)` |
+| 88 | （无公开 API，`IOMobileFramebufferOpenByName` 内联） | Scalar | 显示 id | 0，**返回值被丢弃** |
+
+**79 = `GetBlock` 确认**，block id **0x4d = 77 = gamut-remap 配置块**，长度 0x62c = 1580，
+调用点 `CA::WindowServer::IOMFBDisplay::IOMFBDisplay` `0x1896e7588`。ctor 里**根本不读这块内容**，
+只把 IOReturn 存进 `this+0x888` 当“支持 gamut remap”的能力位；失败也**不致命**。
+同处还有 block 74（2056 B）和 72（3164 B），只在 `this+0x258 & 0x1c00 == 0` 时才取——内屏带这两
+位，所以我们只看到 77。
+
+**headless 的判决链**：`+[CADisplay mainDisplay]` → `ensure_displays` → `query_displays`
+`0x189549038`。**`query_displays` 一次都不碰 IOMobileFramebuffer**，它向渲染服务器要列表：
+
+```
+CARenderServerGetServerPort(0)  ← bootstrap 查 "com.apple.CARenderServer"
+  w0 == 0  → 直接返回空表（0x189549070），无日志
+__CASGetDisplays(...) → ret != 0 → "Unable to query displays from server (%d)"
+每个字典：kCADisplayName 与 kCADisplayDeviceName 必须都非 NULL，否则跳过
+mainDisplay = 第一个名叫 "LCD" 的
+```
+
+服务器侧 `CA::WindowServer::Server::get_displays` `0x1894bdf64` 每有一个 Server 就发一个字典
+（`kCADisplayName`=`[[server+0x60]+0x8]`、id=`[[server+0x60]+0x10]`、
+`kCADisplayDeviceName`=`[server+0x68]`）。
+
+**因此结论是硬的**：9 个 selector 的返回值**没有任何一条**能让 `mainDisplay` 变 nil；能决定的是
+①`com.apple.CARenderServer` 端口在查询时是否已注册，②服务器发布的字典是否两个名字都非空。
+而 `+[CADisplay mainDisplay]` 为 nil 就等价于 `BKDisplayIsHeadless` 为真（§45.48）。
+
+**provider 应答清单**（由这套代码反推，供以后核对）：8 必须 w,h ≥ 1（我们用 1080×1920）且返回
+u64；29 必须写 8 B 两个 float；22 只接受 idx ≤ 4；88 的返回值被丢弃、不能让 open 失败；
+74 返回 count 0 等价于“没有 frame-info tag”（不影响发布，只让 `frame_info_enabled` 为假）；
+79 失败不致命。
+
+### 45.50 ht：直接从插件里问 QuartzCore
+
+因为上面两条都**高于 IOMFB ABI**，插件加了一个探针（`ca#N probe` 日志，设备 init 后
+2/18/34/50 s 各一次）：
+
+- `task_get_special_port(TASK_BOOTSTRAP_PORT)` + `bootstrap_look_up("com.apple.CARenderServer")`
+  → 端口是否存在、`kr` 是多少；
+- `+[CADisplay mainDisplay]`、`+[CADisplay displays].count`、`+[CAWindowServer serverIfRunning]`
+  及其 `-displays.count`，全部经 `objc_msgSend` 调用并包在 `@try` 里。
+
+一行就能区分：`port=0x0` 是“端口还没注册”（鸡生蛋），`port≠0 list=0` 是“服务器没发布 display”，
+`list≥1 main=0` 是“发布的名字不叫 LCD / 缺 device name”。
+
+镜像：`/tmp/opencode/boot-H236ht.img`，sha256 `2497e6de…`；插件 cdhash `bae5b179…`。
