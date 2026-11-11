@@ -2937,3 +2937,40 @@ hv（逐 pid `proc_name`）的 `restart` 行落在日志窗口之外（内核环
 LaunchAgent（用户会话）和一个小探针程序，由它打印
 `bootstrap_look_up("com.apple.CARenderServer")` 的结果与 `+[CADisplay displays]` 计数；
 参照 §45.58 第 2 条，还可以在首次查询前设 `CA_SYSTEM_SESSION_CLIENT=1` 做对照。
+
+### 45.59 hx：把探针放进系统会话（LaunchDaemon），量 SpringBoard 能看到的视图
+
+按 §45.58 的结论做的探针，不重建内核：
+
+- 源码 `drivers/NativeMetal/CadProbe.mm`，编译成 arm64 CLI（ad-hoc 签名，
+  cdhash `8fded1a6…` 已写进 owner 信任缓存）；
+- 由 `scripts/add-gpu-plugin-data.py` 一起送入 Data seed：`ngpu/bin/cadprobe` +
+  `ngpu/daemons/com.unixnu.cadprobe.plist`（`RunAtLoad`）。`ngpu/daemons` 由
+  `zzy-native-gpu-addon-mount` 联合挂载到 `/System/Library/LaunchDaemons`，所以它是一个
+  **系统会话的 LaunchDaemon**；
+- 输出走 A540 ABI 的 Log 方法（`NATIVE_MTL: cad …`），因为 Data 卷是 APFS，恢复环境读不到文件。
+
+每次启动打印五行：
+
+```
+cad  uid/euid accel=…            身份与 ABI 通道是否打开
+cad  system port=… kr=…          bootstrap_look_up("com.apple.CARenderServer")
+cad  peruser uid=501/0 … kr=…    bootstrap_look_up_per_user(...)
+cad  displays class=… list=N main=0/1
+cad  first name=…
+```
+
+`+[CADisplay displays]` 在进程内**只算一次**（§45.55），所以每次采样都是新进程：
+每轮 40 s、共 3 轮；第一串结束后以 `CA_SYSTEM_SESSION_CLIENT=1` 重跑同样 3 轮（前缀 `sys/`），
+对应 §45.58 第 2 条里参考实现需要的那根开关。
+
+判读表：
+
+| 输出 | 含义 |
+|---|---|
+| `system kr=0x44e`（BOOTSTRAP_UNKNOWN_SERVICE） | 系统会话看不到渲染服务器 → SpringBoard 的失败是会话/命名空间问题 |
+| `system kr=0x0` 但 `displays list=0` | 服务在，但该会话里 CA 拿不到 display |
+| `system kr=0x0` 且 `list=6` | 系统会话完全正常 → SpringBoard 卡在更早的初始化（不是 display） |
+| `sys/` 两串结果不同 | 证实 `CA_SYSTEM_SESSION_CLIENT` 就是分水岭 |
+
+镜像：`/tmp/opencode/boot-H236hx.img`，sha256 `99b1531c…`。

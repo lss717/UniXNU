@@ -109,6 +109,19 @@ def main():
             if (bundle.parent / 'adrenoprobed').is_file():
                 shutil.copyfile(bundle.parent / 'adrenoprobed', bin_dir / 'adrenoprobed')
                 os.chmod(bin_dir / 'adrenoprobed', 0o755)
+            # H236hx: the standalone CADisplay probe that reports through the ABI log, so a session
+            # view of the render server can be read from the kernel log (the Data volume is APFS).
+            if (bundle.parent / 'cadprobe').is_file():
+                shutil.copyfile(bundle.parent / 'cadprobe', bin_dir / 'cadprobe')
+                os.chmod(bin_dir / 'cadprobe', 0o755)
+                (daemon_dir / 'com.unixnu.cadprobe.plist').write_bytes(plistlib.dumps({
+                    'Label': 'com.unixnu.cadprobe',
+                    'ProgramArguments': ['/private/var/ngpu/bin/cadprobe'],
+                    'RunAtLoad': True,
+                    'StandardOutPath': '/dev/null',
+                    'StandardErrorPath': '/dev/null',
+                }))
+                os.chmod(daemon_dir / 'com.unixnu.cadprobe.plist', 0o644)
             for plist in sorted(bundle.parent.glob('*.plist')):
                 if plist.name.endswith('-entitlements.plist'):
                     continue   # build input, not a launchd job
