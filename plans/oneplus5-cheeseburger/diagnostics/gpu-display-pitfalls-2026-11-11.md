@@ -173,3 +173,30 @@ launchd 直接忽略；`status=2`（ENOENT）来自覆盖层里缺少 sentinel
 4. adb 侧：`adb kill-server && adb start-server`，`adb devices` 能看到 `recovery`；
 5. 拉日志前先 `blockdev --flushbufs /dev/block/by-name/userdata_ios`；
 6. 装机后第一眼先看 `NATIVE_MTL` 与 `NATIVE_ACCEL_HB`，确认插件真的加载，再谈结论。
+
+---
+
+## P11 MobileGestalt：C 字符串会崩，CFString 会挂
+
+- `MGGetFloat32Answer(CFStringRef key, float def)` 的键是 **CFStringRef**。传 C 字符串 →
+  callee 当 CFString 解引用 → `SIGSEGV`（`pc=0x19c33ec14`，backboardd 被崩、launchd 重建）。
+- 改成 `CFSTR("MainScreenScale")` 之后不崩了，但 `dlopen`/调用**直接把线程挂住**：
+  探针此后再无任何输出，而进程心跳照常。两种失败都不是“返回值不对”，而是“根本回不来”。
+
+**做法**：探针里不要用 MobileGestalt。要 scale 就用 `CADisplay -pointScale`，并且把它排在
+任何可能阻塞的调用**之前**，先打印再继续。
+
+## P12 内核构建：镜像配置不在仓库里
+
+`cheeseburger_defconfig` 里 `CONFIG_XNU_NATIVE_LEGACY_DISPLAY` 与
+`CONFIG_XNU_NATIVE_MOBILE_DISPLAY` 都是 **not set**，但跑在机器上的镜像显然包含
+`NativeLegacyDisplay`。也就是说那批内核是用**仓库外的设置**构建的。
+
+- 打开 `LEGACY_DISPLAY=y` 才能让 `libNativeLegacyDisplay.late.a` 被 `-force_load`
+  （`_native_a540_*` 只在这个归档里）；
+- `MOBILE_DISPLAY=y` 还要求一个并不存在的 `libNativeMobileDisplay.late.a`；
+- 归档步骤需要 `bsd/*.o`，而对象由 XNU 构建产生，上一次失败会把对象清掉 → 循环依赖，
+  只能靠 bootstrap pass 打破，而它当前又生成不了 `startup.o.json` 记录。
+
+**做法**：先确认当初那套设置（问人/翻 Mac 的命令历史/以前录下来的 `out/cheeseburger/.config`），
+再动内核；不要靠临时 `export` 猜。

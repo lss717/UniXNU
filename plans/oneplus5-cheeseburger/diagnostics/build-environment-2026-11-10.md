@@ -3186,3 +3186,44 @@ CFString 解引用 → SIGSEGV。
 
 ig 已改为 `CFSTR("MainScreenScale")` 等 CFString 键。镜像 `boot-H236ig.img`，
 sha256 `0afd79f9…`；插件 cdhash `94aee03f…`。
+
+### 45.69 ig 结果：MG 调用把探针线程挂死（不是崩溃）
+
+ig 把 MG 的键改成 `CFStringRef` 之后不再 SIGSEGV，但换成了更坏的一种失败：
+
+```
+[201.33] ca#200 probe timer class=1 main=1 list=6 server=6 port=0x8b07 kr=0x0
+[201.73] ca#201 mode mode 1080x1920 px=0x0 hz=60.000
+（之后没有任何 ca# 行；同进程的 NATIVE_ACCEL_HB 一直在打：abi=223/17）
+```
+
+`mode` 之后整个 `probe_displays` 就再也不返回了——`dlopen("/usr/lib/libMobileGestalt.dylib")`
+或 `MGGetFloat32Answer` 在 backboardd 里**阻塞**（MG 可能要求主线程/联系服务端）。没有 trap、
+进程没死，所以从外面看就是“探针突然不说话”。
+
+结论：**MobileGestalt 这条读 scale 的路封掉**。下一版把 MG 整段删掉，`scale` 只用
+`CADisplay -pointScale`（它必须排在任何可能阻塞的调用之前，先打印后探测）。
+
+### 45.70 内核构建：症结已定位到“镜像用了仓库里没写的配置”
+
+继续尝试后，内核仍然构建不出来，但原因已经很清楚：
+
+1. `~/UniXNU-cheeseburger/configs/cheeseburger_defconfig` 里
+   `# CONFIG_XNU_NATIVE_LEGACY_DISPLAY is not set`、`# CONFIG_XNU_NATIVE_MOBILE_DISPLAY is not set`
+   ——**两份 `.config` 都是关的**，而跑在机器上的镜像显然包含 `NativeLegacyDisplay`。
+   说明那批镜像是用**仓库外的设置**（shell 环境或临时改过的 config）构建的。
+2. 把 `CONFIG_XNU_NATIVE_LEGACY_DISPLAY=y` 打开后，链接缺的
+   `_native_a540_*` 就不再报错（它们只在 `libNativeLegacyDisplay.late.a` 里，这个归档
+   只在 `NATIVE_LEGACY_DISPLAY=1` 时被 `-force_load`）——这条已确认。
+3. 再往后卡在**归档与内核对象的循环依赖**：
+   `build_archives` 需要 `bsd/DEVELOPMENT/*.o`，而对象由 XNU 构建产生；上一次失败的链接把
+   对象清掉了，于是 `archive-01-build-corecrypto-14.log` 报 `nm: bsd_init.o: No such file`。
+   删掉 `startup.o.json` 让 unixnu 走 bootstrap pass 也没能生成该记录（`kernel-bootstrap.log`
+   仍然停在 `build_all_bootstrap` 链接）。
+4. `XNU_NATIVE_MOBILE_DISPLAY=1` 会额外要求 `libNativeMobileDisplay.late.a`，而该文件不存在
+   （`build/native-mobile-display/` 只有普通 `.a`）——所以这个开关只能在 late 归档也构建出来
+   之后再用。
+
+**结论**：内核路线要恢复，得先拿到当初那套构建设置（或补一个能同时产出 late 归档、且先于
+归档步骤生成对象的脚本）。在那之前不要再指望“临时 export 几个变量”就能构建成功。
+Mac 上的 `out/cheeseburger/.config` 已按原样恢复，`scripts/unixnu/tree.py` 也已还原。
