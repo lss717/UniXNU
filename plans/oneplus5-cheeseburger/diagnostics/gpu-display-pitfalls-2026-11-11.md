@@ -287,3 +287,42 @@ grep -c "rootvp not authenticated after mounting" …/bsd_init.c                
 顺带一条：`--clean` 会丢掉 `.cache/xnu-work` 里的手工编辑，所以任何在 xnu-work 里改的代码
 都必须先落成 `patches/xnu/*.patch`（本轮 `native_sb_pc_sample` 已先重新生成到
 `zzzzzzzzzzz-h103-proc-state.patch`）。
+
+## P16 构建/打包前必须先把仓库同步到 Mac（否则用的是旧源码/旧补丁）
+
+**症状（本轮真实发生）**：在 Linux 侧改好 `patches/xnu/zzzzzzzzzzz-h103-proc-state.patch` 并提交，
+直接在 Mac 上 `macos-build-kernel.sh --clean` 重建 → 链接报
+
+```
+Undefined symbols: "_native_sb_pc_sample", referenced from: a540SpringBoardSamplerThread(...)
+```
+
+因为 `--clean` 用的是 **Mac 上那份旧补丁**（我只 commit 到 Linux 仓库，没有 push/pull 或 scp）。
+同一类问题的另一种表现见 P14：驱动归档没重建。
+
+**规则**：Linux 是编辑侧，Mac 只是构建机。**每次构建前先把代码同步过去**：
+
+```sh
+# Linux：先提交并推送
+git add -A && git commit -m … && git push origin main
+# 子模块（NativeMetal / NativeMobileDisplay 等）同理，且要更新超级仓库指针
+
+# Mac：拉取（构建机没有本地修改时最省事）
+cd ~/UniXNU && git fetch origin && git reset --hard origin/main
+# 有本地改动又不想丢时：git stash（或先 git status 看清再决定）
+```
+
+如果只想快送一两个文件，用 `rscp.sh` 也行，但**必须逐个确认送达**——本轮就是因为
+“插件和驱动 scp 了、补丁文件忘了”而白跑了两轮内核构建。
+
+**构建前 60 秒自检（建议照着做）**：
+
+```sh
+cd ~/UniXNU
+git log --oneline -1                                  # 是本轮要在的提交吗？
+grep -c "native-skip-root-auth" out/cheeseburger/tree/.cache/xnu-work/bsd/kern/bsd_init.c   # 补丁全不全
+grep -c "native_sb_pc_sample"    out/cheeseburger/tree/.cache/xnu-work/osfmk/kern/task.c    # 新代码在不在
+xcrun nm build/native-ufs-probe/libNativeUfsProbe.a | grep -c <新符号>                        # 归档重建了吗
+```
+
+四项都对再构建；任何一项不对，构建出来的东西都不代表仓库当前状态。
