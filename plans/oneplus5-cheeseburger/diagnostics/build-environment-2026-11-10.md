@@ -2974,3 +2974,48 @@ cad  first name=…
 | `sys/` 两串结果不同 | 证实 `CA_SYSTEM_SESSION_CLIENT` 就是分水岭 |
 
 镜像：`/tmp/opencode/boot-H236hx.img`，sha256 `99b1531c…`。
+
+### 45.60 hx/hy 复盘：信任缓存只放了 cadprobe，插件整个没加载（我的失误）
+
+hx/hy 两轮的日志里 `NATIVE_MTL` **零行**，心跳是 `accel=1/1/1/2 abi=0/0/0`——说明
+backboardd 根本没打开加速器、Metal 没加载插件。原因很直接：
+
+```sh
+# 错的：用 trust-base + cadprobe 生成，把上一版插件的 CDHash 覆盖掉了
+add-owner-trust-hash.py trust-base.bin <cadprobe-cdhash> trust-a541t.bin
+```
+
+插件是 ad-hoc 签名，**它的 CDHash 必须在信任缓存里**（§45.14）。正确做法是串两步：
+
+```sh
+add-owner-trust-hash.py trust-base.bin  <plugin-cdhash>   tmp.bin
+add-owner-trust-hash.py tmp.bin         <cadprobe-cdhash> out.bin
+```
+
+hz 已按此重建（`trust-a541v.bin`，owner 模块 5 项）。
+
+**顺带排除了整条“会话/命名空间”假设**：本轮全日志里 **launchd 只有一个（pid=1）**，
+SpringBoard（ppid=1）是它的直接子进程——也就是说 SpringBoard 与 backboardd **同一个
+bootstrap 命名空间**。§45.58 里参考实现的“系统会话看不到、用户会话才看得到”在这里不成立，
+backboardd 里量到的 `list=6 / LCD primary` **就是** SpringBoard 会看到的答案。
+
+也因此：把 cadprobe 交给 launchd 的两条路都不通——
+- **LaunchAgent**：本机没有 per-user launchd，`mobile/Library/LaunchAgents` 不会被扫描
+  （hy 里没有任何 `comm=cadprobe` 的 exec）；
+- **LaunchDaemon**：`/System/Library/LaunchDaemons` 要求 **root 属主**，而 staging 以构建用户
+  （uid 501）写文件，Mac 上又没有 sudo 可以 chown；`NATIVE_GPU_ADDON: … daemons=4/2` 里的
+  `status=2` 就是这个。
+
+结论：**要再拿到一个新进程的测量，必须先有 root 写文件的手段**（内核侧写文件是唯一现成通道，
+但内核构建当天不可用，见 §45.56）。
+
+### 45.61 hz：直接问渲染服务器“有没有客户端”
+
+既然会话假设被排除，剩下的问题只在 SpringBoard 内部。hz 的插件在 `ca#N clients` 里对
+display[0] 用 `respondsToSelector:` 依次试 `contexts` / `contextIds` / `clients` 并打印其
+`count`：
+
+- 全是 0（或都不存在）→ 确认**从来没有客户端**连过窗口服务器；
+- 非 0 → 客户端其实连上了，问题在合成器/present 一侧，方向要改。
+
+镜像：`/tmp/opencode/boot-H236hz.img`，sha256 `a016586b…`；插件 cdhash `0c82a732…`。
