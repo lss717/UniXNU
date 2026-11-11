@@ -464,8 +464,8 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
   // H239: sample for two minutes ten seconds apart, so the window covers SpringBoard's whole
   // life (it is killed by the plugin's restart probe at ~243 s).  Only SpringBoard repeats;
   // the other names are useful once and would otherwise push the ring log out.
-  IOSleep (170000);
-  for (unsigned sample = 0; sample < 12; ++sample) {
+  IOSleep (150000);
+  for (unsigned sample = 0; sample < 26; ++sample) {
     for (unsigned index = 0; index < sizeof a540SbNames / sizeof a540SbNames[0]; ++index) {
       if (index > 2 && sample >= 2) {
         continue;
