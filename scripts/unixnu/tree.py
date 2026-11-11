@@ -20,7 +20,15 @@ def _clear_links(directory):
 
 def _link(target, link):
     link.parent.mkdir(parents=True, exist_ok=True)
-    if link.is_symlink() or link.exists():
+    if link.is_symlink():
+        link.unlink()
+    elif link.exists():
+        if link.is_dir():
+            # A real checked-out directory (e.g. refer/libdispatch cloned by the
+            # baseline build) cannot and must not be replaced by a symlink;
+            # unlinking it fails with EPERM on macOS. Keep it as it is.
+            log(f'keep existing directory {link}')
+            return
         link.unlink()
     link.symlink_to(Path(target).resolve())
 
