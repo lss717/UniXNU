@@ -253,3 +253,37 @@ bash ~/UniXNU/scripts/macos-build-kernel.sh
 ```
 
 自检：`xcrun nm -g build/<模块>/lib<模块>.a | grep <新符号>` 必须能查到，否则就是没重建。
+
+## P15 `XNU_SKIP_PATCH_LOOP=1` 用在"只打了一半补丁"的树上 → 启动即 panic
+
+**症状**：新内核能进内核，约 10 s 后停住；持久日志里是
+
+```
+is_root_hash_authentication_required: Root Volume, root hash authentication is required
+NATIVE_PANIC_STR: rootvp not authenticated after mounting @bsd_init.c:1103
+```
+
+**根因**：`macos-build-kernel.sh` 只用**一个** marker 判断树是否已打补丁：
+
+```sh
+PATCH_MARKER="H82_DATA_WAIT"   # offline-owner-systemos-mount.patch 才有
+```
+
+marker 在 → `export XNU_SKIP_PATCH_LOOP=1` → 补丁循环整段跳过。如果树其实是**部分打补丁**
+（比如 `zzz-root-auth-bypass.patch` 没打上），内核就会缺 `native-skip-root-auth` 这个后门，
+于是 `bsd_init` 在 root hash 认证失败时直接 panic。
+
+**排查（10 秒）**：构建后立刻确认关键补丁的标记：
+
+```sh
+grep -c "native-skip-root-auth"  ~/UniXNU/out/cheeseburger/tree/.cache/xnu-work/bsd/kern/bsd_init.c   # 必须 ≥1
+grep -c "rootvp not authenticated after mounting" …/bsd_init.c                                        # 打上补丁后应为 0 处裸 panic
+```
+
+**做法**：怀疑补丁状态时用 `bash scripts/macos-build-kernel.sh --clean`
+（删 `.cache/xnu-work` → 重新 clone → `XNU_SKIP_PATCH_LOOP=0` → 全量应用 patches/xnu）。
+代价是完整重建，但确定性最高。**不要**在不明状态的树上图快用 skip。
+
+顺带一条：`--clean` 会丢掉 `.cache/xnu-work` 里的手工编辑，所以任何在 xnu-work 里改的代码
+都必须先落成 `patches/xnu/*.patch`（本轮 `native_sb_pc_sample` 已先重新生成到
+`zzzzzzzzzzz-h103-proc-state.patch`）。
