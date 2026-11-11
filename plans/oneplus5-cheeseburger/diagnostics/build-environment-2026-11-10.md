@@ -3122,3 +3122,44 @@ sblog#256 oslog exception NSInvalidArgumentException:
 ie 已按这两条重写：`sblog` 先用 `+storeWithScope:error:`（scope 0），失败再退回
 `localStoreAndReturnError:`；`ca#N mode` 改为直接 getter。镜像
 `/tmp/opencode/boot-H236ie.img`，sha256 `23f4f640…`；插件 cdhash `0fb67058…`。
+
+### 45.66 ie 结果：显示模式拿到了，`pixelWidth/pixelHeight = 0`
+
+```
+ca#201 mode 1080x1920 px=0x0 hz=60.000
+```
+
+- `width/height` = 1080×1920 —— 正确（= `IOMobileFramebufferGetDisplaySize` 的答复）；
+- `refreshRate` = 60.0 —— 正确（Legacy timing 的 Q32.32 60 Hz = 71582788 路径是通的）；
+- **`pixelWidth/pixelHeight` = 0×0** —— QuartzCore 手里没有像素尺寸。
+
+这与 §45.58 里参考端口的失败形态同源：他们家在 `FBSDisplayMode` 校验里因为
+`preferredScale == 0` 被 `BSFloatIsZero` 拒绝（保留尺寸 1242×2208，`pointScale`/`preferredScale`
+都是 0），修法是让 **MobileGestalt/BKS 的 scale 变成 3**（发布 `/chosen/display-scale=3`）。
+
+我们的驱动确实在跑这条策略（`NATIVE_LEGACY: unit-scale status=0 requested=3 chosen=3 rot=0`），
+但 `bounds` 报的是 **1080×1920 点**且像素尺寸为 0，形态更像是 **QuartzCore 侧把 scale 当成了 1、
+而像素信息完全缺失**。
+
+`OSLogStore` 这次返回 `no-store`：`+storeWithScope:0`（系统存储）在这个进程里被拒/不可用，
+所以还是拿不到 SpringBoard 的日志——读取统一日志这条路暂时封住。
+
+### 45.67 if：直接问 MobileGestalt 和 CADisplay 要 scale
+
+`ca#N scale` 用 `dlsym` 取 `libMobileGestalt.dylib` 的 `MGGetFloat32Answer`/`MGGetSInt32Answer`，
+读 `MainScreenScale`、`MainScreenStaticScale`、`MainScreenClass`、`MainScreenOrientation`，
+同时读 `CADisplay -pointScale`：
+
+```
+ca#N scale mg scale=… static=… class=… orientation=… displayScale=…
+```
+
+判读：
+
+| 输出 | 含义 |
+|---|---|
+| `mg scale=3` + `displayScale=3` | scale 链路是通的，`pixel=0` 来自另一处（像素/表面信息缺失） |
+| `mg scale=3` 但 `displayScale=0` | CADisplay 没把 MG 的 scale 用上 → 问题在 QuartzCore 读显示参数的那一段 |
+| `mg scale=0/1` | 驱动 `unit-scale` 没真正进到 MG（或被缓存），要在驱动侧修 |
+
+镜像：`/tmp/opencode/boot-H236if.img`，sha256 `1b091b3a…`；插件 cdhash `457bee9d…`。
