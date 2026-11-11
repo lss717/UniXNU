@@ -3019,3 +3019,22 @@ display[0] 用 `respondsToSelector:` 依次试 `contexts` / `contextIds` / `clie
 - 非 0 → 客户端其实连上了，问题在合成器/present 一侧，方向要改。
 
 镜像：`/tmp/opencode/boot-H236hz.img`，sha256 `a016586b…`；插件 cdhash `0c82a732…`。
+
+### 45.62 踩坑记录独立成文
+
+§45.60 之后又确认了一个更隐蔽的坑：**真正被加载的插件来自 payload 里的
+`Payloads/kernel.macho.gpuaddon`，不是 Data seed 的 `ngpu/addons`**。hx/hy/hz 三轮只换了 seed，
+payload 里仍是 hw 那一版的插件，其 CDHash 已不在新信任缓存里 → AMFI 拒绝 → 零日志。
+再加上 hz 之后我发现 `mcopy` 源文件不在本机、等于把同一张镜像又打了一遍（sha256 相同），
+这三轮的全部代价都来自打包流程，而不是实验设计。
+
+这些流程性坑单独记在
+`plans/oneplus5-cheeseburger/diagnostics/gpu-display-pitfalls-2026-11-11.md`（P1–P10 + 上机前自检清单），
+本文件只保留实验结论。要点：
+
+1. 信任缓存只能**串加**（P1）；
+2. 插件在 payload 的 `.gpuaddon` 里（P2），每次三件套一起换；
+3. 打包后必须比对 `sha256`，相同就说明 payload 没换（P3）；
+4. 用 `NATIVE_MTL` + `NATIVE_ACCEL_HB` 的 `accel=` 计数区分“没加载”和“加载了没日志”（P4）；
+5. LaunchDaemon 需要 root 属主、本机没有 per-user launchd、没有 sudo（P5/P6/P7）；
+6. 日志窗口只有约 61 个快照，关键行要重复写（P9）。

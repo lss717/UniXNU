@@ -14,6 +14,13 @@
   sha256 `f18a2904…`；详见 `diagnostics/build-environment-2026-11-10.md` §45.37–§45.41。
   同一 gate 的另一半：显示侧记录的 "CA 从不提交 swap（selector 3/4/5 = 0）" 与此同源
   ——Metal 的 present 与 display 的 swap 卡在同一个判断上，必须合并设计。
+- **当前已确证的根因（2026-11-11，H236hv→hz）**：SpringBoard 在渲染服务器存在之前就查询
+  `+[CADisplay mainDisplay]`，而 QuartzCore 的 `ensure_displays` 把空列表**永久缓存**在进程内
+  （`0x18948d2c0` 的静态标志）。backboardd 之后发布了 `LCD/primary 1080x1920`（+5 个 wireless），
+  但 SpringBoard 已不再查询；重启 SpringBoard 也没能改变（它在更早的一步就停住，且本机只有一个
+  launchd，SpringBoard 与 backboardd 同命名空间）。
+- 打包与信任缓存的踩坑单独成文：
+  `plans/oneplus5-cheeseburger/diagnostics/gpu-display-pitfalls-2026-11-11.md`（P1–P10 + 自检清单）。
 - 上一阶段：**C3 完成（2026-11-10，H236et→ez）。** A540 的 CP 已离开 secure 模式：
   `RBBM_SECVID_TRUST_CNTL=0`，`CP_MEM_WRITE`（`0xC0FFEE11`）与 `CACHE_FLUSH_TS`
   （`0xBEEF1234`）都经 SMMU 落地，可信窗口写（`0xEA57BEEF`）落地，提交冒烟测试
