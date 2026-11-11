@@ -2747,3 +2747,58 @@ u64；29 必须写 8 B 两个 float；22 只接受 idx ≤ 4；88 的返回值�
 `list≥1 main=0` 是“发布的名字不叫 LCD / 缺 device name”。
 
 镜像：`/tmp/opencode/boot-H236ht.img`，sha256 `2497e6de…`；插件 cdhash `bae5b179…`。
+
+### 45.51 ht 实测：CA 里有 display，而且有 6 个 —— 问题变成“SpringBoard 起得太早”
+
+`ht` 的 `ca#200..203 probe`（插件在 backboardd 内调用 QuartzCore）：
+
+```
+ca#200 probe timer class=1 main=1 list=6 server=6 port=0x8e07 kr=0x0
+ca#201 probe timer class=1 main=1 list=6 server=6 port=0x8e07 kr=0x0
+ca#202 probe timer class=1 main=1 list=6 server=6 port=0x8e07 kr=0x0
+ca#203 probe timer class=1 main=1 list=6 server=6 port=0x8e07 kr=0x0
+```
+
+- `kr=0`、`port=0x8e07`：`com.apple.CARenderServer` **已注册**；
+- `main=1`：`+[CADisplay mainDisplay]` **非 nil**；
+- `list=6` / `server=6`：渲染服务器发布了 **6 个 display**。
+
+也就是说 §45.48/§45.49 推断的“headless”**在 223 s 并不成立**：`BKDisplayIsHeadless` 此刻必然为假。
+再结合本轮的进程次序：
+
+```
+126.47 s  SpringBoard pid=26 exec
+130.48 s  xpcproxy com.apple.backboardd  pid=56
+142.76 s  backboardd exec
+150.10 s  backboardd 打开 NativeLegacyDisplay（第一次 IOMFB 客户端）
+152.76 s  插件加载（Metal 设备）
+223.4  s  probe：main=1 list=6
+```
+
+**SpringBoard 比 backboardd 早 16 s**。而 `query_displays` 在
+`CARenderServerGetServerPort(0) == 0` 时**直接返回空表且不打印任何东西**（§45.49），所以
+SpringBoard 在 126–142 s 之间问“主 display 在哪”时必然拿到 nil；如果这个空结果被
+`ensure_displays` 缓存，它之后再也不会重试，于是：
+
+```
+SpringBoard 没有 display → 不建窗口 → 不提交图层
+→ backboardd 合成空图层树 → 18 个 pass 全是清屏、0 条 draw
+→ 没有可呈现内容 → 不 swap（s345=0/0/0）→ 没有帧
+```
+
+这一条把 §45.46–§45.50 的所有观察串成了一条因果链，而且**不再需要改 IOMFB 的答复**。
+
+### 45.52 hu：验证“起得太早”这个假设
+
+插件（`hu`）加了两件事，都只在 backboardd 内做：
+
+1. `ca#N display`：把 6 个 display 的 `-name` / `-deviceName` 打出来（`mainDisplay` 是名叫
+   `"LCD"` 的那个，所以名字能确认面板是否真在列表里，而不是只有 External/TV 条目）；
+2. 设备 init 后 **+60 s**（约 212 s）用 `proc_listpids` 找到 `SpringBoard`，发 `SIGTERM`，
+   然后在 +12/+28/+44/+60 s 再各探一次 `ca#N probe`。
+
+判读：若重启后的 SpringBoard 拿到 display 并开始提交图层，我们会立刻看到
+`newTextureWithDescriptor:iosurface:plane:`、`presentDrawable:`、`s345` 非零——那就同时证实了
+因果链并给出了可用的规避方案（让 SpringBoard 在 backboardd 之后启动）。
+
+镜像：`/tmp/opencode/boot-H236hu.img`，sha256 `0739918f…`；插件 cdhash `00ffc2f8…`。
