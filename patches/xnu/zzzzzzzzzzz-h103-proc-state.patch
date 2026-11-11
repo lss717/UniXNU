@@ -1,8 +1,8 @@
 diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
-index 5dcf00e..3586f03 100644
+index 5dcf00e..82b5da0 100644
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -10285,3 +10285,159 @@ task_best_name(task_t task, char *buf, size_t size)
+@@ -10285,3 +10285,237 @@ task_best_name(task_t task, char *buf, size_t size)
  	char *name = proc_best_name(task_get_proc_raw(task));
  	strlcpy(buf, name, size);
  }
@@ -161,4 +161,82 @@ index 5dcf00e..3586f03 100644
 +		proc_rele(p);
 +	}
 +	printf("NATIVE_PROC_DUMP: end\n");
++}
++
++/* H236ij: user-PC samples of a named process, for locating a stuck userspace thread.
++ * Ten samples one second apart separate "blocked" from "spinning"; one sample would only show
++ * the mach_msg trap every healthy thread sits in.  Only TH_WAIT threads are read (kernel threads
++ * have no user state, a thread running on a CPU carries the state of its last trap), the state is
++ * validated, and the pc must look like a user address.  The thread queue is walked under
++ * task_lock_try() and nothing is printed while the lock is held (IOLog can block).
++ * Reached from the UFS driver through the same extern "C" channel as native_legacy_client_stats. */
++#include <mach/arm/thread_status.h>
++extern struct arm_saved_state *get_user_regs(thread_t);
++
++struct native_sb_row {
++	uint64_t tid;
++	uint64_t pc;
++	uint64_t lr;
++};
++static struct native_sb_row native_sb_rows[16];
++static unsigned native_sb_count;
++static const char *native_sb_note;
++static const char *native_sb_name;
++
++static int
++native_sb_collect(struct proc *p, void *arg)
++{
++	char comm[17];
++
++	proc_name(proc_getpid(p), comm, sizeof comm);
++	if (strncmp(comm, native_sb_name, strlen(native_sb_name)) != 0) {
++		return 0;
++	}
++	struct task *t = proc_task(p);
++	if (!t) {
++		native_sb_note = "no-task";
++		return 1;
++	}
++	if (!task_lock_try(t)) {
++		native_sb_note = "locked";
++		return 1;
++	}
++	thread_t th;
++	queue_iterate(&t->threads, th, thread_t, task_threads) {
++		if ((th->state & TH_WAIT) == 0) {
++			continue;
++		}
++		arm_saved_state_t *state = get_user_regs(th);
++		if (!state || !is_saved_state64(state)) {
++			continue;
++		}
++		uint64_t pc = get_saved_state_pc(state);
++		if (pc < 0x100000000ULL || pc >= 0x8000000000ULL) {
++			continue;
++		}
++		if (native_sb_count < sizeof(native_sb_rows) / sizeof(native_sb_rows[0])) {
++			native_sb_rows[native_sb_count].tid = thread_tid(th);
++			native_sb_rows[native_sb_count].pc = pc;
++			native_sb_rows[native_sb_count].lr = get_saved_state_lr(state);
++			native_sb_count++;
++		}
++	}
++	task_unlock(t);
++	return 1;
++}
++
++void
++native_sb_pc_sample(const char *name, unsigned sample)
++{
++	native_sb_count = 0;
++	native_sb_note = "-";
++	native_sb_name = name;
++	proc_iterate(1U | 4U, native_sb_collect, NULL, NULL, NULL);
++	printf("NATIVE_SBPC: sample=%u n=%u note=%s\n", sample, native_sb_count, native_sb_note);
++	for (unsigned i = 0; i < native_sb_count; i++) {
++		printf("NATIVE_SBPC: sample=%u tid=%llu pc=0x%llx lr=0x%llx\n", sample,
++		    (unsigned long long)native_sb_rows[i].tid,
++		    (unsigned long long)native_sb_rows[i].pc,
++		    (unsigned long long)native_sb_rows[i].lr);
++	}
 +}

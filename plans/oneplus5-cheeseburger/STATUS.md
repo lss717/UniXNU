@@ -19,6 +19,21 @@
   （`0x18948d2c0` 的静态标志）。backboardd 之后发布了 `LCD/primary 1080x1920`（+5 个 wireless），
   但 SpringBoard 已不再查询；重启 SpringBoard 也没能改变（它在更早的一步就停住，且本机只有一个
   launchd，SpringBoard 与 backboardd 同命名空间）。
+- **开放项（未解释，别当成结论）**：**SpringBoard 为什么不连接渲染服务器**。已排除的只是下面几条，
+  不是这个现象本身：
+  - 已排除：**默认 surface 链**（`create_default_fb_surface` 在整个镜像里无人调用；
+    user client 的 selector 3 才是取默认 surface 的入口，而 CA 从未调用 selector 3；
+    `surface_complete()` 本就会在首帧后释放它 → 不是第一帧的前提，§45.75）；
+  - 已排除：**MobileGestalt 调用**（C 字符串键 SIGSEGV、CFString 键把线程挂死，§45.68/P11）；
+  - 已排除：**MG 持久缓存**（本机 scratch Data 上四个候选路径全部 `absent`，§45.73）；
+  - 已排除：**读 `default_fb_surface` 注册表属性**（它只存在于 ivar，不是属性，§45.75）；
+  - 已排除：**整字典读 IORegistry**（`IORegistryEntryCreateCFProperties` 会把 backboardd 卡住，§45.71/P13）。
+  下一步取证（按评审确定）：**第 0 步**已做——`scripts/symbolicate-pc.py` + 三个 cont 的符号化
+  （`_ipc_mqueue_receive_continue` / `_workq_unpark_continue` / `_ulock_wait_cleanup+0xa4`）；
+  **第 1 步**——内核按名采样 SpringBoard 等待线程的 `pc/lr`，**10 次 × 1 s、只采 `TH_WAIT`、
+  锁内快照解锁后打印**（`osfmk/kern/task.c: native_sb_pc_sample`，驱动侧
+  `NativeUfsProbe` 的采样线程调用）。判据是“同一 tid 的 pc 是否移动”，不是单次快照。
+  栈回溯（FP 链）留到第 1 步显示“pc 停在非 trap 位置”时再做。
 - 打包与信任缓存的踩坑单独成文：
   `plans/oneplus5-cheeseburger/diagnostics/gpu-display-pitfalls-2026-11-11.md`（P1–P10 + 自检清单）。
 - 上一阶段：**C3 完成（2026-11-10，H236et→ez）。** A540 的 CP 已离开 secure 模式：

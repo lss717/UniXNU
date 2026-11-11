@@ -3351,3 +3351,42 @@ mgcache#247 …/mobilegestaltcache/Library/Caches        absent
 `get_user_regs(thread)` 在 arm64 上是可用的（`osfmk/kern/backtrace.c:459` 就用它拿
 `arm_saved_state`），所以在内核里 dump SpringBoard 每个线程的用户 PC 是可行的——
 这是目前唯一还没被排除、又能直接回答“SpringBoard 卡在哪一步”的取证手段。
+
+### 45.76 第 0 步（符号化）+ 第 1 步（SpringBoard 用户 PC 采样）
+
+**第 0 步（零上机）**：用 Mac 构建树里未剥离的内核
+（`build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf`）
+对旧日志里的三个 `cont` 做符号化：
+
+```
+0xfffffff0072861f0 -> _ipc_mqueue_receive_continue +0x0
+0xfffffff0076d8004 -> _workq_unpark_continue        +0x0
+0xfffffff00775aa60 -> _ulock_wait_cleanup           +0xa4
+```
+
+即我们一直看到的等待点就是**等消息 / 等工作队列 / 等 ulock**，与 “SpringBoard 停在
+Mach receive” 一致。新增 `scripts/symbolicate-pc.py`：读 `LC_FUNCTION_STARTS`（Apple 会剥符号表，
+但函数起点表一定在），给出 `pc → 函数起点 + 偏移`，带 `--slide` / `--base`，供后续把设备上报的
+用户 PC 映射回函数。
+
+**第 1 步（一次上机）**：内核按名采样 SpringBoard 的等待线程：
+
+- 实现位置 `osfmk/kern/task.c: native_sb_pc_sample(name, sample)`，patch 见
+  `patches/xnu/zzzzzzzzzzz-h103-proc-state.patch`（已按 xnu-work 的实际 diff 重新生成）；
+- **不用 `task_threads()`**（MIG 会把 task 引用语义带进内核），用 `task_lock_try()` +
+  `queue_iterate(&t->threads, …)`；锁在就保证线程不会被摘链；
+- **只采 `TH_WAIT` 线程**，并要求 `get_user_regs()` 非空、`is_saved_state64()` 为真、
+  `pc` 落在用户地址区间（内核线程没有用户态；正在 CPU 上跑的线程持有的是上次陷入的 saved state，
+  pc 会偏）；
+- **锁内只写静态数组，`task_unlock()` 之后再 `printf`**（IOLog 会阻塞）；
+- 驱动侧 `NativeUfsProbe` 起一个独立线程（不占心跳），在 `IOSleep(170000)` 后
+  **采样 10 次、每次间隔 1 s**，输出 `NATIVE_SBPC: sample=N tid=… pc=0x… lr=0x…`。
+
+判据：**同一个 tid 的 pc 是否在 10 次采样间移动**。单次快照只会得到 “在 mach_msg 里等”，
+那件事已经从 wait graph 知道了；重复采样才能区分“阻塞”与“空转”。栈回溯（FP 链）按评审意见
+留到出现“pc 停在非 trap 位置”时再做。
+
+同时去掉了内核侧那次 SpringBoard SIGTERM（插件那条已经验证可用），避免与采样互相干扰。
+
+镜像：`/tmp/opencode/boot-H236ij.img`，sha256 `b1b164ea…`；
+kernel `a9350a05…`；插件 cdhash `091e9c47…`。已上机。

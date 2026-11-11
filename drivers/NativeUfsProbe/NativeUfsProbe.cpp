@@ -24,7 +24,11 @@
 // kernel build promotes warnings to errors.
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-volatile"
+/* proc_internal.h is C: without this the C++ translation unit asks for a mangled
+ * "proc_iterate(...)" while the kernel exports _proc_iterate. */
+extern "C" {
 #include <sys/proc_internal.h>
+}
 #pragma clang diagnostic pop
 #include <kern/debug.h>
 #include <kern/task.h>
@@ -407,6 +411,7 @@ springboard_restart (proc_t p, void *)
 }
 
 static void
+__attribute__((unused))
 h103MaybeRestartSpringBoard (uint32_t displayClients)
 {
   static int enabled = -1, sawClient, waited, done;
@@ -441,6 +446,24 @@ h103MaybeRestartSpringBoard (uint32_t displayClients)
   IOLog ("NATIVE_RESTART: sent\n");
 }
 
+// H236ij: where SpringBoard is stuck.  The sampling itself lives in the kernel
+// (osfmk/kern/task.c, native_sb_pc_sample): the driver cannot see struct thread or TH_WAIT
+// (<kern/thread.h> resolves to the SDK's Mach header here), while task.c already has the
+// task_lock_try + queue_iterate pattern that this repo uses for wait-state dumps.
+extern "C" void native_sb_pc_sample (const char *name, unsigned sample);
+
+static void
+a540SpringBoardSamplerThread (void *, wait_result_t)
+{
+  // SpringBoard is exec'd between ~115 s and ~190 s on this board, after a slow launchd phase.
+  IOSleep (170000);
+  for (unsigned sample = 0; sample < 10; sample++) {
+    native_sb_pc_sample ("SpringBoard", sample);
+    IOSleep (1000);
+  }
+  IOLog ("NATIVE_SBPC: done\n");
+}
+
 static void
 heartbeatThread (void *, wait_result_t)
 {
@@ -470,7 +493,6 @@ heartbeatThread (void *, wait_result_t)
     uint32_t dpc=0,dca=0,dfa=0,ds6=0,drg=0,ds3=0,ds4=0,ds5=0;
     if (native_legacy_client_stats)
       native_legacy_client_stats (&dpc,&dca,&dfa,&ds6,&drg,&ds3,&ds4,&ds5);
-    h103MaybeRestartSpringBoard (dpc);
     IOLog ("NATIVE_ACCEL_HB: accel=%u/%u/%u/%u abi=%d/%d/%d rep=%.31s gc=%d:%08x "
            "dpy=%u/%u/%u/%u/%u s345=%u/%u/%u val=%u xf=%u fr=%u\n",
            (unsigned) native_a540_open_count, (unsigned) native_a540_open_type,
@@ -3437,6 +3459,16 @@ NativeUfsProbe::start (IOService *provider)
          heartbeatRet, gH103SkipPattern);
   if (heartbeatRet == KERN_SUCCESS) {
     thread_deallocate (heartbeat);
+  }
+  // H236ij: the SpringBoard user-PC sampler runs on its own thread so the ten one-second
+  // samples do not stall the heartbeat (which also feeds the log writer).
+  {
+    thread_t sbSampler = THREAD_NULL;
+    kern_return_t sbRet = kernel_thread_start (a540SpringBoardSamplerThread, nullptr, &sbSampler);
+    IOLog ("NATIVE_SBPC: start rc=%x\n", sbRet);
+    if (sbRet == KERN_SUCCESS) {
+      thread_deallocate (sbSampler);
+    }
   }
   if (gH103SlotMode) {
     // H128: the 2-second slot thread is now opt-in.  It ignored
