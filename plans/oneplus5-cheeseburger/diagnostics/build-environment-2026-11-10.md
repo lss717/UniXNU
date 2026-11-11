@@ -3068,3 +3068,30 @@ ic 因此加了两件事，都是插件侧、不改内核：
 
 镜像：`/tmp/opencode/boot-H236ic.img`，sha256 `d0745f52…`（与上一张 `3ae6cf4a…` 确认不同）；
 插件 cdhash `cd36bb18…`，cadprobe `8fded1a6…`（两者都在信任缓存里）。
+
+### 45.64 ic 结果：两条探针都没输出，改用显示模式做判据
+
+ic 的日志里：
+
+```
+ca#201 clients server none      ← CAWindowServerDisplay 不响应 contexts/contextIds/clients/currentState
+sblog#250 oslog exception       ← OSLogStore 抛异常，没拿到 SpringBoard 的日志
+```
+
+即：窗口服务器一侧没有可直接读的客户端计数；统一日志的读取被拒（原因在异常里，下一版会打出来）。
+
+于是按 §45.58 第 3 条换一个更有判据的输入：**显示模式本身**。参考端口（sagit）的 SpringBoard
+正是死在 `FBSDisplayMode` 校验上——`preferredScale == 0`、保留尺寸 1242×2208 而硬件是 1080×1920。
+如果我们的 `CADisplay` 也报 `refreshRate = 0` 或 `pointScale = 0`，那 SpringBoard 不建 UI 就有了
+直接解释，而且这是**驱动侧可以修**的东西。
+
+id 的 `ca#N mode` 用 KVC 读（不依赖私有类型）：
+
+```
+ca#N mode <w>x<h> px=<pw>x<ph> hz=<refreshRate> prefHz=<preferredMode.refreshRate> scale=<pointScale>
+```
+
+同时把 OSLogStore 的失败原因打全（`exception <name>: <reason>`、`no-enumerator <localizedDescription>`）。
+
+镜像：`/tmp/opencode/boot-H236id.img`，sha256 `20e22b28…`；插件 cdhash `21128ef4…`，
+cadprobe `8fded1a6…`，两者都在信任缓存里（已按 P1 串加、P2/P3 三件套一起换）。
