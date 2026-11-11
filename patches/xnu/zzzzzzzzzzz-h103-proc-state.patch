@@ -2,7 +2,7 @@ diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
 index 5dcf00e..999c217 100644
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -10285,3 +10285,285 @@ task_best_name(task_t task, char *buf, size_t size)
+@@ -10285,3 +10285,432 @@ task_best_name(task_t task, char *buf, size_t size)
  	char *name = proc_best_name(task_get_proc_raw(task));
  	strlcpy(buf, name, size);
  }
@@ -172,6 +172,8 @@ index 5dcf00e..999c217 100644
 +#include <mach/arm/thread_status.h>
 +extern struct arm_saved_state *get_user_regs(thread_t);
 +
++#include <ipc/ipc_port.h>
++
 +struct native_sb_row {
 +	uint64_t tid;
 +	uint64_t pc;
@@ -180,7 +182,7 @@ index 5dcf00e..999c217 100644
 +	/* H237: arm64 syscall arguments from the same saved state.  A thread
 +	 * blocked in mach_msg2_trap has its packed call arguments in x1..x7
 +	 * (struct mach_msg2_trap_args: data/options/bits/ports/id/...), and the
-+	 * trap number (47) in x16, so no copyin is needed to read the header. */
++	 * trap number (47, negated) in x16, so no copyin is needed for those. */
 +	uint64_t x1;
 +	uint64_t x2;
 +	uint64_t x3;
@@ -194,6 +196,91 @@ index 5dcf00e..999c217 100644
 +static unsigned native_sb_count;
 +static const char *native_sb_note;
 +static const char *native_sb_name;
++
++/* H239: describe the port the blocked thread is receiving from, and the port
++ * of the request still left in its message buffer.  Only scalar fields are
++ * kept; the receiver task pointer is used for pointer comparison only, so no
++ * task or proc is dereferenced while the port lock is held. */
++struct native_sb_probe {
++	int seen;
++	uint64_t ie_bits;
++	uint64_t io_bits;
++	unsigned srights;
++	unsigned mscount;
++	unsigned qlimit;
++	uint64_t receiver;
++};
++static struct native_sb_probe native_sb_rcv;
++static struct native_sb_probe native_sb_req;
++static uint64_t native_sb_buf;
++static unsigned native_sb_rcv_name;
++static int native_sb_hdr_ok;
++static uint32_t native_sb_hdr[6];
++static int native_sb_capture;
++static task_t native_sb_task;
++static uint64_t native_sb_name_target;
++static int native_sb_name_found;
++static char native_sb_name_out[17];
++
++static void
++native_sb_probe_name(ipc_space_t space, unsigned name, struct native_sb_probe *out)
++{
++	ipc_entry_t entry;
++	ipc_port_t port;
++
++	memset(out, 0, sizeof(*out));
++	if (space == IS_NULL || name == MACH_PORT_NULL) {
++		return;
++	}
++	is_write_lock(space);
++	entry = ipc_entry_lookup(space, (mach_port_name_t)name);
++	if (entry != IE_NULL) {
++		out->ie_bits = (uint64_t)entry->ie_bits;
++		port = (ipc_port_t)entry->ie_object;
++		if (port != IP_NULL) {
++			ip_lock(port);
++			out->io_bits = (uint64_t)((ipc_object_t)port)->io_bits;
++			out->srights = port->ip_srights;
++			out->mscount = port->ip_mscount;
++			out->qlimit = port->ip_qlimit;
++			if (port->ip_receiver != IS_NULL) {
++				out->receiver = (uint64_t)(uintptr_t)
++				    port->ip_receiver->is_task;
++			}
++			ip_unlock(port);
++		}
++	}
++	is_write_unlock(space);
++	out->seen = 1;
++}
++
++static int
++native_sb_name_match(struct proc *p, void *arg)
++{
++	(void)arg;
++	if (native_sb_name_target != 0 &&
++	    (uint64_t)(uintptr_t)proc_task(p) == native_sb_name_target) {
++		proc_name(proc_getpid(p), native_sb_name_out, sizeof native_sb_name_out);
++		native_sb_name_found = 1;
++		return 1;
++	}
++	return 0;
++}
++
++static void
++native_sb_name_of(uint64_t taskptr, char *out, size_t size)
++{
++	strlcpy(out, "-", size);
++	if (taskptr == 0) {
++		return;
++	}
++	native_sb_name_target = taskptr;
++	native_sb_name_found = 0;
++	proc_iterate(1U | 4U, native_sb_name_match, NULL, NULL, NULL);
++	if (native_sb_name_found) {
++		strlcpy(out, native_sb_name_out, size);
++	}
++}
 +
 +static int
 +native_sb_collect(struct proc *p, void *arg)
@@ -227,6 +314,16 @@ index 5dcf00e..999c217 100644
 +		if (pc < 0x100000000ULL || pc >= 0x8000000000ULL) {
 +			continue;
 +		}
++		/* Mach traps carry a NEGATIVE syscall number in x16
++		 * (osfmk/arm64/bsd_arm64.c: assert(call_number < 0) then
++		 * call_number = -call_number), so mach_msg2_trap is -47. */
++		if (native_sb_task == TASK_NULL && !native_sb_capture &&
++		    (int32_t)(uint32_t)get_saved_state_reg(state, 16) == -47) {
++			native_sb_capture = 1;
++			native_sb_buf = (uint64_t)get_saved_state_reg(state, 0);
++			native_sb_rcv_name = (unsigned)(uint32_t)
++			    (get_saved_state_reg(state, 5) >> 32);
++		}
 +		if (native_sb_count < sizeof(native_sb_rows) / sizeof(native_sb_rows[0])) {
 +			native_sb_rows[native_sb_count].tid = thread_tid(th);
 +			native_sb_rows[native_sb_count].pc = pc;
@@ -244,15 +341,32 @@ index 5dcf00e..999c217 100644
 +		}
 +	}
 +	task_unlock(t);
++	/* The proc reference keeps the task alive, so taking the task reference
++	 * after dropping task_lock is safe and cannot deadlock. */
++	if (native_sb_capture && native_sb_task == TASK_NULL) {
++		native_sb_capture = 0;
++		task_reference(t);
++		native_sb_task = t;
++	}
 +	return 1;
 +}
 +
 +void
 +native_sb_pc_sample(const char *name, unsigned sample)
 +{
++	char rname[17];
++	char qname[17];
++
 +	native_sb_count = 0;
 +	native_sb_note = "-";
 +	native_sb_name = name;
++	native_sb_capture = 0;
++	native_sb_hdr_ok = 0;
++	native_sb_buf = 0;
++	native_sb_rcv_name = 0;
++	memset(&native_sb_rcv, 0, sizeof native_sb_rcv);
++	memset(&native_sb_req, 0, sizeof native_sb_req);
++	memset(native_sb_hdr, 0, sizeof native_sb_hdr);
 +	proc_iterate(1U | 4U, native_sb_collect, NULL, NULL, NULL);
 +	printf("NATIVE_SBPC: sample=%u comm=%s n=%u note=%s\n", sample, name, native_sb_count, native_sb_note);
 +	for (unsigned i = 0; i < native_sb_count; i++) {
@@ -267,9 +381,6 @@ index 5dcf00e..999c217 100644
 +	 * voucher port and msgh_id, desc count/rcv name, rcv size/priority. */
 +	for (unsigned i = 0; i < native_sb_count; i++) {
 +		uint64_t bs, rl, vi, dr, rp;
-+		/* Mach traps carry a NEGATIVE syscall number in x16
-+		 * (osfmk/arm64/bsd_arm64.c: assert(call_number < 0) then
-+		 * call_number = -call_number), so mach_msg2_trap is -47. */
 +		if ((int32_t)(uint32_t)native_sb_rows[i].x16 != -47) {
 +			continue;
 +		}
@@ -286,5 +397,41 @@ index 5dcf00e..999c217 100644
 +		    (unsigned)(uint32_t)vi, (unsigned)(uint32_t)(vi >> 32),
 +		    (unsigned)(uint32_t)(dr >> 32), (unsigned)(uint32_t)rp,
 +		    (unsigned long long)native_sb_rows[i].x7);
++	}
++	/* H239: the buffer of a mach_msg2 call still holds the header of the
++	 * message that was sent last, so read it back and describe both ports. */
++	if (native_sb_task != TASK_NULL) {
++		if (native_sb_buf != 0 &&
++		    vm_map_read_user(get_task_map(native_sb_task),
++		    (vm_offset_t)native_sb_buf, native_sb_hdr,
++		    sizeof native_sb_hdr) == KERN_SUCCESS) {
++			native_sb_hdr_ok = 1;
++		}
++		native_sb_probe_name(native_sb_task->itk_space, native_sb_rcv_name, &native_sb_rcv);
++		native_sb_name_of(native_sb_rcv.receiver, rname, sizeof rname);
++		if (native_sb_hdr_ok) {
++			native_sb_probe_name(native_sb_task->itk_space, native_sb_hdr[2], &native_sb_req);
++			native_sb_name_of(native_sb_req.receiver, qname, sizeof qname);
++		} else {
++			strlcpy(qname, "-", sizeof qname);
++		}
++		printf("NATIVE_SBPORT: sample=%u comm=%s buf=0x%llx hdr=%d bits=0x%x size=%u rport=0x%x lport=0x%x vport=0x%x id=0x%x\n",
++		    sample, name, (unsigned long long)native_sb_buf, native_sb_hdr_ok,
++		    native_sb_hdr[0], native_sb_hdr[1], native_sb_hdr[2],
++		    native_sb_hdr[3], native_sb_hdr[4], native_sb_hdr[5]);
++		printf("NATIVE_SBPORT: sample=%u rcv name=0x%x seen=%d ie=0x%llx io=0x%llx sr=%u ms=%u ql=%u peer=%s\n",
++		    sample, native_sb_rcv_name, native_sb_rcv.seen,
++		    (unsigned long long)native_sb_rcv.ie_bits,
++		    (unsigned long long)native_sb_rcv.io_bits,
++		    native_sb_rcv.srights, native_sb_rcv.mscount,
++		    native_sb_rcv.qlimit, rname);
++		printf("NATIVE_SBPORT: sample=%u req name=0x%x seen=%d ie=0x%llx io=0x%llx sr=%u ms=%u ql=%u peer=%s\n",
++		    sample, native_sb_hdr[2], native_sb_req.seen,
++		    (unsigned long long)native_sb_req.ie_bits,
++		    (unsigned long long)native_sb_req.io_bits,
++		    native_sb_req.srights, native_sb_req.mscount,
++		    native_sb_req.qlimit, qname);
++		task_deallocate(native_sb_task);
++		native_sb_task = TASK_NULL;
 +	}
 +}

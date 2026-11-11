@@ -459,13 +459,19 @@ static void
 a540SpringBoardSamplerThread (void *, wait_result_t)
 {
   // SpringBoard is exec'd between ~115 s and ~190 s on this board, after a slow launchd phase.
+  // H239: sample for two minutes ten seconds apart, so the window covers SpringBoard's whole
+  // life (it is killed by the plugin's restart probe at ~243 s).  Only SpringBoard repeats;
+  // the other names are useful once and would otherwise push the ring log out.
   IOSleep (170000);
-  for (unsigned sample = 0; sample < 6; ++sample) {
+  for (unsigned sample = 0; sample < 12; ++sample) {
     for (unsigned index = 0; index < sizeof a540SbNames / sizeof a540SbNames[0]; ++index) {
+      if (index != 0 && sample >= 2) {
+        continue;
+      }
       IOLog ("NATIVE_SBPC: call name=%s sample=%u\n", a540SbNames[index], sample);
       native_sb_pc_sample (a540SbNames[index], sample);
     }
-    IOSleep (1000);
+    IOSleep (10000);
   }
   IOLog ("NATIVE_SBPC: done\n");
 }
