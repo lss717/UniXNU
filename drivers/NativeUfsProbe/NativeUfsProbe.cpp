@@ -465,7 +465,15 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
   // life (it is killed by the plugin's restart probe at ~243 s).  Only SpringBoard repeats;
   // the other names are useful once and would otherwise push the ring log out.
   IOSleep (150000);
-  for (unsigned sample = 0; sample < 26; ++sample) {
+  // H250 burst: 50 ms cadence for four seconds FIRST, so the high-rate window is
+  // always inside a normal boot (the 10 s series alone runs for minutes).
+  IOLog ("NATIVE_SBPC: burst start\n");
+  for (unsigned b = 0; b < 80; ++b) {
+    native_sb_pc_sample ("SpringBoard", 100 + b);
+    IOSleep (50);
+  }
+  IOLog ("NATIVE_SBPC: burst done\n");
+  for (unsigned sample = 0; sample < 20; ++sample) {
     for (unsigned index = 0; index < sizeof a540SbNames / sizeof a540SbNames[0]; ++index) {
       if (index > 2 && sample >= 2) {
         continue;
