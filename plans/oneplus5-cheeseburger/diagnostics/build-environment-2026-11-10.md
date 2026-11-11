@@ -2486,3 +2486,27 @@ forward: supportsVertexAmplificationCount:          ×10
 ```
 
 （`§45.40` 里写的“两个 double”据此更正。）
+
+### 45.44 hr：描述符与着色器都正常，卡点是“没有可呈现表面”
+
+hr（自完成缓冲 + 侧表标量 + 描述符日志）实测，`bb exits 0`：
+
+```
+newTextureWithDescriptor: 776x24 fmt=115 type=2 samples=1 mips=10 usage=0x5
+newRenderPipelineStateWithDescriptor:error:
+  vs=path_blit_vert_lph            fs=attachment_clear_frag_lph   fmt0=80 samples=1
+  vs=downsample_blur_vert_lph      fs=downsample_4_frag_lph       fmt0=80 samples=1
+  vs=downsample_blur_vert_lph      fs=narrow_blur_15_frag_lph     fmt0=80 samples=1
+  …（共 8 条，函数名与附件格式都正常）
+```
+
+结论（把 §45.41 的三个假设排除了两个）：
+
+1. **着色器不是拦路点**：CA 送来的是真实函数名，`fmt0=80`（BGRA8Unorm）、`samples=1` 也正常；
+2. **不是我们答错描述符**：纹理尺寸/格式/usage 现在都是真值（776×24、fmt=115、usage=0x5）；
+3. **仍然零 `commit`、零 `presentDrawable:`、零 `newTextureWithDescriptor:iosurface:plane:`**。
+
+也就是说 CA 已经把离屏合成跑完（pass/blit/纹理/管线），但没有为我们的设备建立**可呈现的 surface**，
+于是永远走不到 commit。这与显示侧记录的“CA 从不提交 swap（selector 3/4/5 = 0）”是同一个判断的两面，
+**必须按同一个 gate 去解**：让 CA 认为这块 A540 设备拥有一个可提交的显示表面（IOSurface + 显示服务），
+而不是继续在 Metal 侧加桩。
