@@ -1,8 +1,8 @@
 diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
-index 5dcf00e..4750a5a 100644
+index 5dcf00e..1727089 100644
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -10285,3 +10285,631 @@ task_best_name(task_t task, char *buf, size_t size)
+@@ -10285,3 +10285,677 @@ task_best_name(task_t task, char *buf, size_t size)
  	char *name = proc_best_name(task_get_proc_raw(task));
  	strlcpy(buf, name, size);
  }
@@ -235,6 +235,8 @@ index 5dcf00e..4750a5a 100644
 +};
 +static struct native_sb_allrow native_sb_all[24];
 +static unsigned native_sb_alln;
++static uint64_t native_sb_lastpcs[12];
++static unsigned native_sb_lastn;
 +
 +static void
 +native_sb_probe_name(ipc_space_t space, unsigned name, struct native_sb_probe *out)
@@ -413,6 +415,39 @@ index 5dcf00e..4750a5a 100644
 +		    (unsigned long long)native_sb_rows[i].x7);
 +	}
 +	if (strncmp(name, "SpringBoard", 11) == 0) {
++		uint64_t uniq[12];
++		unsigned un = 0;
++		int changed = 0;
++		for (unsigned i = 0; i < native_sb_alln && un < 12; i++) {
++			unsigned j;
++			for (j = 0; j < un; j++) {
++				if (uniq[j] == native_sb_all[i].pc) {
++					break;
++				}
++			}
++			if (j == un) {
++				uniq[un++] = native_sb_all[i].pc;
++			}
++		}
++		if (un != native_sb_lastn) {
++			changed = 1;
++		} else {
++			for (unsigned i = 0; i < un; i++) {
++				if (uniq[i] != native_sb_lastpcs[i]) {
++					changed = 1;
++					break;
++				}
++			}
++		}
++		for (unsigned i = 0; i < un; i++) {
++			native_sb_lastpcs[i] = uniq[i];
++		}
++		native_sb_lastn = un;
++		if (!changed) {
++			printf("NATIVE_SBTHR: sample=%u unchanged threads=%u uniq=%u\n",
++			    sample, native_sb_alln, un);
++			goto sbthr_done;
++		}
 +		printf("NATIVE_SBTHR: sample=%u comm=%s threads=%u\n", sample, name, native_sb_alln);
 +		for (unsigned i = 0; i < native_sb_alln; i++) {
 +			printf("NATIVE_SBTHR: sample=%u tid=%llu st=0x%x pc=0x%llx lr=0x%llx\n",
@@ -421,6 +456,8 @@ index 5dcf00e..4750a5a 100644
 +			    (unsigned long long)native_sb_all[i].pc,
 +			    (unsigned long long)native_sb_all[i].lr);
 +		}
++sbthr_done:
++		;
 +	}
 +	/* H239: the buffer of a mach_msg2 call still holds the header of the
 +	 * message that was sent last, so read it back and describe both ports. */
@@ -577,6 +614,8 @@ index 5dcf00e..4750a5a 100644
 +static unsigned native_xpc_written;
 +static unsigned native_xpc_printed;
 +static unsigned native_xpc_lost;
++static unsigned long long native_xpc_sb_out, native_xpc_sb_in, native_xpc_sb_other;
++static unsigned long long native_xpc_p_out, native_xpc_p_in, native_xpc_p_other;
 +
 +static int
 +native_xpc_tracked(int pid)
@@ -616,21 +655,28 @@ index 5dcf00e..4750a5a 100644
 +	e->size = (unsigned)hdr->msgh_size;
 +	e->id = (unsigned)hdr->msgh_id;
 +	native_xpc_written = w + 1;
++	if ((unsigned)from == (unsigned)native_xpc_pids[0]) {
++		native_xpc_sb_out++;
++	} else if ((unsigned)to == (unsigned)native_xpc_pids[0]) {
++		native_xpc_sb_in++;
++	} else {
++		native_xpc_sb_other++;
++	}
 +}
 +
 +static void
 +native_xpc_emit(unsigned sample, unsigned budget)
 +{
-+	unsigned n = 0;
-+
-+	while (native_xpc_printed != native_xpc_written && n < budget) {
-+		struct native_xpc_note *e =
-+		    &native_xpc_ring[native_xpc_printed % NATIVE_XPC_RING];
-+		printf("NATIVE_XPC2: sample=%u from=%u to=%u bits=0x%x size=%u id=0x%x\n",
-+		    sample, e->from, e->to, e->bits, e->size, e->id);
-+		native_xpc_printed++;
-+		n++;
++	(void)budget;
++	if (native_xpc_sb_out == native_xpc_p_out &&
++	    native_xpc_sb_in == native_xpc_p_in &&
++	    native_xpc_sb_other == native_xpc_p_other) {
++		return;
 +	}
-+	printf("NATIVE_XPC2: sample=%u printed=%u pending=%u lost=%u\n", sample, n,
-+	    native_xpc_written - native_xpc_printed, native_xpc_lost);
++	printf("NATIVE_XPC3: sample=%u sb_out=%llu sb_in=%llu other=%llu lost=%u\n", sample,
++	    native_xpc_sb_out - native_xpc_p_out, native_xpc_sb_in - native_xpc_p_in,
++	    native_xpc_sb_other - native_xpc_p_other, native_xpc_lost);
++	native_xpc_p_out = native_xpc_sb_out;
++	native_xpc_p_in = native_xpc_sb_in;
++	native_xpc_p_other = native_xpc_sb_other;
 +}
