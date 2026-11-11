@@ -46,6 +46,10 @@
   `(apply-protobox)`/`protobox collection`/`sandbox.protobox.index`，`zalloc.h` 无本地改动）。
   审计全文：`diagnostics/H240-LSD-IPC-AUDIT.md`。**下一步**：把采样名单换成
   SpringBoard / lsd / containermanager，沿链继续走到底（不改 policy、不加 allow）。
+- **H248（放宽 bootstrap 捕获）**：仍然 **0 行** `NATIVE_BOOTSTRAP`；SpringBoard 连续两次自然启动
+  （H247/H248，各约 10 分钟）都保持 4–5 线程、pc 恒定 4 个内核 stub、从未打开显示/GPU。
+  取证路径判定：**服务名不在内联消息体里**，不再沿此路线投入。下一步改为 20 ms 高频 pc 采样
+  （H249），以确认它是否根本不在执行用户态代码。
 - **H247（自然启动，无我们重启干扰，130–708 s）**：SpringBoard 全程只有一次 exec、**没有被杀**，
   线程数恒定 4–5、pc 集合恒定 4 个内核 stub，显示/GPU 驱动侧**从未出现 SpringBoard** →
   它**从未推进到图形初始化**（不是连上后卡住）。bootstrap 服务名捕获本轮**未命中**（0 行），
