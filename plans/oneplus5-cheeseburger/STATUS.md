@@ -55,6 +55,13 @@
   `(apply-protobox)`/`protobox collection`/`sandbox.protobox.index`，`zalloc.h` 无本地改动）。
   审计全文：`diagnostics/H240-LSD-IPC-AUDIT.md`。**下一步**：把采样名单换成
   SpringBoard / lsd / containermanager，沿链继续走到底（不改 policy、不加 allow）。
+- **C6a-MTL ③ 上机结果（2026-11-12，已证实）**：commit 路径**从不被调用**——本机 18 个 render
+  encoder、5 个 blit encoder 全部编码完成，但 **commit 次数 = 0**，命令缓冲在 168.6 s 被直接
+  dealloc（`cmdbuf#159 dealloc`）。`gpu commit-path ready` 出现，selftest 的 `submit + WaitFence`
+  本身是通过的（`gpu#9 fence fence=5 … faults=0 suspends=0`）。所以 **③ 的实现与底座已验证，
+  但"每帧 commit"这条路径需要 CA 先愿意提交**。另发现 `-supportsVertexAmplificationCount:` 被
+  泛型 void 转发器接走（BOOL 返回值是垃圾），属于 ① 类缺陷。② 的输出显示 8 个管线全是
+  无附件离屏管线（`att=0 fmt0=0`），与 ho 的"8 次 nil"记录一致。
 - **C6a-MTL ②③（2026-11-12，只改插件）**：② `newRenderPipelineStateWithDescriptor:` 现在打印
   `att/fmt0/wm/blend/d/st/samples` 六个字段（附件数、像素格式、写掩码、混合、深度/模板格式、采样数）；
   ③ `-commit` **真的提交到 A540**：复用 selftest 已映射的 IB/target BO，每帧追加一条 `CP_MEM_WRITE`
