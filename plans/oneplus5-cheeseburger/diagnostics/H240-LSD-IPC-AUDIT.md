@@ -597,3 +597,58 @@ NATIVE_SBSEND: burst=2 seq=300 tid=289 id=0x10000000 to=136/mediaserverd loc=0x0
 
 镜像 `boot-H253.img` = `6d3ec3e4…`，内核 `bcf6e0a2…`；
 补丁 `patches/xnu/zzzzzzzzzzzz-h253-sb-send-ports.patch`。
+
+### 11.12 H253 结果：**"主线程卡在同步调用"这个前提不再成立**（已证实）
+
+H253 的运行（本机在 192.168.8.58 那台 Windows 上控制，日志到 ~945 s）：
+
+```
+NATIVE_SBSEQ: burst=0 tid=290 n=81 runs=1 seq=1dccb8b58*81
+NATIVE_SBSEQ: burst=2 tid=290 n=81 runs=1 seq=1dccb8b58*81   (= mach_msg2_trap)
+              tid=671 __ulock_wait2*81, tid=677 __ulock_wait*81,
+              tid=930/973 ___workq_kernreturn*81
+NATIVE_SBSEQ: burst=3/4 同上（只是 workq 线程 tid 换新）
+```
+
+**已证实 1：主线程一次都没有发出过消息。** `NATIVE_SBSEND` 的每条记录，`tid` 都是
+workqueue 线程（930、973、1235、1514），没有一条是主线程 290。
+
+**已证实 2：消息来自 libdispatch 线程，内容是常规后台 XPC。**
+
+| 记录 | 含义 |
+|---|---|
+| `id=0x10000000 to=146/mediaserverd size=776 bits=0x110011` | XPC（带 voucher） |
+| `id=0x20000000 to=146/ size=52 bits=0x12` | XPC 单向 |
+| `id=0x400002c8 to=1/launchd loc=0x1628da60 size=68` | 唯一带回复端口的调用 |
+| `id=0x3fa/0x3f9 to=82/notifyd` | notify 注册 |
+| `id=0xca8 to=4294967295` | 发往 task port |
+| `id=0x45 to=132/ size=52 bits=0x80000012` | 期待回复，但对端名字为空（已死） |
+
+**已证实 3：本轮 45 次进程退出**，`mobileactivation`/`PerfPowerService`/`liveactivitiesd`/
+`mediaserverd` 继续循环崩溃。另外 `NATIVE_DISPLAY_OPEN` 里 **mediaserverd 反复打开
+`AGXAccelerator`**（`process=mediaserverd grant=backboardd`），而 SpringBoard 一次也没有。
+
+**结论（推翻旧前提）**：一个**空闲的 UIKit 应用，主线程本来就该停在 `mach_msg2` 的
+run loop 接收上**——这不是"卡在同步调用"。旧 gate 里"SpringBoard 卡在一次不回复的
+Mach 调用上"的说法，从 H253 起**不再有证据支持**。
+
+正确的描述是：**SpringBoard 已经起来、run loop 在转、后台 XPC 在走，但它从未创建
+场景（scene）/从未成为前台，所以没有任何绘制请求。** 停点因此从"IPC 阻塞"上移到
+**scene/前台/激活这一层**。
+
+**本轮探针的两个 bug（已在 §11.13 修正）**：
+
+1. kmsg 里 `msgh_local_port` / `msgh_remote_port` 是 **port 对象指针**（如
+   `0x1628da60`），不是端口名；H253 拿它跟 `0x0`/名字比较，所以 `MATCH` 永远不会命中。
+2. 静默模式下 `native_sb_task` 不再被释放（端口探针被 `!quiet` 跳过），导致后续
+   采样里 `native_sb_task != TASK_NULL` 恒成立，`rcv=` 一直是 `0x0`。
+
+### 11.13 H254 计划（按新前提）
+
+1. 修掉上述两个 bug：`rcv` 用 **64 位 port 指针**，发送记录也存 **64 位指针**，
+   `MATCH` 改为指针相等；静默路径也要 `task_deallocate`。
+2. 打印被阻塞端口的**队列状态**（有无 pending 消息）与 `ip_srights/ip_mscount`，
+   区分"欠回复"与"等事件"。
+3. **重点转向 scene/前台**：`runningboardd` 在日志里出现 35 次，需要看
+   SpringBoard 与 `runningboardd`/`frontboard` 之间有没有 scene 创建请求；
+   同时查 `mobileactivation` 反复 SIGTRAP 是否与 `SetupAssistant`/激活状态相关。

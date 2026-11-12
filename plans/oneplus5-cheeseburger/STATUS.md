@@ -46,6 +46,14 @@
   `(apply-protobox)`/`protobox collection`/`sandbox.protobox.index`，`zalloc.h` 无本地改动）。
   审计全文：`diagnostics/H240-LSD-IPC-AUDIT.md`。**下一步**：把采样名单换成
   SpringBoard / lsd / containermanager，沿链继续走到底（不改 policy、不加 allow）。
+- **H253 已证实（推翻旧前提）**：**主线程从不发送**，所有 XPC 都来自 workqueue 线程
+  （tid 930/973/1235/1514），内容是常规后台服务（mediaserverd / wifid / notifyd / launchd）。
+  一个空闲 UIKit 应用的主线程本来就停在 `mach_msg2` 的 run loop 接收上，因此旧 gate 的
+  "SpringBoard 卡在一次不回复的 Mach 调用上"**不再有证据支持**。正确描述是：
+  **run loop 在转、后台 XPC 在走，但它从未创建 scene/成为前台，所以没有绘制。**
+  停点上移到 **scene/前台/激活层**。另：本轮 45 次进程退出，mobileactivation 等仍在崩溃循环；
+  mediaserverd 反复打开 `AGXAccelerator`，SpringBoard 一次也没有。
+  见 `diagnostics/H240-LSD-IPC-AUDIT.md` §11.12。
 - **H252 已证实**：SpringBoard 并非死住——发送累计数在 301→307→319 之间持续增长（约 6–12 条/分钟），
   突发窗口内 5 个线程全部停住，说明它是**慢速心跳**。发送对象里有 `id=0x45 bits=0x80000012`
   （MOVE_SEND_ONCE = 期待回复）发往 `proc_name()` 解析为**空名**的 pid（118、136；136 是 366 s
