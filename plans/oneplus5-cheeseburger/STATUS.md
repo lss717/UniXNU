@@ -12597,3 +12597,33 @@ contextWithOptions:, serverIfRunning, context, stopServer]` —— 早期进程�
 
 **H272o（下一步，唯一改动）**：定时器只从**设备初始化**派生（H272g–I 唯一被证实可靠的路径），
 保留"ctx=0 继续"的修复，让 `presentSurface` / `allContexts` 真正跑一次。
+
+### H272o（2026-11-12）：**屏幕变灰 —— 第一次有内容到达面板**
+
+镜像 `boot-H272o.img` = `85fef0e8…`，插件 `58b8e8b5…`，span **409 s**，**用户观察到屏幕变灰**。
+
+```
+disp#297 enter   early
+disp#299 server  early comm=backboardd displays=6 bounds=1080x1920 ctx=0
+disp#312 context none, continue
+disp#313 root    early root=0 rootclass=-
+disp#315 attach  early attached=0 frame=1080x1920 opaque=1
+disp#319 fill    early surface=1 bytes=8355840 ds=1080x1920
+（此后本探针线程再无任何输出；无 presentsurface / allcontexts / present 行）
+```
+
+**已证实**：
+1. Bug 1 修复生效：`bytes=8355840`（1080×1920×4 的 1088 对齐）与 `ds=1080x1920` 同时出现，
+   `setDrawableSize:` 把像素尺寸与 `contentsScale=3` 解耦成功；
+2. **写入 drawable 的 IOSurface 之后，面板直接变成灰色**，而 `presentsurface` /
+   `present` / `allContexts` **一行都没执行** → 灰帧不是经过任何呈交通道出现的。
+
+**强推断**：在**未挂 context** 的 layer 上取到的 drawable，其 IOSurface 就是（或直接映射到）
+**扫描输出缓冲**；`IOSurfaceGetBaseAddress` 的写入即等于直接改画面。这解释了
+"没有 present 却能上屏"，也解释了为什么探针线程在 fill 之后立刻停止输出（待确认：
+是线程被驱动侧阻塞，还是后续 objc 调用在该内存状态下异常）。
+
+**待确认（下一步 H272p）**：
+- fill 之后线程为何静默：在 fill 前后各打一次心跳，并在 `presentsurface` 分支入口加日志；
+- 该 IOSurface 的 id/尺寸是否与 `NativeLegacyDisplay` 扫出的帧缓冲 id 相同（同轮比对）；
+- 若能稳定复现"填即上屏"，则**第一帧目标已达成**，C6a 的显示输出链可判定为通。
