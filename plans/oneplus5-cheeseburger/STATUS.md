@@ -12549,3 +12549,34 @@ payload，导致两处丢失：
 
 **教训（写入 P 系列）**：payload 是"配置 + 产物"的捆绑包，**不要用默认参数重打**；
 改 boot-arg 只动 `unixnu.toml`。
+
+### H272l（2026-11-12）：三份菜单到手，挂载面找到了两个真入口
+
+`boot-H272l.img` = `4d88dddf…`（仅 `unixnu.toml` 加 `h103-log-secs=1`），本轮存活 **>386 s**。
+
+**CAWindowServer（26 个，全量，已证实）**：`displays`、`displayWithDisplayId:`、
+`displayWithUniqueId:`、`displayWithName:`、`addDisplay:`、`removeDisplay:`、
+`clientPortOfContextId:`、`taskNamePortOfContextId:`、`contextIdHostingContextId:`、
+`isSlotValid:`、`setSlotDeletionCallback:`、`rendererFlags`、`isSecure` …
+→ **没有 context 枚举、没有 mainContext**；context 只能按 id 访问。
+
+**CAWindowServerDisplay（243 个中命中 33，已证实）**：
+`presentSurface:withOptions:`、`acquireFrozenSurface`、`framebufferFormat`、
+`clientPortOfContextId:`、`taskNamePortOfContextId:`、
+`contextIdAtPosition:excludingContextIds:`、`transformFromLayerId:inContextId:`、
+`clientPortAtPosition:`、`freeze` …
+→ **没有任何 layer/context 对象属性**（证实它是元数据对象），
+但 **`presentSurface:withOptions:` 是直接上屏入口**——可绕过 CA 合成。
+
+**CAContext 类方法（15 个，全量，已证实）**：
+`+allContexts`、`+contextWithId:`、`+currentContext`、`+localContextWithOptions:`、
+`+remoteContext`、`+remoteContextWithOptions:`、`+objectForSlot:`、
+`+setDrawInContextBlock:`、`+setClientPort:` …
+→ **有 context 枚举与按 id 查找**，Plan B 完全可行。
+
+另：构造函数期 `builder#11 early srv=1 displays=0`——server 早就在，但显示对象要到
+~250 s 才发布，解释了早期探针为什么拿不到。
+
+**下一步（H272m）**：优先 `-[CAWindowServerDisplay presentSurface:withOptions:]`
+直接呈交我们填好灰的 IOSurface（`ION` 最短路径）；若被拒，退 `+[CAContext allContexts]`
+取现有 context 再 `setLayer:`。
