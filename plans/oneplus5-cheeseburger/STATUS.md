@@ -12,8 +12,17 @@
   **零次 `commit`/`presentDrawable:`**、**零张 IOSurface 纹理**——
   CA 把每一帧都丢弃了。前沿镜像 `boot-H236ho.img`
   sha256 `f18a2904…`；详见 `diagnostics/build-environment-2026-11-10.md` §45.37–§45.41。
-  同一 gate 的另一半：显示侧记录的 "CA 从不提交 swap（selector 3/4/5 = 0）" 与此同源
-  ——Metal 的 present 与 display 的 swap 卡在同一个判断上，必须合并设计。
+  **这个 gate 已拆成两条线，不再互相吞**（2026-11-12）：
+  - **C6a-MTL（驱动侧，当前主线）**：① 标量访问器 → ② 打印 render pipeline descriptor
+    真实内容 → ③ 真队列/命令缓冲（`-initWithQueue:retainedReferences:synchronousDebugMode:`、
+    `-commandBufferDidComplete:startTime:completionTime:error:`）。判据：**`commit` 出现 +
+    `WaitFence` 通过**。只改插件，不动内核。
+  - **C6a-SB（提交者侧，并行）**：scene / 前台 / 激活。判据：`NATIVE_SBPEER` 里出现
+    runningboard/frontboard 的 scene 创建，或 mobileactivation 不再 SIGTRAP。只改内核探针
+    与提交者侧观测，不阻塞 MTL。
+  - **合并条件**：C6a-SB 产出 scene 时，C6a-MTL 的 ③ 必须已经能把命令提交到 A540——
+    否则 scene 出现也只是回到"零 commit"。
+  - 两条线可并行（驱动侧改插件、提交者侧改内核），但**"当前在做什么"同时只能有一条**。
 - **当前已确证的根因（2026-11-11，H236hv→hz）**：SpringBoard 在渲染服务器存在之前就查询
   `+[CADisplay mainDisplay]`，而 QuartzCore 的 `ensure_displays` 把空列表**永久缓存**在进程内
   （`0x18948d2c0` 的静态标志）。backboardd 之后发布了 `LCD/primary 1080x1920`（+5 个 wireless），
@@ -140,7 +149,7 @@
   `diagnostics/build-environment-2026-11-10.md` §34。
 - 基线提交：**H236ez** kernel `451c7d7c…`、boot `b936e889…`（C3 完成 + kgsl 顺序）；
   C1/C2 基线 kernel `8147dc53…`、boot `4dd225e2…`（见 H236g）
-- 当前代码提交：UniXNU `main` `7f2a4d0`（H236et 文档批次）；
+- 当前代码提交：UniXNU `main` `1135dfa`（H254 结果批次）；
   NativeMobileDisplay `h103-a540` `8e729a4`（RBCCU/SP GDSC 上电 + 提交探针）；
   设备仓库 `main` `30c3aaf`（菜单/logo 最终版）
 - 远程仓库：
@@ -150,7 +159,7 @@
   - NativeRamBlock fork `https://github.com/lss717/RamBlock`（submodule 路径仍为
     `drivers/NativeRamBlock`，fork 提交 `bc079a5`；`upstream` 指回 `UniXNU/RamBlock`）
 - UEFI 分支：`edk2-msm8998` 的 `unixnu-cheeseburger`，提交 `0471194`、`708fa06`、`7f34479`、`91e17a8`、`8ef28f1`、`1ffb934`
-- 最近更新：2026-11-09
+- 最近更新：2026-11-12
 
 > 本文件是 B 线（UniXNU / 4K）唯一的计划与状态记录。A 线（在 OP5 上用
 > 自建 shim 引导 16K XNU）是另一个独立项目，与本线没有代码依赖。
