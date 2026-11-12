@@ -12483,3 +12483,17 @@ disp#292 cand context has=0 value=0      （context/contextId/layer/rootLayer/
 （`context` / `layer` / `surface` / `present` / `swap`），对 `CAWindowServerDisplay`
 的 243 个方法和 `CAWindowServer` 的 26 个方法各打 1–2 行；拿到真名后直接试探，
 不再有猜名轮次。
+
+### H272i（2026-11-12）：两次短命（215.5 s / 191.8 s），dump 未跑到
+
+镜像 `boot-H272i.img` = `254c14c7…`，插件 `fb6be12b…`。
+第 1 次止于 **215.5 s**、第 2 次止于 **191.8 s**，两次都只有 `builder#1 load comm=backboardd`
+（构造函数已确认执行、日志队列冲刷生效），**`dump#`/`disp#` 均为 0**——
+设备初始化（探针计时起点）在 213–289 s，两次都在其之前结束。
+
+用户观察：第 2 次运行期间**屏幕左上第 4 个方块变黄**。本轮**没有任何 `attach`/`present`
+日志**，所以这不是我们的层上屏，判定为 **Legacy 显示自检图案的进度标记**（待确认）。
+
+**下一步（H272j）**：把 `dump_methods` 从"设备初始化后计时"改到**构造函数内同步执行一次**
+（日志队列已保证连接建立后冲刷，构造期行不会丢）→ 只要插件被加载，类菜单必然落盘，
+不再受启动寿命影响。
