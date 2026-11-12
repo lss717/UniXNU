@@ -12294,3 +12294,9 @@ fs 版移除 `sheng-disable-jobs=…` 后（args 874，C3 正常）复测，`sel
   `-supportsFamily:1001`×2。
 - 纪律：`-featureProfile` 返回空字典会让 Metal **更早**放弃，必须保持"未实现=nil"。
 - 待验证镜像 `boot-H236gx.img`（`supportsFamily:` 改回 NO），手机改接 **192.168.8.58** 后上机。
+- **H260 已证实（重大）**：backboardd 的 14 次 SIGTRAP 根因是 render command encoder 缺
+  `-tileWidth`（TBDR 分块尺寸）——崩溃前最后一条调用是 `encoder#94 doesNotRecognize: tileWidth`，
+  陷落点在 CoreFoundation `____forwarding___ + 0x520`（`pc` 低 12 位恒定 `0x690`）。补上
+  `tileWidth/tileHeight/tileDepth` 后：**backboardd EXC=0、EXIT=0、user client 建立次数 17→2**，
+  但 `commit` 仍为 0、`s345` 仍 0/0/0 → 渲染服务器第一次稳定下来，却依然不提交帧。
+  插件 CDHash `5a6c4093…`，镜像 `boot-H260b.img` = `eb9c8187…`。
