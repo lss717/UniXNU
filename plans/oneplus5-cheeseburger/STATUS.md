@@ -12294,6 +12294,12 @@ fs 版移除 `sheng-disable-jobs=…` 后（args 874，C3 正常）复测，`sel
   `-supportsFamily:1001`×2。
 - 纪律：`-featureProfile` 返回空字典会让 Metal **更早**放弃，必须保持"未实现=nil"。
 - 待验证镜像 `boot-H236gx.img`（`supportsFamily:` 改回 NO），手机改接 **192.168.8.58** 后上机。
+- **H269 运行（已证实）**：干净重建的内核 `fa3acb0e…` 正常启动，6 个突发窗口、77 条
+  `NATIVE_SBPEER`，**runningboardd/backboardd 再次为 0 条**；draw 0、commit 0、
+  backboardd 0 次退出。SpringBoard 的对端仍只有 notifyd(13)、task-port(6)、wifid(5)、
+  launchd(5/5)、followupd(5)。
+  结合 H254/H262（各有 3 条 scene 往来）与 H266/H269（各 0 条）：**scene 侧往来在 5 次
+  启动中只出现 2 次**，属偶发，不能当稳定事件；C6a-SB 需要更长的观测窗口或更强的触发条件。
 - **H269（已证实，构建回归修复）**：干净树构建出的内核一直不可启动，根因是 **prelink 需要的两个
   kit 补丁不在 `patches/xnu/`**，而在 `kits/NativePrelink/patches/`：
   `xnu-10063.141.1-sparse-index.patch`（`kalloc_sparse_prelink_index_version`）与
