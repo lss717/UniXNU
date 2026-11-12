@@ -12417,3 +12417,19 @@ frame#348 present sent
   （`serverIfRunning.displays[0].context`）——直接对真实显示提交，能画出即证明全链；
 - **(b)** 让插件在 **SpringBoard 侧**跑同一段（SB 是 CA 客户端，context 可以正常创建）——
   更接近真实路径，但需要插件进入 SB 的 Metal 发现。
+
+### H272f（2026-11-12）：探针调度前移仍未生效；I/O 超时立项（D-IO1）
+
+镜像 `boot-H272f.img` = `25d17d61…`，插件 `653a0ba5…`。本版把显示探针从
+"设备初始化后计时"改为 **bundle 构造时 60/90/120/150/180 s 五次尝试**。
+
+结果：日志止于 **190 s**，`disp#` 仍为 **0 条**（屏幕未变灰）。
+**待确认**：构造函数是否在 backboardd 里真的执行（`probe_self_name()` 依赖
+`NSProcessInfo`，构造阶段未必可用；名字判断失败会静默返回）。
+下一版必须**去掉进程名判断**并在构造时打一行 `builder` 日志，把"没执行"和
+"执行了但拿不到对象"分开。
+
+同轮确认：**存储读超时是本阶段所有长跑观测的共同阻碍**，已单独立项
+`diagnostics/IO-TIMEOUT-longrun-blocker-2026-11-12.md`（D-IO1）：
+UFS `err 60` ×51 → APFS 数据哈希读取 `EIO 5` → `launchd` 退出 → `panic: initproc exited`；
+6 次上机中 4 次在 157–216 s 止步，而 H269 同内核曾跑满 590 s（间歇性，非固定定时器）。
