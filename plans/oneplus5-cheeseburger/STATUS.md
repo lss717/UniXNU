@@ -55,6 +55,13 @@
   `(apply-protobox)`/`protobox collection`/`sandbox.protobox.index`，`zalloc.h` 无本地改动）。
   审计全文：`diagnostics/H240-LSD-IPC-AUDIT.md`。**下一步**：把采样名单换成
   SpringBoard / lsd / containermanager，沿链继续走到底（不改 policy、不加 allow）。
+- **C6a-MTL ②③（2026-11-12，只改插件）**：② `newRenderPipelineStateWithDescriptor:` 现在打印
+  `att/fmt0/wm/blend/d/st/samples` 六个字段（附件数、像素格式、写掩码、混合、深度/模板格式、采样数）；
+  ③ `-commit` **真的提交到 A540**：复用 selftest 已映射的 IB/target BO，每帧追加一条 `CP_MEM_WRITE`
+  标记 → `submit` → `WaitFence`（50 ms），`-status` 由完成状态决定（0 新建 / 1 已提交 / 2 完成 /
+  3 失败），完成回调只报一次。判据：日志出现 `commit gpu=fence=<n> marker=<n>` 且无 `commit-fence
+  ... timeout`。插件 CDHash `42f89be2…`，trust cache 7 项（链式，未替换）；
+  镜像 `boot-H255.img` = `1ed7fd04…`，内核不变（`e4085640…`）。
 - **H254 运行结果（已证实）**：SpringBoard 与 Scene/前台相关的消息**只有 191 s 的一次往返**
   （`SpringBoard→runningboardd id=0x40000000 size=200`，`runningboardd→SpringBoard 52 B`，
   `backboardd→SpringBoard 52 B`），**SpringBoard→backboardd 为 0 条**；此后 465 s 无任何
