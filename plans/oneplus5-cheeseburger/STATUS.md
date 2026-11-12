@@ -12294,6 +12294,15 @@ fs 版移除 `sheng-disable-jobs=…` 后（args 874，C3 正常）复测，`sel
   `-supportsFamily:1001`×2。
 - 纪律：`-featureProfile` 返回空字典会让 Metal **更早**放弃，必须保持"未实现=nil"。
 - 待验证镜像 `boot-H236gx.img`（`supportsFamily:` 改回 NO），手机改接 **192.168.8.58** 后上机。
+- **阶段目标变更（2026-11-12，正式）**：从"让渲染服务活下来"转为
+  **"让 SpringBoard 建立真实的前台显示场景，并产生第一帧有效绘制"**。
+  C6a-MTL 的提交底座不再改动；C6a-SB（scene/前台/激活）成为主线，H261 起只做观测。
+- **H261 P0 观测（稳定 backboardd 下，已证实）**：`boot-H260b` 窗口内
+  SpringBoard 的 IPC 对端仍是 followupd / mediaserverd / sharingd / launchd / task-port，
+  **runningboardd / backboardd / frontboard 出现 0 次**——backboardd 稳定并**没有**让
+  SpringBoard 开始与它交互。显示/AGX 打开：backboardd 9 次、mediaserverd 128 次、
+  MobileGestaltHelper 3 次、IOMFB 2 次，**SpringBoard 0 次**。
+  mobileactivation 在同一窗口内 **36 次 SIGTRAP**（pc 低 12 位恒 `0xac0`）。
 - **H260 已证实（重大）**：backboardd 的 14 次 SIGTRAP 根因是 render command encoder 缺
   `-tileWidth`（TBDR 分块尺寸）——崩溃前最后一条调用是 `encoder#94 doesNotRecognize: tileWidth`，
   陷落点在 CoreFoundation `____forwarding___ + 0x520`（`pc` 低 12 位恒定 `0x690`）。补上
