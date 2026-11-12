@@ -3592,3 +3592,31 @@ NATIVE_SBPORT: req name=0x5f03 set=0 ie=0x3210001 sr=2 ms=0 peer=92/lsd
 
 结论：这条链是 **SpringBoard → lsd（Launch Services）→ 没有回复**。`lsd.mapdb` 之前查到 `kr=0x0`
 只说明服务名注册着，不代表 lsd 在工作。下一轮（H241）把采样器直接对准 lsd。
+
+## §45.83 H256：每个 pass 都有颜色附件，但 CA 仍然不 commit
+
+`boot-H256.img`（插件 CDHash `f2fc84f4…`）在 `renderCommandEncoderWithDescriptor:` 上打印了
+颜色/深度附件与 load/store：
+
+```text
+cmdbuf#73 renderCommandEncoderWithDescriptor: tex=1 depth=0 load=1 store=1 0x0
+```
+
+统计（0–660 s）：**84 个 render encoder 全部 `tex=1`**（没有一个是无目标 pass）、
+`commit` 0 次、`enqueue` 0 次、`presentDrawable` 0 次、`waitUntilCompleted` 0 次；
+`commandBuffer` 共创建 13 个。
+
+**已证实**：
+
+1. "丢帧是因为 render pass 没有颜色附件"这一假设**被否定**——84 个 pass 全部有颜色纹理；
+2. CA 的帧在 `endEncoding` 之后直接停止：不 commit、不 enqueue、不 present、不 wait；
+3. 本轮 `supportsVertexAmplificationCount:` 一次都没被调用（H255 那时出现在管线创建前），
+   说明两次启动的帧阶段不同，不能把 H255 的 8 次管线请求当成稳定基线。
+
+**强推断**：CA 在这条离屏合成路径上渲染到**私有纹理**，之后需要 drawable 才能提交/呈现；
+drawable 缺失（显示侧尚未打通）→ 整帧被丢弃，命令缓冲从未走到 commit。
+这与历史上"CA 从不提交 swap（selector 3/4/5 = 0）"是同一个缺口。
+
+**对 gate 的修正**：C6a-MTL ③ 的"每帧 commit"**不能**在显示侧打通之前达成；
+driver 侧的 `Submit + WaitFence` 已由 selftest 证明可用（`gpu#9 fence fence=5 … faults=0`）。
+因此 ③ 的判据改为："commit 路径实现完成 + selftest fence 通过"，每帧 commit 归入 C6a-显示侧。

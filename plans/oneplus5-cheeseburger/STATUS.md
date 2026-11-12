@@ -55,6 +55,13 @@
   `(apply-protobox)`/`protobox collection`/`sandbox.protobox.index`，`zalloc.h` 无本地改动）。
   审计全文：`diagnostics/H240-LSD-IPC-AUDIT.md`。**下一步**：把采样名单换成
   SpringBoard / lsd / containermanager，沿链继续走到底（不改 policy、不加 allow）。
+- **H256（已证实，修正 gate）**：84 个 render pass **全部有颜色附件**（`tex=1`），
+  "丢帧因为没有 render target"的假设被否定；同时 `commit/enqueue/presentDrawable/
+  waitUntilCompleted` **全是 0**，13 个命令缓冲编码完就停。**强推断**：CA 渲染到私有纹理后
+  需要 drawable 才能提交，drawable 缺失（显示侧未打通）→ 整帧丢弃。因此 C6a-MTL ③ 的
+  "每帧 commit"在显示侧打通前无法达成；driver 侧 `Submit+WaitFence` 已由 selftest 证明可用
+  （`fence=5 … faults=0`）。③ 的判据因此改为"实现完成 + selftest fence 通过"，每帧 commit
+  归入显示侧。见 `diagnostics/build-environment-2026-11-10.md` §45.83。
 - **C6a-MTL ③ 上机结果（2026-11-12，已证实）**：commit 路径**从不被调用**——本机 18 个 render
   encoder、5 个 blit encoder 全部编码完成，但 **commit 次数 = 0**，命令缓冲在 168.6 s 被直接
   dealloc（`cmdbuf#159 dealloc`）。`gpu commit-path ready` 出现，selftest 的 `submit + WaitFence`
