@@ -12527,3 +12527,25 @@ disp#292 cand context has=0 value=0      （context/contextId/layer/rootLayer/
 
 同时记录访问链路变更：控制机改为 **`ls@192.168.10.225`**（旧 192.168.8.58 不再使用），
 平台工具与镜像目录不变。
+
+### H272l（2026-11-12）：boot-args 的真正载体是 `EFI/UniXNU/unixnu.toml`；UEFI 卡住已定位
+
+`boot-H272l.img` = `4d88dddf…`。
+
+**已证实（H272k 卡 UEFI 的根因）**：裸跑 `unixnu build payload` 会用**默认参数**重新生成
+payload，导致两处丢失：
+
+| 文件 | 原（H272j） | 重打（H272k） |
+| --- | --- | --- |
+| `EFI/UniXNU/unixnu.toml` | 1274 B（含完整 args 与 data 配置） | **580 B（无 args）** |
+| `kernel.macho.adt` | 14,656（2026-11-08） | 14,512（重新生成） |
+| `scratch-data.img` | 3,551,536 | **缺失** |
+
+`kernel.macho` 两份**字节相同**（`22d3c9dd…`）→ 内核没变，卡 UEFI 是配置/ADT/scratch 缺失。
+
+**正确做法（已采用）**：以 `payload-H272j.img` 为基底，只改 `unixnu.toml` 里的 `args`
+（加 `h103-log-secs=1`），ADT/scratch/kernel/addon 全部原样保留。
+`check-bootargs-fit.py`：最坏情形 **919/1024**，OK。
+
+**教训（写入 P 系列）**：payload 是"配置 + 产物"的捆绑包，**不要用默认参数重打**；
+改 boot-arg 只动 `unixnu.toml`。
