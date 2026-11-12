@@ -12580,3 +12580,20 @@ payload，导致两处丢失：
 **下一步（H272m）**：优先 `-[CAWindowServerDisplay presentSurface:withOptions:]`
 直接呈交我们填好灰的 IOSurface（`ION` 最短路径）；若被拒，退 `+[CAContext allContexts]`
 取现有 context 再 `setLayer:`。
+
+### H272m / H272n（2026-11-12）：两轮都是探针缺陷，不是架构结论
+
+- **H272m**（`62aed317…`）：`presentSurface:` / `allContexts` 代码写了，但一条日志都没出。
+  原因：`probe_display_frame` 里残留 `if (!context) return;`，而 `ctx=0` 恒成立 →
+  **两条新路径从未执行**。
+- **H272n**（`e5935a54…`）：把该 `return` 改为"记一行继续"。结果本轮 **`disp#` = 0 条**
+  （span 345 s），说明**构造函数里 `dispatch_after` 的定时器没有可靠触发**
+  （H272g/i 曾触发过，属不稳定）。`dump#` 行仍出现，因为它们是构造函数**同步**执行的。
+
+**顺带（新证据）**：构造函数期 `dump … server own=6 [serverWithOptions:, server,
+contextWithOptions:, serverIfRunning, context, stopServer]` —— 早期进程里
+`CAWindowServer` **只有 6 个方法**，与 250 s 后的 26 个方法不同（QuartzCore 的类在此阶段尚未完整初始化）。
+这解释了"H272l 早期 `displays=0`"。
+
+**H272o（下一步，唯一改动）**：定时器只从**设备初始化**派生（H272g–I 唯一被证实可靠的路径），
+保留"ctx=0 继续"的修复，让 `presentSurface` / `allContexts` 真正跑一次。
