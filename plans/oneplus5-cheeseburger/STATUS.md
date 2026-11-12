@@ -12731,3 +12731,17 @@ over the scanout until it is told the system owns the display"。本轮：
   只保留 `h103-log-secs=1` 的环刷盘（写盘不等于写屏）；
 - 或者改用**读回判据**：`presentSurface` 返回后从 bootMapping 读回若干像素值并打日志，
   用数值判断谁最后写、写了什么。
+
+### H272r（2026-11-12）：读回判据 + 拷贝计时；控制台刷屏源已移除
+
+`boot-H272r.img` = `31d754c1…`，内核 `6542208d…`（含新驱动）。
+
+**驱动侧（`NativeLegacyDisplay.cpp`，`kickOnce`）**：
+- `NATIVE_LEGACY_READBACK: tl=… c=… br=… q=…` —— 拷贝后直接读 `bootMapping` 的四个采样点，
+  用**数值**判断"屏上是谁的字节"，不再依赖肉眼；
+- `NATIVE_LEGACY_COPY: ticks=… us=… bytes=… kick_us=…` —— 把 99 s 拆到
+  "kick 入口 → 拷贝结束"这一段。
+
+**打包侧**：以 `payload-H272q.img` 为基底，只换 `kernel.macho`（回读逐字节比对通过）
+并把 `args` 开头的 `-v` 去掉（控制台冗长日志正是整屏重绘源），保留 `h103-log-secs=1`；
+`check-bootargs-fit.py` 最坏情形 919/1024 OK。
