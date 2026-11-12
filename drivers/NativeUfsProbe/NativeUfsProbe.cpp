@@ -468,6 +468,11 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
   // life (it is killed by the plugin's restart probe at ~243 s).  Only SpringBoard repeats;
   // the other names are useful once and would otherwise push the ring log out.
   IOSleep (150000);
+  // H271: register the scene-side pids before the bursts, otherwise the latch
+  // can never fire (they are only sampled in the slow series, which starts
+  // after the bursts are over).
+  native_sb_pc_sample ("runningboardd", 1);
+  native_sb_pc_sample ("backboardd", 1);
   // H264: ten 4 s bursts, 30 s apart (150 s .. 450 s).  The driver is linked
   // into the kernel, so this needs a kernel rebuild, but driver-only changes
   // have not been the ones that produce non-booting kernels (H261 proved it).
