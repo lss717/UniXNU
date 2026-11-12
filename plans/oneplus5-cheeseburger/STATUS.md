@@ -12678,3 +12678,34 @@ disp#319 fill    early surface=1 bytes=8355840 ds=1080x1920
 `drivers/NativeMobileDisplay/NativeLegacyDisplay.cpp` 里 swap kick → retire 的完成路径，
 找出 ~100 s 的常量/定时器（超时兜底、定时器周期、或等待 vblank 的 fallback），
 确认是"没有 vsync 中断"还是"中断来了但 retirement 不推进"。
+
+### H272p 判读定稿：慢在传输本身；"呈交通道缺失"表述作废
+
+**已证实（用户现场观察 + 日志对时）**：灰帧出现在 **~402 s**（transfer 完成时），不是 300 s。
+
+- 99.26 s 全部落在 `presentSurface:withOptions:` **调用内部**（302.019 enter → 402.469 sent）；
+- kick 在提交后 **120 ms** 内发生（`pending=1`），因此 **"缺 kick 源"假设否决**；
+- `selector=4` 的发起者是 **pid 56 = backboardd = 插件宿主**，即 `presentSurface` 自己经 legacy client 提交；
+- **"插件静默"之谜解除**：不是死锁，是 `presentSurface` 同步阻塞；H272o 差 0.4 s 没来得及打后续行。
+
+**性能口径**：一帧 99 s，而 60 Hz 需要 16 ms；代码注释里的历史基线是 143–285 ms/swap
+（`NativeLegacyDisplay.cpp:530` 附近，int-005 时代），**现在慢约 400 倍**。
+首要嫌疑：`cpus=1` 下 workloop 被饿死（插件自测同类内存写 1.26 MB/s → 仅拷贝就 ≥6.6 s）；
+次要嫌疑：GPU offer 快路未被使用（`swap_stage` 只计数不打日志）。
+
+**两个结构性事实（后续判读必须先看）**：
+1. **vsync 假设结构性死亡**：`startVsync()` 无 `sheng-vsync` boot-arg 直接 return
+   （`NativeLegacyDisplay.cpp:129–131`），`vsyncTimer` 根本不存在；且 `vsyncTick` 只通知客户端、
+   不 kick 队列；
+2. **`gSwapTrace < 8`**（:420/:434/:440）：kick/skip 日志只打前 8 条，之后静默。
+   做 swap 取证前必须放开（64 或 boot-arg）。
+
+**H272q 重定向（四项，原"每 2 s 重踢"取消）**：
+① `copy_timing_observed` 加打印（LegacyDisplayProbe.cpp:261 目前只进计数器）；
+② `kickOnce` 分段时间戳（entry/map/copy start/copy end/finish）；
+③ `swap_stage` 加打印（回答 GPU offer 是否被接受）；
+④ **相位着色判据**：fill 深灰 → `presentSurface` 返回后浅灰 → `allContexts` 挂载后白，
+   屏幕最终灰阶直接编码"最后一笔到达面板的写属于哪个阶段"。
+
+**同轮收获**：`allctx=2`、两个 root 都是 CALayer、`sublayer=added ×2`、`present sent`、
+`contents set` —— **Plan B 挂载路径也完整执行**；之后 `xf` 停在 1，与"CA 侧无内容可画"一致。
