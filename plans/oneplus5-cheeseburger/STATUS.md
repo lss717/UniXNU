@@ -12627,3 +12627,24 @@ disp#319 fill    early surface=1 bytes=8355840 ds=1080x1920
 - fill 之后线程为何静默：在 fill 前后各打一次心跳，并在 `presentsurface` 分支入口加日志；
 - 该 IOSurface 的 id/尺寸是否与 `NativeLegacyDisplay` 扫出的帧缓冲 id 相同（同轮比对）；
 - 若能稳定复现"填即上屏"，则**第一帧目标已达成**，C6a 的显示输出链可判定为通。
+
+### H272o 判读（用户观察补充）：灰帧出现在 **>400 s**，走的是 swap 通路
+
+**已证实（用户现场观察）**：屏幕变灰发生在 **400 s 之后**，不是 fill 完成的 270 s。
+
+因此 **"直写扫描输出"的推断作废**，改为：
+
+- `fill`（269.8 s）只改了 surface 内存，**面板不变**；
+- `selector 4`（270.06 s）→ `swap validate accepted=1`、`kick transferred=0 pending=1`；
+- **138 s 后**（408.59 s）才出现整帧 `transfer bytes=8294400` + `retirement observed` + `selector 5`，
+  **灰帧就是这一次 transfer 送上去的**。
+
+**结论改写（重要）**：
+> **呈交通道存在且可用**，问题不是"通道缺失"，而是**什么让 transfer 一直 pending 到 408 s**。
+> 这比"修通道"好得多：机器是通的，缺的是触发。
+
+**待确认（H272p/后续）**：
+1. H272p 的 `fillchunk` 时间线是否仍是 ~6.5 s，以及 `presentsurface enter` 是否出现
+   （区分"未走到"与"挂在里面"）；
+2. 408 s 这个时刻的性质：是否与 backboardd 退出/显示 client 注销/最后一次 kick 相关；
+3. `pending=1 → pending=0` 的触发条件（vblank？显示 3/4/5 selector 序列？还是收尾时的强制 flush）。
