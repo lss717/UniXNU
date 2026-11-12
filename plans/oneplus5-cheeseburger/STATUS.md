@@ -12294,6 +12294,14 @@ fs 版移除 `sheng-disable-jobs=…` 后（args 874，C3 正常）复测，`sel
   `-supportsFamily:1001`×2。
 - 纪律：`-featureProfile` 返回空字典会让 Metal **更早**放弃，必须保持"未实现=nil"。
 - 待验证镜像 `boot-H236gx.img`（`supportsFamily:` 改回 NO），手机改接 **192.168.8.58** 后上机。
+- **H268（已证实，收口 A 侧）**：backboardd 稳定、0 次退出，但整个窗口里
+  **render encoder 18 个、`setRenderPipelineState:` 0 次、draw 0 次、commit 0 次**。
+  即 CA **根本没有绘制**：它建好 render pass 骨架、设了几个 `replaceRegion:`、
+  问了 9 次 `supportsVertexAmplificationCount:`，然后直接 `endEncoding`。
+  结论：**"没有 scene 也能把 A 侧推到 commit"这个前提不成立**——CA 在没有任何可绘制
+  内容时连 draw 都不发，commit 更无从谈起。A 侧能验证到的边界是"驱动提交路径可用"
+  （selftest 的 submit + WaitFence 已通过），而不是"每帧 commit"。
+  插件 CDHash `78a40a5c…`，镜像 `boot-H268.img` = `3cf281ab…`（内核 H262 `k262`）。
 - **H266（已证实，重要）**：同一内核（`10758fca`）同一 payload 的第二次启动里，
   `NATIVE_SBPEER` **完全没有** runningboardd/backboardd 条目（H254/H262 各有 3 条）
   → **SpringBoard 的 scene 侧往来是偶发的**，不能当作稳定事件。
