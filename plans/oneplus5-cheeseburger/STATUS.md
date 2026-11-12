@@ -12456,3 +12456,30 @@ disp#287 server early comm=backboardd displays=6 bounds=1080x1920 ctx=0
 `context` / `contextId` / `layer` / `rootLayer` / `displayLayer` / `surface`；
 若全部不可用，则回到 `+[CAContext contextWithOptions:]`，改用带 display id 的选项
 （`kCAContextDisplayId`）而非空字典——空字典正是 `ctx=0` 的最可能原因。
+
+### H272h（2026-11-12）：类菜单拿到了；8 个候选全部不存在 → 下一轮改按子串过滤
+
+镜像 `boot-H272h.img` = `049b99df…`，插件 `b98e6ca4…`，存活 **413 s**、`err60=0`。
+
+```
+dump#288 class disp class=CAWindowServerDisplay image=QuartzCore
+dump#289 methods disp own=243 [setMaximumRefreshRate:,panelPointsPerInch,setScales:,…]
+dump#290 class server class=CAWindowServer image=QuartzCore
+dump#291 methods server own=26 [description,_detectDisplays,isMirroringEnabled,displays,
+                                 clientPortOfContextId:,setMirroringEnabled:,taskNamePortOfContextId:,…]
+disp#292 cand context has=0 value=0      （context/contextId/layer/rootLayer/
+                                         displayLayer/surface/mainDisplay/contexts 全 has=0）
+```
+
+**已证实**：
+1. `displays[0]` 的真实类就是 **`CAWindowServerDisplay`**（QuartzCore），有 **243 个自有方法**；
+   **我们手猜的 8 个选择器一个都不存在** —— 方案 (a) 的挂载面在别的名字下；
+2. `CAWindowServer` 暴露了 **`clientPortOfContextId:` / `taskNamePortOfContextId:`**——
+   说明服务器是**按 context id 管理端口**的，入口是 id 而不是对象；
+3. **早期日志补齐生效**：`builder#1 load comm=backboardd` 已落盘（虽然在 168 s 才被冲刷），
+   "零输出"从此只有"真的没执行"一种解释。
+
+**下一步（H272i，唯一动作）**：把 `dump_class` 从"前 12 个方法"改为**按子串过滤**
+（`context` / `layer` / `surface` / `present` / `swap`），对 `CAWindowServerDisplay`
+的 243 个方法和 `CAWindowServer` 的 26 个方法各打 1–2 行；拿到真名后直接试探，
+不再有猜名轮次。
