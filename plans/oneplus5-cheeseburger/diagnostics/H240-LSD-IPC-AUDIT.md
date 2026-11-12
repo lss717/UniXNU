@@ -545,3 +545,55 @@ NATIVE_SBSEQ: burst=2 tid=301 n=80 runs=4 seq=1eb3888c0*37,1b5915a20*2,1a7a8500c
 镜像 `boot-H252.img` = `34dd7c4f…`，内核 `398b7fbf…`；
 补丁 `patches/xnu/zzzzzzzzzzzz-h252-sb-sends.patch`（已验证：pinned + h103 + h251 + h252
 应用后与构建树 `task.c` 一致）。
+
+### 11.10 H252 结果：SpringBoard 在"慢速心跳"，对端全是没有名字的 pid（已证实）
+
+`NATIVE_SBSEND` 每轮突发打印最新 8 条发送（`total` = 累计发送条数）：
+
+| burst | total | 最新几条 |
+|---|---|---|
+| 2 (321 s) | 301 | `id=0x10000000 to=136/mediaserverd size=776 bits=0x110011`、`id=0x20000000 to=136/ size=52 bits=0x12`、`id=0x400002c8 to=1/launchd size=68 bits=0x111211`、`id=0xca8 to=4294967295/ size=48 bits=0x1211`、**`id=0x45 to=118/ size=52 bits=0x80000012`**、`id=0x10000000 to=59/sharingd` |
+| 3 (385 s) | 307 | `id=0x45 to=136/ size=52 bits=0x80000012`（**最新**）、`id=0x20000000 to=156/followupd`、`id=0x3fa to=82/notifyd`、`id=0x400002c8 to=1/launchd` |
+| 4 (449 s) | 319 | `id=0x10000000 to=186/mediaserverd size=776` |
+
+**已证实**：
+
+1. SpringBoard **不是死住**：`total` 从 301 → 307 → 319 持续增长，说明每轮突发之间它都在
+   醒过来发消息（突发窗口内 5 个线程全部停住，所以发送发生在窗口之外）。
+2. `id=0x45 size=52 bits=0x80000012`（= complex | **MOVE_SEND_ONCE**，即**期待回复**）
+   发往的 pid，`proc_name()` 解析出来是**空名**（118、136）——136 在 366 s 有一条
+   `NATIVE_EXIT: pid=136 comm=mediaserverd status=0x6`。即**对端已死**。
+3. 每轮详细采样的端口归属一致：`rcv name=0xa03 peer=26/SpringBoard`（它自己的端口，
+   `ie=0x3030001` = RECEIVE|SEND），缓冲区残留头的 `req name=0x4807` 属于 `92/lsd`。
+
+**同时发现的系统性问题（已证实，可能同源）**：这一轮有 36 次进程退出，且集中成环：
+
+| 进程 | 次数 | 状态 |
+|---|---|---|
+| `mobileactivation` | 15 | `status=0x5`（SIGTRAP），`EXIT_DESC` 里出现 `exc handler` |
+| `PerfPowerService` | 8 | `status=0x6`（SIGABRT） |
+| `liveactivitiesd` | 7 | `status=0x5` |
+| `mediaserverd` | 5 | `status=0x6` |
+| `launchd`（pid 6） | 1 | `status=0x1`，122 s |
+
+也就是说 SpringBoard 依赖的几个守护进程在**崩溃—重启循环**里。这与"SpringBoard 每天
+只做几次收发、UI 永远不启动"是吻合的，但**尚未证明因果**（H253 就是为钉这一点）。
+
+### 11.11 H253：把"欠回复的那条消息"钉出来（已刷入）
+
+H252 的发送记录缺少两个关键字段，无法把"被阻塞线程在 0xa03 上收"与"哪次发送用了 0xa03
+作为回复端口"对上。H253 给每条记录补上：
+
+- `tid`（发送线程）、`msgh_local_port`（**回复端口名**）、`msgh_remote_port`（目的端口名）；
+- 每轮先做一次完整采样（拿到被阻塞线程的接收端口名 `rcv=`），**再**打印发送环；
+- 与 `rcv` 相同的记录后面直接标 **`MATCH`**。
+
+输出形如：
+
+```
+NATIVE_SBSEND: burst=2 total=301 window=32 rcv=0xa03
+NATIVE_SBSEND: burst=2 seq=300 tid=289 id=0x10000000 to=136/mediaserverd loc=0x0 rem=0x4807 size=776 bits=0x110011 MATCH
+```
+
+镜像 `boot-H253.img` = `6d3ec3e4…`，内核 `bcf6e0a2…`；
+补丁 `patches/xnu/zzzzzzzzzzzz-h253-sb-send-ports.patch`。

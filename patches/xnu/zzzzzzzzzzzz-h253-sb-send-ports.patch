@@ -1,0 +1,76 @@
+diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
+index 2e9987e..0927c8b 100644
+--- a/osfmk/kern/task.c
++++ b/osfmk/kern/task.c
+@@ -10526,6 +10526,7 @@ static struct native_sb_seq_ent native_sb_seq[NATIVE_SB_SEQ_MAX];
+ static unsigned native_sb_seq_n;
+ static int native_sb_seq_on;
+ static int native_sb_quiet;
++static unsigned native_sb_last_rcv_name;   /* H253 */
+ 
+ /* H252: a small ring that holds *only* SpringBoard's outgoing messages.  The
+  * last entry before it stops sending names the transaction it later waits on;
+@@ -10536,6 +10537,11 @@ struct native_sb_send {
+ 	unsigned id;
+ 	unsigned size;
+ 	unsigned bits;
++	/* H253 */
++	unsigned long long tid;
++	unsigned local;         /* msgh_local_port name  (reply port) */
++	unsigned remote;        /* msgh_remote_port name (destination) */
++	unsigned rcv_stamp;     /* sampler's port name at record time, 0 if unknown */
+ };
+ #define NATIVE_SB_SENDS 32
+ static struct native_sb_send native_sb_sends[NATIVE_SB_SENDS];
+@@ -10633,6 +10639,7 @@ native_sb_collect(struct proc *p, void *arg)
+ 			native_sb_buf = (uint64_t)get_saved_state_reg(state, 0);
+ 			native_sb_rcv_name = (unsigned)(uint32_t)
+ 			    (get_saved_state_reg(state, 5) >> 32);
++			native_sb_last_rcv_name = native_sb_rcv_name;
+ 		}
+ 		if (native_sb_count < sizeof(native_sb_rows) / sizeof(native_sb_rows[0])) {
+ 			native_sb_rows[native_sb_count].tid = thread_tid(th);
+@@ -10682,6 +10689,7 @@ native_sb_pc_sample(const char *name, unsigned sample)
+ 	native_sb_hdr_ok = 0;
+ 	native_sb_buf = 0;
+ 	native_sb_rcv_name = 0;
++	native_sb_last_rcv_name = 0;
+ 	memset(&native_sb_rcv, 0, sizeof native_sb_rcv);
+ 	memset(&native_sb_req, 0, sizeof native_sb_req);
+ 	memset(native_sb_hdr, 0, sizeof native_sb_hdr);
+@@ -10909,8 +10917,9 @@ native_sb_send_dump(unsigned burst)
+ 	if (avail > NATIVE_SB_SENDS) {
+ 		avail = NATIVE_SB_SENDS;
+ 	}
+-	printf("NATIVE_SBSEND: burst=%u total=%u window=%u\n", burst, native_sb_sends_n, avail);
+-	for (unsigned i = 0; i < avail && shown < 8; i++) {
++	printf("NATIVE_SBSEND: burst=%u total=%u window=%u rcv=0x%x\n", burst,
++	    native_sb_sends_n, avail, native_sb_last_rcv_name);
++	for (unsigned i = 0; i < avail && shown < 10; i++) {
+ 		struct native_sb_send *sb = &native_sb_sends[(native_sb_sends_n - 1 - i) % NATIVE_SB_SENDS];
+ 		char comm[17];
+ 
+@@ -10919,8 +10928,10 @@ native_sb_send_dump(unsigned burst)
+ 		if (sb->to > 0) {
+ 			proc_name((int)sb->to, comm, sizeof comm);
+ 		}
+-		printf("NATIVE_SBSEND: burst=%u seq=%u id=0x%x to=%u/%s size=%u bits=0x%x\n",
+-		    burst, sb->seq, sb->id, sb->to, comm, sb->size, sb->bits);
++		printf("NATIVE_SBSEND: burst=%u seq=%u tid=%llu id=0x%x to=%u/%s loc=0x%x rem=0x%x size=%u bits=0x%x%s\n",
++		    burst, sb->seq, sb->tid, sb->id, sb->to, comm,
++		    sb->local, sb->remote, sb->size, sb->bits,
++		    (native_sb_last_rcv_name != 0 && sb->local == native_sb_last_rcv_name) ? " MATCH" : "");
+ 		shown++;
+ 	}
+ }
+@@ -11068,6 +11079,10 @@ native_xpc_note(ipc_kmsg_t kmsg, ipc_port_t port)
+ 		sb->id = (unsigned)hdr->msgh_id;
+ 		sb->size = (unsigned)hdr->msgh_size;
+ 		sb->bits = (unsigned)hdr->msgh_bits;
++		sb->tid = thread_tid(current_thread());
++		sb->local = (unsigned)hdr->msgh_local_port;
++		sb->remote = (unsigned)hdr->msgh_remote_port;
++		sb->rcv_stamp = native_sb_last_rcv_name;
+ 		native_sb_sends_n++;
+ 	}
+ 	if (!native_xpc_tracked(from) && !native_xpc_tracked(to)) {

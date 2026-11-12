@@ -46,6 +46,15 @@
   `(apply-protobox)`/`protobox collection`/`sandbox.protobox.index`，`zalloc.h` 无本地改动）。
   审计全文：`diagnostics/H240-LSD-IPC-AUDIT.md`。**下一步**：把采样名单换成
   SpringBoard / lsd / containermanager，沿链继续走到底（不改 policy、不加 allow）。
+- **H252 已证实**：SpringBoard 并非死住——发送累计数在 301→307→319 之间持续增长（约 6–12 条/分钟），
+  突发窗口内 5 个线程全部停住，说明它是**慢速心跳**。发送对象里有 `id=0x45 bits=0x80000012`
+  （MOVE_SEND_ONCE = 期待回复）发往 `proc_name()` 解析为**空名**的 pid（118、136；136 是 366 s
+  退出 `status=0x6` 的 mediaserverd）。**同轮发现 36 次进程退出**：mobileactivation 15×（SIGTRAP）、
+  PerfPowerService 8×（SIGABRT）、liveactivitiesd 7×、mediaserverd 5×，全部在崩溃—重启循环。
+  见 `diagnostics/H240-LSD-IPC-AUDIT.md` §11.10。
+- **H253（已刷入）**：发送环补 `tid` / `msgh_local_port`（回复端口）/ `msgh_remote_port`，
+  并与被阻塞线程的接收端口名比对，命中标 `MATCH`——用来钉出"欠回复的那条消息发给谁"。
+  镜像 `boot-H253.img` = `6d3ec3e4…`。
 - **H251 已证实（关键）**：185 s 时 SpringBoard 还在跑用户态代码（`libobjc
   realizeClassWithoutSwift`），但到 **252 s 全部线程停住**：主线程永久停在
   `mach_msg2_trap`（无超时纯接收 = 等一个永远不来的回复），其余在 `__ulock_wait2`/
