@@ -12709,3 +12709,25 @@ disp#319 fill    early surface=1 bytes=8355840 ds=1080x1920
 
 **同轮收获**：`allctx=2`、两个 root 都是 CALayer、`sublayer=added ×2`、`present sent`、
 `contents set` —— **Plan B 挂载路径也完整执行**；之后 `xf` 停在 1，与"CA 侧无内容可画"一致。
+
+### H272q（2026-11-12）：相位着色被**控制台文字**覆盖，判据无法读出
+
+`boot-H272q.img` = `fdba2466…`，插件 `6a3683b0…`。用户截屏：屏幕上**满是内核日志文字**，
+不是任何一档灰。
+
+**已证实**：`NATIVE_LEGACY` 里的注释说得很清楚——"The diagnostic renderer repaints the page
+over the scanout until it is told the system owns the display"。本轮：
+- `h103-log-secs=1` 让 IOKit 日志每秒刷一次 → 控制台**持续整屏重绘**；
+- 因此**控制台是扫描输出的最后写者**，我们的相位颜色被它盖掉。
+
+**结论**：
+1. 相位着色这项判据**在控制台活跃时无效**，必须与"关闭控制台重绘"配对使用
+   （或改为写完后读回 scanout 值比对，不依赖肉眼）；
+2. 也解释了此前"整屏变灰"与"满屏文字"的差异——灰出现在控制台停止刷新的时刻，
+   而不是 swap 完成时刻。**"灰 = transfer 送达"这条推断需要重新验证**。
+
+**下一步（H272r）**：
+- 显示类实验轮**关闭控制台重绘**（`offline-legacy-gop` 相关开关或 `-v` 去掉 / 降日志级别），
+  只保留 `h103-log-secs=1` 的环刷盘（写盘不等于写屏）；
+- 或者改用**读回判据**：`presentSurface` 返回后从 bootMapping 读回若干像素值并打日志，
+  用数值判断谁最后写、写了什么。
