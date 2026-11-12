@@ -1544,12 +1544,12 @@ static volatile uint32_t gLockWaiters;
 // never reschedules; on the single-CPU baseline a spinning waiter can starve
 // the lock holder, which is how a 2 s bound turned into 20 s stalls.
 static bool
-lockWithTimeout (IOLock *lock, const char *who, uint64_t timeoutTicks)
+lockWithTimeout (IOLock *lock, const char *who, uint64_t timeoutTicks, bool track)
 {
   /* H272ad: a timed-out lock tells us nothing about who held it, which is exactly what
    * the "count=8, nothing started" storms need.  Track the holder and how long it has
    * been holding, and print both when a waiter gives up. */
-  gLockWaiters = gLockWaiters + 1;
+  if (track) gLockWaiters = gLockWaiters + 1;
   uint64_t start = mach_absolute_time ();
   unsigned spins = 0;
   while (!IOLockTryLock (lock)) {
@@ -1560,7 +1560,7 @@ lockWithTimeout (IOLock *lock, const char *who, uint64_t timeoutTicks)
              (unsigned long long) gLockOwnerTid,
              (unsigned long long) (held / 19200ULL),
              (unsigned) gLockWaiters);
-      gLockWaiters = gLockWaiters - 1;
+      if (track) gLockWaiters = gLockWaiters - 1;
       return false;
     }
     if (++spins < 64) {
@@ -1569,9 +1569,17 @@ lockWithTimeout (IOLock *lock, const char *who, uint64_t timeoutTicks)
       IOSleep (1);
     }
   }
-  gLockWaiters = gLockWaiters - 1;
-  gLockOwnerTid = (uint64_t) thread_tid (current_thread ());
-  gLockAcquiredTicks = mach_absolute_time ();
+  if (track) {
+    /* H272ae: thread_tid is a plain uint64_t function; the previous form treated the
+     * result as a function pointer and killed early boot (UEFI green line).  Only the
+     * data paths pay for this bookkeeping - logWrite/logSync pass track=false and stay
+     * byte-identical to the baseline. */
+    gLockWaiters = gLockWaiters - 1;
+    /* This kernel exports no thread_tid(); the thread pointer itself is a stable
+     * enough owner marker for "same holder or not". */
+    gLockOwnerTid = (uint64_t) (uintptr_t) current_thread ();
+    gLockAcquiredTicks = mach_absolute_time ();
+  }
   return true;
 }
 
@@ -2090,7 +2098,7 @@ NativeUfsProbe::readBlocks (uint8_t unit, uint64_t block, uint64_t count,
     }
     // H128: one command per lock.  The old code held fLock across the whole
     // request, so a 1 MiB read blocked every other UFS user for eight chunks.
-    if (!lockWithTimeout (fLock, "readBlocks", UFS_DATA_LOCK_TICKS)) {
+    if (!lockWithTimeout (fLock, "readBlocks", UFS_DATA_LOCK_TICKS, true)) {
       IOLog ("NATIVE_UFS_LOCK: readBlocks blocked block=%llx count=%llu\n",
              block, count);
       ok = false;
@@ -2150,7 +2158,7 @@ NativeUfsProbe::readWindowBulk (uint64_t lba, uint32_t blocks, void *out)
   while (remaining) {
     uint32_t chunk = remaining < chunkBlocks ? remaining : chunkBlocks;
     uint64_t lockStart = mach_absolute_time ();
-    if (!lockWithTimeout (fLock, "readWindowBulk", UFS_DATA_LOCK_TICKS)) {
+    if (!lockWithTimeout (fLock, "readWindowBulk", UFS_DATA_LOCK_TICKS, true)) {
       IOLog ("NATIVE_UFS_LOCK: readWindowBulk blocked lba=%llx blocks=%u wait=%llu\n",
              at, chunk, (unsigned long long) (mach_absolute_time () - lockStart));
       allOk = false;
@@ -2216,7 +2224,7 @@ NativeUfsProbe::logWrite (uint64_t rel, uint32_t blocks, const void *src)
     }
   }
   const unsigned bytes = blocks * 4096U;
-  if (!lockWithTimeout (fLock, "logWrite", 38400000ULL)) {
+  if (!lockWithTimeout (fLock, "logWrite", 38400000ULL, false)) {
     return false;
   }
   uint8_t cdb[16] = { 0x2a };
@@ -2255,7 +2263,7 @@ NativeUfsProbe::logSync (void)
   if (!fReady || !fLock) {
     return false;
   }
-  if (!lockWithTimeout (fLock, "logSync", 38400000ULL)) {
+  if (!lockWithTimeout (fLock, "logSync", 38400000ULL, false)) {
     return false;
   }
   bool ok = ufsSync (&fQueue);
@@ -2765,7 +2773,7 @@ NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
   uint64_t writeTicks = 0;
   bool ok = true;
   uint64_t lockStart = mach_absolute_time ();
-  if (!lockWithTimeout (lock, label, UFS_DATA_LOCK_TICKS)) {
+  if (!lockWithTimeout (lock, label, UFS_DATA_LOCK_TICKS, true)) {
     IOLog ("NATIVE_UFS_LOCK: window %s blocked req=%llu block=%llx count=%llu\n",
            label, request, block, count);
     gWindowInFlight = 0;
