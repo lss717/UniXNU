@@ -12345,3 +12345,46 @@ fs 版移除 `sheng-disable-jobs=…` 后（args 874，C3 正常）复测，`sel
   `tileWidth/tileHeight/tileDepth` 后：**backboardd EXC=0、EXIT=0、user client 建立次数 17→2**，
   但 `commit` 仍为 0、`s345` 仍 0/0/0 → 渲染服务器第一次稳定下来，却依然不提交帧。
   插件 CDHash `5a6c4093…`，镜像 `boot-H260b.img` = `eb9c8187…`。
+
+### H272（2026-11-12）：drawable 首次实测 + scene latch 命中
+
+镜像 `boot-H272.img` = `af6ebf55…`，内核沿用 H271b `22d3c9dd…`，
+插件 `A540Trace` CDHash `cc7394a6…`（仅换 `kernel.macho.gpuaddon` + owner trust cache，
+owner 模块 10 项）。本轮只做 P1（drawable 探测）+ H271 的 scene latch，**零内核改动**。
+
+**1. drawable —— 首次直接问 layer（已证实）**
+
+```
+draw#349 layer timer comm=backboardd device=1 bounds=360x640 scale=3.00 ds=0x0 max=3
+draw#352 next  timer comm=backboardd drawable=1 texture=1 1080x1920
+```
+
+- 给定 `bounds=360x640` + `contentsScale=3.0`，`drawableSize` 仍为 **0×0**；
+- 但同一 layer 的 `nextDrawable` **返回了有效 drawable**，其 `texture` 是 **1080×1920**——
+  即 CA 的屏幕尺寸是对的、分配器也能工作，"没有 drawable"不是分配失败。
+
+**2. 判读（待确认）**：`ds=0x0` 是在**未挂到 CAContext 的自建 layer** 上读的，且读在
+`nextDrawable` **之前**。所以它可能只是"几何惰性计算"，真实 CA layer 未必是 0。
+下一轮必须补：`nextDrawable` 之后再读一次 `drawableSize`，并与 `CADisplay` 的
+`px/pointScale` 同一时刻对照。只有那时才能判定 P2（修模式数据）是必做还是降级。
+
+**3. scene latch 首次命中（已证实，8 条）**
+
+```
+NATIVE_SBLATCH: burst=0 total=0  scene_pids=26/56            ← 189 s，此前完全无往来
+NATIVE_SBLATCH: burst=4 total=8  scene_pids=26/56            ← 340 s
+idx=0 seq=230 27/SpringBoard -> 26/runningboardd id=0x40000000 size=340
+idx=1 seq=232 … size=656   idx=3 seq=240 … size=200
+```
+
+- 请求方向是 **SpringBoard → runningboardd**（不是 SB→lsd），id 全部 `0x40000000`，
+  size 序列 `340/656/532/200/564/340/340/340`；
+- `burst=0` 时 `NATIVE_SBPEER total=0`（SpringBoard 尚未开始任何 Mach 往来），
+  `burst=4` 时 `total=361` → **SpringBoard 在 189–340 s 之间才开始活动**，这是一次
+  "启动很晚"的启动，不是"scene 事件随机"；
+- 同轮 `render encoder=0 / setRenderPipelineState=0 / commit=0` —— 即使 scene 请求已经发出，
+  CA 仍未开始渲染。**scene 请求本身不足以让 CA 出帧**。
+
+**当前 gate（H272 后）**：单线，`scene → drawable → commit` 中的 **drawable 环节**。
+下一步不是再挖 IPC（IPC 已证明会发生），而是把 `ds=0x0` 的真伪钉死：
+`nextDrawable` 之后重读 `drawableSize` + 同刻 `CADisplay` 值 + `CADisplay` 的 `nativeSize`。
