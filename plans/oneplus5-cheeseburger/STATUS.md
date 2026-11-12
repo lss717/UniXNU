@@ -46,6 +46,15 @@
   `(apply-protobox)`/`protobox collection`/`sandbox.protobox.index`，`zalloc.h` 无本地改动）。
   审计全文：`diagnostics/H240-LSD-IPC-AUDIT.md`。**下一步**：把采样名单换成
   SpringBoard / lsd / containermanager，沿链继续走到底（不改 policy、不加 allow）。
+- **H254 运行结果（已证实）**：SpringBoard 与 Scene/前台相关的消息**只有 191 s 的一次往返**
+  （`SpringBoard→runningboardd id=0x40000000 size=200`，`runningboardd→SpringBoard 52 B`，
+  `backboardd→SpringBoard 52 B`），**SpringBoard→backboardd 为 0 条**；此后 465 s 无任何
+  runningboardd/backboardd 往来。`MATCH=0`（无欠回复），`rcv=0x903 port=0xfffffff75ab74100
+  recv=SpringBoard`，SpringBoard 打开显示/AGX 次数 0。mobileactivation 14 次 SIGTRAP 全部
+  `exc=6` 且 `pc` 低 12 位恒为 `0xac0`（同一偏移、仅 slide 不同）→ **稳定重复失败路径**，
+  映像未定位。状态矩阵：`service_lookup=not_observed`、`service_ipc=sent+received`、
+  `scene/foreground/rendering=not_observed`。见
+  `diagnostics/H254_SpringBoard_Scene_Activation_诊断报告.md`。
 - **H254（已构建，未刷写）**：修 H253 两个探针 bug（kmsg 端口字段是 **`ipc_port` 对象**不是名字；
   静默路径漏放 task 引用），新增 `NATIVE_SB_WAIT`（等待端口/接收者/`sr`/`ms`/队列长度，队列长度标记
   unavailable）、`NATIVE_SBPEER`（SpringBoard 全部进出消息，双向、带 comm 名）、

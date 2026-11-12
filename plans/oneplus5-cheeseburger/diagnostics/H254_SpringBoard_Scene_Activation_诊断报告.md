@@ -221,3 +221,79 @@ rendering:       not_executed
 | 打包命令 | `python3 scripts/make-bootimg.py --edk2 ../edk2-msm8998 --kernel ../edk2-msm8998/workspace/uefi-cheeseburger.img.gz-dtb --payload payload-H254.img --out boot-H254.img` |
 | 镜像大小 | 81,149,952 B（与 H250–H253 完全一致；这些镜像均已成功启动） |
 | 刷写 | **未执行**，由用户决定 |
+
+---
+
+# H254 运行结果（2026-11-12，`boot-H254.img` / 内核 `e4085640…`）
+
+窗口 0–656 s，5 轮突发全部执行。SpringBoard pid=27、主线程 tid=290。
+
+## 状态矩阵
+
+```text
+service_lookup:  not_observed      (NATIVE_BOOTSTRAP = 0 行)
+service_ipc:     sent + received   (仅 runningboardd 一次往返)
+scene:           not_observed
+foreground:      not_observed
+rendering:       not_observed      (SpringBoard 打开显示/AGX 次数 = 0)
+```
+
+## 1. 已证实：SpringBoard 与 runningboardd / backboardd 只有"一次"往返
+
+`NATIVE_SBPEER` 全窗口共 420 条 SpringBoard 进出消息，其中与 Scene/前台相关的只有 3 条，
+全部出现在 **burst 0（~191 s）**，此后再无一条：
+
+```text
+seq=268  27/SpringBoard   -> 26/runningboardd  id=0x40000000 size=200 bits=0x111211
+seq=269  26/runningboardd -> 27/SpringBoard    id=0x20000000 size=52  bits=0x12
+seq=272  56/backboardd    -> 27/SpringBoard    id=0x20000000 size=52  bits=0x12
+```
+
+- **SpringBoard → backboardd：0 条**（只有 backboardd 发给它）；
+- 之后 ~465 s 内，runningboardd / backboardd 再未出现在 SpringBoard 的收发表里；
+- 同一窗口的其余流量全部是 notifyd、wifid、sharingd、mediaserverd、chronod、followupd、launchd。
+
+## 2. 已证实：等待不是"欠回复"
+
+`NATIVE_SB_WAIT`（5 轮一致）：
+
+```text
+pid=27 tid=290 wait_type=mach_msg2 rcv=0x903 port=0xfffffff75ab74100
+recv_pid=27 recv_comm=SpringBoard sr=1 ms=1 q=unavailable
+```
+
+`MATCH` 计数 **0**：窗口内没有任何已记录发送把该端口对象当作回复端口。
+结合 §1 的空转形态，主线程是在等**事件**，不是等某个未回的答复。
+
+## 3. 已证实：mobileactivation 是稳定的同一处失败
+
+14 次 `NATIVE_EXC`，全部 `exc=6`（`EXC_BREAKPOINT` ⇒ SIGTRAP），
+且 `pc` 的低 12 位**全部是 `0xac0`**（`0x100840ac0`、`0x100dabac0`、`0x1013cdac0` …），
+`lr == pc`：
+
+- **同一映像、同一偏移、同一线程路径**，仅 ASLR slide 不同 → **稳定的重复失败路径**；
+- 具体映像与符号仍未定位（需要该进程自己的 image base），故**不归因**为激活状态错误。
+
+## 4. 探针可靠性（验收 A 项）
+
+| 检查 | 结果 |
+|---|---|
+| 端口对象匹配 | 端口对象为真实 64 位指针 `0xfffffff75ab74100`（H253 的 32 位假设被推翻，H254 已改 64 位） |
+| 静默模式 task 引用 | 统一走 `sbport_release:`，`rcv=0x903` 正常采集（H253 恒为 `0x0`） |
+| bootstrap 名称 | 仍为 0 行（SpringBoard→launchd 有 3 条消息，但内联区没有 `com.apple.` 串） |
+| 环形缓冲 | `lost=2`（512 条窗口滑动丢弃 2 条）；`consumed=0` 是该缓冲的设计（只计数、不消费），`pending` 即窗口内条目数 |
+| SpringBoard 自然运行 | 无 `NATIVE_EXIT`（全程未被杀），51 次退出全部是其它守护进程 |
+
+## 5. 结论与 H255
+
+**强推断**：停点在 **runningboardd 的第一次往返之后**——请求发出去了（200 B XPC），
+对端也回了一条（52 B），但之后既没有后续 Scene 交互，也没有任何显示/AGX 打开。
+即 `scene: not_observed`、`foreground: not_observed`、`rendering: not_observed`。
+
+H255 建议：
+1. 给 `NATIVE_EXC` 增加 **主映像 base**（`task->all_image_info_addr` 或 `proc_ro` 里的
+   `p_uuid`/load address），把 mobileactivation 的 SIGTRAP 定位到具体符号；
+2. 对 **runningboardd** 也开采样（同一套 `native_sb_pc_sample`）：看它在收到那 200 B 之后
+   是否卡住、卡在哪；
+3. 若 runningboardd 正常，再查那 200 B 消息的 `id=0x40000000` 在 libxpc 里对应哪种调用
+   （需要用户态符号化，不要凭空命名）。
