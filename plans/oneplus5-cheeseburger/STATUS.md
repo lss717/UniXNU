@@ -12433,3 +12433,26 @@ frame#348 present sent
 `diagnostics/IO-TIMEOUT-longrun-blocker-2026-11-12.md`（D-IO1）：
 UFS `err 60` ×51 → APFS 数据哈希读取 `EIO 5` → `launchd` 退出 → `panic: initproc exited`；
 6 次上机中 4 次在 157–216 s 止步，而 H269 同内核曾跑满 590 s（间歇性，非固定定时器）。
+
+### H272g（2026-11-12）：探针跑到了；新事实：displays=6、bounds=1080x1920、`-context` 取不到
+
+镜像 `boot-H272g.img` = `cfa69168…`，插件 `9b7200e9…`。显示探针本轮**确实执行**（6 次），
+首次拿到 window server 侧的真实数据：
+
+```
+disp#287 server early comm=backboardd displays=6 bounds=1080x1920 ctx=0
+```
+
+- **`displays=6`、display 0 的 `bounds=1080×1920`（已证实）**：window server 发布显示正常，
+  尺寸正确 —— 与 `CADisplay px=0`（§45.66）并不矛盾，后者是 QuartzCore 客户端的空列表缓存（H236hv→hz）；
+- **`ctx=0`（已证实）**：`-[CAWindowServerDisplay context]` 拿不到 context
+  （该 selector 不支持或返回 nil）→ 方案 (a) 的挂载点还没找到，卡在"取 context"这一步，
+  而不是挂载/合成；
+- `builder#` 行 **0 条**：不是构造函数没跑，而是 `emit()` 在 bundle 加载时**还没有加速器连接**
+  （`gConnection` 为空即静默丢弃）。**教训**：日志通道本身有前置条件，
+  构造阶段的"零输出"不能直接解释为"没执行"。
+
+**下一步（H272h）**：在 `CAWindowServerDisplay` 上逐个探测候选挂载点并**记录哪个响应**：
+`context` / `contextId` / `layer` / `rootLayer` / `displayLayer` / `surface`；
+若全部不可用，则回到 `+[CAContext contextWithOptions:]`，改用带 display id 的选项
+（`kCAContextDisplayId`）而非空字典——空字典正是 `ctx=0` 的最可能原因。
