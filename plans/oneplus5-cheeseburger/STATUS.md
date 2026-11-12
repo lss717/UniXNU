@@ -12294,6 +12294,12 @@ fs 版移除 `sheng-disable-jobs=…` 后（args 874，C3 正常）复测，`sel
   `-supportsFamily:1001`×2。
 - 纪律：`-featureProfile` 返回空字典会让 Metal **更早**放弃，必须保持"未实现=nil"。
 - 待验证镜像 `boot-H236gx.img`（`supportsFamily:` 改回 NO），手机改接 **192.168.8.58** 后上机。
+- **H262（已证实）**：backboardd 稳定（**0 次退出**）之后，SpringBoard 在 192 s 对
+  `runningboardd` 发出 **1 条** `id=0x40000000 size=200` 请求，并收到 **984 字节**回复
+  （H254 时只有 52 字节）——之后再次静止。mobileactivation 30 次 SIGTRAP，`x1_str=release`
+  恒定为选择器 `release`（即向已释放对象发消息），不是激活流程特有错误。
+  本轮 `mbase/off` 取值失败（`dyld_all_image_infos.infoArray[0]` 不是主映像，`off` 恒 0），
+  需要对 `pc` 向下扫描 Mach-O 魔数才能拿到真正的基址。
 - **阶段目标变更（2026-11-12，正式）**：从"让渲染服务活下来"转为
   **"让 SpringBoard 建立真实的前台显示场景，并产生第一帧有效绘制"**。
   C6a-MTL 的提交底座不再改动；C6a-SB（scene/前台/激活）成为主线，H261 起只做观测。
