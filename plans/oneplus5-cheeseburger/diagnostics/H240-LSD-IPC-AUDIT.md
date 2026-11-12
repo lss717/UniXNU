@@ -499,3 +499,49 @@ NATIVE_SBSEQ: burst=2 tid=301 n=80 runs=4 seq=1eb3888c0*37,1b5915a20*2,1a7a8500c
   与构建树 `osfmk/kern/task.c` 完全一致）。
 - 判读：某 tid 的 RLE 序列在 5 轮之间**变长/出现新 pc** → 路径在推进；每轮都是
   同几条 `*40`/`*80` → 该线程整轮没动。
+
+### 11.8 H251 结果：185 s 之后 SpringBoard **完全静止**（已证实）
+
+五次突发中跑到 4 次（burst 0–3，185 / 252 / 316 / 380 s；日志在 387 s 结束，burst 4 未执行）。
+`NATIVE_SBSEQ` 的有序序列非常干净：
+
+| burst | 线程数 | 序列形态 |
+|---|---|---|
+| 0 (185 s) | 7 | tid 290 `mach_msg2_trap*2, kevent_id*17, mach_msg2_trap*32`；tid 579 序列里出现 **`libobjc realizeClassWithoutSwift`**；tid 587 `ulock_wait*2, ulock_wait2*25` |
+| 1 (252 s) | 5 | **每个 tid 都是同一 pc × 80**（runs=1） |
+| 2 (316 s) | 5 | 同 burst 1，**pc 完全相同** |
+| 3 (380 s) | 5 | 同 burst 2（只是 workq 线程 tid 从 728/888 换成 1286/1349，pc 不变） |
+
+符号化（slide 由 `NATIVE_TRAP_IMAGE_ROW` 反解，`delta=0x1d4f8`）：
+
+| pc | 符号 |
+|---|---|
+| `0x1cbc1cb58` (tid 290, 主线程) | `mach_msg2_trap+0x8` |
+| `0x1cbc1c8c0` (burst 0 内的 tid 290) | `_kevent_id+0x8` |
+| `0x1cbc1c970` (tid 581) | `__ulock_wait2+0x8` |
+| `0x1cbc22bdc` (tid 587) | `__ulock_wait+0x8` |
+| `0x1cbc1c8e8` (两个 workq 线程) | `___workq_kernreturn+0x8` |
+| `0x1805900f8` (burst 0, tid 579) | `libobjc realClassWithoutSwift+0x110` |
+
+**结论**：SpringBoard 在 185 s 还在做 objc 类实现（`realizeClassWithoutSwift`），
+到 252 s 已经**全部线程停住**：主线程永久停在 `mach_msg2_trap`，其余在 `ulock_wait`/`ulock_wait2`
+/`workq_kernreturn`。此后 128 秒内**没有任何一次 pc 变化**（5 个 tid、各 80 次采样、runs=1）。
+
+这与 H237 的结论互相印证：主线程的等待是**无超时的纯接收**（`bits=0`），
+即"发出请求后等回复、而回复永远不来"。
+
+### 11.9 H252：把"最后一次发送"钉出来（已构建并刷入）
+
+既然它停在等回复上，就查它最后发了什么、发给谁：
+
+- 内核新增 **SpringBoard 专用发送环**（`native_sb_sends[32]`，记录 `seq/to/id/size/bits`），
+  在 `native_xpc_note()` 里对 `from==SpringBoard pid` 的消息登记（不打印、不加锁）；
+- 每轮突发结束时 `native_sb_send_dump(burst)` 打印**最新的 8 条**，
+  并在打印时（不在 IPC 路径里）用 `proc_name()` 把目的 pid 解析成进程名；
+- 每轮突发后补一次**完整**（非静默）采样，保证被阻塞线程的 `mach_msg2` 参数
+  （`opt/bits/ssz/rport/lport/id`）与端口归属始终在日志里；
+- 突发期间不再输出 `NATIVE_XPC3` 计数行（原来每 50 ms 一行）。
+
+镜像 `boot-H252.img` = `34dd7c4f…`，内核 `398b7fbf…`；
+补丁 `patches/xnu/zzzzzzzzzzzz-h252-sb-sends.patch`（已验证：pinned + h103 + h251 + h252
+应用后与构建树 `task.c` 一致）。

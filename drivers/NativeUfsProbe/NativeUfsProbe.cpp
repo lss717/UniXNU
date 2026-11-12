@@ -480,6 +480,9 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
     }
     native_sb_set_quiet (0);
     native_sb_trace_dump (burst);
+    // H252: one full (non-quiet) sample per burst, so the blocked thread's
+    // mach_msg2 arguments and the send ring are always in the log.
+    native_sb_pc_sample ("SpringBoard", 900 + burst);
     IOLog ("NATIVE_SBPC: burst=%u done\n", burst);
     if (burst < 4) {
       IOSleep (60000);

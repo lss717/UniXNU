@@ -1,0 +1,96 @@
+diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
+index ed23b62..2e9987e 100644
+--- a/osfmk/kern/task.c
++++ b/osfmk/kern/task.c
+@@ -10526,6 +10526,20 @@ static struct native_sb_seq_ent native_sb_seq[NATIVE_SB_SEQ_MAX];
+ static unsigned native_sb_seq_n;
+ static int native_sb_seq_on;
+ static int native_sb_quiet;
++
++/* H252: a small ring that holds *only* SpringBoard's outgoing messages.  The
++ * last entry before it stops sending names the transaction it later waits on;
++ * the 512-entry general ring is dominated by other daemons and loses that. */
++struct native_sb_send {
++	unsigned seq;
++	unsigned to;
++	unsigned id;
++	unsigned size;
++	unsigned bits;
++};
++#define NATIVE_SB_SENDS 32
++static struct native_sb_send native_sb_sends[NATIVE_SB_SENDS];
++static unsigned native_sb_sends_n;
+ static uint64_t native_sb_lastpcs[12];
+ static unsigned native_sb_lastn;
+ 
+@@ -10682,7 +10696,9 @@ native_sb_pc_sample(const char *name, unsigned sample)
+ 			native_xpc_pids[2] = native_sb_pid;
+ 		}
+ 	}
+-	native_xpc_emit(sample, 25);
++	if (!native_sb_quiet) {
++		native_xpc_emit(sample, 25);
++	}
+ 	if (!native_sb_quiet) {
+ 	printf("NATIVE_SBPC: sample=%u comm=%s n=%u note=%s\n", sample, name, native_sb_count, native_sb_note);
+ 	for (unsigned i = 0; i < native_sb_count; i++) {
+@@ -10823,6 +10839,8 @@ native_sb_trace_start(void)
+ 	native_sb_seq_on = 1;
+ }
+ 
++void native_sb_send_dump(unsigned burst);
++
+ void
+ native_sb_trace_dump(unsigned burst)
+ {
+@@ -10877,6 +10895,34 @@ native_sb_trace_dump(unsigned burst)
+ 		    burst, (unsigned long long)tids[t], total, runs, line,
+ 		    (runs > shown) ? ",..." : "");
+ 	}
++	native_sb_send_dump(burst);
++}
++
++/* H252: the last messages SpringBoard sent, newest first, with the destination's
++ * comm resolved here (proc_name() is far too heavy for the IPC fast path). */
++void
++native_sb_send_dump(unsigned burst)
++{
++	unsigned avail = native_sb_sends_n;
++	unsigned shown = 0;
++
++	if (avail > NATIVE_SB_SENDS) {
++		avail = NATIVE_SB_SENDS;
++	}
++	printf("NATIVE_SBSEND: burst=%u total=%u window=%u\n", burst, native_sb_sends_n, avail);
++	for (unsigned i = 0; i < avail && shown < 8; i++) {
++		struct native_sb_send *sb = &native_sb_sends[(native_sb_sends_n - 1 - i) % NATIVE_SB_SENDS];
++		char comm[17];
++
++		comm[0] = '-';
++		comm[1] = 0;
++		if (sb->to > 0) {
++			proc_name((int)sb->to, comm, sizeof comm);
++		}
++		printf("NATIVE_SBSEND: burst=%u seq=%u id=0x%x to=%u/%s size=%u bits=0x%x\n",
++		    burst, sb->seq, sb->id, sb->to, comm, sb->size, sb->bits);
++		shown++;
++	}
+ }
+ 
+ 
+@@ -11015,6 +11061,15 @@ native_xpc_note(ipc_kmsg_t kmsg, ipc_port_t port)
+ 	unsigned w;
+ 	struct native_xpc_note *e;
+ 
++	if (native_xpc_pids[0] > 0 && (unsigned)from == (unsigned)native_xpc_pids[0]) {
++		struct native_sb_send *sb = &native_sb_sends[native_sb_sends_n % NATIVE_SB_SENDS];
++		sb->seq = native_sb_sends_n;
++		sb->to = (unsigned)to;
++		sb->id = (unsigned)hdr->msgh_id;
++		sb->size = (unsigned)hdr->msgh_size;
++		sb->bits = (unsigned)hdr->msgh_bits;
++		native_sb_sends_n++;
++	}
+ 	if (!native_xpc_tracked(from) && !native_xpc_tracked(to)) {
+ 		return;
+ 	}

@@ -46,6 +46,14 @@
   `(apply-protobox)`/`protobox collection`/`sandbox.protobox.index`，`zalloc.h` 无本地改动）。
   审计全文：`diagnostics/H240-LSD-IPC-AUDIT.md`。**下一步**：把采样名单换成
   SpringBoard / lsd / containermanager，沿链继续走到底（不改 policy、不加 allow）。
+- **H251 已证实（关键）**：185 s 时 SpringBoard 还在跑用户态代码（`libobjc
+  realizeClassWithoutSwift`），但到 **252 s 全部线程停住**：主线程永久停在
+  `mach_msg2_trap`（无超时纯接收 = 等一个永远不来的回复），其余在 `__ulock_wait2`/
+  `__ulock_wait`/`workq_kernreturn`。**252 s 之后 128 秒内没有任何一次 pc 变化**
+  （5 个 tid × 80 次采样，每个都是同一 pc×80）。见 `diagnostics/H240-LSD-IPC-AUDIT.md` §11.8。
+- **H252（已刷入）**：新增 SpringBoard 专用**发送环**（最近 32 条，含目的 pid 与 `msgh_id`），
+  每轮突发后打印最新 8 条并把目的 pid 解析成进程名——用来钉出"最后一次发送"。
+  镜像 `boot-H252.img` = `34dd7c4f…`，内核 `398b7fbf…`。
 - **H250（已证实，推翻旧说法）**：50 ms 突发的 4 秒窗口里 SpringBoard 有 **12 个不同 pc、
   132 次变化**，符号化为 `libobjc` 容器遍历、`_CFHash`、**`UIKitServices+0x17a20
   __getFBProcessManagerClass_block_invoke`**、`libsqlite3`——它在**应用/场景注册查询阶段**
