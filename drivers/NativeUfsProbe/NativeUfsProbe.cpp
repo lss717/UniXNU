@@ -468,9 +468,10 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
   // life (it is killed by the plugin's restart probe at ~243 s).  Only SpringBoard repeats;
   // the other names are useful once and would otherwise push the ring log out.
   IOSleep (150000);
-  // H251: five 4 s bursts one minute apart (150 s .. 410 s), each keeping the
-  // ordered (tid, pc) sequence; then a short slow series for the other daemons.
-  for (unsigned burst = 0; burst < 5; ++burst) {
+  // H264: ten 4 s bursts, 30 s apart (150 s .. 450 s).  The driver is linked
+  // into the kernel, so this needs a kernel rebuild, but driver-only changes
+  // have not been the ones that produce non-booting kernels (H261 proved it).
+  for (unsigned burst = 0; burst < 10; ++burst) {
     IOLog ("NATIVE_SBPC: burst=%u start\n", burst);
     native_sb_trace_start ();
     native_sb_set_quiet (1);
@@ -484,13 +485,17 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
     native_sb_pc_sample ("SpringBoard", 900 + burst);
     native_sb_trace_dump (burst);
     IOLog ("NATIVE_SBPC: burst=%u done\n", burst);
-    if (burst < 4) {
-      IOSleep (60000);
+    if (burst < 9) {
+      IOSleep (30000);
     }
   }
   for (unsigned sample = 0; sample < 10; ++sample) {
     for (unsigned index = 0; index < sizeof a540SbNames / sizeof a540SbNames[0]; ++index) {
-      if (index > 2 && sample >= 2) {
+      // H261: runningboardd / backboardd are the scene-side peers now, so they
+      // are sampled every round (the other daemons keep the old 2-round budget).
+      if (index > 2 && sample >= 2 &&
+          strcmp (a540SbNames[index], "runningboardd") != 0 &&
+          strcmp (a540SbNames[index], "backboardd") != 0) {
         continue;
       }
       IOLog ("NATIVE_SBPC: call name=%s sample=%u\n", a540SbNames[index], sample);

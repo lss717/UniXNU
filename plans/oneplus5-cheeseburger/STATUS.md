@@ -12294,6 +12294,14 @@ fs 版移除 `sheng-disable-jobs=…` 后（args 874，C3 正常）复测，`sel
   `-supportsFamily:1001`×2。
 - 纪律：`-featureProfile` 返回空字典会让 Metal **更早**放弃，必须保持"未实现=nil"。
 - 待验证镜像 `boot-H236gx.img`（`supportsFamily:` 改回 NO），手机改接 **192.168.8.58** 后上机。
+- **H266（已证实，重要）**：同一内核（`10758fca`）同一 payload 的第二次启动里，
+  `NATIVE_SBPEER` **完全没有** runningboardd/backboardd 条目（H254/H262 各有 3 条）
+  → **SpringBoard 的 scene 侧往来是偶发的**，不能当作稳定事件。
+  backboardd 依然 0 次退出；SpringBoard 打开显示/AGX 仍为 0。
+- **构建链路阻塞（已证实）**：同一 payload 换回 H262 内核即可启动，证明打包无误；
+  而 H263/H263b/H263c（增量）与 H265（全量 clean + JOBS=8 + 补齐补丁）产出的内核
+  **全部卡在 UEFI 绿屏**。在"零改动重建"定位之前，内核探针无法继续推进。
+  可启动基线：`boot-H265k262.img` = `54ce3309…`（内核 `10758fca…`）。
 - **H262（已证实）**：backboardd 稳定（**0 次退出**）之后，SpringBoard 在 192 s 对
   `runningboardd` 发出 **1 条** `id=0x40000000 size=200` 请求，并收到 **984 字节**回复
   （H254 时只有 52 字节）——之后再次静止。mobileactivation 30 次 SIGTRAP，`x1_str=release`

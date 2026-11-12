@@ -297,3 +297,64 @@ H255 建议：
    是否卡住、卡在哪；
 3. 若 runningboardd 正常，再查那 200 B 消息的 `id=0x40000000` 在 libxpc 里对应哪种调用
    （需要用户态符号化，不要凭空命名）。
+
+---
+
+# H260–H266 结论补录（2026-11-12）
+
+## 1. backboardd 崩溃循环已解决（已证实）
+
+- 根因：render command encoder 缺 `-tileWidth` / `-tileHeight` / `-tileDepth`（TBDR 分块尺寸）。
+- 证据：崩溃前最后一条调用是 `encoder#94 doesNotRecognize: tileWidth`，陷落点恒为
+  `CoreFoundation + 0x1f690`（`____forwarding___ + 0x520`），`x0=0`。
+- 修复后：`NATIVE_EXC`(backboardd) = 0、`NATIVE_EXIT`(backboardd) = 0，
+  user client 建立次数 17 → 2（多次启动复现，含 H266 的 0 次退出）。
+- 插件 CDHash `5a6c4093…`，随 `boot-H260b` 起稳定。
+
+## 2. SpringBoard 与 scene 侧的往来是**偶发**的（已证实，重要）
+
+| 轮次 | 内核 | runningboardd/backboardd 出现在 `NATIVE_SBPEER` |
+|---|---|---|
+| H254 | e4085640 | 3 条（1 请求 + 2 回复），~192 s |
+| H262 | 10758fca | 3 条（1 请求 + 2 回复），~192 s |
+| **H266** | 10758fca（同 H262） | **0 条**（75 条 SBPEER 全是 launchd/notifyd/chronod/sharingd/mediaserverd） |
+
+同一内核、同一 payload、两次独立启动 → **一次有、一次没有**。因此
+"SpringBoard 会向 runningboardd 发一次 scene 请求"**不能当成稳定事件**，
+只能记为 `scene: not_observed（可偶发出现）`。
+
+H266 的对端分布：`SpringBoard→launchd` 7、`launchd→SpringBoard` 6、
+`SpringBoard→notifyd` 5、`SpringBoard→149/`（名字为空，疑似已死进程）4、`chronod` 3、`sharingd` 3。
+
+## 3. 显示/加速器打开分布（H266）
+
+`backboardd` 9、`IOMFB` 3、`mediaserverd` 370、`MobileGestaltHelper` 3、**SpringBoard 0**。
+
+## 4. mobileactivation（已证实）
+
+- 多次启动累计 30+ 次 SIGTRAP，`exc=6`，`x1_str=release` 恒定 → **向已释放对象发 `release`**
+  （CF 过度释放类），**不是**激活状态 / SetupAssistant 的错误；
+- `pc` 低 12 位恒 `0xac0`，同一映像同一偏移；
+- 获取主映像基址的两种方法都失败（`dyld_all_image_infos.infoArray[0]` 不是主映像；
+  魔数向下扫描版本会让内核无法启动），因此**尚无符号级定位**。
+
+## 5. 构建链路问题（阻塞项，已证实）
+
+| 版本 | 构建方式 | 结果 |
+|---|---|---|
+| H262 内核 `10758fca` | 增量（带直接编辑的树） | ✅ 启动 |
+| H263/H263b/H263c | 增量 | ❌ 卡 UEFI 绿屏 |
+| H265 `ed35a24b` | **全量 clean + JOBS=8 + 补齐补丁** | ❌ 卡 UEFI 绿屏 |
+| H265k262（同 payload，内核换回 `10758fca`） | — | ✅ 启动 |
+
+**已证实**：payload 打包、信任缓存、addon、adt、boot 镜像均无误（同一 payload 换内核即可启动）；
+**问题在"当前补丁集 + 干净树"产出的内核本身不可启动**。
+在解决之前，内核侧探针无法继续推进；可用观测基线是 H262 内核（`boot-H265k262.img` = `54ce3309…`）。
+
+## 6. 下一步（H267）
+
+1. **零改动重建**：当前干净树不做任何源码修改，直接构建 + 打包 + 刷机；
+   - 启动成功 → 补丁集无罪，是"干净树/增量树"差异；
+   - 启动失败 → 补丁集自身有问题，按 `h103 → h242 → h251…h254` 顺序二分。
+2. 在该基线恢复之后，再决定是否继续 scene 侧探针（当前证据表明 scene 往来本身是偶发的，
+   继续加探针的收益需要重新评估）。
