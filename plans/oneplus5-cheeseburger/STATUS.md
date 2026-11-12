@@ -12388,3 +12388,32 @@ idx=1 seq=232 … size=656   idx=3 seq=240 … size=200
 **当前 gate（H272 后）**：单线，`scene → drawable → commit` 中的 **drawable 环节**。
 下一步不是再挖 IPC（IPC 已证明会发生），而是把 `ds=0x0` 的真伪钉死：
 `nextDrawable` 之后重读 `drawableSize` + 同刻 `CADisplay` 值 + `CADisplay` 的 `nativeSize`。
+
+### H272c（2026-11-12）：drawable 假设**否决**；卡点收窄到 present→swap 连接
+
+镜像 `boot-H272c.img` = `7a97b647…`，内核不变（`22d3c9dd…`），插件 `A540Trace` `196c5bb6…`。
+
+```
+frame#341 class  comm=backboardd class=CAMetalLayer device=1 scale=1 bounds=1 frame=1
+frame#342 context comm=backboardd ctx=0 ds_before=0x0 ds_after=0x0
+frame#347 fill   comm=backboardd surface=1 bytes=8355840 ds_now=1080x1920
+frame#348 present sent
+```
+
+三点结论：
+
+1. **`ds=0x0` 是惰性读（已证实）**：取到 drawable 之后同一 layer 的 `drawableSize`
+   变成 **1080×1920**。此前"H256 推断闭环 / 缺 drawable"**否决**，**P2（修 px/pointScale）
+   不必做**——它的唯一理由是 `ds=0`，该理由已消失。
+2. **`CAContext` 在 backboardd 内建不出来（已证实）**：`ctx=0`。
+   渲染服务器进程里没有任何客户端 context 被创建，因此 `present` 只是把对象交出去，
+   没有呈现目标 → 屏幕上没有中灰帧，`NATIVE_LEGACY_SWAP=0`、`s345` 仍 0/0/0。
+3. **layer 对象本身是正常的**：`device/scale/bounds/frame` 四位全 1，H272b 的
+   `setBounds` 异常是调用顺序问题（先设 scale 后设几何），已被独立 `@try` 覆盖。
+
+**当前 gate（H272c 后）**：**present → swap → 板端**这一段，具体是"从哪个 context 呈交"。
+下一步只有两条候选：
+- **(a)** 不在渲染服务器里造 context，而是把 layer 挂到 **CAWindowServer 已发布的显示 context**
+  （`serverIfRunning.displays[0].context`）——直接对真实显示提交，能画出即证明全链；
+- **(b)** 让插件在 **SpringBoard 侧**跑同一段（SB 是 CA 客户端，context 可以正常创建）——
+  更接近真实路径，但需要插件进入 SB 的 Metal 发现。
