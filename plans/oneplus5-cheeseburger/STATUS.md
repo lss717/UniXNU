@@ -12745,3 +12745,32 @@ over the scanout until it is told the system owns the display"。本轮：
 **打包侧**：以 `payload-H272q.img` 为基底，只换 `kernel.macho`（回读逐字节比对通过）
 并把 `args` 开头的 `-v` 去掉（控制台冗长日志正是整屏重绘源），保留 `h103-log-secs=1`；
 `check-bootargs-fit.py` 最坏情形 919/1024 OK。
+
+### H272r 分段账修正（用户交叉核对）：黑区共 84.9 s，不是 67 s
+
+`kickStart` 在 `NativeLegacyDisplay.cpp:477`（`pendingSwapRequest()`/`isValidated()` **之后**），
+所以日志反推要分两段：
+
+| 段 | 区间 | 耗时 |
+| --- | --- | --- |
+| 提交+校验 | 301.67 → 302.49 | 0.8 s |
+| **黑区一（无计时）** | 302.49 → ~320.27 | **17.8 s**（boot-arg、pendingSwapRequest、isValidated、surface 提取） |
+| **黑区二** | ~320.27 → 387.39 | **67.1 s**（metaCast、descriptor、校验、prepare#1、gpu_offer、map、scans、prepare#2） |
+| 拷贝 | 387.39 → 391.39 | 4.0 s（8 MB ≈ 2 MB/s） |
+| 收尾 | 391.39 → 391.68 | 0.3 s |
+
+**已离线排除**：`prepare_scanout()`（≤0.2 s，100×1 ms 上限）、`gpu_offer()`（非阻塞）。
+
+**旁证支持"睡眠/锁等待"而非"抢占"**：同一线程的纯 CPU 拷贝只花 4 s；
+fillchunk 各块 0.3–2.3 s 不均、phase 重填从 2 MB/s 降到 ~0.33 MB/s，与启动晚期竞争吻合。
+
+**H272s**：6 个新时间戳（kickOnce 入口/descriptor 后/map 后/scans 后/copyStart/copyEnd）+ 一行汇总；
+同轮打印 `prepare_report` 与 `native_gop_gpu_offers`/`gpuMode`；可选 `scanBudget=0` 变体。
+
+**里程碑判词**：P1″ 验收判据**达成**——数值 readback 证明我们的字节在 scanout，
+且 `validate → kick → transfer → retirement → selector 5` 全管线走通。
+C6a-MTL 显示链（Metal drawable → 面板）到此收官。
+
+**两个前瞻（修 85 s 之前就要记）**：
+1. 拷贝本身退化到 2 MB/s（历史基线 143–285 ms/swap，慢 15–30 倍）→ 终极修法是 GPU offer 快路（异步机器已就位）；
+2. `presentSurface:` 同步阻塞 90 s → 任何 per-frame present 都不能走这条路，异步化是显示侧最后一项。
