@@ -12648,3 +12648,33 @@ disp#319 fill    early surface=1 bytes=8355840 ds=1080x1920
    （区分"未走到"与"挂在里面"）；
 2. 408 s 这个时刻的性质：是否与 backboardd 退出/显示 client 注销/最后一次 kick 相关；
 3. `pending=1 → pending=0` 的触发条件（vblank？显示 3/4/5 selector 序列？还是收尾时的强制 flush）。
+
+### H272p（2026-11-12）：`presentSurface:` 阻塞 **100 s** 直到 transfer 完成——gate 在我们的 swap 通路里
+
+`boot-H272p.img` = `f4458295…`，插件 `53da28ad…`，span **470 s**。
+
+```
+280.45–288.15  fillchunk chunk=0…7   （8 MiB / 7.7 s，设备内存速度，逐块均匀）
+302.02         disp presentsurface enter
+302.81         NATIVE_LEGACY: client io selector=4 status=0
+302.93         swap validate accepted=1  → kick transferred=0 pending=1
+402.20         NATIVE_LEGACY: transfer status=0 bytes=8294400
+402.20         retirement observed → kick pending=0 → selector=5
+402.47         disp presentsurface sent          ← 调用在其中阻塞了 100 s
+```
+
+**已证实**：
+1. `presentsurface` 分支**确实走到了**（`enter` 行存在），并且**阻塞在调用内部 100 s**，
+   直到 transfer 完成才返回；
+2. transfer 相对 kick 的延迟：本轮 **99.3 s**，上一轮 **138 s** —— 都是"接近 100 s 量级"的
+   固定延迟，而不是 teardown 触发（本轮 transfer 发生在 402 s，日志还继续到 470 s）；
+3. `fillchunk` 均匀（每块 0.3–2.4 s），说明慢是**逐块写设备内存**，不是某一块卡住。
+
+**结论（改写后）**：呈交通道存在、`presentSurface:` 能返回成功；
+**缺的是 swap 完成事件的及时性**——kick 之后要等 ~100 s 才有 transfer/retirement。
+这个 ~100 s 常数不太像硬件，更像我们自己的显示驱动里"等 vsync/retire 的兜底超时"。
+
+**下一步（H272q，纯驱动侧，离线可先查）**：
+`drivers/NativeMobileDisplay/NativeLegacyDisplay.cpp` 里 swap kick → retire 的完成路径，
+找出 ~100 s 的常量/定时器（超时兜底、定时器周期、或等待 vblank 的 fallback），
+确认是"没有 vsync 中断"还是"中断来了但 retirement 不推进"。
