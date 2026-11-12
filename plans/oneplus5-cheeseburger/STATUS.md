@@ -46,6 +46,14 @@
   `(apply-protobox)`/`protobox collection`/`sandbox.protobox.index`，`zalloc.h` 无本地改动）。
   审计全文：`diagnostics/H240-LSD-IPC-AUDIT.md`。**下一步**：把采样名单换成
   SpringBoard / lsd / containermanager，沿链继续走到底（不改 policy、不加 allow）。
+- **H254（已构建，未刷写）**：修 H253 两个探针 bug（kmsg 端口字段是 **`ipc_port` 对象**不是名字；
+  静默路径漏放 task 引用），新增 `NATIVE_SB_WAIT`（等待端口/接收者/`sr`/`ms`/队列长度，队列长度标记
+  unavailable）、`NATIVE_SBPEER`（SpringBoard 全部进出消息，双向、带 comm 名）、
+  bootstrap 扫描改为"SpringBoard→launchd 全部消息"、`NATIVE_EXC`（mobileactivation 陷落 pc/lr）、
+  IPC ring 的 `produced/consumed/pending` 统计。**只构建未刷机**；
+  镜像 `boot-H254.img` = `24b02fb0…`，内核 `e4085640…`，补丁
+  `patches/xnu/zzzzzzzzzzzz-h254-scene-probe.patch`。报告：
+  `diagnostics/H254_SpringBoard_Scene_Activation_诊断报告.md`（观测项全部标 `not_executed`）。
 - **H253 已证实（推翻旧前提）**：**主线程从不发送**，所有 XPC 都来自 workqueue 线程
   （tid 930/973/1235/1514），内容是常规后台服务（mediaserverd / wifid / notifyd / launchd）。
   一个空闲 UIKit 应用的主线程本来就停在 `mach_msg2` 的 run loop 接收上，因此旧 gate 的

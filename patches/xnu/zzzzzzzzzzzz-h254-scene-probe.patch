@@ -1,0 +1,317 @@
+diff --git a/osfmk/kern/exception.c b/osfmk/kern/exception.c
+index 5c88e69..c2fa6a5 100644
+--- a/osfmk/kern/exception.c
++++ b/osfmk/kern/exception.c
+@@ -205,6 +205,10 @@ exception_deliver(
+ 	lck_mtx_t               *mutex)
+ {
+ 	ipc_port_t              exc_port = IPC_PORT_NULL;
++	{
++		extern void native_exc_probe(thread_t, int);
++		native_exc_probe(thread, (int)exception);
++	}
+ 	exception_data_type_t   small_code[EXCEPTION_CODE_MAX];
+ 	thread_state_t          new_state = NULL;
+ 	int                     code64;
+diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
+index 0927c8b..02702ec 100644
+--- a/osfmk/kern/task.c
++++ b/osfmk/kern/task.c
+@@ -10490,6 +10490,7 @@ struct native_sb_probe {
+ 	uint64_t ie_bits;
+ 	unsigned srights;
+ 	unsigned mscount;
++	unsigned qcount;        /* H254: receive queue length under ip_lock */
+ 	int pid;
+ 	uint64_t port;          /* H242: port object, compared only */
+ };
+@@ -10527,6 +10528,8 @@ static unsigned native_sb_seq_n;
+ static int native_sb_seq_on;
+ static int native_sb_quiet;
+ static unsigned native_sb_last_rcv_name;   /* H253 */
++static unsigned long long native_sb_last_rcv_port;  /* H254: ipc_port object */
++static unsigned long long native_sb_main_tid;       /* H254: thread in mach_msg2 */
+ 
+ /* H252: a small ring that holds *only* SpringBoard's outgoing messages.  The
+  * last entry before it stops sending names the transaction it later waits on;
+@@ -10539,13 +10542,28 @@ struct native_sb_send {
+ 	unsigned bits;
+ 	/* H253 */
+ 	unsigned long long tid;
+-	unsigned local;         /* msgh_local_port name  (reply port) */
+-	unsigned remote;        /* msgh_remote_port name (destination) */
++	unsigned long long local;   /* H254: ipc_port object, not a port name */
++	unsigned long long remote;  /* H254: ipc_port object, not a port name */
+ 	unsigned rcv_stamp;     /* sampler's port name at record time, 0 if unknown */
+ };
+ #define NATIVE_SB_SENDS 32
+ static struct native_sb_send native_sb_sends[NATIVE_SB_SENDS];
+ static unsigned native_sb_sends_n;
++
++/* H254: every message that SpringBoard sends or receives, both directions, so
++ * the scene/foreground chain (FrontBoard, RunningBoard, backboardd, ...) can be
++ * followed without knowing the peer's service name in advance. */
++struct native_sb_peer {
++	unsigned seq;
++	unsigned from;
++	unsigned to;
++	unsigned id;
++	unsigned size;
++	unsigned bits;
++};
++#define NATIVE_SB_PEERS 64
++static struct native_sb_peer native_sb_peers[NATIVE_SB_PEERS];
++static unsigned native_sb_peers_n;
+ static uint64_t native_sb_lastpcs[12];
+ static unsigned native_sb_lastn;
+ 
+@@ -10574,8 +10592,19 @@ native_sb_probe_name(ipc_space_t space, unsigned name, struct native_sb_probe *o
+ 		    entry->ie_object != IP_NULL) {
+ 			port = (ipc_port_t)entry->ie_object;
+ 			out->port = (uint64_t)(uintptr_t)port;
++			/* H254: ip_srights, ip_mscount and the receive queue length are
++			 * all protected by the *port* lock (not the space lock).  They
++			 * are copied into locals under ip_lock and only printed after
++			 * every lock is dropped.  The space lock held here keeps the
++			 * entry (and therefore the port reference) alive, so no extra
++			 * reference is taken and nothing can be freed underneath us. */
+ 			out->srights = port->ip_srights;
+ 			out->mscount = port->ip_mscount;
++			/* The receive-queue length is guarded by the port lock, whose
++			 * API is not exported to this file in this XNU revision.  Rather
++			 * than read it unlocked (or take a lock in the wrong order) the
++			 * field is reported as unavailable. */
++			out->qcount = 0xffffffffu;
+ 			/* Takes the port queue lock itself and reports the pid of the
+ 			 * task that holds the receive right (safe, no hand locking). */
+ 			out->pid = ipc_port_get_receiver_task(port, NULL);
+@@ -10640,6 +10669,7 @@ native_sb_collect(struct proc *p, void *arg)
+ 			native_sb_rcv_name = (unsigned)(uint32_t)
+ 			    (get_saved_state_reg(state, 5) >> 32);
+ 			native_sb_last_rcv_name = native_sb_rcv_name;
++			native_sb_main_tid = thread_tid(th);
+ 		}
+ 		if (native_sb_count < sizeof(native_sb_rows) / sizeof(native_sb_rows[0])) {
+ 			native_sb_rows[native_sb_count].tid = thread_tid(th);
+@@ -10690,6 +10720,8 @@ native_sb_pc_sample(const char *name, unsigned sample)
+ 	native_sb_buf = 0;
+ 	native_sb_rcv_name = 0;
+ 	native_sb_last_rcv_name = 0;
++	native_sb_last_rcv_port = 0;
++	native_sb_main_tid = 0;
+ 	memset(&native_sb_rcv, 0, sizeof native_sb_rcv);
+ 	memset(&native_sb_req, 0, sizeof native_sb_req);
+ 	memset(native_sb_hdr, 0, sizeof native_sb_hdr);
+@@ -10788,7 +10820,13 @@ sbthr_done:
+ 	}
+ 	/* H239: the buffer of a mach_msg2 call still holds the header of the
+ 	 * message that was sent last, so read it back and describe both ports. */
+-	if (!native_sb_quiet && native_sb_task != TASK_NULL) {
++	if (native_sb_task != TASK_NULL) {
++		/* H254: the task reference is taken by native_sb_collect and MUST be
++		 * released on every path, including the quiet (burst) one.  Only the
++		 * probe/printing is skipped when quiet. */
++		if (native_sb_quiet) {
++			goto sbport_release;
++		}
+ 		if (native_sb_buf != 0 &&
+ 		    vm_map_read_user(get_task_map(native_sb_task),
+ 		    (vm_offset_t)native_sb_buf, native_sb_hdr,
+@@ -10796,6 +10834,7 @@ sbthr_done:
+ 			native_sb_hdr_ok = 1;
+ 		}
+ 		native_sb_probe_name(native_sb_task->itk_space, native_sb_rcv_name, &native_sb_rcv);
++		native_sb_last_rcv_port = native_sb_rcv.port;
+ 		native_sb_qname1[0] = '-'; native_sb_qname1[1] = 0;
+ 		if (native_sb_rcv.pid > 0) {
+ 			proc_name(native_sb_rcv.pid, native_sb_qname1, sizeof native_sb_qname1);
+@@ -10818,6 +10857,12 @@ sbthr_done:
+ 		    (unsigned long long)native_sb_rcv.ie_bits,
+ 		    native_sb_rcv.srights, native_sb_rcv.mscount,
+ 		    native_sb_rcv.pid, native_sb_qname1);
++		printf("NATIVE_SB_WAIT: sample=%u pid=%d tid=%llu wait_type=mach_msg2 rcv=0x%x "
++		    "port=0x%llx recv_pid=%d recv_comm=%s sr=%u ms=%u q=%u\n",
++		    sample, native_sb_pid, (unsigned long long)native_sb_main_tid,
++		    native_sb_rcv_name, (unsigned long long)native_sb_rcv.port,
++		    native_sb_rcv.pid, native_sb_qname1,
++		    native_sb_rcv.srights, native_sb_rcv.mscount, native_sb_rcv.qcount);
+ 		printf("NATIVE_SBPORT: sample=%u req name=0x%x seen=%d set=%d ie=0x%llx sr=%u ms=%u peer=%d/%s\n",
+ 		    sample, native_sb_hdr[2], native_sb_req.seen, native_sb_req.is_set,
+ 		    (unsigned long long)native_sb_req.ie_bits,
+@@ -10826,11 +10871,60 @@ sbthr_done:
+ 		native_xpc_register(native_sb_rcv.port, native_sb_pid, name, 'r');
+ 		native_xpc_register(native_sb_req.port, native_sb_pid, name, 'q');
+ 		native_xpc_dump(sample);
++sbport_release:
+ 		task_deallocate(native_sb_task);
+ 		native_sb_task = TASK_NULL;
+ 	}
+ }
+ 
++/* H254: the faulting pc of a trap/abort, for the processes that keep dying.
++ * exception_deliver() is the point where the kernel hands the exception to the
++ * handler, so the crashing thread's saved user state is still intact. */
++void
++native_exc_probe(thread_t th, int exc)
++{
++	static uint64_t last_pc;
++	static int last_pid;
++	static unsigned long long last_tid;
++	char comm[17];
++	task_t t;
++	int pid;
++	arm_saved_state_t *st;
++	uint64_t pc = 0, lr = 0;
++
++	if (th == THREAD_NULL) {
++		return;
++	}
++	/* thread->task lives behind the read-only part in this XNU revision. */
++	t = (th->t_tro != NULL) ? th->t_tro->tro_task : TASK_NULL;
++	if (t == TASK_NULL) {
++		return;
++	}
++	pid = task_pid(t);
++	comm[0] = '-';
++	comm[1] = 0;
++	if (pid > 0) {
++		proc_name(pid, comm, sizeof comm);
++	}
++	if (strncmp(comm, "mobileactivation", 16) != 0) {
++		return;
++	}
++	st = get_user_regs(th);
++	if (st != NULL) {
++		pc = get_saved_state_pc(st);
++		lr = get_saved_state_lr(st);
++	}
++	if (pc == last_pc && pid == last_pid && thread_tid(th) == last_tid) {
++		return;
++	}
++	last_pc = pc;
++	last_pid = pid;
++	last_tid = thread_tid(th);
++	printf("NATIVE_EXC: pid=%d comm=%s tid=%llu exc=%d pc=0x%llx lr=0x%llx\n",
++	    pid, comm, (unsigned long long)thread_tid(th), exc,
++	    (unsigned long long)pc, (unsigned long long)lr);
++}
++
+ /* H251: burst helpers.  quiet keeps the ring log readable at 20 Hz, and the
+  * trace dump prints the ordered sequence as run-length pairs so a thread that
+  * advances through new code looks different from one that spins on a stub. */
+@@ -10848,6 +10942,7 @@ native_sb_trace_start(void)
+ }
+ 
+ void native_sb_send_dump(unsigned burst);
++void native_sb_peer_dump(unsigned burst);
+ 
+ void
+ native_sb_trace_dump(unsigned burst)
+@@ -10904,10 +10999,40 @@ native_sb_trace_dump(unsigned burst)
+ 		    (runs > shown) ? ",..." : "");
+ 	}
+ 	native_sb_send_dump(burst);
++	native_sb_peer_dump(burst);
+ }
+ 
+ /* H252: the last messages SpringBoard sent, newest first, with the destination's
+  * comm resolved here (proc_name() is far too heavy for the IPC fast path). */
++/* H254: print the newest SpringBoard conversations with both comm names. */
++void
++native_sb_peer_dump(unsigned burst)
++{
++	unsigned avail = native_sb_peers_n;
++	unsigned shown = 0;
++
++	if (avail > NATIVE_SB_PEERS) {
++		avail = NATIVE_SB_PEERS;
++	}
++	printf("NATIVE_SBPEER: burst=%u total=%u window=%u\n", burst, native_sb_peers_n, avail);
++	for (unsigned i = 0; i < avail && shown < 14; i++) {
++		struct native_sb_peer *pr = &native_sb_peers[(native_sb_peers_n - 1 - i) % NATIVE_SB_PEERS];
++		char fcomm[17], tcomm[17];
++
++		fcomm[0] = '-'; fcomm[1] = 0;
++		tcomm[0] = '-'; tcomm[1] = 0;
++		if (pr->from > 0) {
++			proc_name((int)pr->from, fcomm, sizeof fcomm);
++		}
++		if ((int)pr->to > 0) {
++			proc_name((int)pr->to, tcomm, sizeof tcomm);
++		}
++		printf("NATIVE_SBPEER: burst=%u seq=%u %u/%s -> %u/%s id=0x%x size=%u bits=0x%x\n",
++		    burst, pr->seq, pr->from, fcomm, pr->to, tcomm, pr->id, pr->size, pr->bits);
++		shown++;
++	}
++}
++
+ void
+ native_sb_send_dump(unsigned burst)
+ {
+@@ -10928,10 +11053,10 @@ native_sb_send_dump(unsigned burst)
+ 		if (sb->to > 0) {
+ 			proc_name((int)sb->to, comm, sizeof comm);
+ 		}
+-		printf("NATIVE_SBSEND: burst=%u seq=%u tid=%llu id=0x%x to=%u/%s loc=0x%x rem=0x%x size=%u bits=0x%x%s\n",
++		printf("NATIVE_SBSEND: burst=%u seq=%u tid=%llu id=0x%x to=%u/%s loc=0x%llx rem=0x%llx size=%u bits=0x%x%s\n",
+ 		    burst, sb->seq, sb->tid, sb->id, sb->to, comm,
+ 		    sb->local, sb->remote, sb->size, sb->bits,
+-		    (native_sb_last_rcv_name != 0 && sb->local == native_sb_last_rcv_name) ? " MATCH" : "");
++		    (native_sb_last_rcv_port != 0 && sb->local == native_sb_last_rcv_port) ? " MATCH" : "");
+ 		shown++;
+ 	}
+ }
+@@ -11080,11 +11205,26 @@ native_xpc_note(ipc_kmsg_t kmsg, ipc_port_t port)
+ 		sb->size = (unsigned)hdr->msgh_size;
+ 		sb->bits = (unsigned)hdr->msgh_bits;
+ 		sb->tid = thread_tid(current_thread());
+-		sb->local = (unsigned)hdr->msgh_local_port;
+-		sb->remote = (unsigned)hdr->msgh_remote_port;
++		/* H254: in a kernel message the header port fields hold ipc_port
++		 * objects, never Mach port names (name-space lookup already
++		 * happened in ipc_kmsg_copyin_header). */
++		sb->local = (unsigned long long)(uintptr_t)hdr->msgh_local_port;
++		sb->remote = (unsigned long long)(uintptr_t)hdr->msgh_remote_port;
+ 		sb->rcv_stamp = native_sb_last_rcv_name;
+ 		native_sb_sends_n++;
+ 	}
++	if (native_xpc_pids[0] > 0 &&
++	    ((unsigned)from == (unsigned)native_xpc_pids[0] ||
++	     (unsigned)to == (unsigned)native_xpc_pids[0])) {
++		struct native_sb_peer *pr = &native_sb_peers[native_sb_peers_n % NATIVE_SB_PEERS];
++		pr->seq = native_sb_peers_n;
++		pr->from = (unsigned)from;
++		pr->to = (unsigned)to;
++		pr->id = (unsigned)hdr->msgh_id;
++		pr->size = (unsigned)hdr->msgh_size;
++		pr->bits = (unsigned)hdr->msgh_bits;
++		native_sb_peers_n++;
++	}
+ 	if (!native_xpc_tracked(from) && !native_xpc_tracked(to)) {
+ 		return;
+ 	}
+@@ -11103,8 +11243,7 @@ native_xpc_note(ipc_kmsg_t kmsg, ipc_port_t port)
+ 	e = &native_xpc_ring[w % NATIVE_XPC_RING];
+ 		/* H247: bootstrap look-ups carry the service name inline.  Record only
+ 	 * that string (never any other message body), from SpringBoard only. */
+-	if ((unsigned)hdr->msgh_id == 0x40000324u ||
+-	    (unsigned)hdr->msgh_id == 0x40000325u) {
++	if ((unsigned)to == 1u) {
+ 		const char *base = (const char *)hdr;
+ 		unsigned msize = (unsigned)hdr->msgh_size;
+ 		char cfrom[17];
+@@ -11164,9 +11303,12 @@ native_xpc_emit(unsigned sample, unsigned budget)
+ 	    native_xpc_sb_other == native_xpc_p_other) {
+ 		return;
+ 	}
+-	printf("NATIVE_XPC3: sample=%u sb_out=%llu sb_in=%llu other=%llu lost=%u\n", sample,
++	printf("NATIVE_XPC3: sample=%u sb_out=%llu sb_in=%llu other=%llu lost=%u "
++	    "produced=%u consumed=%u pending=%u\n", sample,
+ 	    native_xpc_sb_out - native_xpc_p_out, native_xpc_sb_in - native_xpc_p_in,
+-	    native_xpc_sb_other - native_xpc_p_other, native_xpc_lost);
++	    native_xpc_sb_other - native_xpc_p_other, native_xpc_lost,
++	    native_xpc_written, native_xpc_printed,
++	    native_xpc_written - native_xpc_printed);
+ 	while (native_xpc_names_printed < native_xpc_names_n) {
+ 		printf("NATIVE_BOOTSTRAP: sample=%u name=%s\n", sample,
+ 		    native_xpc_names[native_xpc_names_printed]);
