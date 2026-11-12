@@ -1535,6 +1535,9 @@ waitForCompletion (uint8_t *list, uint32_t *ocs, unsigned *loops,
 // that is what turned the slow read at LBA 0x5b17b0 into repeated 2 s
 // kIOReturnTimeout failures.  115200000 ticks is 6 s at 19.2 MHz.
 #define UFS_DATA_LOCK_TICKS  (115200000ULL)  /* 6 s at 19.2 MHz */
+static volatile uint64_t gLockOwnerTid;
+static volatile uint64_t gLockAcquiredTicks;
+static volatile uint32_t gLockWaiters;
 // Bounded lock acquisition: a stuck holder must not turn a diagnostic read into
 // an unobservable hang. 19.2 MHz timebase, so 38400000 ticks is two seconds.
 // H128: the wait must sleep, not spin.  `yield` is only a pipeline hint and
@@ -1543,12 +1546,21 @@ waitForCompletion (uint8_t *list, uint32_t *ocs, unsigned *loops,
 static bool
 lockWithTimeout (IOLock *lock, const char *who, uint64_t timeoutTicks)
 {
+  /* H272ad: a timed-out lock tells us nothing about who held it, which is exactly what
+   * the "count=8, nothing started" storms need.  Track the holder and how long it has
+   * been holding, and print both when a waiter gives up. */
+  gLockWaiters = gLockWaiters + 1;
   uint64_t start = mach_absolute_time ();
   unsigned spins = 0;
   while (!IOLockTryLock (lock)) {
     if (mach_absolute_time () - start > timeoutTicks) {
-      IOLog ("NATIVE_UFS_LOCK: %s timeout ticks=%llu\n", who,
-             (unsigned long long) (mach_absolute_time () - start));
+      const uint64_t held = gLockAcquiredTicks ? (mach_absolute_time () - gLockAcquiredTicks) : 0;
+      IOLog ("NATIVE_UFS_LOCK: %s timeout ticks=%llu owner=%llu held_ms=%llu waiters=%u\n", who,
+             (unsigned long long) (mach_absolute_time () - start),
+             (unsigned long long) gLockOwnerTid,
+             (unsigned long long) (held / 19200ULL),
+             (unsigned) gLockWaiters);
+      gLockWaiters = gLockWaiters - 1;
       return false;
     }
     if (++spins < 64) {
@@ -1557,6 +1569,9 @@ lockWithTimeout (IOLock *lock, const char *who, uint64_t timeoutTicks)
       IOSleep (1);
     }
   }
+  gLockWaiters = gLockWaiters - 1;
+  gLockOwnerTid = (uint64_t) thread_tid (current_thread ());
+  gLockAcquiredTicks = mach_absolute_time ();
   return true;
 }
 
