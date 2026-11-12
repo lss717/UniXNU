@@ -12774,3 +12774,65 @@ C6a-MTL 显示链（Metal drawable → 面板）到此收官。
 **两个前瞻（修 85 s 之前就要记）**：
 1. 拷贝本身退化到 2 MB/s（历史基线 143–285 ms/swap，慢 15–30 倍）→ 终极修法是 GPU offer 快路（异步机器已就位）；
 2. `presentSurface:` 同步阻塞 90 s → 任何 per-frame present 都不能走这条路，异步化是显示侧最后一项。
+
+### H272o → H272w（2026-11-12）：**第一帧达成**，帧延迟 90 s → 3.3 s
+
+镜像序列：`boot-H272o.img` = `85fef0e8…` → `boot-H272w.img` = `71eac7fd…`（内核 `e7dc3bc3…`）。
+
+#### 1. 第一帧（已证实，数值）
+```
+NATIVE_LEGACY_READBACK: tl=ffa0a0a0 c=ffa0a0a0 br=ffa0a0a0 q=ffa0a0a0
+```
+扫描输出四个采样点全部等于我们写入的相位色。配合
+`selector 4 → validate accepted → kick → transfer 8 MB → retirement → selector 5`
+全序列，**Metal drawable → 面板的整条链走通**。C6a-MTL 线到此收官。
+
+`dev#317 newTextureWithDescriptor:iosurface:plane: iosurface 1080x1920 fmt=80 strand=4352 id=2`
+说明 drawable 的 surface 由系统交给我们的设备包装，`stride 4352` 即面板几何。
+
+#### 2. 90 s 的分段账（已证实）
+| 段 | 耗时 |
+| --- | --- |
+| 提交+校验 | 0.8 s |
+| `descriptor` | **116 µs** |
+| `map()` | **~1 µs** |
+| **两次内容扫描（frame_scan + frame_colors）** | **68.0 s** |
+| 像素拷贝 | 2.4–11.1 s（波动） |
+| 收尾 | 0.1 s |
+
+根因：扫描读的是 **drawable 的设备内存**（2.4 MB/s 量级），且是逐像素 load；
+`native_legacy_frame_scan` 朴素双循环 → **读 16 MB 花 68 s（0.24 MB/s）**。
+读比写慢一个量级，是 uncached 映射的典型行为。**不是代码写得慢，是诊断代码在读最差的内存。**
+
+#### 3. 修复与收口（H272w）
+- `scanBudget` 默认 **0**，`sheng-fb-scan=N` 显式开启（同 `sheng-fb-diff` 范式）；
+- `gSwapTrace` 上限 8 → 64；
+- `native_legacy_prepare_report` 从"只定义无调用"改为首次 swap 后打印一行。
+
+实测（H272w）：
+```
+NATIVE_LEGACY_COPY: us=2,377,279  kick_us=2,377,372   ← kick_us == 拷贝时间，黑区归零
+NATIVE_LEGACY_PREPARE: calls=2 failures=0 retried=0 waited_ms=0 vsync hz=0 sent=0 arms=0
+NATIVE_LEGACY_READBACK: tl=ffa0a0a0 …（不变）
+presentsurface：284.63 enter → 288.49 sent = 3.86 s
+```
+**总计 ~3.3 s/帧**（此前 90 s，提升 27 倍），但仍是 0.42 fps。
+
+#### 4. GPU offer 快路为什么没启用（已离线闭卷）
+1. **总开关未开**：`gpuMode` 只由 `sheng-fb-gpu=1` 设置（`NativeGOPPresenter.cpp:94`，默认 false）
+   → `offer()` 在 :132 第一道检查即返回 false → `kickOnce` 落到 CPU 拷贝（H272w 走 CPU 即是证据）；
+2. **客户端代码已存在但不在当前插件**：`drivers/NativeMetal/GpuScanoutClient.h` 有完整
+   waitSwap/completeSwap，使用者是 `NativeMetalBridgePhase`，不是 `A540TracePlugin`；
+3. **传输层现成**：`NativeAdrenoPublish.cpp:458` 已把 handoff 段转发到 `native_gop_handoff_call`，
+   入口正是插件手里的加速器 user client。
+
+架构事实：单独开 `sheng-fb-gpu=1` **安全**（没有客户端 `waitSwap` 时 `offer()` 仍婉拒，
+行为零变化）；GPU 模式下 retirement 由客户端驱动（`completeSwap → finishGpuSwap → finishTransfer`），
+因此客户端线程必须独立于 `presentSurface` 调用线程。
+
+#### 5. 下一步（H272x）
+boot-arg `sheng-fb-gpu=1` + 在 `A540TracePlugin` 里接 `GpuScanoutClient` 循环（独立线程）。
+判据：`native_gop_gpu_offers > 0`、`swap_stage(1)` 出现、`kickOnce` 不再走 CPU 拷贝、
+`presentsurface` 阻塞显著低于 2.4 s。
+**预期管理**：GPU 路径的确定收益是**异步**；scanout 内存本身 2.7 MB/s 的带宽下限未必被 DMA 突破——
+这轮实验恰好把"瓶颈是通路还是内存"这个未知数测掉。
