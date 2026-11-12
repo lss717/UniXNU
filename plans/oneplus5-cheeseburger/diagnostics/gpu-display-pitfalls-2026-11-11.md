@@ -350,3 +350,36 @@ com.apple.lsd.icons / .personaobserver / .diagnostics / .plugin / .rebuild / .ex
 而且 `com.apple.lsd.mapdb` 实测 `kr=0x0`，说明 lsd 的监听是好的。
 **做法**：探测服务名之前，先从 `com.apple.<x>.plist` 的 `MachServices` 取真实名字，
 不要按进程名猜。
+
+## P19：prelink 失败 → 静默打包旧 `kernel.macho`（H263–H269，4 轮代价）
+
+**症状**：新构建的镜像停在 UEFI 绿色画面，而"同一个 payload 换回旧内核"就能启动。
+构建日志 `K=0`、prelink `P=1`，但打包步骤照常执行。
+
+**根因**：`unixnu build prelink` 失败时不会删掉上一次的
+`out/cheeseburger/kernel/kernel.macho`；于是 `mcopy` 把**旧内核**打进 payload。
+更隐蔽的是：干净 xnu 树缺少 `kits/NativePrelink/patches/` 里的两个补丁
+（`xnu-10063.141.1-sparse-index.patch`、`xnu-10063.141.1-security-init.patch`），
+prelink 会报 `Native kernel lacks ... ABI`——但只有**看了日志**才知道。
+
+**判定方法**（30 秒内可做）：
+
+```sh
+# 1) 解出 payload 里的内核，和本地内核比较
+mcopy -o -i payload.img ::/EFI/UniXNU/Payloads/kernel.macho /tmp/chk.macho
+cmp -s /tmp/chk.macho out/cheeseburger/kernel/kernel.macho || echo "payload != kernel"
+# 2) 比较 mtime：内核必须比最新的 mach.development.* 新
+ls -l out/cheeseburger/kernel/kernel.macho
+find out/cheeseburger/tree/build/xnu -name 'mach.development.*' -newer out/cheeseburger/kernel/kernel.macho
+```
+
+**加固（已固化到 `scripts/build-and-pack.sh`）**：
+
+1. kit 补丁**幂等应用**（`git apply --reverse --check` 探测后再 `apply`）；
+2. prelink 非零 → **整个 wrapper 中止**；
+3. 断言 `kernel.macho` 比最新 `mach.development.*` 新，否则报 `stale product (P19)`；
+4. 打印并保存 `kernel.macho` 的 sha256；
+5. 打包后从 payload **回读内核并逐字节比较**，不一致即中止。
+
+**教训**：`K=0` 只代表编译通过，**不代表产物是新的**。凡"改了源码却没生效/启动不了"，
+先查产物来源，再查源码。
