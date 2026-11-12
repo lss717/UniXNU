@@ -12294,6 +12294,14 @@ fs 版移除 `sheng-disable-jobs=…` 后（args 874，C3 正常）复测，`sel
   `-supportsFamily:1001`×2。
 - 纪律：`-featureProfile` 返回空字典会让 Metal **更早**放弃，必须保持"未实现=nil"。
 - 待验证镜像 `boot-H236gx.img`（`supportsFamily:` 改回 NO），手机改接 **192.168.8.58** 后上机。
+- **H269（已证实，构建回归修复）**：干净树构建出的内核一直不可启动，根因是 **prelink 需要的两个
+  kit 补丁不在 `patches/xnu/`**，而在 `kits/NativePrelink/patches/`：
+  `xnu-10063.141.1-sparse-index.patch`（`kalloc_sparse_prelink_index_version`）与
+  `xnu-10063.141.1-security-init.patch`（early security initializer ABI）。缺失时
+  `emit_prelink.py` 会报 `Native kernel lacks ... ABI`，而构建脚本沿用**旧的** kernel.macho，
+  于是打出的镜像与源码不匹配（表现为停 UEFI 绿屏）。补齐两个 kit 补丁后 prelink 成功，
+  内核 `fa3acb0e…`、镜像 `boot-H269.img` = `00846bfd…`，**已确认可启动**。
+  **此后任何干净的 xnu 树都必须补这两个 kit 补丁。**
 - **H268（已证实，收口 A 侧）**：backboardd 稳定、0 次退出，但整个窗口里
   **render encoder 18 个、`setRenderPipelineState:` 0 次、draw 0 次、commit 0 次**。
   即 CA **根本没有绘制**：它建好 render pass 骨架、设了几个 `replaceRegion:`、
