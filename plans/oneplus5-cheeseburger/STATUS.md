@@ -12876,3 +12876,21 @@ boot-arg `sheng-fb-gpu=1` + 在 `A540TracePlugin` 里接 `GpuScanoutClient` 循�
 上一版 `kernel.macho` 可读 AON vtable；H251–H254 探针在 `patches/xnu/experimental/`，
 未编入；`XNU_NATIVE_UFS=0`），payload 76 MiB，镜像 `boot-H273.img` = `5fd63da1…`
 （固件层仍是 `edk2-msm8998/workspace/uefi-cheeseburger.img.gz-dtb`，本弧未改动）。
+
+### H273 上机结果：全新链内核进入用户态（2026-11-13）
+
+| 镜像 | 内核 | PMGR | boot 参数 | 结果 |
+| --- | --- | --- | --- | --- |
+| H273（b） | `4ef7564c` | 桩 | `board.toml` 基线 | 到 `NATIVE_UFS_HB: enter` 后停 |
+| H273c/d | `a51b7e3b` / `057bec93` | 真实绑定 | 基线 | `HB: start` 后硬挂（两种参照同一停点） |
+| H273e | `42c28659` | 桩 | 基线 | 到 `NativeRamBlock: gpu addon snapshot` 后停 |
+| **H273f** | `42c28659` | 桩 | **H272r 参照参数** | **进入用户态**：dyld shared cache、launchd exec、`NATIVE_TC_QUERY`、GPU 电源/加速器心跳，最后 `panic "AMFI: No PMGR7" @ConfigurationSettings.cpp:235` |
+
+结论：
+
+1. **构建链产物是可用的**——同一内核在正确 boot 参数下能跑完内核态并进入用户态；
+   之前"卡住"多半是 `board.toml` 的基线参数与当前阶段不匹配（缺
+   `offline-mobile-graphics-load`、`offline-legacy-phase=4`、`sheng-gpu-*`、`sheng-pmgr=2` 等）。
+2. 桩 PMGR 与 `sheng-pmgr=2` 冲突：AMFI 在 `ConfigurationSettings.cpp:235` 找不到 PMGR7 而 panic。
+   这在设计上正确——**要跑后期参数就必须用真实 PMGR**。
+3. 真实 PMGR 的"早停"是在基线参数下测的，尚未与参照参数组合验证。
