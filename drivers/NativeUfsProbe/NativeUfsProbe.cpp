@@ -2672,11 +2672,18 @@ NativeUfsProbe::logMarker (const char *kind, bool urgent)
   // it rather than making the reader compare timestamps from two different records.
   const uint64_t hbAgoTicks = gH103BeatTicks ?
       (mach_absolute_time () - gH103BeatTicks) : 0;
+  // H341: the ring's first write is gated on a storage request and the console stops painting once
+  // the display driver owns the panel, so neither can answer "is CoreAnimation submitting?".
+  // This record is written every minute regardless: val/xf/fr are the display-side counters.
   snprintf (block, sizeof block,
-      "NXMARK1 kind=%s uptime=%u hbago=%llu beat=%u cmds=%llu flags=%x build=%s\n",
+      "NXMARK1 kind=%s uptime=%u hbago=%llu beat=%u cmds=%llu flags=%x build=%s "
+      "val=%u xf=%u fr=%u\n",
       kind ? kind : "?", (unsigned) uptime,
       (unsigned long long) (hbAgoTicks / 19200000ULL), (unsigned) gH103SlotCursor,
-      (unsigned long long) gUfsCommands, (unsigned) native_boot_flags, H103_BUILD);
+      (unsigned long long) gUfsCommands, (unsigned) native_boot_flags, H103_BUILD,
+      (unsigned) native_legacy_swap_validation_calls,
+      (unsigned) native_legacy_transfer_calls,
+      (unsigned) native_legacy_frame_count);
   // H314: the ring flush can lose the race for fLock at panic time, and the ring is what normally
   // carries NATIVE_PANIC_STR.  The message buffer is readable from this context, so the marker
   // block carries its tail as well - that is the panic reason without needing a second boot.
