@@ -28,10 +28,10 @@ diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
 +					named++;
 +					sbp = proc_find(native_sb_pid);
 +					{
-+						vm_shared_region_t sr = VM_SHARED_REGION_NULL;
++						vm_shared_region_t sr = NULL;
 +						mach_vm_offset_t srbase = 0;
 +						sr = vm_shared_region_get(native_sb_task);
-+						if (sr != VM_SHARED_REGION_NULL) {
++						if (sr != NULL) {
 +							(void)vm_shared_region_start_address(sr, &srbase, native_sb_task);
 +							vm_shared_region_deallocate(sr);
 +						}
