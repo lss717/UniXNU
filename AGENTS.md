@@ -224,6 +224,13 @@ These are ordered by how much time they wasted, not by how likely they are.
   `kernel/kernel.macho` before/after, and treat "unchanged" as failure.
   `unixnu build prelink` is the one guard that already refuses
   (`…noctf not found; run "unixnu build kernel" first`) — never bypass it.
+- **Every remote build or package command starts with a pull.** A packaging step
+  run on its own (`unixnu build payload`, `make-bootimg.py`, the archive
+  scripts) sees whatever the builder's checkout happens to contain, and a
+  forgotten pull silently ships the previous kernel or the previous addon. The
+  only safe shape is one command that begins with
+  `cd ~/UniXNU && git pull -q origin main && git submodule update --init --recursive`
+  and then builds, so the pull and the build cannot come from different trees.
   `scripts/macos-build-kernel.sh` itself can still exit **0** when an archive
   compile failed (H310: a missing forward declaration in the driver), so the
   script's status says nothing; only the kernel hash and prelink's refusal do.
