@@ -13927,3 +13927,33 @@ NXMARK1 kind=alive uptime=1034 hbago=0 beat=1324 cmds=71900 flags=fd7f608f
 下一步（H315 起）：用**不带 Metal 插件/addon** 的 payload 做对照——lumia950xl / ios-fuxi /
 ios-galaxy-s8 都是在**没有 GPU 驱动**的情况下用 CPU 渲染出主屏/锁屏的，而我们的 trace 插件
 可能让 CA 认为"有 GPU"从而堵死了软件渲染路径。
+
+#### H315ng / H317：无插件两轮都冻在 ~292 s，定位到"注册表锁内取进程锁"（2026-11-14）
+
+两轮配置相同（无 addon、`offline-accelerator=0`），内核分别 `45276f1f` / `eff7e09a`。
+
+| 观测 | H315ng | H317（日志解耦后） |
+| --- | --- | --- |
+| 环结束 | ~294 s | **~292 s** |
+| `NATIVE_UFS_LOCK` | 6 | 11（等待已降到 ~100 ms） |
+| `LOG_STAT skips=` | 无此字段 | **23**（丢弃而不是等待，符合预期） |
+| `NATIVE_IRQ` / `NATIVE_GIC` 最后一条 | ~291 s | **~291 s** |
+| 心跳最后一条 | 292 s | 292 s |
+| 标记块 | `kind=alive uptime=247 hbago=3`（旧值） | 同上（300 s 间隔没走到，已改回 60 s） |
+
+**结论一**：日志解耦生效（`skips` 增长、等待从 2.7 s 降到 100 ms），但**没有解决冻结**。
+
+**结论二**：冻结是**整机级**的——连定时器 IRQ 探针（`NATIVE_IRQ`/`NATIVE_GIC`）和 1 s 心跳
+都同时停止，说明不是某个线程卡住，而是有线程在持锁状态下永久阻塞。
+
+**结论三（根因假设，H318 已修）**：冻结紧跟在 backboardd 的 IOKit 匹配风暴之后，而我们的
+IOKit 跟踪代码在 `is_io_service_*`（**持 IOKit 注册表锁**）里调用了 `proc_selfname()`，
+后者会遍历**进程链表**取名字。另一侧是 daemon 退出路径：`proc_exit` 持进程锁并去拆该进程的
+IOKit 用户客户端（要注册表锁）——标准 ABBA 死锁。无插件配置下 `IOAcceleratorES` 匹配失败
+（`ok=0`），backboardd 反复查询，正好把这条路径踩热。
+
+H318 的修法：去掉该路径上的 `proc_selfname`（不再在注册表锁内取进程锁），其余字段保留。
+
+**顺带记录**：无插件这一轮仍然 `s345=0/0/0 val=0 xf=0 fr=0`，只看到 selector 15/22/33/88，
+其中 22/33/57 落到 `client fixup … unsupported->0`。所以"关掉插件让 CA 走 CPU 渲染"这条
+假设**尚未得到验证**——两轮都没活过 300 秒。
