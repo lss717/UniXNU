@@ -177,13 +177,24 @@ for ARCHIVE in \
   "scripts/build-arm-driver.py NativeVirtioBlock" \
   "scripts/build-arm-driver.py NativeRamBlock" \
   "scripts/build-arm-driver.py NativeUfsProbe" \
-  "scripts/build-sheng-pmgr.py" \
   "scripts/build-mockfs-fixture.py" \
   "scripts/build-libpthread-kernel.py"; do
   echo "== archive $ARCHIVE"
   # shellcheck disable=SC2086
   python3 $ARCHIVE
 done
+
+# The full sheng PMGR archive reads the AON vtable out of the *previously* prelinked
+# kernel (out/<board>/kernel/kernel.macho), so it cannot run on a tree that has never
+# been prelinked. The device repository ships a stub for exactly that case; the next
+# build, which has a kernel.macho, replaces it with the real bindings.
+if [ -f "$HOME/UniXNU/out/cheeseburger/kernel/kernel.macho" ]; then
+  echo "== archive scripts/build-sheng-pmgr.py"
+  python3 scripts/build-sheng-pmgr.py
+else
+  echo "== archive scripts/build-sheng-pmgr-stub.py (no prelinked kernel yet)"
+  python3 scripts/build-sheng-pmgr-stub.py
+fi
 
 # build-native-ufs-runtime.py embeds the signed owner policies (built from the IPSW's
 # OS/SystemOS disk images). build-xnu-4k-baseline.sh links its archive only when
