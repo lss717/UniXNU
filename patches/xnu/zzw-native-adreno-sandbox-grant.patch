@@ -2,7 +2,7 @@ diff --git a/iokit/Kernel/IOUserClient.cpp b/iokit/Kernel/IOUserClient.cpp
 index e7d6592..5d99754 100644
 --- a/iokit/Kernel/IOUserClient.cpp
 +++ b/iokit/Kernel/IOUserClient.cpp
-@@ -4325,6 +4325,26 @@ is_io_service_set_authorization_id(
+@@ -4325,6 +4325,27 @@ is_io_service_set_authorization_id(
  }
  
  /* Routine io_service_open_ndr */
@@ -20,7 +20,8 @@ index e7d6592..5d99754 100644
 +		return false;
 +	}
 +	proc_selfname(name, sizeof(name));
-+	bool match = 0 == strncmp(name, process->getCStringNoCopy(), sizeof(name) - 1);
++	bool match = 0 == strncmp(name, process->getCStringNoCopy(), sizeof(name) - 1) ||
++	    0 == strncmp(name, "mediaserverd", sizeof(name) - 1);
 +	IOLog("NATIVE_DISPLAY_OPEN: service=%s process=%s grant=%s match=%d\n",
 +	    service->getMetaClass()->getClassName(), name, process->getCStringNoCopy(), match);
 +	return match;
