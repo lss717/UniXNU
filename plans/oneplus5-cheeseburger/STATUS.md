@@ -13038,3 +13038,28 @@ NATIVE_LEGACY_SURFACE: rejected w=1080 h=1920 fmt=1647534392 planes=2 stride=108
      `trace_object_of("_MTLRenderPipelineState")` 返回），需要真正可用的管线。
 4. 插件实现位置：`drivers/NativeMetal/A540TracePlugin.mm:2523`
    （`newRenderPipelineStateWithDescriptor:error:` 只记录描述符并返回 trace 对象）。
+
+### H275 更正：`presentsurface` 行来自我们自己的探针（2026-11-13）
+
+阅读 `drivers/NativeMetal/A540TracePlugin.mm` 后确认：日志里的
+
+```
+NATIVE_MTL: disp#329 presentsurface enter
+NATIVE_MTL: disp#330 presentsurface sent
+```
+
+**由插件自己发出**（`A540TracePlugin.mm:1211-1228`，`caller("disp","presentsurface",…)`），
+不是 CoreAnimation 的合成结果。因此：
+
+- **CA 从未向显示提交过任何一帧**（`commit`/`draw`/`setRenderPipelineState` 均为 0）；
+- 那条 `ffa0a0a0` 的读数对应的是**探针合成的纯色帧**，不是 backboardd 的画面；
+- 但 `NATIVE_LEGACY: client io pid=56 selector=4 → selector=5` 是**真实的** CA 客户调用，
+  `swap validate accepted=1` 也是真实提交被接受——显示端接收链路依然成立。
+
+同时修正一处污染：`allContexts` 探针原本会往**真实的 render context** 里
+`addSublayer:` 一张纯色 CAMetalLayer（H272o 的诊断产物），这会让之后任何
+被呈现的帧都变成灰。现已改为只打印 root layer 的 `sublayers` 数量与 bounds
+（`AdrenoMetal 47cabb7`，超级仓库 `0232790`），不再插入图层。
+
+结论不变但归因更准：**当前没有桌面，是因为 CA 没有提交任何帧**
+（管线是 trace 壳、无绘制、无 commit），而不是显示端拒绝。
