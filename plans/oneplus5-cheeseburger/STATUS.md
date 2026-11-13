@@ -13097,3 +13097,29 @@ NATIVE_MTL: disp#330 presentsurface sent
 下一步只剩一条线：**C6a-MTL** —— 让 `newRenderPipelineStateWithDescriptor:` 返回
 CA 可用的管线对象（或让它接受我们的实现），使 CA 愿意 `setRenderPipelineState` + `commit`。
 显示驱动（校验/传输/retirement）已用探针验证可用，等 CA 真的提交时再回到这条路径。
+
+### H278：224 个命令缓冲，binds=0 draws=0 dispatch=0（2026-11-13，决定性）
+
+镜像插件 CDHash `f1d56573…`。在追踪对象上补了三处此前"看不见"的观测后
+（`setRenderPipelineState:`、`drawPrimitives:` 汇总、`dispatchThreads:`），
+`dealloc` 汇总给出了唯一一种结果：
+
+```
+224 × dealloc binds=0 draws=0 dispatch=0
+setRenderPipelineState 日志行 0
+drawPrimitives 日志行 0
+cmdbuf commit 日志行 0
+```
+
+此前"CA 可能在画但我们看不见"的可能性被排除：**CA 从未绑定任何管线、从未绘制、
+从未 dispatch、从未提交**，224 个命令缓冲全部编码完即释放。
+
+结论（本轮最重要）：
+
+1. 方案 A（让管线壳"看起来可用"）**没有必要**——CA 根本不会去 `setRenderPipelineState:`，
+   补内部字段不会改变任何行为。管线对象不是当前瓶颈。
+2. 真正缺的是**可绘制的内容**：整条链路里没有 scene/前台窗口，CA 没有东西可画，
+   于是建编码器、做几张纹理拷贝、结束、释放。
+3. 因此主线回到 **C6a-SB（scene / 前台）**；Metal 管线（C6a-MTL ②）留到有内容之后，
+   否则做了也无法验证。
+4. 显示驱动（校验/传输/retirement）保持"已用探针验证可用"的结论，等 CA 真正提交时再回归。
