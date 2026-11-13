@@ -13629,3 +13629,36 @@ NATIVE_GPU_ADDON: plugin=A540Trace files=3 written=3 same=0 failed=0
    TWRP 侧再读）——彻底绕开 panic 时 I/O；
 2. 在系统存活时**周期性把 ring 同步到磁盘**（例如每 5 s），把可丢失窗口压到 5 s 内；
 3. 用串口/USB 控制台抓 live 输出（本项目此前未接）。
+
+### H303：日志第一次追到崩溃前 5 秒——现场是 mediaserverd 的崩溃循环（2026-11-13）
+
+内核 `a69f805f…`（心跳改为每秒一拍、每 5 拍同步；burst 间隙与慢序列每秒 flush）。
+
+效果：持久 ring 从"停在 187–242 s"变为 **356–653 s**，即**追到崩溃前 5 秒以内**。
+
+崩溃前沿的日志形态（最后 2 秒、每毫秒级重复）：
+
+```
+NATIVE_DISPLAY_OPEN: service=AGXAccelerator process=mediaserverd grant=backboardd match=0
+NATIVE_A540_ACCEL: open request type=0 comm=mediaserverd …
+IOUC AGXDeviceUserClient failed MACF in process pid 163, mediaserverd
+```
+
+统计：
+
+| 观测 | 数值 |
+| --- | --- |
+| `AGXDeviceUserClient failed MACF` | **105 次** |
+| 涉及 pid | **118 / 131 / 148 / 163**（四个不同的 mediaserverd 实例） |
+| `mediaserverd` exec | 4 次 |
+| `mediaserverd` exit | 3 次，全部 `status=0x6`（SIGABRT） |
+
+即：**mediaserverd 反复崩溃重启，每次新实例都去打开 `AGXAccelerator` 并被 MACF 拒绝**，
+形成崩溃—重启—再被拒的循环；系统在这之后不久出现 `initproc exited`（launchd SIGBUS）。
+
+这是第一次拿到"崩溃前发生了什么"，把 frontier 从"未知"变成**具体的进程级循环**。
+下一步应回答两件事：
+
+1. mediaserverd 为什么 `SIGABRT`（`status=0x6`）——先看它是在 GPU 打开失败后主动 abort，
+   还是自身页换入失败；
+2. `AGXDeviceUserClient` 的 MACF 拒绝是否可以放行（与我们插件用的 trust cache 是同一类问题）。
