@@ -100,7 +100,12 @@ git clone https://github.com/lss717/UniXNU-cheeseburger
     (verifies the A540 ZAP PAS layout: only `.b02` is PT_LOAD, `.b02@0`,
     extent 0x2000, metadata 0x1a1c)
   - `python3 scripts/check-bootargs-fit.py --payload <payload.img>`
-    (the boot_args command line must leave room for ` zap-base=0x...`)
+    (the boot_args command line must leave room for ` zap-base=0x...`). Run
+    this on the *modified* payload copy, not on the freshly built one: the
+    mcopy of `unixnu.toml` is what changes the length. A command line over
+    1024 bytes does not print an error — the phone stops in UEFI with no
+    message, which looks like a broken image. H332 wasted a boot this way: the
+    aks-quiet argument set was 1042 bytes.
   - `python3 scripts/check-unixnu.py` (offline driver self-test; on this Linux
     host with GNU mtools 4.0.43 it currently stops at
     `FAIL: payload volume is reproducible` — confirm on macOS before treating
