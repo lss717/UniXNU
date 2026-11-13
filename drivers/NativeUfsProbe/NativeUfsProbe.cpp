@@ -610,6 +610,10 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
         // put the trap in libsystem_kernel's receive path, so the unanswered half of that RPC is
         // lsd.  Sample it once a second alongside SpringBoard to see where it is stuck.
         native_sb_pc_sample ("lsd", 700 + burst * 100 + b);
+        // H320: SpringBoard reaches its first block right after runningboardd starts, and the
+        // sampler never looked at runningboardd after that point, so the scene-side peer was
+        // invisible.  Sample it in the bursts as well.
+        native_sb_pc_sample ("runningboardd", 300 + burst * 100 + b);
       }
       IOSleep (50);
     }
@@ -626,6 +630,7 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
       for (unsigned gap = 0; gap < 30; ++gap) {
         IOSleep (1000);
         h103StallCheck ();
+        native_sb_pc_sample ("runningboardd", 3000 + burst * 100 + gap);
         native_log_flush_hook ();
       }
     }
