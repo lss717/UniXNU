@@ -75,12 +75,14 @@ fi
 if [ -d "$WORK/.git" ]; then
   for stale in "$HOME"/UniXNU/patches/xnu/*.patch "$HOME"/UniXNU/kits/NativePrelink/patches/*.patch; do
     git -C "$WORK" apply --reverse --check "$stale" >/dev/null 2>&1 && continue
-    git -C "$WORK" apply --check "$stale" >/dev/null 2>&1 && continue
-    # Patching in place is not an option: build-xnu-4k-baseline.sh reverses and re-applies
-    # a LATE_PATCH subset first, so a tree that is merely missing a patch still ends up in
-    # a different order and dies at KernelConfigTables.cpp. Rebuild and let that script
-    # apply the whole series in its own order.
-    echo "xnu-work cannot take $(basename "$stale"); rebuilding it from the feed"
+    if git -C "$WORK" apply --check "$stale" >/dev/null 2>&1; then
+      # Applicable but not applied: the archive builders compile from this worktree and
+      # only build-xnu-4k-baseline.sh applies patches, so the archives would be built from
+      # unpatched sources. A rebuild is the only state that is consistent for both.
+      echo "worktree is behind $(basename "$stale"); rebuilding it from the feed"
+    else
+      echo "worktree cannot take $(basename "$stale"); rebuilding it from the feed"
+    fi
     rm -rf "$WORK"
     break
   done
