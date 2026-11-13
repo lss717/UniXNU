@@ -158,6 +158,14 @@ if [ ! -f "$RECORD" ]; then
   fi
 fi
 
+# The storage ABI headers come from the IOStorageFamily reference and the archive
+# builders (NativeVirtioBlock) need them; `unixnu build kernel` runs this before its
+# archive list, so the wrapper does the same.
+if [ -d "$TREE/refer/IOStorageFamily" ] && [ ! -d "$TREE/build/storage-abi/include/IOKit/storage" ]; then
+  echo "== storage headers"
+  python3 scripts/prepare-storage-headers.py
+fi
+
 # The board archive list of ../UniXNU-cheeseburger board.toml [kernel] archives,
 # in order. `unixnu build kernel` runs this list; keep the two in step.
 for ARCHIVE in \
