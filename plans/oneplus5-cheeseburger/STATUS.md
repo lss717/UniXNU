@@ -13123,3 +13123,32 @@ cmdbuf commit 日志行 0
 3. 因此主线回到 **C6a-SB（scene / 前台）**；Metal 管线（C6a-MTL ②）留到有内容之后，
    否则做了也无法验证。
 4. 显示驱动（校验/传输/retirement）保持"已用探针验证可用"的结论，等 CA 真正提交时再回归。
+
+### H280：backboardd 里没有 FrontBoard 场景服务器（2026-11-13）
+
+插件 CDHash `28f4a1d2…`，两次上机（第二次跑到 443 s，探针窗口完整）。探针结果：
+
+```
+NATIVE_MTL: scene# proc backboardd
+NATIVE_MTL: scene# class timer FBSceneManager=0   FBSWorkspace=1   FBSBasicScene=0
+NATIVE_MTL: scene# class timer FBSScene=1         FBSMutableSceneSettings=1
+NATIVE_MTL: scene# class timer FBSSceneSettings=1 FBSSystemService=1
+NATIVE_MTL: scene# workspace nil
+```
+
+解读：
+
+1. **`FBSceneManager = 0`**：场景**服务器**（backboardd 侧）不存在；
+2. **`FBSScene` / `FBSSceneSettings` 类存在但 `+[FBSWorkspace sharedWorkspace]` 返回 nil**：
+   workspace **实例**没有创建，所以没有可枚举的场景；
+3. 插件只在 **backboardd** 里加载（`builder#1 load comm=backboardd`、`proc=backboardd`），
+   SpringBoard 侧看不到——因此"SpringBoard 有没有场景"这个问题，用当前插件**测不到**。
+
+方法学结论（重要）：
+
+- 之前的 H279 用 `FBSceneManager`/`FBScene` 查不到，是**类选错**；
+- 现在的 H280 用对了类，但**进程选错**：场景请求发生在 SpringBoard（客户端），
+  而插件只被渲染服务器加载。
+- 要观测 SpringBoard，必须换仪器：要么让插件在 SpringBoard 里加载，
+  要么用内核侧探针读 SpringBoard 与 frontboardd/runningboardd 的 IPC
+  （H254 曾偶发看到 3 条 scene 往来，属偶发事件）。
