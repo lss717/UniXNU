@@ -13265,3 +13265,29 @@ NATIVE_SBPC_IMAGE: sample=238 … 239 … （同一 pc，单线程）
   与 kernel 记下的 SpringBoard pc 相减即可换算成缓存内偏移；
 - 或从 OS 镜像提取 `dyld_shared_cache_arm64e`，解析 `dyld_cache_image_info` 表，
   用上面算出的偏移定位镜像与符号。
+
+### H286：UFS 等待上限 6 s → 30 s 后，I/O 失败与 panic 消失（2026-11-13）
+
+内核 `3805c57b…`。唯一改动是 `UFS_DATA_LOCK_TICKS`（`drivers/NativeUfsProbe`）。
+
+| 指标 | 之前（H282–H284） | **H286** |
+| --- | --- | --- |
+| 日志时长 | 171–268 s | **532 s** |
+| `I/O error` | 多次（disk5/disk6） | **0** |
+| `NATIVE_PANIC_STR` | 每轮都有 | **0** |
+
+结论：那族 "disk 读 err 60/5 → decmpfs page-in 失败 → 进程 SIGBUS → `ipc_space.h:173`"
+**根因是等待者 6 秒超时后把慢命令当 I/O 错误上报**，不是坏块、不是窗口映射、不是并发缺陷。
+把上限放到 30 s 后整族消失，启动也能稳定跑过 500 s。
+
+顺带拿到了共享缓存 slide（H285 的打印）：
+
+```
+NATIVE_SBPC_IMAGE: sample=300 pid=27 count=2 proc=1 pc=0x1d61acb58 slide=0xaa2c000
+```
+
+`pc - slide - 0x180000000` ≈ `0x4b6f0b58`，即 SpringBoard 卡在**共享缓存内约 1.26 GB 偏移处**；
+同一轮 `NATIVE_TRAP_IMAGE` 仍报 `no-dyld-info`（SpringBoard 未登记镜像表）。
+
+同时确认：`setRenderPipelineState` / `drawPrimitives` / `swap validate` 仍是 **0**，
+`NATIVE_LEGACY: client io` 9 次——CA 依然没有提交任何帧。
