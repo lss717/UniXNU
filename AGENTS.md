@@ -157,10 +157,24 @@ git clone https://github.com/lss717/UniXNU-cheeseburger
 
 ## Current display bring-up
 
-- The Legacy display backend works (GOP test pattern, `start=1`); the blocker
-  is that backboardd does not obtain/use a display provider, so no user client
-  submits the first frame. H103 §44 lists the excluded hypotheses; do not
-  repeat them.
+- backboardd **does** obtain the legacy display provider and submits swaps
+  (`NATIVE_DISPLAY_OPEN … process=backboardd match=1`, then `selector=4` → `selector=5`).
+  The old "no provider / no first frame" gate is closed (H273g, STATUS).
+- What it submits is a **two-plane `'b3a8'` wide-colour surface**, not single-plane BGRA:
+  `w=1080 h=1920 planes=2 stride=1088(px) alloc=10444800 = plane0 + alpha plane`.
+  The validator must accept that format and convert its pixel stride to bytes, otherwise
+  every submission returns `kIOReturnNotPermitted` and the desktop never reaches scanout
+  (H274/H275, `NativeMobileDisplay 5f520f6`).
+- The GPU is powered and reachable (`NATIVE_GPU_PWR`, `AGXAccelerator`, `NATIVE_ACCEL_HB`),
+  but `drawPrimitives`/`dispatchThreads`/`commit` stay zero while the render pipelines are
+  nil; that is the C6a-MTL line, separate from the display path.
+- Boot arguments decide the stage. The `board.toml [payload] kernel_args` defaults are an
+  early baseline; the current stage needs the argument set of the last working image
+  (`offline-mobile-graphics-load=1`, `offline-legacy-phase=4`, `…-register/validate/transfer/
+  retire=1`, `sheng-gpu-addon=1`, `sheng-pmgr=2`, `h103-log-secs=1`). Always copy the
+  argument set from a known image of the same stage.
+- `sheng-pmgr=2` requires the real PMGR archive. A build with the PMGR stub boots to
+  userspace and then panics `AMFI: No PMGR7 @ConfigurationSettings.cpp:235`.
 - Keep the verified baseline: `cpus=1`, `IOClass =
   IOMobileFramebufferLegacy` on the service, and no `sheng-vsync`.
   `cpus=2` is nondeterministic before `KextLog`.
