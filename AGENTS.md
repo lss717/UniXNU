@@ -20,6 +20,38 @@
 
 ## Build and verification
 
+### Building from a brand-new clone (the only sequence that works today)
+
+A fresh checkout has none of the generated state the scripts silently assume. In
+November 2026 this cost several failed builds, each failing at a different step:
+
+```sh
+./unixnu defconfig cheeseburger_defconfig -D ../UniXNU-cheeseburger
+./unixnu fetch   -D ../UniXNU-cheeseburger   # then CONFIRM out/feeds/xnu-0b4b910d exists:
+                                             # a "successful" fetch has been seen to skip xnu
+./unixnu tree    -D ../UniXNU-cheeseburger
+JOBS=1 bash scripts/macos-build-kernel.sh    # first pass: XNU only
+cd out/cheeseburger/tree && SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path) \
+    python3 scripts/build-arm-driver.py NativeUfsProbe
+JOBS=1 bash scripts/macos-build-kernel.sh    # second pass: display archive + relink
+./unixnu build prelink -D ../UniXNU-cheeseburger
+```
+
+Known traps on a fresh tree, in the order they bite:
+
+1. `out/<board>/tree` does not exist until `unixnu tree` runs;
+2. `tree/refer/*` is only populated by `tree`, and only after `fetch` filled
+   `out/feeds/` — running `tree` first leaves `refer/` empty;
+3. `scripts/build-arm-driver.py` reads the compiler recipe from
+   `tree/build/xnu/ios-obj/.../IOPlatformExpert.cpo.json`, which only exists after one
+   XNU build — the first pass therefore defers the display archive (`9de1ca7`);
+4. `OP5_A540_FIRMWARE` must point at a real A540 firmware cache, or the display archive
+   step aborts with "A540 firmware cache not found";
+5. `unixnu tree` runs `git -C tree/refer/xnu …` **before** creating that symlink, so on
+   an empty `refer/` it dies with `fatal: repository '…/refer/xnu' does not exist` even
+   when the feed is present. Until this is fixed, create the links by hand or run
+   `tree` twice.
+
 The driver is `./unixnu`. Device modules override base modules with the same
 name; `./unixnu status` shows the resolved origin of every module.
 
