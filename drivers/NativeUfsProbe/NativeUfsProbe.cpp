@@ -463,6 +463,8 @@ static const char *const a540SbNames[] = {
   "SpringBoard", "lsd", "containermanager", "keybagd", "runningboardd", "usermanagerd", "backboardd",
 };
 
+extern "C" void native_log_flush_hook (void);
+
 static void
 a540SpringBoardSamplerThread (void *, wait_result_t)
 {
@@ -488,6 +490,12 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
     native_sb_set_quiet (1);
     for (unsigned b = 0; b < 80; ++b) {
       native_sb_pc_sample ("SpringBoard", 100 + burst * 100 + b);
+      // H293: the persistent ring stops early in most boots (196 s in H292, 187 s in H289)
+      // while this sampler keeps running past 500 s.  Flush from here as well, so the
+      // record survives even when the heartbeat path stops calling h103FlushNow().
+      if ((b % 20) == 19) {
+        native_log_flush_hook ();
+      }
       IOSleep (50);
     }
     native_sb_set_quiet (0);
