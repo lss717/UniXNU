@@ -133,6 +133,13 @@ git clone https://github.com/lss717/UniXNU-cheeseburger
 - `out/<board>/tree` and `out/<board>/.cache` are generated. Edit the real
   source under `drivers/`, `kits/`, `scripts/`, or the device repository, not
   symlinks in the generated tree.
+- **A driver needs three separate wirings, and two of them are not the same list.**
+  `board.toml [kernel] archives` (and the copy in `macos-build-kernel.sh`) builds the
+  `.a`; the link inside `build-xnu-4k-baseline.sh` adds archives only for the
+  `XNU_NATIVE_*` switches in `macos-build-kernel.sh`; and something must instantiate
+  the service (`*_allocate()` called from a started driver or a patch). A component
+  missing any one of the three compiles cleanly and does nothing — that is exactly
+  what happened to `NativeKeyStoreEvents`, which SpringBoard matched every boot.
 - **Some `drivers/` entries are submodules** (`drivers/NativeMobileDisplay` is
   `lss717/GopFramebuffer`, and the same is true of the other renamed forks). A
   change there is only a dirty worktree until it is committed and pushed in the
