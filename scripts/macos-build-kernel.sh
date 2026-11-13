@@ -83,7 +83,10 @@ if [ -d "$WORK/.git" ]; then
     else
       echo "worktree cannot take $(basename "$stale"); rebuilding it from the feed"
     fi
-    rm -rf "$WORK"
+    # The compile records live in build/xnu/ios-obj, not in the worktree. Deleting only
+    # $WORK leaves them behind, the bootstrap pass is then skipped, and the archive
+    # builders compile a freshly cloned, unpatched source tree.
+    rm -rf "$WORK" "$TREE/build/xnu/ios-obj"
     break
   done
 fi
