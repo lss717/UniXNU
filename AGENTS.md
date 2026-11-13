@@ -215,6 +215,9 @@ These are ordered by how much time they wasted, not by how likely they are.
   `kernel/kernel.macho` before/after, and treat "unchanged" as failure.
   `unixnu build prelink` is the one guard that already refuses
   (`…noctf not found; run "unixnu build kernel" first`) — never bypass it.
+  `scripts/macos-build-kernel.sh` itself can still exit **0** when an archive
+  compile failed (H310: a missing forward declaration in the driver), so the
+  script's status says nothing; only the kernel hash and prelink's refusal do.
 - **`grep -c "error: "` is not a compile check.** Kernel logs contain string
   literals such as `"(kcdata_memcpy error: %d…)"`, so 15 "errors" can be noise
   while a real `error: use of undeclared identifier` sits unnoticed. Filter
