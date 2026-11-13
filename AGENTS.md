@@ -148,7 +148,12 @@ git clone https://github.com/lss717/UniXNU-cheeseburger
   H315 lost two builds to this: the driver grew a weak reference to
   `native_legacy_panic_paint` while the archive still came from the old
   submodule commit, so the link failed with an undefined symbol and the
-  payload step quietly packed the previous kernel.
+  payload step quietly packed the previous kernel. The same thing happened
+  again to `NativeKeyStoreEvents` (submodule `lss717/AppleKeyStoreState`).
+  Before any build run `git submodule foreach --quiet 'git status --short'`;
+  and check the submodule is on a branch (`git status -sb` said
+  `HEAD (no branch)`), because pushing from a detached HEAD fails and leaves
+  the superproject pointing at a commit the remote does not have.
 - Kernel patches live in `patches/xnu/`. Edit the applied source in
   `out/<board>/tree/.cache/xnu-work` after a first kernel build, generate the
   diff, add it to `patches/xnu/`, then rebuild kernel + prelink. Patch names
