@@ -13680,3 +13680,29 @@ IOUC AGXDeviceUserClient failed MACF in process pid 163, mediaserverd
 不影响系统功能。
 
 因此这一类坑目前只剩已修的 mediaserverd 一处；下一轮上机用于验证。
+
+### H304：mediaserverd 已放行，MACF 拒绝归零，但它仍 SIGABRT（2026-11-13）
+
+内核 `5e6c89c5…`（放行 `mediaserverd` 打开 AGX 用户客户端）。日志 6783 行 / 173–524 s。
+
+| 指标 | H303 | **H304** |
+| --- | --- | --- |
+| `AGXDeviceUserClient failed MACF` | 105 次 | **0 次** |
+| `process=mediaserverd … match=1` | 0 | **12 次**（放行生效） |
+| `mediaserverd` exit（status=0x6） | 3 次 | **4 次** |
+| `initproc exited` panic | 有 | **仍有** |
+
+结论：**MACF 准入不是它的根本死因**，放行只消除了拒绝风暴，mediaserverd 依旧
+`SIGABRT`（`status=0x6`）。所以它的 abort 来自拿到用户客户端**之后**的某一步，
+需要看它在该客户端上的选择器调用。
+
+另一条同时可见（重要）：
+
+```
+NATIVE_MTL: frame#642 fill frame comm=backboardd surface=1 bytes=8355840 ds_now=1080x1920
+NATIVE_MTL: frame#643 present sent
+```
+
+**插件仍在自行填充并呈现整帧**（`8355840 = 1080×1920×4`）。此前把 `probe_display_frame`
+改成 observe-only 只挡住了其中一条路径，`probe_drawable` 那条仍在渲染——
+这会让"谁在提交帧"重新变得不可分辨（H277 的教训）。
