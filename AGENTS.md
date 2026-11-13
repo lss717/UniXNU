@@ -230,6 +230,11 @@ These are ordered by how much time they wasted, not by how likely they are.
   `kernel/kernel.macho` before/after, and treat "unchanged" as failure.
   `unixnu build prelink` is the one guard that already refuses
   (`…noctf not found; run "unixnu build kernel" first`) — never bypass it.
+- **`extern "C"` cannot appear inside a function body.** Declaring a weak entry point where it is
+  used (`extern "C" IOService *native_foo(void) __attribute__((weak_import));` inside `start()`)
+  fails with `use of undeclared identifier`, and the build script still exits 0 while the payload
+  packs the previous kernel. Put every such declaration at file scope. This cost three builds in
+  one session (H310, H325, H329).
 - **Every remote build or package command starts with a pull.** A packaging step
   run on its own (`unixnu build payload`, `make-bootimg.py`, the archive
   scripts) sees whatever the builder's checkout happens to contain, and a
