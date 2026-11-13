@@ -132,6 +132,14 @@ git clone https://github.com/lss717/UniXNU-cheeseburger
   diff, add it to `patches/xnu/`, then rebuild kernel + prelink. Patch names
   encode apply order; late patches use `zzy-`/`zzz-` prefixes. Do not reorder
   or rename unrelated patches.
+- **Edit source with a text editor (`edit`) or `sed`, never with a script that
+  rewrites files in bulk.** A Python heredoc doing multi-line replacements is
+  what produced two "corrupt patch at line N" failures and one duplicated
+  declaration in November 2026: the edits looked right, the diffs did not.
+  For a `.patch`, prefer regenerating it from the worktree (`git -C
+  .cache/xnu-work diff`, as above) over editing its hunks by hand; when a
+  one-line `sed -i` really is the change, re-run
+  `git apply --check <patch>` on a clean series before committing.
 - Bring-up diagnostics are boot-argument-gated and often live in
   `zzzz...h103...` patches. Do not turn them into default behavior or add more
   boot arguments without reading the current STATUS gate.
