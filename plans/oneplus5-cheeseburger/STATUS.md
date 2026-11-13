@@ -13063,3 +13063,37 @@ NATIVE_MTL: disp#330 presentsurface sent
 
 结论不变但归因更准：**当前没有桌面，是因为 CA 没有提交任何帧**
 （管线是 trace 壳、无绘制、无 commit），而不是显示端拒绝。
+
+### H277：探针静默后，CA 一帧都不提交（2026-11-13）
+
+镜像 `978ac537…`，插件 CDHash `5d28531a…`（观测-only，不再建图层/填充/`presentSurface:`）。
+
+日志 11247 行 / 32–691 s，插件侧 14 次 `disp# observe-only`，即 display 观测照常但不再渲染。
+结果：
+
+| 观测 | 计数 |
+| --- | --- |
+| `swap validate`（任何 reason） | **0** |
+| `client io … selector=4/5` | **0** |
+| `NATIVE_LEGACY_READBACK` | **0** |
+| `NATIVE_MTL: encoder` / `cmdbuf` | 46 / 24 |
+| `newRenderPipelineState` | 8 |
+| `setRenderPipelineState` / `drawPrimitives` / `dispatchThreads` | 0 / 0 / 0 |
+| `cmdbuf … commit` | **0** |
+| `cmdbuf … dealloc` | 1 |
+
+**两处重要更正**（都推翻了我此前的判断）：
+
+1. 之前所有 `selector=4 → selector=5`、`swap validate accepted=1`、`presentsurface sent`
+   都来自**插件自己的 `presentSurface:` 调用**。插件运行在 backboardd 进程内，
+   所以用户客户端日志的 `pid=56` 无法区分"CA 提交"与"探针提交"。
+   探针一静默，**提交数立刻归零** —— 说明 CA 从未提交过任何一帧。
+2. 因此显示驱动**从未接收过真实帧**；"显示侧闭环"只在探针驱动下成立，
+   不能作为 C6a 的前提已经满足的证据。
+
+**当前真实状态**：CA 建了 8 个管线（trace 壳）、编码了 46 个 encoder / 24 个命令缓冲，
+然后 **dealloc，从未 commit**；`setRenderPipelineState` 为 0，即管线壳从未被使用。
+
+下一步只剩一条线：**C6a-MTL** —— 让 `newRenderPipelineStateWithDescriptor:` 返回
+CA 可用的管线对象（或让它接受我们的实现），使 CA 愿意 `setRenderPipelineState` + `commit`。
+显示驱动（校验/传输/retirement）已用探针验证可用，等 CA 真的提交时再回到这条路径。
