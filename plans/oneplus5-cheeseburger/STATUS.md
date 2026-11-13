@@ -13897,3 +13897,33 @@ H314 的改动：标记块追加 **msgbuf 尾部 1200 字节**，这样即便环
 
 风险与边界：若 panic 发生在显示驱动尚未初始化时（早期 48 s 前），填充会直接返回，屏幕保持原样——
 这也是可接受的结果，保留块标记仍然有效。
+
+#### H314：这一轮没有 panic（alive 到 1034 s），但 daemon 崩溃到触发 launchd 尸体上限（2026-11-14）
+
+内核 `a3962a85…`。标记块：
+
+```
+NXMARK1 kind=alive uptime=1034 hbago=0 beat=1324 cmds=71900 flags=fd7f608f
+```
+
+**这说明标记机制是可靠的**：`kind=alive` 每 60 秒刷新，说明看门狗活着、心跳新鲜；
+而 H313 的 `kind=panic uptime=165` 就是真 panic。同一套探针能明确区分两种结局。
+
+环窗口 925–1126 s 的关键事实：
+
+| 观测 | 数值 | 含义 |
+| --- | --- | --- |
+| `comm=lsd n=4..6` | 31 次采样全部有线程 | **这一轮 lsd 活着**（与 H313 的 n=0 对照） |
+| `comm=SpringBoard n=4` | 1 次 | SpringBoard 基本不在健康状态 |
+| `process=backboardd` | 0 | 仍未打开 legacy display |
+| `Corpse failure, too many 6` | 22 次 | mediaserverd/liveactivitiesd/mobileactivationd 反复崩溃 |
+| `NATIVE_TRAP … comm=mobileactivation sig=5` | 9 次，`x1="release"` | 该 daemon 在 `__builtin_trap` 自陷 |
+| `s345/val/xf/fr` | 0/0/0/0 | 仍然没有任何帧 |
+
+**新结论**：`lsd` 消失只是 H313 那一轮的情形，不是所有轮次的通因；通因是
+**daemon 崩溃循环 → launchd 触发尸体上限（"too many corpses"）→ 相关 job 不再被拉起**，
+于是 SpringBoard 依赖的某个对端缺失、`CA` 始终拿不到可绘制的内容。
+
+下一步（H315 起）：用**不带 Metal 插件/addon** 的 payload 做对照——lumia950xl / ios-fuxi /
+ios-galaxy-s8 都是在**没有 GPU 驱动**的情况下用 CPU 渲染出主屏/锁屏的，而我们的 trace 插件
+可能让 CA 认为"有 GPU"从而堵死了软件渲染路径。
