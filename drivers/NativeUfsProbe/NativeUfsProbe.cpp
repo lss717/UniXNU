@@ -191,6 +191,9 @@ extern "C" void native_proc_state_dump(void);
 // the +2 s snapshot proved the ipc_mqueue_full block there is a startup
 // transient, so the extra ~70 lines are not worth the console time early on.
 extern "C" void native_proc_wait_graph(void);
+// H310: the stage-2 dump flushes around itself so a stall is visible; the hook is defined
+// further down, so it needs a forward declaration here.
+extern "C" void native_log_flush_hook(void);
 
 // H108: independent heartbeat. ios-sweet's log thread sleeps on tsleep, not
 // IOSleep; this port never woke from IOSleep, so this thread first proves
