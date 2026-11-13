@@ -13,7 +13,7 @@ diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
 +	(void)task;
 +	return NULL;
  }
-@@ -7680,5 +7685,10 @@
+@@ -7680,5 +7685,7 @@
  uint8_t *
  task_get_mach_kobj_filter_mask(task_t task)
  {
