@@ -58,6 +58,16 @@ Known traps on a fresh tree, in the order they bite:
    and no `-F`; check after adding a patch. `patches/xnu/experimental/` holds the
    H251-H254 probe patches until they are rebased onto the current line, with
    `zzzz…-h25x-probe-stubs.patch` keeping the UFS probe's symbols linkable.
+7. `unixnu build payload` without `--trust-cache` writes a payload with no
+   `kernel.macho.trustcache`. DarwinBoot then publishes no `chosen/memory-map:TrustCache`
+   property and the kernel panics at `NATIVE_TRUSTCACHE: property lookup failed -1`
+   (`kern_trustcache.c:1095`) before any kext loads. Take the 3-module bundle out of a
+   known-good payload (`mcopy -i payload.img ::/EFI/UniXNU/Payloads/kernel.macho.trustcache`)
+   and pass it as `--trust-cache`.
+8. The first build of a fresh tree can only use the sheng PMGR stub, because
+   `build-sheng-pmgr.py` reads the AON vtable from an already prelinked `kernel.macho`.
+   Build the kernel a second time once `out/<board>/kernel/kernel.macho` exists; the stub
+   leaves the boot stalled right after `NATIVE_UFS_HB: enter`.
 
 The driver is `./unixnu`. Device modules override base modules with the same
 name; `./unixnu status` shows the resolved origin of every module.
