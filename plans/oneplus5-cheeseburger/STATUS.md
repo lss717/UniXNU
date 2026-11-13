@@ -13234,3 +13234,34 @@ NATIVE_PANIC_STR: Kernel data abort at pc 0xfffffff007aa9734 lr 0xfffffff00b6897
 2. **与 H281 探针无关**：panic 发生在 UFS 路径，不在采样器；
 3. `owner` 值是内核指针样式的巨大数（`0xffffffff…`），说明 owner 记录本身可能已被复用/释放，
    与"锁未正常释放"的假设一致——需要在 `native_ufs_lock` 的释放路径核对 owner 清理。
+
+### H284：SpringBoard 的 dyld 尚未注册镜像表（2026-11-13）
+
+把采样起点从 150 s 提前到 60 s 后，探针第一次真正落进 ring：
+
+```
+NATIVE_SBPC_IMAGE: sample=237 pid=27 count=1 proc=1 pc=0x1e9b70b58
+NATIVE_TRAP_IMAGE: pid=27 comm=SpringBoard addr=0x1e9b70b58 no-dyld-info
+NATIVE_SBPC_IMAGE: sample=238 … 239 … （同一 pc，单线程）
+```
+
+解读：
+
+1. `proc=1`：`proc_find(27)` 成功，采样上下文没有问题；
+2. `no-dyld-info`：`task_get_all_image_info_addr(task)` 为 0，即
+   **SpringBoard 还没有向内核登记 `dyld_all_image_infos`**；
+3. 同一个解析器对 `liveactivitiesd` 是**可以**给出框架路径的（H133 的
+   `NATIVE_TRAP_IMAGE_ROW … /System/Library/PrivateFrameworks/…`），所以机制本身没问题；
+4. SpringBoard 只有一个线程（`count=1`），`pc` 固定在共享缓存内（每轮 ASLR 不同：
+   `0x1e008cb58` / `0x1e2a4b58` / `0x1e9b70b58`，低 32 位一致）。
+
+推断：**SpringBoard 阻塞在 dyld 完成初始化之前**——它连自己的镜像表都没来得及登记，
+自然不会有 workspace、没有 scene、不会有任何 UI 侧 IPC。这与 H251 记录的
+"阻塞在 libsystem_kernel" 以及 H280b 的"只和 lsd/launchd 往来"完全一致。
+
+**下一步**：需要把这个 pc 落到共享缓存里的具体函数。两个可行途径：
+
+- 插件在 backboardd 里打印 `dlopen`（等已知符号）的实际地址 → 得到本轮的共享缓存 slide，
+  与 kernel 记下的 SpringBoard pc 相减即可换算成缓存内偏移；
+- 或从 OS 镜像提取 `dyld_shared_cache_arm64e`，解析 `dyld_cache_image_info` 表，
+  用上面算出的偏移定位镜像与符号。
