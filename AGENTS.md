@@ -67,6 +67,14 @@ git clone https://github.com/lss717/UniXNU-cheeseburger
 
 ## Source and patch workflow
 
+- **Never copy source files between machines with `scp`.** In November 2026 the two
+  trees diverged silently (the Mac checkout stopped updating on 2026-10-31 while files
+  kept being scp'd over it) and every build after that produced a kernel that stalled in
+  UEFI. The only allowed direction is: **edit -> commit -> push -> `git pull` on the
+  builder -> build**. If `git log --oneline -1` differs between the two machines, stop
+  and fix that first.
+- Before every build, check both ends agree: the same commit on the workstation and on
+  the builder, and `git status --short` showing no modified driver sources.
 - `out/<board>/tree` and `out/<board>/.cache` are generated. Edit the real
   source under `drivers/`, `kits/`, `scripts/`, or the device repository, not
   symlinks in the generated tree.
