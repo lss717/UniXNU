@@ -13489,3 +13489,32 @@ build 标识（如 `NATIVE_MTL: build H294`）。否则任何插件侧结论都�
 
 同时 H294 这轮的其它数据仍然有效：日志首次跑到 **1115 s**（采样器兜底 flush 生效），
 `renderer=3`、`ctxs=2`、两个 context 都是 1080x1920 + 2 个子层、`d0ctx=0` 不变。
+
+### H295：插件版本可辨，绑定接口选错（2026-11-13）
+
+镜像内核 `c59dae65…` + 插件 build `H295`（CDHash `1c1cebf3…`）。日志 16041 行，到 **1080 s**。
+
+三件事同时被证实：
+
+```
+NATIVE_MTL: builder#2 build H295            ← 新插件确实被加载（H294 的"无 bind"是旧 bundle）
+NATIVE_GPU_ADDON: probe found=1 enabled=1   ← addon 入口本轮执行了
+NATIVE_MTL: srv#311 bind no-selector        ← display 不响应 setContext:
+```
+
+后续 CA 侧仍全为 0（`swap validate` / `setRenderPipelineState` / `drawPrimitives` /
+`commit` / `presentsurface`），说明没有绑定成功。
+
+`CAWindowServer` 的方法表（H275 已 dump）里可用的相关接口：
+
+```
+clientPortOfContextId:  contextIdHostingContextId:  displayWithDisplayId:
+displayWithName:  addDisplay:  removeDisplay:  setRendererFlags:  isSlotValid:
+```
+
+`setContext:` 不在其中，所以"绑定"应当走服务器侧（`addDisplay:`/`contextIdHostingContextId:`）
+或 `CAContext` 侧的选择器，而不是 `CAWindowServerDisplay`。
+
+**下一步（纯观测，不动行为）**：把 `CAWindowServerDisplay` 与 `CAContext` 的完整方法表
+dump 出来（无过滤），据此选正确的绑定接口；同时记录 `clientPortOfContextId:` 对两个
+context id 的返回，判断服务器是否认这两个客户端。
