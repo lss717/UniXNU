@@ -36,11 +36,13 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  		return;
  	}
  	uint32_t count = 0;
-@@ -7603,8 +7606,18 @@
+@@ -7603,8 +7606,20 @@
  static void
  native_gpu_addon_prepare(proc_t p, user_addr_t scratch)
  {
 +	native_gpu_addon_calls++;
++	printf("NATIVE_GPU_ADDON_ENTER: calls=%d stage=%d status=%d\n",
++	    (int) native_gpu_addon_calls, (int) native_owner_data_stage, (int) native_owner_data_status);
  	uint32_t enabled = 0;
 -	if (!PE_parse_boot_argn("sheng-gpu-addon", &enabled, sizeof(enabled)) || enabled != 1) {
 +	/* Bring-up report (H182b): the H181b/H182 runs never showed the addon code although the argument is in the
