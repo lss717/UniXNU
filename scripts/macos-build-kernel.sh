@@ -245,5 +245,11 @@ if [ ! -x "$SDK_PL" ] && [ ! -x "$FAKE_PL" ] && [ -f "$GEN" ]; then
   touch "$GEN"
 fi
 
+# The bootstrap pass has applied the series by now, so the final invocation must not
+# apply it again: the patches overlap and a second pass fails on a patch that is already
+# there. Recompute the flag from the worktree instead of reusing the bootstrap decision.
 cd "$TREE"
+if grep -q "$PATCH_MARKER" "$WORK/bsd/kern/kern_exec.c" 2>/dev/null; then
+  export XNU_SKIP_PATCH_LOOP=1
+fi
 exec bash scripts/build-xnu-4k-baseline.sh
