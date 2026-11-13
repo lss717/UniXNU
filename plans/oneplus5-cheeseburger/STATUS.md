@@ -13152,3 +13152,33 @@ NATIVE_MTL: scene# workspace nil
 - 要观测 SpringBoard，必须换仪器：要么让插件在 SpringBoard 里加载，
   要么用内核侧探针读 SpringBoard 与 frontboardd/runningboardd 的 IPC
   （H254 曾偶发看到 3 条 scene 往来，属偶发事件）。
+
+### H280b：frontboardd 从未启动，但 SpringBoard 能查到它的服务（2026-11-13）
+
+同一镜像第二次上机（443 s）。在 kernel 日志里核对进程与 IPC：
+
+| 观测 | 结果 |
+| --- | --- |
+| `NATIVE_EXEC … comm=frontboardd` | **0 次**（`frontboardd` 在整个窗口里从未被 exec） |
+| 文本中出现 `frontboard` | 仅 1 次：`NATIVE_MTL: svc#324 lookup com.apple.frontboard.systemappservices kr=0x0` |
+| SpringBoard 的 IPC 对端 | `peer=27/SpringBoard`(243) · `91/lsd`(148) · `1/launchd`(82) · `56/backboardd`(1) |
+| `runningboardd` | 仅作为采样文本出现，非 exec、非对端 |
+
+解读：
+
+1. **FrontBoard 的服务名存在且 lookup 成功（`kr=0x0`）**，说明 SpringBoard 的 scene 客户端
+   路径**至少走到了服务查询**；
+2. **`frontboardd` 进程从未启动** —— 场景服务器这一侧缺失；
+3. SpringBoard 的 IPC 只有 lsd / launchd / backboardd，**没有任何 FrontBoard 对端**。
+
+因此 C6a-SB 的具体形态是：**SpringBoard 知道 FrontBoard 的服务名，但提供该服务的进程不存在**，
+于是没有 workspace、没有 scene，CA 也就没有内容可画（与 H278 的 224×0 完全一致）。
+
+下一步要做的是"为什么 `frontboardd` 没起来"，而不是继续在渲染侧加探针。
+建议一次性把三件事合到一个镜像里：
+
+- **A**：内核侧记录一组守护进程（frontboardd / runningboardd / backboardd / SpringBoard）
+  在窗口内是否被 exec、是否退出、退出码；
+- **B**：内核侧记录 bootstrap 服务 lookup 的成功/失败（`com.apple.frontboard.*`、
+  `com.apple.backboard.*`），定位 SpringBoard 到底在等谁；
+- **C**：`launchd` 侧的 job 状态（若 job 存在但未启动，说明依赖未满足或程序缺失）。
