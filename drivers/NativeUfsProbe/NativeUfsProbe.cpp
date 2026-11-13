@@ -1493,6 +1493,39 @@ compatibleContains (OSData *compatible, const char *needle)
   return false;
 }
 
+/* H290: ufsCommand() refuses a new command while the previous doorbell is still set
+ * (UFS_REG_UTRLDBR), and refuses outright when the queue is poisoned.  The refusal
+ * surfaced as EIO, which APFS turned into a failed page-in and SIGBUS in the paging
+ * process.  Wait for the doorbell and retry a bounded number of times; block reads and
+ * writes are idempotent, so a resend is safe.  Only a poisoned queue gives up at once. */
+static bool ufsCommand (UfsQueue *q, uint8_t lun, const uint8_t *cdb, unsigned bytes, void *dst);
+
+static bool
+ufsCommandRetry (UfsQueue *q, uint8_t lun, const uint8_t *cdb, unsigned bytes, void *dst,
+                 const char *who)
+{
+  for (unsigned attempt = 0; attempt < 8; ++attempt) {
+    if (ufsCommand (q, lun, cdb, bytes, dst)) {
+      if (attempt) {
+        IOLog ("NATIVE_UFS_RETRY: %s ok attempt=%u\n", who, attempt);
+      }
+      return true;
+    }
+    if (!q || q->poisoned) {
+      IOLog ("NATIVE_UFS_RETRY: %s abandoned attempt=%u poisoned=%u\n", who, attempt,
+             q ? (unsigned) q->poisoned : 2u);
+      return false;
+    }
+    if (attempt == 0 || attempt == 7) {
+      IOLog ("NATIVE_UFS_RETRY: %s wait attempt=%u doorbell=%u bytes=%u\n", who, attempt,
+             (unsigned) read32 (q->hc, UFS_REG_UTRLDBR), bytes);
+    }
+    IOSleep (2);
+  }
+  IOLog ("NATIVE_UFS_RETRY: %s gave up bytes=%u\n", who, bytes);
+  return false;
+}
+
 static bool
 readCommandAllowed (unsigned opcode, unsigned direction, unsigned bytes)
 {
@@ -2123,7 +2156,7 @@ NativeUfsProbe::readBlocks (uint8_t unit, uint64_t block, uint64_t count,
     unsigned bytes = chunk * blockSize;
     gUfsLastLba = block;
     gUfsLastBytes = bytes;
-    bool commandOk = ufsCommand (&fQueue, unit, cdb, bytes, nullptr);
+    bool commandOk = ufsCommandRetry (&fQueue, unit, cdb, bytes, nullptr, "readBlocks");
     bool copyOk = commandOk &&
         dst->writeBytes (static_cast<IOByteCount> (total), fQueue.data,
                          static_cast<IOByteCount> (bytes)) ==
@@ -2184,7 +2217,7 @@ NativeUfsProbe::readWindowBulk (uint64_t lba, uint32_t blocks, void *out)
     gUfsLastLba = at;
     gUfsLastBytes = bytes;
     uint64_t commandStart = mach_absolute_time ();
-    bool ok = ufsCommand (&fQueue, 0, cdb, bytes, dst);
+    bool ok = ufsCommandRetry (&fQueue, 0, cdb, bytes, dst, "readWindow");
     uint64_t commandTicks = mach_absolute_time () - commandStart;
     IOLockUnlock (fLock);
     if (!calls) {
