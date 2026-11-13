@@ -313,7 +313,7 @@ h103StallCheck (void)
 
 // H312: the sampler thread ends around 550 s, which is exactly the gap that left H311 silent at
 // 933 s with no record at all.  This thread never returns: it overwrites the marker block with
-// "alive" every five minutes (proving the marker path itself works) and stops stamping once a stall
+// "alive" once a minute (proving the marker path itself works) and stops stamping once a stall
 // has been recorded, so the stall is not erased.
 // H313: the ring only keeps its last slots, so the "client enter" lines that say who registered
 // on the legacy display are long gone by the time a boot dies.  Dump the whole client table - it
@@ -344,7 +344,7 @@ nativeWatchdogThread (void *, wait_result_t)
     if (seconds == 120 || seconds == 300 || seconds == 600 || seconds == 900) {
       h103DumpDisplayClients ();
     }
-    if (++ticks >= 300) {
+    if (++ticks >= 60) {
       ticks = 0;
       h103Marker ("alive", false);
     }
