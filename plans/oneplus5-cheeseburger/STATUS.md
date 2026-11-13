@@ -13349,3 +13349,42 @@ H286 采样值：`pc=0x1d61acb58 slide=0xaa2c000` → 未滑动地址 `0x1cb6f0b
 取二进制时 `dyldex -e SymptomEvaluator.framework/SymptomEvaluator` 报
 `TypeError: '>=' not supported between instances of 'NoneType' and 'int'`（该版本对部分镜像的
 vmaddr 解析缺陷），符号化尚未完成。
+
+### H288：SpringBoard 阻塞在 mach_msg 接收，端口 0xa03（2026-11-13）
+
+内核加了 `vm_shared_region_get` / `vm_shared_region_start_address` 之后，偏移不再靠猜测：
+
+```
+NATIVE_SBPC_IMAGE: sample=300 pid=26 count=3 proc=1 pc=0x1ccd30b58 slide=0x15b0000 base=0x1815b0000 off=0x4b780b58
+```
+
+换算 `0x180000000 + off = 0x1cb780b58` → 镜像表定位：
+
+```
+/usr/lib/system/libsystem_kernel.dylib + 0x1b58      （镜像范围 0x1cb77f000，跨度 0x38000）
+```
+
+**结论：SpringBoard 停在 Mach IPC 接收陷入里**，不是停在某个业务框架
+（H287 的 `SymptomEvaluator` / `MusicKitInternal` 两个候选都是 slide 处理错误的产物，已作废）。
+
+同轮 `NATIVE_SBMSG2` 给出陷入参数（93 条，全部相同）：
+
+```
+comm=SpringBoard tid=289 opt=0x40700420e bits=0x0 ssz=0 rport=0xf03 lport=0x0
+vport=0x0 id=0x0 rcvname=0xa03 rcvsz=16384
+```
+
+`opt` 含 `MACH_RCV_MSG`（0x2）而无 `MACH_SEND_MSG`（0x1）→ **这是一次接收等待**：
+SpringBoard 的线程 289 阻塞在自己端口名 `0xa03` 上，接收缓冲 16 KiB，**没有任何消息到来**。
+
+同轮另外两个事实：
+
+- `NATIVE_SBPC: sample=500 comm=SpringBoard n=0`：稍后 SpringBoard **进程消失**；
+- `NATIVE_PANIC_STR: initproc exited -- exit reason namespace 2 subcode 0xa`：
+  `launchd`(pid 1) 退出触发 `panic_init`，这才是这一版的直接死因。
+
+因此下一步要回答的是两件事，且都在用户态：
+
+1. **端口 `0xa03` 是谁的**（SpringBoard 自己的引导端口？谁应当向它发送）；
+2. **为什么 launchd 会以 `subcode 0xa`（signal 10 = SIGBUS）退出**——这决定了整个系统能否活着
+   让我们观测 SpringBoard。
