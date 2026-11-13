@@ -143,18 +143,18 @@ fi
 # The board archive list of ../UniXNU-cheeseburger board.toml [kernel] archives,
 # in order. `unixnu build kernel` runs this list; keep the two in step.
 for ARCHIVE in \
-  "build-corecrypto-14.py" \
-  "build-corecrypto-14.py --namespace" \
-  "build-arm-driver.py ArmDTPlatform" \
-  "build-arm-driver.py ArmCpu" \
-  "build-arm-driver.py NativeAES" \
-  "build-arm-driver.py NativeVirtioBlock" \
-  "build-arm-driver.py NativeRamBlock" \
-  "build-arm-driver.py NativeUfsProbe" \
-  "build-native-ufs-runtime.py" \
-  "build-sheng-pmgr.py" \
-  "build-mockfs-fixture.py" \
-  "build-libpthread-kernel.py"; do
+  "scripts/build-corecrypto-14.py" \
+  "scripts/build-corecrypto-14.py --namespace" \
+  "scripts/build-arm-driver.py ArmDTPlatform" \
+  "scripts/build-arm-driver.py ArmCpu" \
+  "scripts/build-arm-driver.py NativeAES" \
+  "scripts/build-arm-driver.py NativeVirtioBlock" \
+  "scripts/build-arm-driver.py NativeRamBlock" \
+  "scripts/build-arm-driver.py NativeUfsProbe" \
+  "scripts/build-native-ufs-runtime.py" \
+  "scripts/build-sheng-pmgr.py" \
+  "scripts/build-mockfs-fixture.py" \
+  "scripts/build-libpthread-kernel.py"; do
   echo "== archive $ARCHIVE"
   # shellcheck disable=SC2086
   python3 $ARCHIVE
