@@ -13,7 +13,7 @@ diff --git a/bsd/uxkern/ux_exception.c b/bsd/uxkern/ux_exception.c
 diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -10658,6 +10658,21 @@
+@@ -10658,6 +10658,24 @@
  	proc_iterate(1U | 4U, native_sb_collect, NULL, NULL, NULL);
  	if (native_sb_pid > 0) {
  		if (strncmp(name, "SpringBoard", 11) == 0) {
@@ -24,11 +24,14 @@ diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
 +				extern void native_report_trap_image(proc_t, uint64_t);
 +				static unsigned named;
 +				if (named < 3 && native_sb_alln > 0) {
++					struct proc *sbp;
 +					named++;
-+					native_report_trap_image(native_sb_task->bsd_info,
-+					    native_sb_all[0].pc);
-+					native_report_trap_image(native_sb_task->bsd_info,
-+					    native_sb_all[0].lr);
++					sbp = proc_find(native_sb_pid);
++					if (sbp) {
++						native_report_trap_image(sbp, native_sb_all[0].pc);
++						native_report_trap_image(sbp, native_sb_all[0].lr);
++						proc_rele(sbp);
++					}
 +				}
 +			}
 +
