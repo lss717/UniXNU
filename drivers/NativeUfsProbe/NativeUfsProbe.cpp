@@ -128,6 +128,9 @@ static volatile uint64_t gH103StartTicks;
 static volatile uint64_t gH103BeatTicks;
 // H312: set once the stall record is on disk, so the watchdog stops overwriting it with "alive".
 static volatile int gH103StallRecorded;
+// H317: set when a log flush lost the I/O lock, so the next flushes step aside for the main path.
+static volatile uint64_t gH103FlushBackoffTicks;
+static volatile uint32_t gH103FlushSkips;
 static volatile uint32_t gH103SlotWriteErrors;
 /* H289: the persistent ring stopped at 258 s in H288 while the system kept running for
  * another 300 s, so the flush path needs to say whether it is failing or merely idle. */
@@ -1080,7 +1083,8 @@ class NativeUfsProbe : public IOService {
   static void logThread (void *, wait_result_t);
   static void hbTimerFired (OSObject *owner, IOTimerEventSource *sender);
   void hbTimerTick (IOTimerEventSource *sender);
-  bool logWrite (uint64_t rel, uint32_t blocks, const void *src);
+  bool logWrite (uint64_t rel, uint32_t blocks, const void *src,
+      uint64_t lockTicks = 38400000ULL);
   bool logSync (void);
   // H311: one-block record outside the ring so a dead machine still says whether it panicked
   // or stalled.  Block 250 sits in the reserved header area (slots begin at 257) and takes no
@@ -1126,6 +1130,10 @@ static void
 h103FlushNow (void)
 {
   if (gH103SlotBusy) {
+    return;
+  }
+  if (gH103FlushBackoffTicks != 0 && mach_absolute_time () < gH103FlushBackoffTicks) {
+    gH103FlushSkips = gH103FlushSkips + 1;
     return;
   }
   struct H103MsgBuf *m = msgbufp;
@@ -1787,6 +1795,10 @@ waitForCompletion (uint8_t *list, uint32_t *ocs, unsigned *loops,
  * timing out says the command took longer than the bound, not that the queue is
  * wedged. Give it enough room to survive a slow command before failing. */
 #define UFS_DATA_LOCK_TICKS  (576000000ULL)  /* 30 s at 19.2 MHz */
+/* H317: the log is a diagnostic, so it must never make the main I/O path wait.  A flush that
+ * cannot take the lock in 100 ms is dropped and the next two seconds are skipped. */
+#define UFS_LOG_LOCK_TICKS   (1920000ULL)    /* 100 ms at 19.2 MHz */
+#define UFS_LOG_BACKOFF_TICKS (38400000ULL)  /* 2 s */
 static volatile uint64_t gLockOwnerTid;
 static volatile uint64_t gLockAcquiredTicks;
 static volatile uint32_t gLockWaiters;
@@ -2469,7 +2481,8 @@ NativeUfsProbe::readWindow4k (uint64_t lba, void *out)
 }
 
 bool
-NativeUfsProbe::logWrite (uint64_t rel, uint32_t blocks, const void *src)
+NativeUfsProbe::logWrite (uint64_t rel, uint32_t blocks, const void *src,
+                          uint64_t lockTicks)
 {
   if (!fReady || !fLock || !src || !blocks || rel >= fLogBlocks ||
       blocks > fLogBlocks - rel || blocks > UFS_DATA_MAX / 4096) {
@@ -2485,7 +2498,7 @@ NativeUfsProbe::logWrite (uint64_t rel, uint32_t blocks, const void *src)
     }
   }
   const unsigned bytes = blocks * 4096U;
-  if (!lockWithTimeout (fLock, "logWrite", 38400000ULL, false)) {
+  if (!lockWithTimeout (fLock, "logWrite", lockTicks, false)) {
     return false;
   }
   uint8_t cdb[16] = { 0x2a };
@@ -2837,7 +2850,12 @@ NativeUfsProbe::h103SlotWrite (void)
           static_cast<uint8_t> (m->msg_bufc[(offset + i) % size]);
     }
     uint32_t slot = gH103SlotCursor % slotCount;
-    bool wrote = logWrite (257U + slot * 32U, blocks, body);
+    // H317: a contended lock drops this slot instead of stalling the heartbeat, and the next
+    // flushes back off briefly so the main I/O path keeps the queue to itself.
+    bool wrote = logWrite (257U + slot * 32U, blocks, body, UFS_LOG_LOCK_TICKS);
+    if (!wrote) {
+      gH103FlushBackoffTicks = mach_absolute_time () + UFS_LOG_BACKOFF_TICKS;
+    }
     if (!wrote) {
       gH103SlotWriteErrors = gH103SlotWriteErrors + 1;
       if (gH103SlotWriteErrors <= 8 || (gH103SlotWriteErrors % 32) == 0) {
@@ -2856,9 +2874,10 @@ NativeUfsProbe::h103SlotWrite (void)
       break;
     }
     if ((gH103FlushRounds % 60) == 1) {
-      IOLog ("NATIVE_UFS_LOG_STAT: rounds=%u seq=%u errors=%u idle=%u delta=%u n=%u\n",
+      IOLog ("NATIVE_UFS_LOG_STAT: rounds=%u seq=%u errors=%u idle=%u skips=%u delta=%u n=%u\n",
              (unsigned) gH103FlushRounds, (unsigned) (gH103SlotCursor + 1),
-             (unsigned) gH103SlotWriteErrors, (unsigned) gH103FlushIdleRounds, delta, n);
+             (unsigned) gH103SlotWriteErrors, (unsigned) gH103FlushIdleRounds,
+             (unsigned) gH103FlushSkips, delta, n);
     }
     H103LogHeader h;
     memset (&h, 0, sizeof h);
