@@ -23,13 +23,13 @@ diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
 +			{
 +				extern void native_report_trap_image(proc_t, uint64_t);
 +				static unsigned named;
-+				if (named < 3 && native_sb_alln > 0) {
++				if (named < 3 && native_sb_count > 0) {
 +					struct proc *sbp;
 +					named++;
 +					sbp = proc_find(native_sb_pid);
 +					if (sbp) {
-+						native_report_trap_image(sbp, native_sb_all[0].pc);
-+						native_report_trap_image(sbp, native_sb_all[0].lr);
++						native_report_trap_image(sbp, native_sb_rows[0].pc);
++						native_report_trap_image(sbp, native_sb_rows[0].lr);
 +						proc_rele(sbp);
 +					}
 +				}
