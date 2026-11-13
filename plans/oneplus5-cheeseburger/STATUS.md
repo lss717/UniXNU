@@ -13182,3 +13182,27 @@ NATIVE_MTL: scene# workspace nil
 - **B**：内核侧记录 bootstrap 服务 lookup 的成功/失败（`com.apple.frontboard.*`、
   `com.apple.backboard.*`），定位 SpringBoard 到底在等谁；
 - **C**：`launchd` 侧的 job 状态（若 job 存在但未启动，说明依赖未满足或程序缺失）。
+
+### 离线核对 OS 镜像：iPadOS 17.7.11 没有 frontboardd（2026-11-13）
+
+把 `out/ipsw/21H461/044-76040-038.dmg` 只读挂载后直接查文件系统：
+
+```
+/usr/libexec/                    backboardd  runningboardd        （无 frontboardd）
+/System/Library/LaunchDaemons/   com.apple.backboardd.plist  com.apple.runningboardd.plist
+```
+
+所以"`frontboardd` 从未 exec"**不是故障，而是镜像本就没有这个进程**——iOS 17 的场景服务器
+在 `backboardd` 内。
+
+因此 H280 里 `FBSceneManager=0` 的正确读法是：**该类在 backboardd 里尚未被加载**
+（FrontBoard 的服务器侧按需加载，没有场景请求就不会注册该类），而不是"没有场景服务器"。
+这一点修正了上一条记录的推断。
+
+离线检查的局限：iOS 17 的系统框架在 dyld shared cache 里，没有独立二进制可 `strings`，
+所以无法离线确认 `FBSceneManager` 究竟由哪个镜像提供。
+
+**当前对 C6a-SB 的判断**：SpringBoard 已 exec 且在运行，但它的 IPC 对端只有
+`lsd`(148) / `launchd`(82) / `backboardd`(1)，没有任何 UI/scene 相关往来；结合
+H251 记录的"SpringBoard 阻塞在 libsystem_kernel"，最可能是**启动早期等待某个 IPC 不回**，
+而不是 scene 请求被拒绝。
