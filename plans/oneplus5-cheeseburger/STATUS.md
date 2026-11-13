@@ -12894,3 +12894,32 @@ boot-arg `sheng-fb-gpu=1` + 在 `A540TracePlugin` 里接 `GpuScanoutClient` 循�
 2. 桩 PMGR 与 `sheng-pmgr=2` 冲突：AMFI 在 `ConfigurationSettings.cpp:235` 找不到 PMGR7 而 panic。
    这在设计上正确——**要跑后期参数就必须用真实 PMGR**。
 3. 真实 PMGR 的"早停"是在基线参数下测的，尚未与参照参数组合验证。
+
+### H273g：真实 PMGR + 参照参数 = 首个"全新链"到达 SpringBoard/Metal（2026-11-13）
+
+镜像 `boot-H273g.img`（`4c9f513e…`），内核 `057bec93…`（真实 PMGR，AON 绑定取自
+`057bec93` 自身的上一轮 prelink），payload 带信任缓存 + gpuaddon + scratch-data，
+boot 参数与 `boot-H272r.img` 完全一致。
+
+关键结果（屏幕日志尾部）：
+
+```
+NATIVE_MTL: cmdBuf#149 renderCommandEncoderWithDescriptor … encoder#150 endEncoding
+NATIVE_MTL: kind#162 copyFromTexture:…
+NATIVE_SBPC: sample=105..107 comm=SpringBoard tid=290 tid=347 …   （SBTHR 2 uniq=2）
+NATIVE_UFS_SLOT: … / NATIVE_GPU_PWR: c1e2 mode … / NATIVE_ACCEL_HB …
+disk6: I/O error.
+NATIVE_TRAP: pid=56 comm=backboardd exc=1 code=0xa sub=0x1a0893f48 sig=10   （SIGBUS）
+NATIVE_EXIT: pid=56 ppid=1 comm=backboardd status=0xa ns=2
+panic(cpu 0 caller 0xfffffff0079f8d9c): ipc_space.h:173 assertion failed: table != NULL
+```
+
+判定：
+
+1. **构建链闭环成立**——全新 clone 的产物在正确参数下跑到用户态，SpringBoard 发起
+   Metal render command encoder 与 texture 拷贝，这是旧链 `boot-H272r` 之外的更远阶段。
+2. 新的阻塞点是 **backboardd SIGBUS → 内核 `ipc_space.h:173 (table != NULL)` 断言**。
+   这是内核 IPC 问题，不是显示链问题；需要按 `NATIVE_TRUSTCACHE`/`NATIVE_EXIT` 的
+   取证方式单独定位（`NATIVE_EXIT_DESC` 尾部被截断，需完整 ring 日志）。
+3. 三条参数/PMGR 组合的对照已写入上文表；**基线参数 ≠ 当前阶段参数**，以后上机一律
+   取同阶段镜像的参数表。
