@@ -1,0 +1,27 @@
+diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
+--- a/osfmk/kern/task.c
++++ b/osfmk/kern/task.c
+@@ -11005,3 +11005,23 @@
+ 	native_xpc_p_in = native_xpc_sb_in;
+ 	native_xpc_p_other = native_xpc_sb_other;
+ }
++
++/* H251-H254 (patches/xnu/experimental) were generated from a diverged tree and do not
++ * apply to a fresh source. The UFS probe driver names their entry points, so keep the
++ * symbols linkable as no-ops until the series is rebased; delete this block with them. */
++void
++native_sb_set_quiet(int on)
++{
++	(void)on;
++}
++
++void
++native_sb_trace_start(void)
++{
++}
++
++void
++native_sb_trace_dump(unsigned burst)
++{
++	(void)burst;
++}
