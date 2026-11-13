@@ -309,15 +309,33 @@ h103StallCheck (void)
 // 933 s with no record at all.  This thread never returns: it overwrites the marker block with
 // "alive" once a minute (proving the marker path itself works) and stops stamping once a stall
 // has been recorded, so the stall is not erased.
+// H313: the ring only keeps its last slots, so the "client enter" lines that say who registered
+// on the legacy display are long gone by the time a boot dies.  Dump the whole client table - it
+// carries pid, comm and the per-selector call counts - from the watchdog at fixed points.
+static void
+h103DumpDisplayClients (void)
+{
+  extern "C" unsigned native_legacy_clients_dump (char *out, unsigned cap);
+  static char buffer[1200];
+  buffer[0] = 0;
+  unsigned count = native_legacy_clients_dump (buffer, sizeof buffer);
+  IOLog ("NATIVE_LEGACY_CLIENTS: n=%u %s\n", count, buffer);
+}
+
 static void
 nativeWatchdogThread (void *, wait_result_t)
 {
   unsigned ticks = 0;
+  unsigned seconds = 0;
   for (;;) {
     IOSleep (1000);
+    seconds++;
     h103StallCheck ();
     if (gH103StallRecorded) {
       continue;
+    }
+    if (seconds == 120 || seconds == 300 || seconds == 600 || seconds == 900) {
+      h103DumpDisplayClients ();
     }
     if (++ticks >= 60) {
       ticks = 0;
