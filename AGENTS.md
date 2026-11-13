@@ -311,6 +311,12 @@ These are ordered by how much time they wasted, not by how likely they are.
   `dd if=/dev/block/by-name/userdata_ios of=/tmp/x bs=4096 skip=<blocks-8192>
   count=8192`, then `scripts/h103-log-pull.py --slots 256`. Recompute `skip`
   when the partition size changes. TWRP's `dd` does not accept `iflag=direct`.
+- **A pulled ring may be a previous boot's.** Every slot starts with
+  `SHLOGS v2 boot=<id> seq=<n>`; a boot that dies before its first flush leaves
+  the ring untouched, and the pull then shows another boot's uptime (H337 was
+  read as "alive at 473 s" when that content belonged to an older boot and the
+  current one had only written seq=0). Always group the slot stamps by boot id
+  before believing a runtime figure from the ring.
 - **The ring stops early and silently** (observed at 187 s, 196 s, 258 s, 532 s
   and 1115 s across boots). Adding `NATIVE_UFS_LOG_STAT` / `NATIVE_UFS_LOG_FAIL`
   showed no write failures, and `UFS_LOG_STAT rounds=1` showed the flush was
