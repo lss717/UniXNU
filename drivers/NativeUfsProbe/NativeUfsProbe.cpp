@@ -1721,6 +1721,40 @@ compatibleContains (OSData *compatible, const char *needle)
  * writes are idempotent, so a resend is safe.  Only a poisoned queue gives up at once. */
 static bool ufsCommand (UfsQueue *q, uint8_t lun, const uint8_t *cdb, unsigned bytes, void *dst);
 
+/* H323: one OCS timeout used to poison the queue for the rest of the boot.  Every later read then
+ * returned EIO straight away, APFS failed the page-in, and the process that touched the page died
+ * - SpringBoard among them, which is the "got err 5 / too many corpses" screen.  A timeout leaves
+ * the transfer list wedged, so recovery is a host-controller reset; block reads are idempotent, so
+ * the caller can simply retry once the controller is ready again. */
+static bool
+ufsRecover (UfsQueue *q)
+{
+  if (!q || !q->hc) {
+    return false;
+  }
+  const uint32_t beforeIs = read32 (q->hc, UFS_REG_IS);
+  const uint32_t beforeDb = read32 (q->hc, UFS_REG_UTRLDBR);
+  write32 (q->hc, UFS_REG_HCE, read32 (q->hc, UFS_REG_HCE) & ~1U);
+  spinTicks (38400);                                  /* 2 ms to quiesce */
+  write32 (q->hc, UFS_REG_IS, 0xffffffffU);
+  write32 (q->hc, UFS_REG_UTRLDBR, 0);                /* drop the stuck transfer */
+  write32 (q->hc, UFS_REG_HCE, read32 (q->hc, UFS_REG_HCE) | 1U);
+  uint32_t hcs = 0;
+  for (unsigned i = 0; i < 200; ++i) {
+    hcs = read32 (q->hc, UFS_REG_HCS);
+    if ((hcs & 3) == 3) {
+      break;
+    }
+    spinTicks (1920);                                 /* 100 us */
+  }
+  const bool ready = (hcs & 3) == 3;
+  q->poisoned = false;
+  gUfsInFlight = 0;
+  IOLog ("NATIVE_UFS_RECOVER: is=%x db=%x hcs=%x ready=%u\n",
+         beforeIs, beforeDb, hcs, ready ? 1u : 0u);
+  return ready;
+}
+
 static bool
 ufsCommandRetry (UfsQueue *q, uint8_t lun, const uint8_t *cdb, unsigned bytes, void *dst,
                  const char *who)
@@ -1732,10 +1766,16 @@ ufsCommandRetry (UfsQueue *q, uint8_t lun, const uint8_t *cdb, unsigned bytes, v
       }
       return true;
     }
-    if (!q || q->poisoned) {
-      IOLog ("NATIVE_UFS_RETRY: %s abandoned attempt=%u poisoned=%u\n", who, attempt,
-             q ? (unsigned) q->poisoned : 2u);
+    if (!q) {
       return false;
+    }
+    if (q->poisoned) {
+      // H323: recover instead of abandoning the read for the rest of the boot.
+      IOLog ("NATIVE_UFS_RETRY: %s poisoned at attempt=%u, recovering\n", who, attempt);
+      if (!ufsRecover (q)) {
+        return false;
+      }
+      continue;
     }
     if (attempt == 0 || attempt == 7) {
       IOLog ("NATIVE_UFS_RETRY: %s wait attempt=%u doorbell=%u bytes=%u\n", who, attempt,
