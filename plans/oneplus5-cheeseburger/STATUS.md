@@ -13662,3 +13662,21 @@ IOUC AGXDeviceUserClient failed MACF in process pid 163, mediaserverd
 1. mediaserverd 为什么 `SIGABRT`（`status=0x6`）——先看它是在 GPU 打开失败后主动 abort，
    还是自身页换入失败；
 2. `AGXDeviceUserClient` 的 MACF 拒绝是否可以放行（与我们插件用的 trust cache 是同一类问题）。
+
+### H304 源码审计：同类的"单进程闸门"只有一处（2026-11-13）
+
+按"同类坑"逐一核对源码，结论与处置：
+
+| 检查项 | 位置 | 结论 |
+| --- | --- | --- |
+| MACF 用户客户端准入 | `iokit/Kernel/IOUserClient.cpp` `native_sandbox_grant()` | **只放行 `NativeSandboxGrantProcess` 里的单个进程名**（backboardd），mediaserverd 因此被拒并崩溃循环 → 已放行（本条） |
+| 第二处 MACF 检查 | 同文件 `io_service_open_ndr` 与 `is_io_service_open_extended` | 两处都调用同一个 `native_sandbox_grant()`，**一处修改即全部生效** |
+| 属性缺失时的兜底 | 同文件 H200 分支 | 硬编码 `backboardd` + 类名 `AGXAccelerator`；当前属性始终存在，兜底不参与 |
+| addon 覆盖系统目录 | `native_gpu_addon_mount()`（`zzy-native-gpu-addon-mount.patch`） | 用 `MNT_RDONLY | MNT_UNION` 且校验"sealed 下层仍可见 + owner 条目可见"（stage 3/4/5），**是叠加不是替换**，不会隐藏 LaunchDaemons |
+| 我们自己的驱动是否按进程拒绝 | `drivers/NativeMobileDisplay`、`drivers/NativeUfsProbe` | 无 `kIOReturnNotPermitted`/`NotPrivileged` 返回，未发现额外闸门 |
+| `drivers/NativeAdreno`（未启用，`XNU_NATIVE_ADRENO=0`） | `NativeAdrenoPublish.cpp` | 有一套自己的 grant/cap 逻辑（每进程限 8 次），当前构建不参与 |
+
+其余"单进程假设"都只出现在**诊断探针**里（`NATIVE_SBPC` 的采样名单、`native_sb_grant` 的日志），
+不影响系统功能。
+
+因此这一类坑目前只剩已修的 mediaserverd 一处；下一轮上机用于验证。
