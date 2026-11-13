@@ -122,6 +122,9 @@ static volatile uint32_t gH103LogSecs = 10;
 static volatile int gH103HbTimerOn;
 static volatile uint64_t gH103StartTicks;
 static volatile uint32_t gH103SlotWriteErrors;
+/* H289: the persistent ring stopped at 258 s in H288 while the system kept running for
+ * another 300 s, so the flush path needs to say whether it is failing or merely idle. */
+static uint32_t gH103FlushRounds, gH103FlushIdleRounds;
 // H103fm: even when the message buffer is unchanged, rewrite the header every
 // two seconds from the next completed read.  uptime_s then proves whether the
 // read path was still alive after the last kernel log line.
@@ -2469,6 +2472,12 @@ NativeUfsProbe::h103SlotWrite (void)
       static_cast<uint32_t> (m->msg_bufx) : 0;
   uint32_t previous = gH103LastSlotMsgX < 0 ? 0 : static_cast<uint32_t> (gH103LastSlotMsgX);
   uint32_t delta = size ? (cursor + size - previous) % size : 0;
+  gH103FlushRounds++;
+  if (!delta) {
+    gH103FlushIdleRounds++;
+  } else {
+    gH103FlushIdleRounds = 0;
+  }
   const uint32_t stampBytes = 128;
   const uint32_t chunkPayload = 32U * 4096U - stampBytes;
   const uint32_t uptime = gH103StartTicks ?
@@ -2500,6 +2509,11 @@ NativeUfsProbe::h103SlotWrite (void)
     bool wrote = logWrite (257U + slot * 32U, blocks, body);
     if (!wrote) {
       gH103SlotWriteErrors = gH103SlotWriteErrors + 1;
+      if (gH103SlotWriteErrors <= 8 || (gH103SlotWriteErrors % 32) == 0) {
+        IOLog ("NATIVE_UFS_LOG_FAIL: slot=%u seq=%u errors=%u delta=%u n=%u blocks=%u\n",
+               slot, (unsigned) gH103SlotCursor, (unsigned) gH103SlotWriteErrors,
+               delta, n, blocks);
+      }
     }
     if (attempts++ < 8) {
       IOLog ("NATIVE_UFS_SLOT: attempt=%u slot=%u lba=%llx body=%u blocks=%u "
@@ -2509,6 +2523,11 @@ NativeUfsProbe::h103SlotWrite (void)
     }
     if (!wrote) {
       break;
+    }
+    if ((gH103FlushRounds % 60) == 1) {
+      IOLog ("NATIVE_UFS_LOG_STAT: rounds=%u seq=%u errors=%u idle=%u delta=%u n=%u\n",
+             (unsigned) gH103FlushRounds, (unsigned) (gH103SlotCursor + 1),
+             (unsigned) gH103SlotWriteErrors, (unsigned) gH103FlushIdleRounds, delta, n);
     }
     H103LogHeader h;
     memset (&h, 0, sizeof h);
