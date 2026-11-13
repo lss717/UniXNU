@@ -32,8 +32,12 @@ set -e
 # The compile is CPU bound; the baseline script falls back to -j4, which halves the
 # throughput of this 8-core builder. Nine builds in November used JOBS=1 only while
 # the non-booting builds were being isolated, and H269 showed the cause was a missing
-# kit patch, not the job count.
-export JOBS="${JOBS:-8}"
+# kit patch, not the job count. H330: read the job count from the machine instead of
+# hard-coding it, so the same command is right on any builder; JOBS still overrides.
+if [ -z "${JOBS:-}" ]; then
+  JOBS=$(sysctl -n hw.perflevel0.physicalcpu 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+fi
+export JOBS
 
 TREE="$HOME/UniXNU/out/cheeseburger/tree"
 WORK="$TREE/.cache/xnu-work"
