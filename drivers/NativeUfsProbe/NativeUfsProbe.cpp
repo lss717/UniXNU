@@ -517,7 +517,13 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
     native_sb_trace_dump (burst);
     IOLog ("NATIVE_SBPC: burst=%u done\n", burst);
     if (burst < 9) {
-      IOSleep (30000);
+      // H303: the gaps between bursts were 30 s of no flushing at all, which is where the
+      // persistent ring kept dying (187-242 s) while the system still had 300+ s to run.
+      // Flush once a second across the whole gap instead.
+      for (unsigned gap = 0; gap < 30; ++gap) {
+        IOSleep (1000);
+        native_log_flush_hook ();
+      }
     }
   }
   for (unsigned sample = 0; sample < 10; ++sample) {
@@ -532,7 +538,11 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
       IOLog ("NATIVE_SBPC: call name=%s sample=%u\n", a540SbNames[index], sample);
       native_sb_pc_sample (a540SbNames[index], sample);
     }
-    IOSleep (10000);
+    // H303: the slow series used to sleep ten seconds with no sync; keep the ring moving.
+    for (unsigned gap = 0; gap < 10; ++gap) {
+      IOSleep (1000);
+      native_log_flush_hook ();
+    }
   }
   IOLog ("NATIVE_SBPC: done\n");
 }
@@ -547,10 +557,16 @@ heartbeatThread (void *, wait_result_t)
     // H157: a boot that dies in launchd is over in a few seconds, long before a
     // 10 s beat.  Beat once per second until the h107 gate opens so the early
     // flush in h103SlotTick() can persist the crash window.
-    IOSleep (h107GateOpen () ? 10000 : 1000);
+    // H303: after the gate opened this slept 10 s, so a crash could lose ten seconds of the
+    // record; that gap is where the ring kept ending (187-242 s). Beat every second and sync
+    // the persistent ring every fifth beat, which bounds the loss to five seconds.
+    IOSleep (1000);
     h103MaybeSetAcceleratorPlugin ();
     h103ProbeAcceleratorService ();
     beat++;
+    if ((beat % 5) == 0) {
+      native_log_flush_hook ();
+    }
     // H220: the long ALIVE line can be truncated inside a log slot, and its abi=/accel= fields
     // are the ones that matter here. This short line carries them alone, once per beat.
     // H225: two GPUCC registers per beat, inside the line that always survives the log window
