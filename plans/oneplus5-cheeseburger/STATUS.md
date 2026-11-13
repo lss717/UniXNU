@@ -13999,3 +13999,34 @@ H321 即按此实现（`patches/xnu/…-h321-sandbox-mask-off.patch`）。
 
 **另外记录**：h280b 是历史日志里 SpringBoard 状态最好的一轮（n=4~5），但它同样
 `val=0 xf=0 fr=0` ——**80 份日志里没有任何一轮真正出过帧**。
+
+#### H321/H322：sandbox 修复生效，但 UFS 毒化终结了整个用户态（2026-11-14）
+
+| 轮次 | 改动 | 结果 |
+| --- | --- | --- |
+| H321 | `task_get_mach_*_filter_mask` 返回 0 掩码 | `syscall-mig` 拒绝 **113 次 → 0 次**；`lsd` 全程有线程；存活到 611 s+ |
+| H322 | ADT 增加 `mac-address-wifi0` / `mac-address-bluetooth0` | 见下：仍被 UFS 毒化终结 |
+
+**H321 的正面结果（已证实）**
+
+- `Protobox: lsd(…) deny … syscall-mig` 彻底消失 → sandbox 掩码修复有效；
+- `runningboardd` 从 `n=0` 变为 `n=5` 并正常调度；
+- `NATIVE_LEGACY_CLIENTS` 首次完整落盘：pid 56/88/79 三个 client，
+  调用落在 selector 6/8/12/15/17/22/27/29/33/50/57/74/79/84/88——**仍然没有任何 3/4/5**。
+
+**仍然存在的环**：`NATIVE_SBPORT` 显示 SpringBoard 等 `92/lsd`（`sr=2`），而 `lsd` 的接收侧
+指向 `27/SpringBoard`（`sr=1`）——两边互等回复。这是 scene 建不起来的直接形态。
+
+**H322 的结局**：ADT 补 MAC 后，屏幕出现大量
+
+```
+_vnode_dev_read:907: disk3 ### got err 5 reading blknum 90543 (num read errs: 121 …)
+NATIVE_UFS_RETRY: readWindow abandoned attempt=0 poisoned=1
+Process[154] crashed: SpringBoard. Too many corpses being created.
+```
+
+即**一次 OCS 超时把队列永久毒化**，之后所有读直接返回 EIO，APFS 页换入失败，
+SpringBoard 等进程被杀到 launchd 的尸体上限——这是比 IPC 更底层的终结者。
+
+H323 的修法：超时不再永久放弃，改为**复位 host controller（HCE 关→清 IS/门铃→开）并重试**，
+块读幂等所以安全；失败才真的返回错误。
