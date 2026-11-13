@@ -104,13 +104,13 @@ git clone https://github.com/lss717/UniXNU-cheeseburger
   - `python3 scripts/check-unixnu.py` (offline driver self-test; on this Linux
     host with GNU mtools 4.0.43 it currently stops at
     `FAIL: payload volume is reproducible` — confirm on macOS before treating
+    that as a source regression)
 - **The skip-setup seed is cached, so editing the tool changes nothing.** The
   payload step keys `data-skip-setup-<hash>.dbr` on the base seed and the
   arguments only; `scripts/seed-data-skip-setup.py` itself is not part of the
   key. After editing the tool, delete `out/<board>/payload/data-skip-setup-*.dbr`
   (H326 lost a build to a stale seed this way) — otherwise the payload ships the
   previous preferences.
-    that as a source regression)
 - Wait for a build by letting the build command itself return. Run it in the
   foreground (an SSH call to the macOS host returns when the build ends), or
   if it must run in the background, read its log once at completion. Do not
