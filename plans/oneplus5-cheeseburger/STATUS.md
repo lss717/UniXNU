@@ -13551,3 +13551,35 @@ NATIVE_MTL: srv#314 ports ctxid=3157440344 port=0xc453
 1. 内核侧：`sheng-gpu-addon=2` 时**跳过内容比较，强制重写**全部 addon 文件，
    并在日志打印 `written/same` 统计（H182b 已有字段）；
 2. 插件侧：加载时打印自身路径与文件大小/mtime，直接判断装的是哪一版。
+
+### H298：Data 卷挂载与 addon 投放强相关（2026-11-13）
+
+内核 `5f0a5a9e…`。按"是否出现 `mount-complete volume OwnerData`"分类这几次启动：
+
+| 日志 | OwnerData 挂载完成 | `NATIVE_GPU_ADDON` | 实际加载的插件 |
+| --- | --- | --- | --- |
+| H293 | ✗ | 0 条 | 旧 bundle |
+| H294 | ✗ | 0 条 | 旧 bundle（H292） |
+| H297 | ✗ | 0 条 | 旧 bundle（H295） |
+| **H298** | **✓** | **4 条（`written=3`）** | **H297（新）** |
+
+**结论：Data 卷挂载成功 → addon 被写入并生效；挂载失败 → 静默沿用旧 bundle。**
+addon 安装在 `native_owner_data_prepare()` 内，只有在 Data 卷通过
+`apfs`/非只读/设备匹配的校验后才会调用，因此这条相关性是机制性的，不是巧合。
+
+H298 的挂载与投放链（同一段日志）：
+
+```
+spaceman_scan_free_blocks: disk6 scan took …
+apfs_log_op_with_proc: disk6s1 mount-complete volume OwnerData, requested by: init (pid 1)
+NATIVE_GPU_ADDON: probe found=1 enabled=1 … zap-base=0xABE00000
+NATIVE_GPU_ADDON: blob … bytes=38704 count=3 repair=0
+NATIVE_GPU_ADDON: plugin=A540Trace files=3 written=3 same=0 failed=0
+```
+
+这也把 launchd 的 `SIGBUS` 串了进来：Data 卷挂不上时，APFS 页换入会失败，
+进程拿到 SIGBUS；H290–H298 中"能跑 400–1100 s"的轮次恰好都是挂载成功的轮次。
+
+遗留：新加的 `NATIVE_GPU_ADDON_ENTER` 在二进制里存在（`strings` 命中 1 次），
+但日志中没有输出，说明补丁把它插到了不会执行的位置或另一处同名片段——这条打印仍待修正，
+不过上面的挂载相关性已由 `mount-complete` 独立证实，不依赖它。
