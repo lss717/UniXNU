@@ -13767,3 +13767,23 @@ NATIVE_MTL: frame#643 present sent
 1. 删除 h306 后，`backboardd` 打开 legacy display 应回到 H304 的 11 次量级；
 2. `SpringBoard n=4` 采样应重新出现；
 3. 若此时再出 `initproc exited`，环内应能看到 `NATIVE_SIG: pid=1 sig=10`（无锁环不再依赖 printf）。
+
+#### H309：去掉 h306 后 exec 速率恢复，但 stage≥2 转储把日志带走（2026-11-14）
+
+内核 `e1369e0f…`（h306 已删除，h308 无锁信号环保留）。环覆盖 **50–201 s**。
+
+| 指标 | H308 | H309 |
+| --- | --- | --- |
+| `NATIVE_EXEC` 总数 | 19 | **134** |
+| launchd 信号 | 13 × SIGCHLD | **21 × SIGCHLD** |
+| 环最后一行 | 心跳 | `NATIVE_PROC_DUMP: trigger stage=2 … elapsed_ms=12926` |
+
+**结论一**：h306（在 BRK 陷入路径里 `vm_shared_region_get()` + `printf()`）确实是 H308 的
+元凶，删除后 exec 速率回到 H304 量级。
+
+**结论二**：**stage≥2 的进程转储会吞掉日志**。转储跑在心跳线程上，而持久环的 flush 也在
+同一线程，所以转储一开始停住，环就再没有任何写入——连 `native_proc_state_dump()` 自己的
+`NATIVE_PROC_DUMP: begin` 都没落盘。这解释了 200 s/900 s 附近"日志恰好停在某个诊断点"的历史现象。
+
+H310 的处理：该转储是 H105 时期的诊断，改为**默认关闭**，仅在显式传 `h105-dump=1` 时执行；
+同时把 `native_log_flush_hook()` 插到转储前、转储后和 wait-graph 后，使开启时也能看出卡在哪一步。

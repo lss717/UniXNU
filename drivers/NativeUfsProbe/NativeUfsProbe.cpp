@@ -282,6 +282,20 @@ h105DumpTick (void)
   if (gH105DumpStage >= 3 || !h107GateOpen ()) {
     return false;
   }
+  // H310: this dump runs on the heartbeat thread, which is also the only thing that flushes
+  // the persistent ring, so any stall here takes the record with it: H309 ended exactly at
+  // "trigger stage=2" with not even the dump's own "begin" line on disk.  It is an H105-era
+  // diagnostic, so it is off unless the boot explicitly asks for it.
+  {
+    static int dumpWanted = -1;
+    if (dumpWanted < 0) {
+      int value = 0;
+      dumpWanted = PE_parse_boot_argn ("h105-dump", &value, sizeof value) && value ? 1 : 0;
+    }
+    if (!dumpWanted) {
+      return false;
+    }
+  }
   uint64_t now = mach_absolute_time ();
   if (!gH105GateTicks) {
     gH105GateTicks = now;
@@ -304,9 +318,13 @@ h105DumpTick (void)
          stage, native_boot_flags, (unsigned long long) gUfsCommands,
          (unsigned long long) (elapsed / 19200),
          (native_boot_flags & 4) ? "" : " fallback");
+  // H310: flush before and inside the dump so a stall is visible instead of silent.
+  native_log_flush_hook ();
   native_proc_state_dump ();
+  native_log_flush_hook ();
   if (stage >= 2) {
     native_proc_wait_graph ();
+    native_log_flush_hook ();
   }
   return true;
 }
