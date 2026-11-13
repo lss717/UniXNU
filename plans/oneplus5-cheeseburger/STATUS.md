@@ -13706,3 +13706,32 @@ NATIVE_MTL: frame#643 present sent
 **插件仍在自行填充并呈现整帧**（`8355840 = 1080×1920×4`）。此前把 `probe_display_frame`
 改成 observe-only 只挡住了其中一条路径，`probe_drawable` 那条仍在渲染——
 这会让"谁在提交帧"重新变得不可分辨（H277 的教训）。
+
+### H305：跑到 908 s，崩溃前 1 秒内没有任何 I/O 失败（2026-11-13）
+
+内核 `3226af21…`（心跳 1 s 同步 + `NATIVE_UFS_READFAIL` 计数）。日志 3750 行 / **702–908 s**。
+
+| 指标 | 结果 |
+| --- | --- |
+| `NATIVE_UFS_READFAIL` | **0** |
+| `I/O error` / `decmpfs` / `pagein` | **0** |
+| 运行时长 | **908 s**（历史最长） |
+| 崩溃前最后一条 | `NATIVE_SBPC: sample=864 … SpringBoard n=4`、`NATIVE_ACCEL_HB` |
+| `initproc exited` panic | 仍有（屏幕） |
+
+**page-in 假设被削弱**：如果 SIGBUS 来自窗口读失败，1 秒同步窗口内应先出现
+`NATIVE_UFS_READFAIL`；实际一条都没有，且读路径的 `NATIVE_UFS_ALIVE` 显示
+`winFlight=0`、累计 `winBytes=4.36 GiB` 正常。
+
+崩溃前反复出现的 `NATIVE_BRK`（`osfmk/arm64/sleh.c` 的 H136 记录器）是**用户态 BRK 陷入**
+（libc abort 路径或 `__builtin_trap`），其寄存器形态（`x1=x2=0x103`、`x4=0x20`、`x6=0x3`）
+更像 `os_crash`/断言参数，而不是内存访问错误。
+
+因此 SIGBUS 的三个剩余候选：
+
+1. **文件映射被失效**（bindfs 叠加卷 / 挂载被替换后，旧映射页不可换入）；
+2. **设备内存映射被撤销**后仍被访问（MMIO 映射）；
+3. launchd 自身 abort 路径（`BRK`）与 SIGBUS 并存的误读。
+
+下一步建议：把 `NATIVE_BRK` 的 `pc/lr` 与本轮共享缓存基址一起记录（H285 的 `sr_base` 机制），
+直接符号化出 abort 发生在哪个库——这比继续在黑箱里加探针更有效。
