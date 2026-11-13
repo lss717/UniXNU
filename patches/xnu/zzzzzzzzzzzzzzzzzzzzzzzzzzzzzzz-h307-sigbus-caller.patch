@@ -9,11 +9,11 @@ diff --git a/bsd/kern/kern_sig.c b/bsd/kern/kern_sig.c
 +static void
 +native_sigbus_probe(proc_t p, int signum, void *caller)
 +{
-+	if (signum != SIGBUS) {
++	if (signum != SIGBUS && proc_getpid(p) != 1) {
 +		return;
 +	}
-+	printf("NATIVE_SIGBUS: pid=%d comm=%.16s caller=0x%llx\n",
-+	    proc_getpid(p), p->p_comm, (unsigned long long)(uintptr_t)caller);
++	printf("NATIVE_SIGBUS: pid=%d sig=%d comm=%.16s caller=0x%llx\n",
++	    proc_getpid(p), signum, p->p_comm, (unsigned long long)(uintptr_t)caller);
 +}
 +
  void
