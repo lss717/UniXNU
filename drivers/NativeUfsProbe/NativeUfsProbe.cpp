@@ -1537,7 +1537,12 @@ waitForCompletion (uint8_t *list, uint32_t *ocs, unsigned *loops,
 // (5.2 s), otherwise the lock expires while a command is legitimately running;
 // that is what turned the slow read at LBA 0x5b17b0 into repeated 2 s
 // kIOReturnTimeout failures.  115200000 ticks is 6 s at 19.2 MHz.
-#define UFS_DATA_LOCK_TICKS  (115200000ULL)  /* 6 s at 19.2 MHz */
+/* H285: a 6 s bound turned transiently slow UFS commands into hard I/O errors
+ * (disk5/disk6 err 60/5 -> decmpfs page-in failure -> process SIGBUS -> ipc_space
+ * panic).  The holder keeps the lock across one synchronous command, so a waiter
+ * timing out says the command took longer than the bound, not that the queue is
+ * wedged. Give it enough room to survive a slow command before failing. */
+#define UFS_DATA_LOCK_TICKS  (576000000ULL)  /* 30 s at 19.2 MHz */
 static volatile uint64_t gLockOwnerTid;
 static volatile uint64_t gLockAcquiredTicks;
 static volatile uint32_t gLockWaiters;
