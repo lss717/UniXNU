@@ -13583,3 +13583,26 @@ NATIVE_GPU_ADDON: plugin=A540Trace files=3 written=3 same=0 failed=0
 遗留：新加的 `NATIVE_GPU_ADDON_ENTER` 在二进制里存在（`strings` 命中 1 次），
 但日志中没有输出，说明补丁把它插到了不会执行的位置或另一处同名片段——这条打印仍待修正，
 不过上面的挂载相关性已由 `mount-complete` 独立证实，不依赖它。
+
+### H301：addon 写入成功仍会崩溃——修正 H298 的关联（2026-11-13）
+
+内核 `15e4193e…`，同一镜像连续两次上机：
+
+| 轮次 | `GPU_ADDON_SUMMARY` | 结果 |
+| --- | --- | --- |
+| H300 | `stage=4 status=0 calls=1 files=3 written=3` | 跑到 694 s，正常 |
+| **H301** | `stage=4 status=0 calls=1 files=3 written=3` | **launchd `initproc exited` panic** |
+
+**H298 那条"Data 挂载 ↔ addon 投放"的关联需要修正**：挂载与投放两次都成功，
+但一次稳定、一次崩溃。addon 投放不是稳定性的判别条件；`mount-complete volume OwnerData`
+缺失也不代表挂载失败（那只是 APFS 的一条日志）。
+
+新增的 `NATIVE_GPU_ADDON_SUMMARY` 在 60 s 打印，**每次都稳定落盘**，
+从此"挂载是否成功"这个问题可以随时回答，不必再猜。
+
+仍然缺的是崩溃现场：H301 的 ring 依旧在 **242 s** 停止，而 panic 在其后；
+屏幕上有 `NATIVE_PANIC: flags=… client=3 xfer=8 frames=0`（说明 panic 钩子确实执行了），
+但 ring 没有获得 242 s 之后的任何行。
+
+因此下一步应当给 `native_panic_flush()` 加"写入是否成功"的输出（它在 panic 路径上调用），
+判断是**拷贝没发生**还是**写入失败**——这是目前唯一还挡着崩溃归因的环节。
