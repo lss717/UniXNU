@@ -177,7 +177,6 @@ for ARCHIVE in \
   "scripts/build-arm-driver.py NativeVirtioBlock" \
   "scripts/build-arm-driver.py NativeRamBlock" \
   "scripts/build-arm-driver.py NativeUfsProbe" \
-  "scripts/build-native-ufs-runtime.py" \
   "scripts/build-sheng-pmgr.py" \
   "scripts/build-mockfs-fixture.py" \
   "scripts/build-libpthread-kernel.py"; do
@@ -185,6 +184,17 @@ for ARCHIVE in \
   # shellcheck disable=SC2086
   python3 $ARCHIVE
 done
+
+# build-native-ufs-runtime.py embeds the signed owner policies (built from the IPSW's
+# OS/SystemOS disk images). build-xnu-4k-baseline.sh links its archive only when
+# XNU_NATIVE_UFS=1, so a UFS-off build does not need those inputs. Turning UFS on later
+# means running scripts/build-owner-os-policy.py and the systemos equivalent first.
+if [ "${XNU_NATIVE_UFS:-0}" = 1 ]; then
+  echo "== archive scripts/build-native-ufs-runtime.py"
+  python3 scripts/build-native-ufs-runtime.py
+else
+  echo "== archive scripts/build-native-ufs-runtime.py skipped (XNU_NATIVE_UFS=0, the link does not use it)"
+fi
 
 DISPLAY_ARCHIVE="$TREE/build/native-legacy-display/libNativeLegacyDisplay.late.a"
 if [ ! -f "$DISPLAY_ARCHIVE" ] || \
