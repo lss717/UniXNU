@@ -285,6 +285,8 @@ h107GateOpen (void)
 // H311: ten seconds without a heartbeat beat means the heartbeat thread is stuck.  The sampler
 // keeps running on its own, so it leaves a "stall" record in the reserved block; finding that
 // record instead of a "panic" one says the machine hung rather than panicked.
+static void h103Marker (const char *kind);  // defined after the driver class is complete
+
 static void
 h103StallCheck (void)
 {
@@ -297,9 +299,7 @@ h103StallCheck (void)
     return;
   }
   reportedAt = now;
-  if (gH103Probe) {
-    gH103Probe->marker ("stall");
-  }
+  h103Marker ("stall");
 }
 
 static bool
@@ -1130,6 +1130,17 @@ native_panic_flush (void)
            (unsigned) beforeSeq, (unsigned) gH103SlotCursor,
            (unsigned) beforeErrors, (unsigned) gH103SlotWriteErrors);
   }
+}
+
+// H311: the sampler's stall detector only needs the marker call, and the driver class is still
+// incomplete where the detector sits, so this wrapper holds the typed access.
+static void
+h103Marker (const char *kind)
+{
+  if (gH103Probe == nullptr) {
+    return;
+  }
+  gH103Probe->marker (kind);
 }
 
 // H128: driven from heartbeatThread() only.  The spawned slot thread never
