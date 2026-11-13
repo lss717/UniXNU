@@ -30,7 +30,7 @@ November 2026 this cost several failed builds, each failing at a different step:
 ./unixnu fetch   -D ../UniXNU-cheeseburger   # then CONFIRM out/feeds/xnu-0b4b910d exists:
                                              # a "successful" fetch has been seen to skip xnu
 ./unixnu tree    -D ../UniXNU-cheeseburger
-JOBS=1 bash scripts/macos-build-kernel.sh    # records, archives, display archive, link
+JOBS=8 bash scripts/macos-build-kernel.sh    # records, archives, display archive, link
 ./unixnu build prelink -D ../UniXNU-cheeseburger
 ```
 

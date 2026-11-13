@@ -29,6 +29,12 @@
 
 set -e
 
+# The compile is CPU bound; the baseline script falls back to -j4, which halves the
+# throughput of this 8-core builder. Nine builds in November used JOBS=1 only while
+# the non-booting builds were being isolated, and H269 showed the cause was a missing
+# kit patch, not the job count.
+export JOBS="${JOBS:-8}"
+
 TREE="$HOME/UniXNU/out/cheeseburger/tree"
 WORK="$TREE/.cache/xnu-work"
 FEED="$TREE/refer/xnu"

@@ -32,7 +32,7 @@ The cheeseburger port needs a fetched feed and one complete kernel pass before a
 ./unixnu defconfig cheeseburger_defconfig -D ../UniXNU-cheeseburger
 ./unixnu fetch   -D ../UniXNU-cheeseburger   # confirm out/feeds/xnu-* exists afterwards
 ./unixnu tree    -D ../UniXNU-cheeseburger   # links out/feeds/* into tree/refer
-JOBS=1 bash scripts/macos-build-kernel.sh    # records, archives, display archive, link
+JOBS=8 bash scripts/macos-build-kernel.sh    # records, archives, display archive, link
 ./unixnu build prelink -D ../UniXNU-cheeseburger
 ```
 

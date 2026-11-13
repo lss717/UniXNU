@@ -32,7 +32,7 @@ cheeseburger 移植必须先拉到 feed，并完整跑一遍内核构建。全�
 ./unixnu defconfig cheeseburger_defconfig -D ../UniXNU-cheeseburger
 ./unixnu fetch   -D ../UniXNU-cheeseburger   # 之后确认 out/feeds/xnu-* 存在
 ./unixnu tree    -D ../UniXNU-cheeseburger   # 把 out/feeds/* 链接到 tree/refer
-JOBS=1 bash scripts/macos-build-kernel.sh    # 记录、归档、display 归档、链接
+JOBS=8 bash scripts/macos-build-kernel.sh    # 记录、归档、display 归档、链接
 ./unixnu build prelink -D ../UniXNU-cheeseburger
 ```
 
