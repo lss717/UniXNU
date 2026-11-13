@@ -13518,3 +13518,36 @@ displayWithName:  addDisplay:  removeDisplay:  setRendererFlags:  isSlotValid:
 **下一步（纯观测，不动行为）**：把 `CAWindowServerDisplay` 与 `CAContext` 的完整方法表
 dump 出来（无过滤），据此选正确的绑定接口；同时记录 `clientPortOfContextId:` 对两个
 context id 的返回，判断服务器是否认这两个客户端。
+
+### H296/H297：服务器认这两个 context，但 addon 投放不稳定（2026-11-13）
+
+H296（内核 `c59dae65…` + 插件 `ports` 探针，日志 11780 行 / 708 s）关键数据：
+
+```
+NATIVE_MTL: srv#313 ports ctxid=1873498055 port=0xbc13
+NATIVE_MTL: srv#314 ports ctxid=3157440344 port=0xc453
+```
+
+`clientPortOfContextId:` 对两个 context 都返回**非 0 客户端端口**：
+**渲染服务器已经接纳这两个 context**，缺的只是 display 侧的显示关联
+（`d0ctx=0`、`d0layer=-` 不变）。
+
+但同轮与 H297 都出现同一个交付问题：
+
+| 镜像 | 日志里的 build | 说明 |
+| --- | --- | --- |
+| H295 | `build H295` | 正常 |
+| H296 | `build H295`（含 H296 的 `ports` 行） | 代码是新的，build 号忘了改 |
+| H297 | `build H295` | **加载的仍是旧 bundle** |
+| H293/H294 | 无 `NATIVE_GPU_ADDON` 探针行 | addon 入口未执行 |
+
+即 `sheng-gpu-addon` 的投放**间歇性失效**，而且失效时日志里没有明显迹象
+（H297 的 ring 从 33.1 s 开始，30 s 的探针行可能被挤掉）。
+
+**因此插件侧实验必须先解决交付可见性**，否则每轮都可能是在观察旧二进制。
+
+建议的两条修法（择一）：
+
+1. 内核侧：`sheng-gpu-addon=2` 时**跳过内容比较，强制重写**全部 addon 文件，
+   并在日志打印 `written/same` 统计（H182b 已有字段）；
+2. 插件侧：加载时打印自身路径与文件大小/mtime，直接判断装的是哪一版。
