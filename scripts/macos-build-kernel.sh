@@ -85,13 +85,6 @@ if [ -d "$WORK/.git" ]; then
     break
   done
 fi
-# The bootstrap pass also restores the headers XNU omits (EXTERNAL_HEADERS/TrustCache);
-# when the compile records already exist that pass is skipped, so the archive builders
-# would meet a source tree without them.
-mkdir -p "$TREE/refer"
-if [ -d "$WORK/.git" ] && [ ! -d "$WORK/EXTERNAL_HEADERS/TrustCache" ]; then
-  ( cd "$TREE" && python3 scripts/prepare-xnu-source.py )
-fi
 NEED_PATCH=0
 if [ ! -d "$WORK/.git" ]; then
   NEED_PATCH=1
@@ -165,6 +158,19 @@ if [ ! -f "$RECORD" ]; then
   XNU_BOOTSTRAP=1 XNU_BOOT_PROGRESS=0 bash scripts/build-xnu-4k-baseline.sh || true
   if [ ! -f "$RECORD" ]; then
     echo "bootstrap pass left no compile records at $RECORD" >&2
+    exit 1
+  fi
+fi
+
+# The bootstrap pass also restores the headers XNU omits (EXTERNAL_HEADERS/TrustCache),
+# but it is skipped once the compile records exist, and scripts/ inside the tree is a copy
+# made by "unixnu tree" that can predate a fix. Use the repository copy and require the
+# result: a missing TrustCache/API.h otherwise surfaces much later, in the mockfs archive.
+if [ ! -d "$WORK/EXTERNAL_HEADERS/TrustCache" ]; then
+  echo "== restore omitted headers"
+  ( cd "$TREE" && python3 "$HOME/UniXNU/scripts/prepare-xnu-source.py" )
+  if [ ! -d "$WORK/EXTERNAL_HEADERS/TrustCache" ]; then
+    echo "TrustCache headers were not restored; the archive step cannot compile" >&2
     exit 1
   fi
 fi
