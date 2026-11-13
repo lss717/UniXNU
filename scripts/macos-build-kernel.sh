@@ -75,11 +75,22 @@ fi
 if [ -d "$WORK/.git" ]; then
   for stale in "$HOME"/UniXNU/patches/xnu/*.patch "$HOME"/UniXNU/kits/NativePrelink/patches/*.patch; do
     git -C "$WORK" apply --reverse --check "$stale" >/dev/null 2>&1 && continue
-    git -C "$WORK" apply --check "$stale" >/dev/null 2>&1 && continue
+    if git -C "$WORK" apply --check "$stale" >/dev/null 2>&1; then
+      echo "applying missing $(basename "$stale")"
+      git -C "$WORK" apply "$stale"
+      continue
+    fi
     echo "xnu-work cannot take $(basename "$stale"); rebuilding it from the feed"
     rm -rf "$WORK"
     break
   done
+fi
+# The bootstrap pass also restores the headers XNU omits (EXTERNAL_HEADERS/TrustCache);
+# when the compile records already exist that pass is skipped, so the archive builders
+# would meet a source tree without them.
+mkdir -p "$TREE/refer"
+if [ -d "$WORK/.git" ] && [ ! -d "$WORK/EXTERNAL_HEADERS/TrustCache" ]; then
+  ( cd "$TREE" && python3 scripts/prepare-xnu-source.py )
 fi
 NEED_PATCH=0
 if [ ! -d "$WORK/.git" ]; then
