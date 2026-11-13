@@ -13606,3 +13606,26 @@ NATIVE_GPU_ADDON: plugin=A540Trace files=3 written=3 same=0 failed=0
 
 因此下一步应当给 `native_panic_flush()` 加"写入是否成功"的输出（它在 panic 路径上调用），
 判断是**拷贝没发生**还是**写入失败**——这是目前唯一还挡着崩溃归因的环节。
+
+### H302：panic 现场仍未落盘（2026-11-13）
+
+内核 `458b26f5…`（含 `NATIVE_PANIC_FLUSH: seq=…->… errors=…->…`）。上机后 ring 仍然只到 **187 s**，
+且没有 `NATIVE_PANIC*` 行——panic 之后的日志（包括这条新诊断）没有进入持久 ring。
+
+现状可以这样概括：
+
+| 能力 | 状态 |
+| --- | --- |
+| 正常轮的持久日志 | ✅ 可到 694–1115 s（采样器兜底 flush） |
+| 崩溃轮的持久日志 | ❌ 仍然停在 187–242 s |
+| panic 屏上的诊断 | ✅ 可见（`NATIVE_PANIC`、`NATIVE_SBPC` 等），但**没有 `NATIVE_PANIC_FLUSH`** |
+
+也就是说 panic 路径上的那次 flush **没有产生任何持久输出**，而它自己的诊断行也无法留在 ring 里
+（flush 失败时，诊断行只进 msg 缓冲，不会被写盘）。
+
+**结论**：要归因 launchd 的 SIGBUS，必须换一条不依赖 panic 时写盘的取证通道。可选项：
+
+1. 把 ring 改成**内存直写**（panic 时不走 UFS，直接把 `msgbuf` 的最后 128 KiB 拷到已知物理页，
+   TWRP 侧再读）——彻底绕开 panic 时 I/O；
+2. 在系统存活时**周期性把 ring 同步到磁盘**（例如每 5 s），把可丢失窗口压到 5 s 内；
+3. 用串口/USB 控制台抓 live 输出（本项目此前未接）。
