@@ -13,7 +13,7 @@ diff --git a/bsd/uxkern/ux_exception.c b/bsd/uxkern/ux_exception.c
 diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -10658,6 +10658,28 @@
+@@ -10658,6 +10658,39 @@
  	proc_iterate(1U | 4U, native_sb_collect, NULL, NULL, NULL);
  	if (native_sb_pid > 0) {
  		if (strncmp(name, "SpringBoard", 11) == 0) {
@@ -27,10 +27,21 @@ diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
 +					struct proc *sbp;
 +					named++;
 +					sbp = proc_find(native_sb_pid);
-+					printf("NATIVE_SBPC_IMAGE: sample=%u pid=%d count=%u proc=%d pc=0x%llx slide=0x%llx\n",
-+					    sample, native_sb_pid, native_sb_count, sbp ? 1 : 0,
-+					    (unsigned long long)native_sb_rows[0].pc,
-+					    (unsigned long long)(native_sb_task ? native_sb_task->task_shared_region_slide : 0));
++					{
++						vm_shared_region_t sr = VM_SHARED_REGION_NULL;
++						mach_vm_offset_t srbase = 0;
++						sr = vm_shared_region_get(native_sb_task);
++						if (sr != VM_SHARED_REGION_NULL) {
++							(void)vm_shared_region_start_address(sr, &srbase, native_sb_task);
++							vm_shared_region_deallocate(sr);
++						}
++						printf("NATIVE_SBPC_IMAGE: sample=%u pid=%d count=%u proc=%d pc=0x%llx slide=0x%llx base=0x%llx off=0x%llx\n",
++						    sample, native_sb_pid, native_sb_count, sbp ? 1 : 0,
++						    (unsigned long long)native_sb_rows[0].pc,
++						    (unsigned long long)(native_sb_task ? native_sb_task->task_shared_region_slide : 0),
++						    (unsigned long long)srbase,
++						    (unsigned long long)(srbase ? native_sb_rows[0].pc - srbase : 0));
++					}
 +					if (sbp) {
 +						native_report_trap_image(sbp, native_sb_rows[0].pc);
 +						native_report_trap_image(sbp, native_sb_rows[0].lr);
