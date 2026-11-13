@@ -1155,6 +1155,22 @@ native_log_flush_hook (void)
   h103FlushNow ();
 }
 
+// H315: strstr is not declared for this driver, and the panic hook only needs a substring test.
+static bool
+nativeContains (const char *text, const char *needle)
+{
+  size_t length = strlen (needle);
+  if (!length) {
+    return true;
+  }
+  for (const char *at = text; *at; ++at) {
+    if (strncmp (at, needle, length) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // H117: called from XNU's panic path before the machine-layer handler prints
 // and stops the machine. The marker goes into the message buffer first, so a
 // written log proves a panic even though the panic text is printed afterwards.
@@ -1181,9 +1197,9 @@ native_panic_flush (void)
         tail[i] = (ch >= 32 && ch < 127) ? ch : ' ';
       }
       tail[want] = 0;
-      if (strstr (tail, "initproc exited") != nullptr) {
+      if (nativeContains (tail, "initproc exited")) {
         color = 0xffff8000U;        // orange: launchd exited
-      } else if (strstr (tail, "Kernel data abort") != nullptr) {
+      } else if (nativeContains (tail, "Kernel data abort")) {
         color = 0xff8000ffU;        // purple: kernel data abort
       }
     }
