@@ -13871,3 +13871,29 @@ NATIVE_SBPORT: req name=0x580b … peer=92/lsd               （请求发往 lsd
 
 H314 的改动：标记块追加 **msgbuf 尾部 1200 字节**，这样即便环形 flush 失败，
 `NATIVE_PANIC_STR` 的内容也会随标记块落盘——panic 原因不需要再靠屏幕。
+
+### 计划 H315：panic 时把屏幕刷成纯色（用户要求，2026-11-14）
+
+目的：**一眼判断死机类型**，不用读滚动的日志——panic 时整屏变成纯色，挂死时屏幕保持最后一帧。
+
+设计要点（已具备的前提）：
+
+1. 显示驱动持有 scanout 映射（`NativeLegacyDisplay` 的 cacheable scanout mapping），
+   填充 + 一次 cache clean 就是一次全屏写，成本与现有每帧一致；
+2. 新增 `native_legacy_panic_paint(uint32_t argb)`：
+   - 取当前 scanout 的 `base/stride/width/height`，`memset` 式按 4 字节填充；
+   - 不取任何可能被卡住的锁（与保留块标记同样的原则）；
+   - 填充后 `cacheClean`，确保控制器读到的是新内容；
+3. 由 `native_panic_flush()`（驱动，panic 路径）调用，**排在保留块标记之前或之后都可以**，
+   因为两者互不依赖；
+4. 颜色编码（可选，便于区分族）：
+   | 颜色 | 含义 |
+   | --- | --- |
+   | 纯红 `0xffff0000` | panic（默认） |
+   | 纯橙 `0xffff8000` | panic 且 panic 文本里含 `initproc` |
+   | 纯紫 `0xff8000ff` | panic 且含 `Kernel data abort` |
+   | 纯蓝 `0xff0000ff` | 由看门狗写下的 `stall`（真挂死） |
+5. 判据：屏幕纯色 = 已 panic（颜色给出族别）；屏幕静止且仍是日志 = 挂死。
+
+风险与边界：若 panic 发生在显示驱动尚未初始化时（早期 48 s 前），填充会直接返回，屏幕保持原样——
+这也是可接受的结果，保留块标记仍然有效。
