@@ -26,21 +26,18 @@ git submodule update --init --recursive
 
 ## 本 fork 的全新克隆构建（cheeseburger）
 
-cheeseburger 移植需要两遍内核构建，并且必须先拉到 feed。全新克隆漏掉任何一步，都会在下一步失败。
+cheeseburger 移植必须先拉到 feed，并完整跑一遍内核构建。全新克隆漏掉任何一步，都会在下一步失败。
 
 ```sh
 ./unixnu defconfig cheeseburger_defconfig -D ../UniXNU-cheeseburger
 ./unixnu fetch   -D ../UniXNU-cheeseburger   # 之后确认 out/feeds/xnu-* 存在
 ./unixnu tree    -D ../UniXNU-cheeseburger   # 把 out/feeds/* 链接到 tree/refer
-JOBS=1 bash scripts/macos-build-kernel.sh    # 第一遍：只构建 XNU，display 归档延后
-cd out/cheeseburger/tree && SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path) \
-  python3 scripts/build-arm-driver.py NativeUfsProbe
-cd "$OLDPWD" && JOBS=1 bash scripts/macos-build-kernel.sh   # 第二遍：归档并链接
+JOBS=1 bash scripts/macos-build-kernel.sh    # 记录、归档、display 归档、链接
 ./unixnu build prelink -D ../UniXNU-cheeseburger
 ```
 
 - `fetch` 曾被观察到"报告成功但没有克隆 xnu"。第一次内核构建前先确认 `out/feeds/xnu-*`，缺失时再跑一次 `fetch`。
-- `scripts/build-arm-driver.py` 的编译配方来自 `tree/build/xnu/ios-obj`，该目录只有在构建过一次 XNU 之后才存在，所以第一遍跳过 legacy display 归档、第二遍才生成。
+- `scripts/build-arm-driver.py` 的编译配方来自 `tree/build/xnu/ios-obj`，而链接还需要各归档构建脚本的产物。因此 `macos-build-kernel.sh` 会先跑一遍 `XNU_BOOTSTRAP=1` 和板级归档列表，再做最终链接。
 - A540 厂商固件是输入而非构建产物。把它们放在 UniXNU 检出目录的 `.cache/firmware/a540`；`OP5_A540_FIRMWARE` 可覆盖查找路径。
 
 启动镜像位于 `out/<board>/boot/boot.img`，旁边的 `boot.json` 是报告。选项写在子命令之后。

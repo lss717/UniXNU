@@ -30,10 +30,7 @@ November 2026 this cost several failed builds, each failing at a different step:
 ./unixnu fetch   -D ../UniXNU-cheeseburger   # then CONFIRM out/feeds/xnu-0b4b910d exists:
                                              # a "successful" fetch has been seen to skip xnu
 ./unixnu tree    -D ../UniXNU-cheeseburger
-JOBS=1 bash scripts/macos-build-kernel.sh    # first pass: XNU only
-cd out/cheeseburger/tree && SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path) \
-    python3 scripts/build-arm-driver.py NativeUfsProbe
-JOBS=1 bash scripts/macos-build-kernel.sh    # second pass: display archive + relink
+JOBS=1 bash scripts/macos-build-kernel.sh    # records, archives, display archive, link
 ./unixnu build prelink -D ../UniXNU-cheeseburger
 ```
 
@@ -43,8 +40,11 @@ Known traps on a fresh tree, in the order they bite:
 2. `tree/refer/*` is only populated by `tree`, and only after `fetch` filled
    `out/feeds/` — running `tree` first leaves `refer/` empty;
 3. `scripts/build-arm-driver.py` reads the compiler recipe from
-   `tree/build/xnu/ios-obj/.../IOPlatformExpert.cpo.json`, which only exists after one
-   XNU build — the first pass therefore defers the display archive (`9de1ca7`);
+   `tree/build/xnu/ios-obj/.../IOPlatformExpert.cpo.json`, and the link needs the
+   archives (`$CRYPTO_ARCHIVE`, the drivers, `libpthread`), which only the archive
+   builders produce. Both come from one XNU pass, so `macos-build-kernel.sh` now runs
+   a bootstrap pass (`XNU_BOOTSTRAP=1`) and then the board archive list itself; running
+   `build-xnu-4k-baseline.sh` alone on a fresh tree dies at `test -f "$CRYPTO_ARCHIVE"`;
 4. `OP5_A540_FIRMWARE` must point at a real A540 firmware cache, or the display archive
    step aborts with "A540 firmware cache not found";
 5. `scripts/macos-build-kernel.sh` cloned `.cache/xnu-work` from `tree/refer/xnu`

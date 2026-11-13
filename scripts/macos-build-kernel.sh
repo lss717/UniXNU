@@ -124,16 +124,44 @@ export XNU_SHENG_PMGR=1
 # display objects are linked into the prelinked kernel; rebuilding only XNU
 # after touching drivers/NativeMobileDisplay leaves a stale archive and the
 # boot dies with a bogus "Undefined kernel instruction" (H236ct, H173/H174).
+#
+# A brand-new tree has no compile records yet, and every archive builder below
+# (including this one) needs the recipe that only an XNU pass leaves behind.
+# `unixnu build kernel` handles that with a bootstrap pass; this script is the
+# qualified entry point for the port, so it does the same thing itself. Without
+# it a fresh tree dies at "test -f \"$CRYPTO_ARCHIVE\"" in the baseline script.
+RECORD="$TREE/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/osfmk/DEVELOPMENT/startup.o.json"
+if [ ! -f "$RECORD" ]; then
+  echo "== bootstrap pass for the compile records (it may stop at the link)"
+  XNU_BOOTSTRAP=1 XNU_BOOT_PROGRESS=0 bash scripts/build-xnu-4k-baseline.sh || true
+  if [ ! -f "$RECORD" ]; then
+    echo "bootstrap pass left no compile records at $RECORD" >&2
+    exit 1
+  fi
+fi
+
+# The board archive list of ../UniXNU-cheeseburger board.toml [kernel] archives,
+# in order. `unixnu build kernel` runs this list; keep the two in step.
+for ARCHIVE in \
+  "build-corecrypto-14.py" \
+  "build-corecrypto-14.py --namespace" \
+  "build-arm-driver.py ArmDTPlatform" \
+  "build-arm-driver.py ArmCpu" \
+  "build-arm-driver.py NativeAES" \
+  "build-arm-driver.py NativeVirtioBlock" \
+  "build-arm-driver.py NativeRamBlock" \
+  "build-arm-driver.py NativeUfsProbe" \
+  "build-native-ufs-runtime.py" \
+  "build-sheng-pmgr.py" \
+  "build-mockfs-fixture.py" \
+  "build-libpthread-kernel.py"; do
+  echo "== archive $ARCHIVE"
+  # shellcheck disable=SC2086
+  python3 $ARCHIVE
+done
+
 DISPLAY_ARCHIVE="$TREE/build/native-legacy-display/libNativeLegacyDisplay.late.a"
-# A brand-new tree has no ios-obj yet, and build-arm-driver.py needs it to read the
-# compiler recipe.  Skipping the archive here is safe: the archive only matters to the
-# link step, and the caller runs this script a second time after XNU exists, which then
-# builds it with the real recipe.  Without this the first build of a fresh clone always
-# dies with "FileNotFoundError: IOPlatformExpert.cpo.json".
-CPO="$TREE/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/iokit/DEVELOPMENT/IOPlatformExpert.cpo.json"
-if [ ! -f "$CPO" ]; then
-  echo "first build: XNU has not produced $CPO yet, so the legacy display archive is deferred to the next pass"
-elif [ ! -f "$DISPLAY_ARCHIVE" ] || \
+if [ ! -f "$DISPLAY_ARCHIVE" ] || \
    [ -n "$(find -L "$HOME/UniXNU/drivers/NativeMobileDisplay" -type f -newer "$DISPLAY_ARCHIVE" -print -quit 2>/dev/null)" ]; then
   echo "rebuilding the legacy display archive (sources newer than $DISPLAY_ARCHIVE)"
   SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)" python3 scripts/build-op5-legacy-display.py

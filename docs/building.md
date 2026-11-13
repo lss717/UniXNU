@@ -26,21 +26,18 @@ The device repository is remembered in `out/state.json` after the first `-D`.
 
 ## Fresh clone on this fork (cheeseburger)
 
-The cheeseburger port needs two kernel passes and a fetched feed before anything else runs. A fresh checkout that skips a step fails at the next one.
+The cheeseburger port needs a fetched feed and one complete kernel pass before anything else runs. A fresh checkout that skips a step fails at the next one.
 
 ```sh
 ./unixnu defconfig cheeseburger_defconfig -D ../UniXNU-cheeseburger
 ./unixnu fetch   -D ../UniXNU-cheeseburger   # confirm out/feeds/xnu-* exists afterwards
 ./unixnu tree    -D ../UniXNU-cheeseburger   # links out/feeds/* into tree/refer
-JOBS=1 bash scripts/macos-build-kernel.sh    # pass 1: XNU only; the display archive waits
-cd out/cheeseburger/tree && SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path) \
-  python3 scripts/build-arm-driver.py NativeUfsProbe
-cd "$OLDPWD" && JOBS=1 bash scripts/macos-build-kernel.sh   # pass 2: archives and link
+JOBS=1 bash scripts/macos-build-kernel.sh    # records, archives, display archive, link
 ./unixnu build prelink -D ../UniXNU-cheeseburger
 ```
 
 - `fetch` has been seen to report success while leaving `xnu` uncloned. Check `out/feeds/xnu-*` before the first pass; a second `fetch` fixes it.
-- `scripts/build-arm-driver.py` reads its compiler recipe from `tree/build/xnu/ios-obj`, which only exists after one XNU build. Pass 1 therefore skips the legacy display archive and pass 2 builds it.
+- `scripts/build-arm-driver.py` reads its compiler recipe from `tree/build/xnu/ios-obj`, and the link needs the archives the archive builders produce. `macos-build-kernel.sh` therefore runs a `XNU_BOOTSTRAP=1` pass and the board archive list itself before the final link.
 - The A540 vendor blobs are an input, not a build product. Keep them in `.cache/firmware/a540` of the UniXNU checkout; `OP5_A540_FIRMWARE` overrides the search.
 
 The boot image is `out/<board>/boot/boot.img` with `out/<board>/boot/boot.json` next to it. Options follow the subcommand.
