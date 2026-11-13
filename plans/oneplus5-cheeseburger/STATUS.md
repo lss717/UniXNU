@@ -14105,3 +14105,19 @@ H329 起恢复 addon + `offline-accelerator=1`，与 sandbox 掩码修复、AKS 
 - 内核控制台与 CA 共用 scanout，**探针输出会把画面覆盖**，所以"屏幕是日志"不能当作没有出帧；
   唯一可靠判据是 `NATIVE_ACCEL_HB` 的 `val/xf/fr`；
 - 环只有 256 个 slot：拉取太晚（>10 分钟）会把 SpringBoard 启动段挤掉，需要在 ~420 秒时拉取。
+
+#### H331：把已确认的修复叠加到一轮（2026-11-14）
+
+内核 `4edbf2e6…`（`nm` 里 `AppleKeyStore` 符号 48 个，AppleKeyStore 首次真正进核）。
+
+本轮同时具备：sandbox 掩码解除、AppleKeyStore 服务发布、addon + `offline-accelerator=1`、
+`--skip-setup` 种子（含不熄屏）、`sheng-disable-jobs` 停掉崩溃循环、`native-probe-quiet=1`。
+
+启动参数自本轮起按用户要求改为 **`cpus=4`**（此前为 `cpus=2`）。AGENTS.md 里"cpus=1 是已验证基线、
+cpus=2 在 KextLog 前不确定"的结论仍然有效，只是当前实验按用户要求提高并行度；若出现不稳定，
+应回退到 `cpus=1` 复测，而不是继续加核。
+
+配套的构建侧修正：
+- `macos-build-kernel.sh` 改为自动获取线程数（性能核数 → `hw.ncpu` → `nproc`，`JOBS` 可覆盖）；
+- keystore 归档需要**三处接线**（board 归档列表、`XNU_NATIVE_KEYSTORE` 链接开关、探针实例化），
+  缺一即"能编译但什么都不做"。
