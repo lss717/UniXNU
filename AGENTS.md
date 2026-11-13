@@ -127,6 +127,15 @@ git clone https://github.com/lss717/UniXNU-cheeseburger
 - `out/<board>/tree` and `out/<board>/.cache` are generated. Edit the real
   source under `drivers/`, `kits/`, `scripts/`, or the device repository, not
   symlinks in the generated tree.
+- **Some `drivers/` entries are submodules** (`drivers/NativeMobileDisplay` is
+  `lss717/GopFramebuffer`, and the same is true of the other renamed forks). A
+  change there is only a dirty worktree until it is committed and pushed in the
+  submodule; the superproject commit then records the new pointer, and the
+  builder needs `git submodule update --init --remote` before it sees the file.
+  H315 lost two builds to this: the driver grew a weak reference to
+  `native_legacy_panic_paint` while the archive still came from the old
+  submodule commit, so the link failed with an undefined symbol and the
+  payload step quietly packed the previous kernel.
 - Kernel patches live in `patches/xnu/`. Edit the applied source in
   `out/<board>/tree/.cache/xnu-work` after a first kernel build, generate the
   diff, add it to `patches/xnu/`, then rebuild kernel + prelink. Patch names
