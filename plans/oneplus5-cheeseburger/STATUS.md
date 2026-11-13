@@ -13464,3 +13464,28 @@ NATIVE_MTL: srv#376 state disp  displays=6 d0ctx=0 d0layer=- renderer=3 ctxs=2
 
 这是渲染服务器内部的关联逻辑，与 SpringBoard 是否"卡在 mach_msg"可以分开验证：
 如果 context 是 SpringBoard 建的，说明它已经连通渲染服务器，只是 display 侧没接上。
+
+### H294：绑定实验没跑到——设备上加载的还是上一版插件（2026-11-13）
+
+镜像内核 `c59dae65…`、插件 addon `38208` 字节（CDHash `14a52d6a…`，含一次性
+`[display setContext:ctx0]`）。payload 里的 addon 与构建产物 **md5 完全一致**
+（`cc51f294c7aeb02d45dfb391166358df`），但日志里：
+
+```
+NATIVE_MTL: srv#315 state early displays=6 d0ctx=0 d0layer=- renderer=3 ctxs=2
+NATIVE_MTL: srv#318 ctx ctx[0] id=419891936 … subs=2 bounds=1080x1920
+NATIVE_MTL: srv#319 ctx ctx[1] id=2057620099 … subs=2 bounds=1080x1920
+（**42 条 srv 行，但一条 `bind` 都没有**）
+```
+
+`ctx` 行是 H292 才有的、`bind` 行是 H294 才有的——同时出现"有 ctx、无 bind"说明
+**设备上运行的是 H292 版的 bundle**，即 **addon 没有在本轮被写入 Data 卷**。
+
+这是新的、独立的缺陷：`sheng-gpu-addon` 的写入是"内容不同才写"，但没有验证机制，
+一旦某一轮没写成功，之后就会一直用旧 bundle，而日志里看不出任何差别。
+
+**因此下一步必须先让"当前加载的插件版本"可见**：在插件加载时打印一个手工维护的
+build 标识（如 `NATIVE_MTL: build H294`）。否则任何插件侧结论都可能是对旧二进制的观察。
+
+同时 H294 这轮的其它数据仍然有效：日志首次跑到 **1115 s**（采样器兜底 flush 生效），
+`renderer=3`、`ctxs=2`、两个 context 都是 1080x1920 + 2 个子层、`d0ctx=0` 不变。
