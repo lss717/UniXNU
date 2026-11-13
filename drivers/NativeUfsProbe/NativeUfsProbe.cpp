@@ -476,6 +476,18 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
   // boot dies, and the last runs panic in the UFS path around 200-240 s, after the old
   // 150 s wait and the first bursts.  SpringBoard is exec'd from ~115 s on this board.
   IOSleep (60000);
+  // H300: the addon decision happens around 31 s, before the persistent ring's first retained
+  // slot (~33 s), so its lines are always lost.  Report the recorded outcome here instead.
+  {
+    extern volatile int native_owner_data_stage, native_owner_data_status;
+    extern volatile int native_gpu_addon_files, native_gpu_addon_written, native_gpu_addon_same,
+        native_gpu_addon_failed, native_gpu_addon_calls;
+    IOLog ("NATIVE_GPU_ADDON_SUMMARY: stage=%d status=%d calls=%d files=%d written=%d same=%d failed=%d\n",
+           (int) native_owner_data_stage, (int) native_owner_data_status,
+           (int) native_gpu_addon_calls, (int) native_gpu_addon_files,
+           (int) native_gpu_addon_written, (int) native_gpu_addon_same,
+           (int) native_gpu_addon_failed);
+  }
   // H271: register the scene-side pids before the bursts, otherwise the latch
   // can never fire (they are only sampled in the slow series, which starts
   // after the bursts are over).
