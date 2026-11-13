@@ -13735,3 +13735,35 @@ NATIVE_MTL: frame#643 present sent
 
 下一步建议：把 `NATIVE_BRK` 的 `pc/lr` 与本轮共享缓存基址一起记录（H285 的 `sr_base` 机制），
 直接符号化出 abort 发生在哪个库——这比继续在黑箱里加探针更有效。
+
+### H306–H308：把探针移出内核关键路径；1259 秒不崩，但用户态退步（2026-11-14）
+
+三轮实验共用一条教训：**内核里"加一句 printf"本身就是风险**。
+
+| 轮次 | 改动 | 结果 |
+| --- | --- | --- |
+| H306 | BRK 现场打印共享缓存基址 | 打印发生在 `sleh.c` 的**陷入路径**（抢占关闭），与 H154 同类 |
+| H307 | 在 `psignal` 里直接 `printf` | **153 s 内核 data abort**：`_lck_mtx_lock + 0x34`，`x0=0`（msgbuf 互斥锁） |
+| H308 | 无锁环 + 心跳排空 | **1259 秒不崩**（人工重启），但用户态退步 |
+
+#### H307 的确定性结论
+
+`NATIVE_SIG` 之前的探针证实：环内 **launchd 只收到 `sig=20`（SIGCHLD，`_proc_exit + 0x84c`）**，
+没有任何 SIGBUS。而 `printf` 从 `proc_exit` 调用会二次 panic（H154 早已记录，本轮又踩一次）。
+`_lck_mtx_lock + 0x34` 且有 `x0=0` 就是它的指纹：**给 msgbuf 的互斥锁传了 NULL**。
+
+#### H308 的两面性
+
+- 好的一面：**1259 秒无 panic**（历史最长），`NATIVE_SIG` 只出现 13 条 SIGCHLD；
+- 坏的一面：`backboardd` 打开 legacy display **0 次**、`SpringBoard n=4` 采样 **0 次**
+  （H304 分别是 11 次和 118 次），说明用户态停在更早的阶段。
+
+与 H307/H308 的共同新增项是 h306——它在 BRK 陷入路径调用 `vm_shared_region_get()` 与
+`printf()`，两者都不该在抢占关闭的上下文里出现。而 BRK 地址本来就能解析
+（日志已有 `base=… delta=… <image path>`），**该补丁无价值**，H309 中删除。
+
+#### 判据（H309）
+
+1. 删除 h306 后，`backboardd` 打开 legacy display 应回到 H304 的 11 次量级；
+2. `SpringBoard n=4` 采样应重新出现；
+3. 若此时再出 `initproc exited`，环内应能看到 `NATIVE_SIG: pid=1 sig=10`（无锁环不再依赖 printf）。
