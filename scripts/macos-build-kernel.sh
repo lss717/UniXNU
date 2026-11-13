@@ -103,7 +103,15 @@ export XNU_SHENG_PMGR=1
 # after touching drivers/NativeMobileDisplay leaves a stale archive and the
 # boot dies with a bogus "Undefined kernel instruction" (H236ct, H173/H174).
 DISPLAY_ARCHIVE="$TREE/build/native-legacy-display/libNativeLegacyDisplay.late.a"
-if [ ! -f "$DISPLAY_ARCHIVE" ] || \
+# A brand-new tree has no ios-obj yet, and build-arm-driver.py needs it to read the
+# compiler recipe.  Skipping the archive here is safe: the archive only matters to the
+# link step, and the caller runs this script a second time after XNU exists, which then
+# builds it with the real recipe.  Without this the first build of a fresh clone always
+# dies with "FileNotFoundError: IOPlatformExpert.cpo.json".
+CPO="$TREE/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/iokit/DEVELOPMENT/IOPlatformExpert.cpo.json"
+if [ ! -f "$CPO" ]; then
+  echo "first build: XNU has not produced $CPO yet, so the legacy display archive is deferred to the next pass"
+elif [ ! -f "$DISPLAY_ARCHIVE" ] || \
    [ -n "$(find -L "$HOME/UniXNU/drivers/NativeMobileDisplay" -type f -newer "$DISPLAY_ARCHIVE" -print -quit 2>/dev/null)" ]; then
   echo "rebuilding the legacy display archive (sources newer than $DISPLAY_ARCHIVE)"
   SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)" python3 scripts/build-op5-legacy-display.py
