@@ -63,7 +63,13 @@ def main():
             merge_pref(mount, 'com.apple.springboard', {
                 'BKNoWatchdogs': True,
                 'FBLaunchWatchdogExceptions': {'com.apple.purplebuddy': 100.0},
-                'MCForceShowCloudConfigurationUI': False})
+                'MCForceShowCloudConfigurationUI': False,
+                # H325: a board with no working idle timer turns the display off about 30 s after
+                # SpringBoard starts, which looks exactly like "no frames".  UniXNU-qemu's root
+                # builder sets the same three keys for the same reason.
+                'SBDisableAutoDim': True,
+                'SBDontDimOrLockOnAC': True,
+                'SBDisableIdleSleep': True})
             merge_pref(mount, 'com.apple.purplebuddy', {
                 'SetupDone': True, 'SetupFinishedAllSteps': True, 'SetupVersion': 11, 'daemonizeNeedsToRun': False})
             merge_pref(mount, 'com.apple.purplebuddy.notbackedup', {

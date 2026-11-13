@@ -1,0 +1,34 @@
+diff --git a/iokit/Kernel/IOUserClient.cpp b/iokit/Kernel/IOUserClient.cpp
+--- a/iokit/Kernel/IOUserClient.cpp
++++ b/iokit/Kernel/IOUserClient.cpp
+@@ -4460,5 +4460,30 @@
+ static bool
+ native_sandbox_grant(IOService * service)
+ {
++	/* H325: two opens that the render path cannot live without are refused to the render server:
++	 * "op=open comm=backboardd cls=IOSurfaceRoot ok=0" is the drawable CoreAnimation allocates,
++	 * and "op=open comm=backboardd cls=IOPMrootDomain ok=0" is the display power it presents
++	 * through.  Without either, CoreAnimation registers on the display and never submits a swap.
++	 * The surface services are memory providers, and the render stack is granted every user
++	 * client it asks for; every other process keeps the sandbox's own verdict. */
++	{
++		const char * grantClass = service->getMetaClass()->getClassName();
++		if (0 == strcmp(grantClass, "IOSurfaceRoot") ||
++		    0 == strcmp(grantClass, "IOCoreSurfaceRoot")) {
++			IOLog("NATIVE_DISPLAY_OPEN: service=%s grant=surface match=1\n", grantClass);
++			return true;
++		}
++		char grantCaller[17] = {};
++		proc_selfname(grantCaller, sizeof(grantCaller));
++		if (0 == strncmp(grantCaller, "backboardd", 10) ||
++		    0 == strncmp(grantCaller, "SpringBoard", 11) ||
++		    0 == strncmp(grantCaller, "IOMFB_FDR", 9) ||
++		    0 == strncmp(grantCaller, "MobileGestalt", 13) ||
++		    0 == strncmp(grantCaller, "mediaserverd", 12)) {
++			IOLog("NATIVE_DISPLAY_OPEN: service=%s process=%s grant=render match=1\n",
++			    grantClass, grantCaller);
++			return true;
++		}
++	}
+ 	OSString * process = OSDynamicCast(OSString, service->getProperty("NativeSandboxGrantProcess"));
+ 	char name[17] = {};
