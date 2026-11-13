@@ -312,10 +312,11 @@ h103StallCheck (void)
 // H313: the ring only keeps its last slots, so the "client enter" lines that say who registered
 // on the legacy display are long gone by the time a boot dies.  Dump the whole client table - it
 // carries pid, comm and the per-selector call counts - from the watchdog at fixed points.
+extern "C" unsigned native_legacy_clients_dump (char *out, unsigned cap);
+
 static void
 h103DumpDisplayClients (void)
 {
-  extern "C" unsigned native_legacy_clients_dump (char *out, unsigned cap);
   static char buffer[1200];
   buffer[0] = 0;
   unsigned count = native_legacy_clients_dump (buffer, sizeof buffer);
@@ -598,6 +599,11 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
       // record survives even when the heartbeat path stops calling h103FlushNow().
       if ((b % 20) == 19) {
         native_log_flush_hook ();
+        h103StallCheck ();
+        // H313: SpringBoard's blocked receive has a port whose peer is lsd (pid 92), and H283
+        // put the trap in libsystem_kernel's receive path, so the unanswered half of that RPC is
+        // lsd.  Sample it once a second alongside SpringBoard to see where it is stuck.
+        native_sb_pc_sample ("lsd", 700 + burst * 100 + b);
       }
       IOSleep (50);
     }
