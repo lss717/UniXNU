@@ -30,7 +30,12 @@ def fetch(url, attempts=4):
         except urllib.error.HTTPError as error:
             if error.code not in (403, 429) or attempt == attempts - 1:
                 raise
-            time.sleep(5 * (attempt + 1))
+        except OSError:
+            # RemoteDisconnected, reset by peer, timeout: the build host's egress is flaky
+            # and a half-restored header set only fails much later, in the archive step.
+            if attempt == attempts - 1:
+                raise
+        time.sleep(5 * (attempt + 1))
 
 
 def restore(entry, destination=DESTINATION, tag=TAG):
@@ -40,7 +45,7 @@ def restore(entry, destination=DESTINATION, tag=TAG):
     target = destination / name
     if target.exists():
         return None
-    data = urllib.request.urlopen(entry['download_url'], timeout=30).read()
+    data = fetch(entry['download_url'])
     digest = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
     if digest != entry['sha']:
         raise ValueError(f'Git blob hash mismatch: {entry["name"]}')
