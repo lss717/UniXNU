@@ -3961,9 +3961,14 @@ NativeUfsProbe::start (IOService *provider)
   {
     if (native_keyevents_allocate != nullptr) {
       IOService * keystore = native_keyevents_allocate ();
+      // H335: attach to the provider, not to this driver.  A child inherits its parent's work
+      // loop, and attaching it to the UFS driver made the first log flush and the keystore share
+      // that loop: the boot stopped right after "header=1 cursor=0".  The platform nub is a plain
+      // IOService and does not use our loop.
+      IOService * parent = provider != nullptr ? provider : this;
       if (keystore != nullptr && keystore->init ()) {
-        if (keystore->attach (this)) {
-          keystore->start (this);
+        if (keystore->attach (parent)) {
+          keystore->start (parent);
           IOLog ("NATIVE_AKS: AppleKeyStore published\n");
         } else {
           IOLog ("NATIVE_AKS: attach failed\n");
