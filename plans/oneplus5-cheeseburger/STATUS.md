@@ -13388,3 +13388,26 @@ SpringBoard 的线程 289 阻塞在自己端口名 `0xa03` 上，接收缓冲 16
 1. **端口 `0xa03` 是谁的**（SpringBoard 自己的引导端口？谁应当向它发送）；
 2. **为什么 launchd 会以 `subcode 0xa`（signal 10 = SIGBUS）退出**——这决定了整个系统能否活着
    让我们观测 SpringBoard。
+
+### H288 补充：持久 ring 在 258 s 停止写入（2026-11-13）
+
+同一镜像的 ring 只到 `258.1 s`（末行被截断），而屏幕上的 panic 发生在 `sample≈500`（≈560 s）。
+即 **panic 前约 300 秒的日志没有落盘**：
+
+```
+NATIVE_UFS_HB: start rc=0 / enter / slot thread off (heartbeat owns the flush)
+…（日志在 258 s 处戛然而止）
+```
+
+对比 H286（无 panic）ring 一直写到 532 s，说明**不是 ring 容量问题**，而是
+**在 258 s 前后负责落盘的线程停止工作**。这让"panic 前最后几十秒"只能从屏幕读取。
+
+`launchd` 的退出信息（屏幕）：
+
+```
+NATIVE_PANIC_STR: initproc exited -- exit reason namespace 2 subcode 0xa description: none
+```
+
+`subcode 0xa` = 信号 10 = **SIGBUS**。结合此前多次出现的 `xpcproxy … sig=10`，
+最可能的共因是**用户态访问了无法从我们的模拟存储换入的页面**（文件映射页 page-in 失败），
+即使等待超时已放宽，只要换入返回的数据不可用，仍然会以 SIGBUS 形式杀死进程。
