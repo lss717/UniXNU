@@ -14030,3 +14030,31 @@ SpringBoard 等进程被杀到 launchd 的尸体上限——这是比 IPC 更底
 
 H323 的修法：超时不再永久放弃，改为**复位 host controller（HCE 关→清 IS/门铃→开）并重试**，
 块读幂等所以安全；失败才真的返回错误。
+
+#### H325/H326：外部证据指向"崩溃循环的 daemon 挡住 SpringBoard 初始化"（2026-11-14）
+
+**先更正一条误判**：我曾把 `NATIVE_IOKIT: op=open … ok=0` 当成"IOSurfaceRoot 被 sandbox 拒绝"。
+实际上 `ok=0` 是入口打印时**硬编码的占位值**，真正的拒绝会单独打印 `op=deny`，而全部历史日志里
+`op=deny` 出现 **0 次**。H325 的 grant 扩展因此**前提不成立**（补丁无害，但不要当作修复）。
+
+**外部文档给出的两条关键事实**
+
+1. **eShard（QEMU 跑 iOS 14）**：SpringBoard "启动但什么都不显示"的最终解法之一是
+   **禁用崩溃循环的 daemon**——原文记录 `CommCenter` 一直崩溃并"阻止 SpringBoard 完成初始化"，
+   运行 `launchctl` 停掉它之后**白屏立刻出现**。之后才依次处理空闲休眠、背光、以及 QuartzCore
+   里硬编码的 Metal 上下文。
+2. **ios-sweet（同代移植）**：SpringBoard 的 sig 5 崩在
+   `-[FBSDisplayMonitor _initWithBookendObserver:transformer:]` ← `FBSystemShellInitialize`，
+   根因是**没有 main display**；backboardd 同样在启动 window server 时因 `mainDisplay` 为 nil 而 abort。
+
+**我们这边的对应措施（H326）**
+
+- `native-probe-quiet=1`：把采样线程停掉、心跳降到每分钟一行，让**用户态自己的日志**能进环
+  （否则 256 个 slot 全被探针占满，SpringBoard/lsd 说什么都看不到）；
+- `sheng-disable-jobs=com.apple.mediaserverd,com.apple.liveactivitiesd,com.apple.PerfPowerServices,com.apple.datamigrator`
+  ：停掉正在耗尽 launchd "尸体额度"的 job，对应 eShard 的 CommCenter 处理；
+- 种子继续带 `--skip-setup`，并新增 `SBDisableAutoDim` / `SBDontDimOrLockOnAC` / `SBDisableIdleSleep`
+  （UniXNU 文档明确：没有空闲计时器的板子会在 SpringBoard 启动约 30 秒后熄屏）。
+
+判据：环里应出现 SpringBoard / lsd / backboardd 自己的日志；`NATIVE_ACCEL_HB` 的 `val`/`fr`
+若变成非 0，则说明 CA 真正开始提交。
