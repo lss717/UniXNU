@@ -13436,3 +13436,31 @@ ring 末端: 187.6 s（NATIVE_PROC_DUMP: end）
 
 附注：内存中的 `h103-log-secs` 参数、`h103-slot` 模式在本轮均为默认（slotMode=1），
 `NATIVE_UFS_SLOT: attempt=8` 之后就再没有新的 attempt 输出，与上面一致。
+
+### H291：渲染器在、2 个 CAContext 在，但 display 没有绑定 context（2026-11-13）
+
+插件新增 `NATIVE_MTL: srv# state …` 后的结果（稳定轮：无 I/O 错误、无 panic、日志到 409 s）：
+
+```
+NATIVE_MTL: srv#309 state early displays=6 d0ctx=0 d0layer=- renderer=3 ctxs=2
+NATIVE_MTL: srv#338 state early displays=6 d0ctx=0 d0layer=- renderer=3 ctxs=2
+NATIVE_MTL: srv#376 state disp  displays=6 d0ctx=0 d0layer=- renderer=3 ctxs=2
+```
+
+判读：
+
+1. `displays=6`、LCD 为 1080x1920（H286 已确认）；
+2. **`renderer=3`**：渲染服务器认为自己有渲染器（非 0）；
+3. **`ctxs=2`**：系统里存在两个 `CAContext`；
+4. **`d0ctx=0`、`d0layer=-`**：主显示 **没有绑定任何 context，也没有 root layer**。
+
+即 H291 的"情况 2"：**context 存在，却没有被绑定到 display**。
+所以 CA 无绘制目标的原因不是"没有 context"，而是"context 与 display 之间没有建立关联"。
+
+下一步要查的是这个绑定的两端：
+
+- 两个 `CAContext` 分别属于哪个客户端（`clientPort`/`contextId`），以及它们的 layer 有无内容；
+- `CAWindowServer` 侧接受/拒绝该 context 的条件（`clientPortOfContextId:`、`rendererFlags=3` 的含义）。
+
+这是渲染服务器内部的关联逻辑，与 SpringBoard 是否"卡在 mach_msg"可以分开验证：
+如果 context 是 SpringBoard 建的，说明它已经连通渲染服务器，只是 display 侧没接上。
