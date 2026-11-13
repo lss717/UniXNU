@@ -13291,3 +13291,37 @@ NATIVE_SBPC_IMAGE: sample=300 pid=27 count=2 proc=1 pc=0x1d61acb58 slide=0xaa2c0
 
 同时确认：`setRenderPipelineState` / `drawPrimitives` / `swap validate` 仍是 **0**，
 `NATIVE_LEGACY: client io` 9 次——CA 依然没有提交任何帧。
+
+### H286 归因：display 没有 root layer，CA 因此不画（2026-11-13）
+
+同一轮（532 s、无 I/O 错误、无 panic）的插件日志：
+
+```
+NATIVE_MTL: disp#649 context none, continue
+NATIVE_MTL: disp#650 root disp root=0 rootclass=-
+NATIVE_MTL: ca#225 display list[0] name=LCD device=primary bounds=1080x1920
+```
+
+即 **CAWindowServerDisplay 有 6 个 display、LCD 1080x1920，但 `context` 为 nil、root layer 不存在**。
+配合：
+- `setRenderPipelineState` / `drawPrimitives` / `swap validate` 全为 0；
+- 只有 18 个 render encoder、5 个 blit encoder 被创建后 `endEncoding`；
+- `NATIVE_SBPC_IMAGE: … pid=27 count=2..5 proc=1 pc=0x1d61acb58 slide=0xaa2c000`、
+  `NATIVE_TRAP_IMAGE: pid=27 … no-dyld-info`。
+
+因果链已经闭合：
+
+```
+SpringBoard 卡在 dyld 早期（未登记镜像表，pc 固定在共享缓存内）
+  → 从不创建绑定到 display 的 CAContext
+  → display 没有 root layer（context=nil）
+  → CoreAnimation 没有可绘制的目标 → 不绑定管线、不 draw、不 commit
+  → 屏幕只有内核日志/黑屏
+```
+
+**这不是渲染实现的问题**（`setRenderPipelineState` 从未被调用），也不是显示驱动的问题
+（验证/传输路径此前已用探针验证可用）。要看到桌面，必须先让 SpringBoard 走出 dyld 启动。
+
+剩余待办：把 `pc=0x1d61acb58 / slide=0xaa2c000`（偏移 ≈ `0x4b6f0b58`）落到具体函数。
+离线障碍：主缓存 `dyld_shared_cache_arm64` 只有 48 KB 的桩（`imagesCount=0`），
+镜像表在 `.01…` 子缓存里，需要专用的 dsc 解析器（如 `dyldextractor`）。
