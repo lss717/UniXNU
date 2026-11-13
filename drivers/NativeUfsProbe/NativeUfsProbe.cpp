@@ -467,7 +467,10 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
   // H239: sample for two minutes ten seconds apart, so the window covers SpringBoard's whole
   // life (it is killed by the plugin's restart probe at ~243 s).  Only SpringBoard repeats;
   // the other names are useful once and would otherwise push the ring log out.
-  IOSleep (150000);
+  // H283: start early.  The image resolver has to land in the persistent ring before the
+  // boot dies, and the last runs panic in the UFS path around 200-240 s, after the old
+  // 150 s wait and the first bursts.  SpringBoard is exec'd from ~115 s on this board.
+  IOSleep (60000);
   // H271: register the scene-side pids before the bursts, otherwise the latch
   // can never fire (they are only sampled in the slow series, which starts
   // after the bursts are over).
