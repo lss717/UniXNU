@@ -566,6 +566,22 @@ extern "C" void native_sigbus_drain (void);
 static void
 a540SpringBoardSamplerThread (void *, wait_result_t)
 {
+  // H326: one boot needs the ring for the *userspace* side.  Our sampler alone writes thousands
+  // of lines into the 256 slots, so SpringBoard's and launchservicesd's own messages never
+  // survive.  native-probe-quiet=1 parks this thread and the heartbeat drops to once a minute.
+  {
+    static int quiet = -1;
+    if (quiet < 0) {
+      int value = 0;
+      quiet = PE_parse_boot_argn ("native-probe-quiet", &value, sizeof value) && value ? 1 : 0;
+    }
+    if (quiet) {
+      IOLog ("NATIVE_SBPC: sampler parked (native-probe-quiet=1)\n");
+      for (;;) {
+        IOSleep (60000);
+      }
+    }
+  }
   // SpringBoard is exec'd between ~115 s and ~190 s on this board, after a slow launchd phase.
   // H239: sample for two minutes ten seconds apart, so the window covers SpringBoard's whole
   // life (it is killed by the plugin's restart probe at ~243 s).  Only SpringBoard repeats;
@@ -694,17 +710,26 @@ heartbeatThread (void *, wait_result_t)
     uint32_t dpc=0,dca=0,dfa=0,ds6=0,drg=0,ds3=0,ds4=0,ds5=0;
     if (native_legacy_client_stats)
       native_legacy_client_stats (&dpc,&dca,&dfa,&ds6,&drg,&ds3,&ds4,&ds5);
-    IOLog ("NATIVE_ACCEL_HB: accel=%u/%u/%u/%u abi=%d/%d/%d rep=%.31s gc=%d:%08x "
-           "dpy=%u/%u/%u/%u/%u s345=%u/%u/%u val=%u xf=%u fr=%u\n",
-           (unsigned) native_a540_open_count, (unsigned) native_a540_open_type,
-           (unsigned) native_a540_sel_count, (unsigned) native_a540_sel_last,
-           (int) native_a540_abi_calls, (int) native_a540_abi_last_method,
-           (int) native_a540_abi_reports, native_a540_abi_report,
-           gpucc_got ? (int) gpucc_index : -1, gpucc_value,
-           dpc,dca,dfa,ds6,drg,ds3,ds4,ds5,
-           (unsigned) native_legacy_swap_validation_calls,
-           (unsigned) native_legacy_transfer_calls,
-           (unsigned) native_legacy_frame_count);
+    // H326: with native-probe-quiet=1 this line only appears once a minute, so a boot can be
+    // read for the daemons' own messages instead of our counters.
+    static int quietBeat = -1;
+    if (quietBeat < 0) {
+      int value = 0;
+      quietBeat = PE_parse_boot_argn ("native-probe-quiet", &value, sizeof value) && value ? 1 : 0;
+    }
+    if (!quietBeat || (beat % 60) == 1) {
+      IOLog ("NATIVE_ACCEL_HB: accel=%u/%u/%u/%u abi=%d/%d/%d rep=%.31s gc=%d:%08x "
+             "dpy=%u/%u/%u/%u/%u s345=%u/%u/%u val=%u xf=%u fr=%u\n",
+             (unsigned) native_a540_open_count, (unsigned) native_a540_open_type,
+             (unsigned) native_a540_sel_count, (unsigned) native_a540_sel_last,
+             (int) native_a540_abi_calls, (int) native_a540_abi_last_method,
+             (int) native_a540_abi_reports, native_a540_abi_report,
+             gpucc_got ? (int) gpucc_index : -1, gpucc_value,
+             dpc,dca,dfa,ds6,drg,ds3,ds4,ds5,
+             (unsigned) native_legacy_swap_validation_calls,
+             (unsigned) native_legacy_transfer_calls,
+             (unsigned) native_legacy_frame_count);
+    }
     if (beat == 1 || (beat % 10) == 0) {
     IOLog ("NATIVE_UFS_ALIVE: winFlight=%llu ufsFlight=%llu cmds=%llu "
            "winReq=%llu winBytes=%llu lastCmd=%llx/%llu req=%llx/%llu "
