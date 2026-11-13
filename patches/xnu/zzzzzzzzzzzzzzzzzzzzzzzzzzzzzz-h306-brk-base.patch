@@ -1,0 +1,29 @@
+diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -43,4 +43,5 @@
+ #include <kern/restartable.h>
+ #include <kern/socd_client.h>
+ #include <kern/task.h>
++#include <vm/vm_shared_region.h>
+ #include <kern/thread.h>
+@@ -630,4 +631,19 @@
+ 	    (unsigned long long)native_brk_regs[2], (unsigned long long)native_brk_regs[3],
+ 	    (unsigned long long)native_brk_regs[4], (unsigned long long)native_brk_regs[5],
+ 	    (unsigned long long)native_brk_regs[6], (unsigned long long)native_brk_regs[7]);
++	/* H306: a BRK pc is useless without the slide of the boot that produced it.  Record the
++	 * shared-region base with the trap so the pc/lr become dyld cache offsets offline. */
++	{
++		vm_shared_region_t sr = vm_shared_region_get(current_task());
++		mach_vm_offset_t srbase = 0;
++
++		if (sr != NULL) {
++			(void) vm_shared_region_start_address(sr, &srbase, current_task());
++			vm_shared_region_deallocate(sr);
++		}
++		printf("NATIVE_BRK_BASE: base=0x%llx offpc=0x%llx offlr=0x%llx\n",
++		    (unsigned long long) srbase,
++		    (unsigned long long) (srbase ? native_brk_pc - srbase : 0),
++		    (unsigned long long) (srbase ? native_brk_lr - srbase : 0));
++	}
+ }
