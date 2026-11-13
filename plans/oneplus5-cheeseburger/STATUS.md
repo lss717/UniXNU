@@ -13325,3 +13325,27 @@ SpringBoard 卡在 dyld 早期（未登记镜像表，pc 固定在共享缓存�
 剩余待办：把 `pc=0x1d61acb58 / slide=0xaa2c000`（偏移 ≈ `0x4b6f0b58`）落到具体函数。
 离线障碍：主缓存 `dyld_shared_cache_arm64` 只有 48 KB 的桩（`imagesCount=0`），
 镜像表在 `.01…` 子缓存里，需要专用的 dsc 解析器（如 `dyldextractor`）。
+
+### H287：用 dyldextractor 定位 SpringBoard 的 pc（2026-11-13）
+
+在构建机上装了 `dyldextractor`（venv `/tmp/dsc`，需 `setuptools==68.2.2` 提供 `distutils`），
+对 OS 卷里的 `dyld_shared_cache_arm64` 列出 3354 个镜像（含地址）：
+
+```
+dyldex -l -a <cache>            → 0x1800e8000 … 0x229379000
+dyldex --lookup 0x1cb6f0b58     → /System/Library/PrivateFrameworks/Symptoms.framework/
+                                  Frameworks/SymptomEvaluator.framework/SymptomEvaluator
+```
+
+H286 采样值：`pc=0x1d61acb58 slide=0xaa2c000` → 未滑动地址 `0x1cb6f0b58`。
+
+- `pc - slide` → **SymptomEvaluator + 0x2deb58**（镜像范围 `0x1cb412000…0x1cb76b000`，跨度 0x359000）；
+- `lr - slide` → 同一镜像 **+ 0x2e8224**，与 pc 相距 `0x38cc`。
+
+`pc` 与 `lr` 落在同一镜像、相距 ~14 KB，支持"slide 为字节、按 `pc - slide` 换算"这一读法
+（若不减 slide，pc 落在 `MusicKitInternal + 0x1a8b58`，而 lr 也在该镜像内，同样自洽——
+两者无法仅凭这两个地址互斥判定，需 `sr_base_address` 才能定论）。
+
+取二进制时 `dyldex -e SymptomEvaluator.framework/SymptomEvaluator` 报
+`TypeError: '>=' not supported between instances of 'NoneType' and 'int'`（该版本对部分镜像的
+vmaddr 解析缺陷），符号化尚未完成。
