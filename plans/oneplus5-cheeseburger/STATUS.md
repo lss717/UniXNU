@@ -13009,3 +13009,32 @@ NATIVE_LEGACY_SURFACE: rejected w=1080 h=1920 fmt=1647534392 planes=2 stride=108
    墙纸模糊链无法建立，于是合成结果是一张被清成灰的表面；
 3. 因此主线回到 **C6a-MTL ②**（`newRenderPipelineStateWithDescriptor:` 为什么返回 nil），
    而不是显示驱动。
+
+### H275 归因：显示侧已闭环，桌面缺的是 scene（2026-11-13）
+
+同一轮日志（`h275-log.txt`）里逐条核对：
+
+| 观测 | 计数 | 含义 |
+| --- | --- | --- |
+| `comm=SpringBoard` | 1648 | SpringBoard 全程存活（pid 27） |
+| `NATIVE_MTL: encoder` / `cmdbuf` | 46 / 24 | Metal 编码在进行 |
+| `setRenderPipelineState` | **0** | 管线从未被使用 |
+| `drawPrimitives` / `dispatchThreads` | **0** / **0** | 没有任何绘制 |
+| `commit`（真提交） | **0** | 命令缓冲从不提交 |
+| `NATIVE_SBPEER` | **0** | 没有任何 scene 侧往来 |
+| `presentsurface` | 2（enter/sent） | **CA 确实把一帧交给了显示** |
+| `READBACK` | `ffa0a0a0` | 交出去的那帧是均匀灰 |
+
+结论（修正上一节）：
+
+1. **显示链路闭环**：接受 → 传输 → retirement → present，全部 `status=0`，
+   这条线不再是任何环节的瓶颈。
+2. **CA 交出的是一张空 surface**：因为没有 scene，没有可合成的内容；
+   `setRenderPipelineState=0`/`draw=0` 说明渲染管线从未被用于绘制，
+   8 个 `newRenderPipelineStateWithDescriptor` 是墙纸模糊链，即使建成也只是背景效果。
+3. 因此剩余缺口按优先级：
+   - **C6a-SB**：SpringBoard 建立 scene / 前台（`NATIVE_SBPEER` 仍是 0）；
+   - **C6a-MTL ②**：管线对象是不带内部状态的 trace 壳（插件用
+     `trace_object_of("_MTLRenderPipelineState")` 返回），需要真正可用的管线。
+4. 插件实现位置：`drivers/NativeMetal/A540TracePlugin.mm:2523`
+   （`newRenderPipelineStateWithDescriptor:error:` 只记录描述符并返回 trace 对象）。
