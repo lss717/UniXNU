@@ -12871,3 +12871,8 @@ boot-arg `sheng-fb-gpu=1` + 在 `A540TracePlugin` 里接 `GpuScanoutClient` 循�
    构建脚本一律从 `$HOME/UniXNU/scripts/` 取源。
 4. `unixnu fetch` 可能"成功"却没拉 `xnu`，必须确认 `out/feeds/xnu-*`。
 5. `JOBS=1` 从来不是要求（H265 的绿屏是缺 kit 补丁，H269 已证实）；8 核机器用 `JOBS=8`。
+
+**产物（H273，全新克隆构建）**：内核 `4ef7564c…`（`JOBS=8`，PMGR 用桩——首次构建无
+上一版 `kernel.macho` 可读 AON vtable；H251–H254 探针在 `patches/xnu/experimental/`，
+未编入；`XNU_NATIVE_UFS=0`），payload 76 MiB，镜像 `boot-H273.img` = `5fd63da1…`
+（固件层仍是 `edk2-msm8998/workspace/uefi-cheeseburger.img.gz-dtb`，本弧未改动）。
