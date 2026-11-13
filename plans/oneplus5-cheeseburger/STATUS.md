@@ -13834,3 +13834,40 @@ H312 的改动：
 - 一旦写下 `kind=stall` 就停止写 `alive`，避免覆盖；
 - 标记写入手动绕过 `q->poisoned`（控制器忙仍由 `ufsWriteCommand` 的 UTRLDBR 检查保护）；
 - 标记内容增加 `hbago=`（距上次心跳多少秒），直接区分挂死与存活。
+
+#### H313：标记块判定为 **panic**（不是挂死）；同时发现 `lsd` 已消失（2026-11-14）
+
+内核 `a416f842…`。环覆盖 **44–164 s**，保留块给出决定性的第一条：
+
+```
+NXMARK1 kind=panic uptime=165 hbago=0 beat=196 cmds=28823 flags=fd7f6028 build=H236
+```
+
+**结论一**：600–933 s 那些"静默停止"是 **panic**，不是死锁挂死。心跳在 165 秒时仍是新鲜的
+（`hbago=0`），所以不是心跳线程卡住。此前多次"环里没有 `NATIVE_PANIC`"只是因为 panic 路径的
+环形 flush 抢不到 `fLock`——无锁的标记块一次就把它暴露出来了。
+
+**结论二**：`lsd` 在 ~150 s 时**已无任何线程**：
+
+```
+NATIVE_SBPC: sample=719 comm=lsd n=0 note=-     （burst 0，每 20 拍一次）
+… 859 同样 n=0
+```
+
+对照 H311 同位置 `comm=lsd n=6`（活着）。结合 H311 的端口数据：
+
+```
+SpringBoard tid=290 rcvname=0x1e03 rcvsz=16384
+NATIVE_SBPORT: rcv name=0x1e03 … sr=1 peer=27/SpringBoard   （自己的回复端口）
+NATIVE_SBPORT: req name=0x580b … peer=92/lsd               （请求发往 lsd 的端口）
+```
+
+即 **SpringBoard 发了请求给 `lsd`，`lsd` 消失后回复永远不会来**，`mach_msg` 接收一直阻塞
+（H283 的 `libsystem_kernel + 0x1b58`）。没有 scene → 没有 CAContext → display 无 root layer
+→ CA 不画 → 黑屏。这条链和 H286 一致，但补上了"为什么早期就停"：**对端进程不在了**。
+
+**结论三**：`NATIVE_LEGACY_CLIENTS` 未出现——看门狗线程的 120 s 计时从线程启动算起，
+在 165 s 的 panic 之前没走到；下一版提到 60 s。
+
+H314 的改动：标记块追加 **msgbuf 尾部 1200 字节**，这样即便环形 flush 失败，
+`NATIVE_PANIC_STR` 的内容也会随标记块落盘——panic 原因不需要再靠屏幕。
