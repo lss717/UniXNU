@@ -138,6 +138,12 @@ git clone https://github.com/lss717/UniXNU-cheeseburger
 - `out/<board>/tree` and `out/<board>/.cache` are generated. Edit the real
   source under `drivers/`, `kits/`, `scripts/`, or the device repository, not
   symlinks in the generated tree.
+- **Never wait for a service from `start()`, `probe()` or just after `registerService()`.**
+  `IOService::copyMatchingService()` and `waitForService()` need the registry lock, and the
+  matching/registration path already holds it: the call blocks forever and the boot looks like a
+  hard hang with no output. H340 lost several boots to an H141 diagnostic that matched our own
+  display service from inside its registration path; `getMatchingServices()` (an iterator) and
+  calls made from a driver thread are safe.
 - **A driver needs three separate wirings, and two of them are not the same list.**
   `board.toml [kernel] archives` (and the copy in `macos-build-kernel.sh`) builds the
   `.a`; the link inside `build-xnu-4k-baseline.sh` adds archives only for the
