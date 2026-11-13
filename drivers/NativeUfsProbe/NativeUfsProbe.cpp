@@ -300,6 +300,17 @@ static bool gNativeKeystoreDone;
 static void h103Marker (const char *kind, bool urgent);
 static void nativePublishKeystore (void)
 {
+  // H339: publishing is opt-in.  Every kernel that carried this call hung one second after the
+  // first log flush, while the kernel without it ran for eight hundred seconds; until the reason
+  // is understood the publish stays behind sheng-aks-publish=1.
+  static int publishWanted = -1;
+  if (publishWanted < 0) {
+    int value = 0;
+    publishWanted = PE_parse_boot_argn ("sheng-aks-publish", &value, sizeof value) && value ? 1 : 0;
+  }
+  if (!publishWanted) {
+    return;
+  }
   if (gNativeKeystoreDone) {
     return;
   }
