@@ -2503,6 +2503,25 @@ NativeUfsProbe::logMarker (const char *kind)
       kind ? kind : "?", (unsigned) uptime,
       (unsigned long long) (hbAgoTicks / 19200000ULL), (unsigned) gH103SlotCursor,
       (unsigned long long) gUfsCommands, (unsigned) native_boot_flags, H103_BUILD);
+  // H314: the ring flush can lose the race for fLock at panic time, and the ring is what normally
+  // carries NATIVE_PANIC_STR.  The message buffer is readable from this context, so the marker
+  // block carries its tail as well - that is the panic reason without needing a second boot.
+  {
+    struct H103MsgBuf *m = msgbufp;
+    int size = (m && m->msg_size > 0) ? m->msg_size : 0;
+    int cursor = (m && m->msg_bufx >= 0 && m->msg_bufx < m->msg_size) ? m->msg_bufx : 0;
+    size_t used = strlen (block);
+    const int want = 1200;
+    if (size > want && used + want + 2 < sizeof block) {
+      block[used++] = '\n';
+      for (int i = 0; i < want; ++i) {
+        char ch = m->msg_bufc[(cursor + size - want + i) % size];
+        block[used + i] = (ch == '\n' || (ch >= 32 && ch < 127)) ? ch : ' ';
+      }
+      used += want;
+      block[used] = 0;
+    }
+  }
   if (fLogDma->writeBytes (0, block, sizeof block) !=
       static_cast<IOByteCount> (sizeof block)) {
     return false;
