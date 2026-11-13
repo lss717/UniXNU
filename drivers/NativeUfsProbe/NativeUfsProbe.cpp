@@ -293,6 +293,36 @@ h107GateOpen (void)
   return now - gH107SpringBoardTicks >= 60 * 19200000ULL;
 }
 
+// H336: the keystore service is published late, from the watchdog thread, so the early launchd
+// and securityd start without it.
+static IOService *gNativeProvider;
+static bool gNativeKeystoreDone;
+static void h103Marker (const char *kind, bool urgent);
+static void nativePublishKeystore (void)
+{
+  if (gNativeKeystoreDone) {
+    return;
+  }
+  gNativeKeystoreDone = true;
+  if (native_keyevents_allocate == nullptr) {
+    IOLog ("NATIVE_AKS: driver not linked\n");
+    return;
+  }
+  IOService * keystore = native_keyevents_allocate ();
+  IOService * parent = gNativeProvider != nullptr ? gNativeProvider : nullptr;
+  if (keystore != nullptr && parent != nullptr && keystore->init ()) {
+    if (keystore->attach (parent)) {
+      keystore->start (parent);
+      IOLog ("NATIVE_AKS: AppleKeyStore published (late)\n");
+    } else {
+      IOLog ("NATIVE_AKS: attach failed\n");
+      keystore->release ();
+    }
+  } else {
+    IOLog ("NATIVE_AKS: allocation failed\n");
+  }
+}
+
 // H311: ten seconds without a heartbeat beat means the heartbeat thread is stuck.  The sampler
 // keeps running on its own, so it leaves a "stall" record in the reserved block; finding that
 // record instead of a "panic" one says the machine hung rather than panicked.
@@ -343,6 +373,9 @@ nativeWatchdogThread (void *, wait_result_t)
     h103StallCheck ();
     if (gH103StallRecorded) {
       continue;
+    }
+    if (seconds == 30) {
+      nativePublishKeystore ();
     }
     if (seconds == 120 || seconds == 300 || seconds == 600 || seconds == 900) {
       h103DumpDisplayClients ();
@@ -3955,32 +3988,10 @@ NativeUfsProbe::start (IOService *provider)
   PE_parse_boot_argn ("h103-load-iogpu", &loadIogpu, sizeof loadIogpu);
   gH103LoadIogpu = loadIogpu ? 1 : 0;
   gH103StartTicks = mach_absolute_time ();
-  // H328: publish the AppleKeyStore service.  SpringBoard's MobileKeyBag matches that class and
-  // finds nothing on this port, which is where its setup path stops; the driver existed but was
-  // never instantiated, archived or given its hook implementations.
-  {
-    if (native_keyevents_allocate != nullptr) {
-      IOService * keystore = native_keyevents_allocate ();
-      // H335: attach to the provider, not to this driver.  A child inherits its parent's work
-      // loop, and attaching it to the UFS driver made the first log flush and the keystore share
-      // that loop: the boot stopped right after "header=1 cursor=0".  The platform nub is a plain
-      // IOService and does not use our loop.
-      IOService * parent = provider != nullptr ? provider : this;
-      if (keystore != nullptr && keystore->init ()) {
-        if (keystore->attach (parent)) {
-          keystore->start (parent);
-          IOLog ("NATIVE_AKS: AppleKeyStore published\n");
-        } else {
-          IOLog ("NATIVE_AKS: attach failed\n");
-          keystore->release ();
-        }
-      } else {
-        IOLog ("NATIVE_AKS: allocation failed\n");
-      }
-    } else {
-      IOLog ("NATIVE_AKS: driver not linked\n");
-    }
-  }
+  // H336: publishing AppleKeyStore from start() made launchd/securityd talk to it immediately and
+  // the boot stopped right after the first log flush.  Remember the provider and publish from the
+  // watchdog thread half a minute in, once launchd is up.
+  gNativeProvider = provider;
   // H178: a warm reboot leaves the kernel message ring in place, and its write
   // cursor does not necessarily start at zero.  With previous=0 the first
   // flush therefore copied the whole ring up to the current cursor, i.e. the
