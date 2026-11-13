@@ -126,6 +126,8 @@ static volatile uint64_t gH103StartTicks;
 // H311: the heartbeat stamps this every beat; the sampler writes a "stall" marker into the
 // reserved block when it has not moved for ten seconds, which distinguishes a hang from a panic.
 static volatile uint64_t gH103BeatTicks;
+// H312: set once the stall record is on disk, so the watchdog stops overwriting it with "alive".
+static volatile int gH103StallRecorded;
 static volatile uint32_t gH103SlotWriteErrors;
 /* H289: the persistent ring stopped at 258 s in H288 while the system kept running for
  * another 300 s, so the flush path needs to say whether it is failing or merely idle. */
@@ -300,6 +302,28 @@ h103StallCheck (void)
   }
   reportedAt = now;
   h103Marker ("stall");
+  gH103StallRecorded = 1;
+}
+
+// H312: the sampler thread ends around 550 s, which is exactly the gap that left H311 silent at
+// 933 s with no record at all.  This thread never returns: it overwrites the marker block with
+// "alive" once a minute (proving the marker path itself works) and stops stamping once a stall
+// has been recorded, so the stall is not erased.
+static void
+nativeWatchdogThread (void *, wait_result_t)
+{
+  unsigned ticks = 0;
+  for (;;) {
+    IOSleep (1000);
+    h103StallCheck ();
+    if (gH103StallRecorded) {
+      continue;
+    }
+    if (++ticks >= 60) {
+      ticks = 0;
+      h103Marker ("alive");
+    }
+  }
 }
 
 static bool
@@ -2446,9 +2470,14 @@ NativeUfsProbe::logMarker (const char *kind)
   memset (block, 0, sizeof block);
   const uint32_t uptime = gH103StartTicks ?
       static_cast<uint32_t> ((mach_absolute_time () - gH103StartTicks) / 19200000ULL) : 0;
+  // H312: how long ago the heartbeat last moved is the single most useful field here, so record
+  // it rather than making the reader compare timestamps from two different records.
+  const uint64_t hbAgoTicks = gH103BeatTicks ?
+      (mach_absolute_time () - gH103BeatTicks) : 0;
   snprintf (block, sizeof block,
-      "NXMARK1 kind=%s uptime=%u beat=%u cmds=%llu flags=%x build=%s\n",
-      kind ? kind : "?", (unsigned) uptime, (unsigned) gH103SlotCursor,
+      "NXMARK1 kind=%s uptime=%u hbago=%llu beat=%u cmds=%llu flags=%x build=%s\n",
+      kind ? kind : "?", (unsigned) uptime,
+      (unsigned long long) (hbAgoTicks / 19200000ULL), (unsigned) gH103SlotCursor,
       (unsigned long long) gUfsCommands, (unsigned) native_boot_flags, H103_BUILD);
   if (fLogDma->writeBytes (0, block, sizeof block) !=
       static_cast<IOByteCount> (sizeof block)) {
@@ -2465,7 +2494,14 @@ NativeUfsProbe::logMarker (const char *kind)
   fQueue.data = fLogData;
   fQueue.dataPhys = fLogDataPhys;
   fQueue.dataCapacity = fLogCapacity;
+  // H312: a queue poisoned by an earlier timeout refused every later command, which is one way
+  // the marker could stay empty.  The controller-busy check inside ufsWriteCommand still guards
+  // the hardware, so a marker attempt may clear the flag for its own duration.
+  const bool savedPoisoned = fQueue.poisoned;
+  fQueue.poisoned = false;
   bool ok = ufsWriteCommand (&fQueue, 0, cdb, 4096, fLogData);
+  // Keep the poisoned state if it was already set or if this attempt set it again.
+  fQueue.poisoned = savedPoisoned || fQueue.poisoned;
   fQueue.data = savedData;
   fQueue.dataPhys = savedPhys;
   fQueue.dataCapacity = savedCapacity;
@@ -3767,6 +3803,15 @@ NativeUfsProbe::start (IOService *provider)
     IOLog ("NATIVE_SBPC: start rc=%x\n", sbRet);
     if (sbRet == KERN_SUCCESS) {
       thread_deallocate (sbSampler);
+    }
+  }
+  {
+    // H312: outlives the sampler, so a late stall or a late panic always has a writer.
+    thread_t watchdog = THREAD_NULL;
+    kern_return_t wdRet = kernel_thread_start (nativeWatchdogThread, nullptr, &watchdog);
+    IOLog ("NATIVE_UFS_WD: start rc=%x\n", wdRet);
+    if (wdRet == KERN_SUCCESS) {
+      thread_deallocate (watchdog);
     }
   }
   if (gH103SlotMode) {
