@@ -12836,3 +12836,38 @@ boot-arg `sheng-fb-gpu=1` + 在 `A540TracePlugin` 里接 `GpuScanoutClient` 循�
 `presentsurface` 阻塞显著低于 2.4 s。
 **预期管理**：GPU 路径的确定收益是**异步**；scanout 内存本身 2.7 MB/s 的带宽下限未必被 DMA 突破——
 这轮实验恰好把"瓶颈是通路还是内存"这个未知数测掉。
+
+## H273：全新克隆构建链的九个缺陷与一次干净构建（2026-11-13）
+
+**要求**：除下载的 IPSW/厂商固件外，所有生成物必须全新——不复用 `.cache/`、`build/`、
+`refer/`、`ios-obj`。**结果**：在一份全新 clone（`~/UniXNU` + `~/UniXNU-cheeseburger`）上，
+`defconfig → fetch → tree → macos-build-kernel.sh → build prelink` 一次跑通，
+内核 `4ef7564cb791cac511853a158204895efd8dd8177f390f75771e818d13b2620d`。
+
+此前所有构建都依赖旧目录里的历史残留，因此这些缺陷从未暴露。按出现顺序：
+
+| # | 症状 | 根因 | 修复 |
+| --- | --- | --- | --- |
+| 1 | `fatal: repository '…/refer/xnu' does not exist` | `macos-build-kernel.sh` 先 `git clone --shared "$FEED"`，后建 `refer/*` 软链 | `a98ad86` 启动时先把 `out/feeds/*` 链进 `refer/` |
+| 2 | 补丁 fuzz 套用后 `static int native_sb_pid;` 重复两行 | H251–H254 在已打过补丁的树上生成，`h103-proc-state` 已含其上下文 | `3ff1d31` 移入 `patches/xnu/experimental/` + 桩符号 |
+| 3 | `test -f "$CRYPTO_ARCHIVE" failed` | 只跑 baseline 脚本，没人建归档 | `7629412` 脚本内建 bootstrap + 归档列表 |
+| 4 | `can't open file '…/tree/build-corecrypto-14.py'` | 归档脚本在 `tree/scripts/` | `bced951` |
+| 5 | 中断后补丁"正反都不行" | 半应用的 `xnu-work` | `4d91785` 复用前校验整串补丁 |
+| 6 | `'IOBlockStorageDevice.h' file not found` | 缺 `prepare-storage-headers.py` | `7f93d57` |
+| 7 | `NativeRamBlock.cpp` 不存在 | 子模块 `lss717/RamBlock` 工作区为空 | 恢复子模块（`git submodule update --force`） |
+| 8 | UFS 运行时归档要 `verified-root-os/manifest.bin` | 该归档仅 `XNU_NATIVE_UFS=1` 时参与链接 | `050ed9b` 按条件跳过 |
+| 9 | `kernel.macho` 不存在于 PMGR 归档 | `build-sheng-pmgr.py` 从**上一次** prelink 的内核读 AON vtable | `f03bee2` 无内核时用 stub |
+| 10 | `'TrustCache/API.h' file not found` | 头文件恢复无重试；树内 `scripts/` 是旧快照 | `1fa5e60`、`6f49154` |
+| 11 | `mockfs_fsnode.c` 静态断言失败 | 重建 `xnu-work` 却没删 `build/xnu/ios-obj`，bootstrap 被跳过，归档在未打补丁的源码上编译 | `100856c` 两者同删 |
+| 12 | `KernelConfigTables.cpp:61` 打不上 | 重叠补丁被应用两次；`XNU_SKIP_PATCH_LOOP` 未被 baseline 读取、且整脚本只算一次 | `a414bd2`、`0645f56` |
+
+**纪律（现在由脚本强制）**：
+
+1. 补丁只由 `build-xnu-4k-baseline.sh` 按唯一顺序应用；补丁重叠
+   （`native-aes-personality` ↔ `h158-drop-personality`、`h103-proc-state` ↔ `h251-254`），
+   第二遍必然失败。判断"是否已在"必须实时算，不能缓存。
+2. 源码树与编译记录同生同灭：删 `.cache/xnu-work` 必须同时删 `build/xnu/ios-obj`。
+3. `out/<board>/tree/scripts/` 是 `unixnu tree` 生成的**副本**，可能落后于仓库；
+   构建脚本一律从 `$HOME/UniXNU/scripts/` 取源。
+4. `unixnu fetch` 可能"成功"却没拉 `xnu`，必须确认 `out/feeds/xnu-*`。
+5. `JOBS=1` 从来不是要求（H265 的绿屏是缺 kit 补丁，H269 已证实）；8 核机器用 `JOBS=8`。
