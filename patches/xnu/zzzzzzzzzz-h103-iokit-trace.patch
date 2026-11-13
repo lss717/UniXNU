@@ -35,7 +35,7 @@ diff --git a/iokit/Kernel/IOUserClient.cpp b/iokit/Kernel/IOUserClient.cpp
 +		return;
 +	}
 +	char comm[17] = {};
-+	comm[0] = 0; /* H318: no proc lock under the registry lock */
++	proc_selfname(comm, sizeof(comm));
 +	IOLog("NATIVE_IOKIT: op=%s comm=%s cls=%s d=%s ok=%d flags=%x\n",
 +	    op, comm, cls ? cls : "-", detail ? detail : "-", ok, native_boot_flags);
 +}
@@ -51,7 +51,7 @@ diff --git a/iokit/Kernel/IOUserClient.cpp b/iokit/Kernel/IOUserClient.cpp
 +native_match_trace(OSDictionary *dict, bool success)
 +{
 +	char comm[17] = {};
-+	comm[0] = 0; /* H318: no proc lock under the registry lock */
++	proc_selfname(comm, sizeof(comm));
 +	bool mobile = false;
 +	const char *keys[] = { "IOClass", "IOProviderClass", "IONameMatch" };
 +	for (unsigned k = 0; k < sizeof(keys) / sizeof(keys[0]); ++k) {

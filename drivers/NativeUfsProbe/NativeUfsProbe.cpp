@@ -2498,7 +2498,10 @@ NativeUfsProbe::logWrite (uint64_t rel, uint32_t blocks, const void *src,
     }
   }
   const unsigned bytes = blocks * 4096U;
-  if (!lockWithTimeout (fLock, "logWrite", lockTicks, false)) {
+  // H319: never wait for the I/O lock in the log path.  A single try-lock means a busy queue costs
+  // the log one slot and costs the main path nothing; the caller backs off on failure.
+  (void) lockTicks;
+  if (!IOLockTryLock (fLock)) {
     return false;
   }
   uint8_t cdb[16] = { 0x2a };
