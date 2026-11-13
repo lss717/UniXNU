@@ -14155,3 +14155,37 @@ NATIVE_UFS_SLOT: header=1 cursor=0
 - `NATIVE_AKS: AppleKeyStore publishResult=1` 出现 → AKS 服务确实发布了；
 - `NATIVE_UFS_ACCEL: probe none`（accelerator 关闭时）+ `NATIVE_IOG_OPEN: dyld_shared_cache_arm64 → 0`
   说明 dyld 缓存的打开路径正常。
+
+#### H340：不是挂死——系统活到 528 秒，是控制台停止重绘（2026-11-14）
+
+**两条观测通道都需要修正**：
+
+1. **持久环**：本轮 **0 个 slot**。不是没写成功，而是首写被"等一次存储请求"这个门挡住
+   （`NATIVE_UFS_LOG: deferred snapshot to window read`）。
+2. **控制台**：显示驱动 `startDisplay` 成功后（`base start ok primary=1`），内核控制台**不再重绘**，
+   于是屏幕定格在显示驱动的最后几行——之前几轮所谓"卡死"很大程度是这个假象。
+
+**唯一可靠的通道是保留块**（block 250，看门狗每 60 秒无锁写一次）：
+
+```
+NXMARK1 kind=alive uptime=489 hbago=0 beat=477 cmds=63384
+```
+
+`uptime` 是相对**探针启动**（约 40 s），所以对应内核日志的 **≈529 s**；保留块里同时抓到的
+msgbuf 尾部时间戳是 527–528 s，两者一致。
+
+同一块里还有关键内容：
+
+```
+NATIVE_EXEC: pid=190 … seserviced
+NATIVE_MTL: scene#710 proc backboardd
+NATIVE_MTL: scene#712 class timer FBSWorkspace=1
+NATIVE_MTL: scene#714 class timer FBSScene=1
+```
+
+即 backboardd 在跑、**FrontBoard 的 `FBSWorkspace` / `FBSScene` 类已经加载**。
+
+H341 的改动：把 `val/xf/fr` 三个显示计数写进**每分钟的保留块**——这样不依赖环、也不依赖屏幕，
+就能客观判断 CoreAnimation 有没有开始提交。
+
+**方法教训（已写入 AGENTS）**：拉环后先按 `SHLOGS v2 boot=<id>` 分组，确认是不是本轮的数据。
