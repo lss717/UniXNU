@@ -199,6 +199,9 @@ extern "C" void native_proc_wait_graph(void);
 // H310: the stage-2 dump flushes around itself so a stall is visible; the hook is defined
 // further down, so it needs a forward declaration here.
 extern "C" void native_log_flush_hook(void);
+// H315: the display archive paints the panel solid on panic; weak because a build without that
+// archive must still link.
+extern "C" void native_legacy_panic_paint (uint32_t color) __attribute__((weak_import));
 
 // H108: independent heartbeat. ios-sweet's log thread sleeps on tsleep, not
 // IOSleep; this port never woke from IOSleep, so this thread first proves
@@ -1164,6 +1167,28 @@ native_panic_flush (void)
   // H311: the ring flush below can lose the race for fLock, which is why several boots ended
   // with no panic in the log at all.  This block needs no lock, so its presence (or absence)
   // answers "panicked or stalled" even when nothing else survives.
+  // H315: and the panel turns solid, so the death type is readable without the log at all.
+  if (native_legacy_panic_paint != nullptr) {
+    uint32_t color = 0xffff0000U;   // red: panic, family unknown
+    struct H103MsgBuf *m = msgbufp;
+    if (m != nullptr && m->msg_size > 0 && m->msg_bufc != nullptr) {
+      const int size = m->msg_size;
+      const int cursor = (m->msg_bufx >= 0 && m->msg_bufx < size) ? m->msg_bufx : 0;
+      const int want = 1200;
+      char tail[want + 1];
+      for (int i = 0; i < want; ++i) {
+        char ch = m->msg_bufc[(cursor + size - want + i) % size];
+        tail[i] = (ch >= 32 && ch < 127) ? ch : ' ';
+      }
+      tail[want] = 0;
+      if (strstr (tail, "initproc exited") != nullptr) {
+        color = 0xffff8000U;        // orange: launchd exited
+      } else if (strstr (tail, "Kernel data abort") != nullptr) {
+        color = 0xff8000ffU;        // purple: kernel data abort
+      }
+    }
+    native_legacy_panic_paint (color);
+  }
   gH103Probe->marker ("panic");
   IOLog ("NATIVE_PANIC: flags=%x client=%u xfer=%u frames=%u\n",
          native_boot_flags, native_legacy_client_calls,
