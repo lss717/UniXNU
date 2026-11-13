@@ -12984,3 +12984,28 @@ NATIVE_LEGACY_SURFACE: rejected w=1080 h=1920 fmt=1647534392 planes=2 stride=108
 
 **方法论**：这一轮能一击命中，是因为把"拒绝"从布尔值变成了七个具体数字；
 在此之前 46 次拒绝没有任何可读信息（reason=4 只表示"卡在最后四项之一"）。
+
+### H275 结果：B3A8 被接受，但源 surface 是空白（2026-11-13）
+
+镜像 `4c3b6472…`，内核 `31341047…`（`NativeMobileDisplay 5f520f6`）。日志 6625 行 / 443 s。
+
+- 校验：**`swap validate accepted=1 reason=0`**（本轮只提交 1 次，无任何 `reason=4` 拒绝），
+  说明 stride/格式两处修复生效，`kIOReturnNotPermitted` 不再出现。
+- 传输：`NATIVE_LEGACY_COPY … us=14115500 bytes=8294400` →
+  `transfer status=0` → `retirement observed` → `presentsurface sent`（315.96 → 338.66 s）。
+- **但 `NATIVE_LEGACY_READBACK: tl=ffa0a0a0 c=ffa0a0a0 br=ffa0a0a0 q=ffa0a0a0`**：
+  `ffa0a0a0` = 不透明浅灰，即**拷贝进 scanout 的是均匀灰**，不是桌面内容。
+  因此源 surface（CA 交给 backboardd 的那张 B3A8）本身是空白。
+- 同一轮 Metal 侧：`commit` 计数 **1**（首次非零），8 次
+  `newRenderPipelineStateWithDescriptor` 仍全部 nil，`drawPrimitives`/`dispatchThreads`
+  仍为 0。管线描述符显示它们是墙纸模糊链
+  （`path_blit_vert_lph` / `downsample_4|8_frag_lph` / `narrow_blur_15|19_frag_lph`，
+  `fmt0=80` 即 BGRA8Unorm_sRGB）。
+
+结论：
+
+1. 显示侧（校验/传输/retirement）**已完全打通**，不再是瓶颈；
+2. 画面为空的原因是 **CA 没有往 surface 里画东西**——8 个 render pipeline 全 nil，
+   墙纸模糊链无法建立，于是合成结果是一张被清成灰的表面；
+3. 因此主线回到 **C6a-MTL ②**（`newRenderPipelineStateWithDescriptor:` 为什么返回 nil），
+   而不是显示驱动。
