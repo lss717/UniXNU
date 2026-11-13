@@ -12942,3 +12942,45 @@ panic(cpu 0 caller 0xfffffff0079f8d9c): ipc_space.h:173 assertion failed: table 
      需对 `sub=0x1a0893f48` 附近的访存做符号化；
   2. **`ipc_space.h:173` 断言**：进程退出→重启路径上对 corpse task 的 IPC 空间操作，
      需要判断是 XNU 原生竞态还是我们的 exec/corpse 补丁改变了顺序。
+
+### H274/H275：swap 校验 1/47 的根因是 B3A8 双平面 surface（2026-11-13）
+
+**H274 探针**（内核 `090b0940…`，镜像 `1b343484…`）在 `native_legacy_surface_rejected`
+里打印了被拒 surface 的七个字段，第一次上机即给出唯一一条：
+
+```
+NATIVE_LEGACY_SURFACE: rejected w=1080 h=1920 fmt=1647534392 planes=2 stride=1088 alloc=10444800 bytes=10444800
+```
+
+解码与算术：
+
+| 字段 | 值 | 含义 |
+| --- | --- | --- |
+| `fmt` | `1647534392` = `0x62336138` = `'b3a8'` | iOS 17 宽色双平面格式 |
+| `planes` | 2 | plane0 = 32-bit BGRA，plane1 = 8-bit alpha |
+| `stride` | 1088 | **像素**（不是字节）：1088×4 = 4352 B/row |
+| `alloc` | 10444800 | 4352×1920 **+** 1088×1920 = 8 355 840 + 2 088 960，**完全吻合** |
+
+**根因（两处，缺一不可）**：
+
+1. `nativeBgra()` 只接受单平面 BGRA（`0x42475241`/`0x26424741`），`b3a8` 直接判不合格；
+2. `native_legacy_surface_bounds()` 要求 `stride ≥ width×4`，而该格式的 stride 是像素
+   （1088 < 4320），即使格式放行也会在边界检查处失败。
+
+因此 backboardd 的每次提交都返回 `selector=5 status=e00002c2`
+（`kIOReturnNotPermitted`）——**不是 CA 不愿意提交，是我们把它的帧全退回了**。
+这修正了 H256 的强推断（"drawable 缺失 → 整帧丢弃"）：drawable 一直有，格式判定挡在中间。
+
+**修复**（`NativeMobileDisplay 5f520f6`，超级仓库 `e6ea5f6`）：
+
+- `nativeBgra` 增加 `(format==0x62336138 && planes==2)`；
+- 新增 `native_legacy_surface_bytestride()`：对 `b3a8` 把像素 stride 换算成字节；
+  validate 与 kick 两条路径都用它；
+- plane1（alpha）不参与拷贝——不透明桌面不需要。
+
+**H275 镜像**：内核 `31341047…`，镜像 `4c3b64723148e3145f106bc1d73637d8345fc587ee5c34e89f1afc68259ccf00`。
+判据：`swap validate accepted=1` 的比例从 1/47 升到接近全部，`presentsurface sent` 持续增长，
+屏幕出现真实 SpringBoard 画面。
+
+**方法论**：这一轮能一击命中，是因为把"拒绝"从布尔值变成了七个具体数字；
+在此之前 46 次拒绝没有任何可读信息（reason=4 只表示"卡在最后四项之一"）。
