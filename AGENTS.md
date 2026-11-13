@@ -194,3 +194,95 @@ git clone https://github.com/lss717/UniXNU-cheeseburger
   entry. Private images, IPSWs and kernels stay out of git.
 - Keep English and Simplified Chinese documentation in sync. The documentation
   describes the resulting state; STATUS records the experiment history.
+
+## Bring-up tooling: traps that cost a boot each (November 2026)
+
+These are ordered by how much time they wasted, not by how likely they are.
+
+### Verifying a build before it reaches the device
+
+- **The kernel hash must change before you pack an image.** A build that fails
+  still leaves the previous `out/<board>/kernel/kernel.macho` in place, and
+  `unixnu build payload` happily packs it. Compare `sha256sum` of
+  `kernel/kernel.macho` before/after, and treat "unchanged" as failure.
+  `unixnu build prelink` is the one guard that already refuses
+  (`…noctf not found; run "unixnu build kernel" first`) — never bypass it.
+- **`grep -c "error: "` is not a compile check.** Kernel logs contain string
+  literals such as `"(kcdata_memcpy error: %d…)"`, so 15 "errors" can be noise
+  while a real `error: use of undeclared identifier` sits unnoticed. Filter
+  `error: (use of|unknown|no member|implicit)`.
+- **Editing a `.patch` by hand almost always gets the hunk counts wrong** and
+  `git apply` then says `corrupt patch at line N`. Recompute the header from
+  the body (`context+added` on the new side, `context+removed` on the old) or
+  regenerate the patch from a worktree; do not eyeball it.
+
+### Plugin and addon delivery
+
+- **The addon is installed only after the Data volume mount validates**
+  (`native_owner_data_prepare` → `native_gpu_addon_prepare`). When the mount
+  fails, no addon is written and the device keeps running the bundle already in
+  `/private/var/ngpu`, with no error in the log. H293/H294/H297 all ran a stale
+  plugin this way.
+- **Print a build id from the plugin itself** (`NATIVE_MTL: builder#N build
+  Hxxx`). Without it, "the plugin behaves differently" and "the old plugin is
+  still loaded" are indistinguishable. Bump the string in the same commit as
+  the behaviour change — H296 forgot and the log still said H295.
+- **A new bundle needs its CDHash in the owner trust cache**, or it will not
+  load: `scripts/add-owner-trust-hash.py <base> <cdhash> <out>`, then
+  `unixnu build payload --trust-cache <out> --gpu-addon <addon>`.
+- **`/tmp` on the builder is cleaned without warning.** Losing
+  `trust-H272r.bin` / `scratch-data.img` / the addon makes the payload step
+  fail or, worse, silently fall back to the previous payload. Keep those inputs
+  somewhere durable and re-upload them after a cleanup.
+
+### Reaching the device
+
+- **Never `fastboot flash`.** Only `fastboot boot`. The Data partition is the
+  Android side; `userdata_ios` needs explicit approval.
+- **PowerShell is the Windows default shell** (`ls@192.168.10.225`). Use
+  `/tmp/opencode/ps225 "<script>"` (base64 `-EncodedCommand`); plain quoted
+  `cmd` style commands die with `ParserError`. The backup host
+  `192.168.8.58` is `cmd.exe` with `rwin8`/`rscp8`.
+- `fastboot boot` right after `adb reboot bootloader` often fails with
+  `< waiting for any device >` or `Write to device failed (Invalid argument)`:
+  wait longer, re-check `fastboot devices`, and retry. It is a timing problem,
+  not a bad image.
+- **TWRP can come back `offline`** in `adb devices` after a panic-reboot.
+  Restarting the adb server does not help; reboot the phone into recovery again.
+
+### Reading the persistent kernel log
+
+- The ring lives at the **end** of `userdata_ios`:
+  `dd if=/dev/block/by-name/userdata_ios of=/tmp/x bs=4096 skip=<blocks-8192>
+  count=8192`, then `scripts/h103-log-pull.py --slots 256`. Recompute `skip`
+  when the partition size changes. TWRP's `dd` does not accept `iflag=direct`.
+- **The ring stops early and silently** (observed at 187 s, 196 s, 258 s, 532 s
+  and 1115 s across boots). Adding `NATIVE_UFS_LOG_STAT` / `NATIVE_UFS_LOG_FAIL`
+  showed no write failures, and `UFS_LOG_STAT rounds=1` showed the flush was
+  simply never called again. A sampler-driven `native_log_flush_hook()` every
+  second is what finally kept logs alive past 1000 s.
+- **Start any probe early.** The SpringBoard sampler originally waited 150 s
+  and the Metal plugin loads around 210 s, while the ring often died before
+  that: the probes existed but never made it to disk. Sampling now starts at
+  60 s.
+
+### Interpreting what the device says
+
+- **`pid` cannot separate our probe from CoreAnimation.** The Metal plugin runs
+  inside `backboardd`, so a `presentSurface:` issued by the probe and one issued
+  by CA both appear as `client io pid=56`. Silencing the probe took the swap
+  validation count from 47 to 0 — every earlier "CA submits frames" reading was
+  the probe.
+- **Shared-cache addresses need the region base, not a guess.** `pc` lives in
+  the dyld cache and slides per boot; subtracting `task_shared_region_slide`
+  gave `SymptomEvaluator`, while `pc - sr_base_address` (via
+  `vm_shared_region_start_address`) gave the truth: `libsystem_kernel + 0x1b58`.
+  Print the base.
+- **A probe that never fires looks like a passing test.** `native_sb_alln` was
+  zero on the sampler path, so an image-resolver block never ran and printed
+  nothing for three boots. Make every probe print its own inputs before it
+  decides anything.
+- **`stride` units differ per pixel format.** The desktop composites into a
+  two-plane `'b3a8'` surface whose stride is in *pixels* (1088) while the bounds
+  check wants *bytes*; requiring single-plane BGRA refused 46 of 47 submissions
+  with `kIOReturnNotPermitted` and looked exactly like "CA refuses to commit".
