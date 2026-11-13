@@ -14121,3 +14121,37 @@ cpus=2 在 KextLog 前不确定"的结论仍然有效，只是当前实验按用
 - `macos-build-kernel.sh` 改为自动获取线程数（性能核数 → `hw.ncpu` → `nproc`，`JOBS` 可覆盖）；
 - keystore 归档需要**三处接线**（board 归档列表、`XNU_NATIVE_KEYSTORE` 链接开关、探针实例化），
   缺一即"能编译但什么都不做"。
+
+#### H333/H334：AKS 发布成功，但挂死点暴露了两个独立问题（2026-11-14）
+
+**H333（addon + accelerator）**：屏幕在
+
+```
+NATIVE_AKS: AppleKeyStore publishResult=1
+NATIVE_UFS_ACCEL: probe class=AGXAccelerator name=AGXAccelerator agx=1 refs=4
+```
+
+之后**整机冻结**（心跳行一分钟一次都没出现）。这一轮带着 `sheng-gpu-power=7`，
+所以先归因到 GPU 上电路径；同时也印证了用户此前的判断：**桌面走 CPU 渲染，不该开 GPU**。
+
+**H334（纯 CPU：accelerator=0、无 addon、无 gpu-power）**：仍然冻结，但位置变了，而且非常明确：
+
+```
+NATIVE_AKS: AppleKeyStore published
+NATIVE_UFS_SLOT: attempt=1 slot=0 … fires=0
+NATIVE_UFS_LOG_STAT: rounds=1 seq=1 errors=0 idle=0 skips=0 delta=1562 n=1562
+NATIVE_UFS_SLOT: header=1 cursor=0
+（之后无声）
+```
+
+停在**首次日志落盘之后**。与 H326（同配置但无 AKS，跑了 800 s）相比，唯一变量就是 AKS 发布。
+
+**H335 的修法**：`keystore->attach(this)` 把子服务挂到了 UFS 驱动上——IOService 的子节点会继承
+父节点的 work loop，于是 keystore 与 UFS 驱动共用同一个 loop，在驱动 start 期间注册子服务很容易
+在 loop 上互锁。改为 `attach(provider)`（平台 nub，普通 IOService，不持有我们的 loop）。
+
+顺带记录两个已验证的正面结论：
+
+- `NATIVE_AKS: AppleKeyStore publishResult=1` 出现 → AKS 服务确实发布了；
+- `NATIVE_UFS_ACCEL: probe none`（accelerator 关闭时）+ `NATIVE_IOG_OPEN: dyld_shared_cache_arm64 → 0`
+  说明 dyld 缓存的打开路径正常。
