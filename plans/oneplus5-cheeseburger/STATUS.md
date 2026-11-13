@@ -13411,3 +13411,28 @@ NATIVE_PANIC_STR: initproc exited -- exit reason namespace 2 subcode 0xa descrip
 `subcode 0xa` = 信号 10 = **SIGBUS**。结合此前多次出现的 `xpcproxy … sig=10`，
 最可能的共因是**用户态访问了无法从我们的模拟存储换入的页面**（文件映射页 page-in 失败），
 即使等待超时已放宽，只要换入返回的数据不可用，仍然会以 SIGBUS 形式杀死进程。
+
+### H289：落盘不是写失败，而是心跳线程不再调用 flush（2026-11-13）
+
+新增 `NATIVE_UFS_LOG_STAT` / `NATIVE_UFS_LOG_FAIL` 后的首次上机（内核 `23207e3a…`）：
+
+```
+NATIVE_UFS_LOG_STAT: rounds=1 seq=1 errors=0 idle=0 delta=8435 n=8435    ← 只有一条
+NATIVE_UFS_LOG_FAIL: 0 条
+NATIVE_UFS_SLOT: attempt=8 slot=7 … fires=0
+ring 末端: 187.6 s（NATIVE_PROC_DUMP: end）
+```
+
+判定：
+
+1. **没有任何写失败**（`errors=0`，无 `FAIL` 行）→ 不是 UFS 写路径的问题；
+2. **`rounds` 只到 1**（60 轮才打印一条，说明从未跑满 60 轮）；
+3. **`gH103TimerFires = 0`**（`fires=0`）→ 1 Hz 的 `timer_call` 心跳**从未触发**；
+4. 因此 flush 只被调用过极少次数，ring 停在 187.6 s 是**调用方停了**，不是落盘失败。
+
+`h103FlushNow()` 的唯一驱动是 `heartbeatThread()`（H128 注释写明），
+所以下一步要查的是**心跳线程本身**：它是否被调度、循环次数、每次是否进入 flush。
+这与"落盘"无关，也与 UFS 无关。
+
+附注：内存中的 `h103-log-secs` 参数、`h103-slot` 模式在本轮均为默认（slotMode=1），
+`NATIVE_UFS_SLOT: attempt=8` 之后就再没有新的 attempt 输出，与上面一致。
