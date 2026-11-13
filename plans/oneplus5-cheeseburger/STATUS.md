@@ -12923,3 +12923,22 @@ panic(cpu 0 caller 0xfffffff0079f8d9c): ipc_space.h:173 assertion failed: table 
    取证方式单独定位（`NATIVE_EXIT_DESC` 尾部被截断，需完整 ring 日志）。
 3. 三条参数/PMGR 组合的对照已写入上文表；**基线参数 ≠ 当前阶段参数**，以后上机一律
    取同阶段镜像的参数表。
+
+#### H273g 取证：ring 日志与 panic 符号化
+
+- 持久 ring 截到 **157.76 s**（panic 后未再落盘），最后阶段为：
+  `NATIVE_DISPLAY_OPEN: service=NativeLegacyDisplay process=backboardd grant=backboardd match=1`
+  → `NATIVE_LEGACY: client sel pid=56 selector=88 status=0` →
+  `client io pid=56 selector=57 status=0 … no=1` → `NATIVE_EXEC: pid=79 IOMFB_FDR_Loader`。
+  **即 backboardd 已取得 legacy display provider 并发出 selector**，这是长期阻塞点首次在
+  全新链镜像上被跨过。
+- panic caller `0xfffffff0079f8d9c` = `_ipc_task_set_immovable_pinned.cold.3 + 0x10`，
+  断言来自 `ipc_space.h:173 (table != NULL)`：进程（其余进程仍在运行，backboardd 已
+  `NATIVE_EXIT status=0xa`）退出后再对已释放的 `ipc_space` 取端口。
+  调用链为 `task_set_immovable_pinned() → ipc_task_set_immovable_pinned()`
+  （`osfmk/kern/task.c:786`），属原生代码，不在我们的补丁里。
+- 因此下一步有两个独立议题：
+  1. **backboardd SIGBUS（exc=1 code=0xa sig=10）**：发生在其打开 legacy display 之后，
+     需对 `sub=0x1a0893f48` 附近的访存做符号化；
+  2. **`ipc_space.h:173` 断言**：进程退出→重启路径上对 corpse task 的 IPC 空间操作，
+     需要判断是 XNU 原生竞态还是我们的 exec/corpse 补丁改变了顺序。
