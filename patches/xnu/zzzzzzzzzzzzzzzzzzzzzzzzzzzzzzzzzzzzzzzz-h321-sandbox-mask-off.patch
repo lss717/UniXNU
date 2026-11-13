@@ -1,0 +1,24 @@
+diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
+--- a/osfmk/kern/task.c
++++ b/osfmk/kern/task.c
+@@ -7664,5 +7664,10 @@
+ uint8_t *
+ task_get_mach_trap_filter_mask(task_t task)
+ {
+-	return task_get_ro(task)->task_filters.mach_trap_filter_mask;
++	/* H321: the sandbox installs per-process syscall filters as bitmasks that XNU tests
++	 * inline on the Mach trap and MIG paths.  launchservicesd is denied its own IPC
++	 * ("Protobox: lsd deny syscall-mig"), which is why SpringBoard's reply never comes.
++	 * An unfiltered task is the zero mask, so every such test falls through to allow. */
++	(void)task;
++	return NULL;
+ }
+@@ -7680,5 +7685,10 @@
+ uint8_t *
+ task_get_mach_kobj_filter_mask(task_t task)
+ {
+-	return task_get_ro(task)->task_filters.mach_kobj_filter_mask;
++	/* H321: same for the kobject (MIG) dispatch path. */
++	(void)task;
++	return NULL;
+ }
