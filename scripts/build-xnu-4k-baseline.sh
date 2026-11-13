@@ -674,6 +674,14 @@ if [ "${XNU_SOURCE_CORECRYPTO14:-0}" = 1 ] && [ "$BOOTSTRAP" = 0 ]; then
     KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$UFS_PROBE_ARCHIVE"
     KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $UFS_PROBE_ARCHIVE"
   fi
+  if [ "${XNU_NATIVE_KEYSTORE:-0}" = 1 ]; then
+    # H329: SpringBoard matches AppleKeyStore during setup; without this archive the service never
+    # exists and its keybag query has nothing to talk to.
+    KEYSTORE_ARCHIVE=$ROOT/build/native-keystore-events/libNativeKeyStoreEvents.a
+    test -f "$KEYSTORE_ARCHIVE"
+    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$KEYSTORE_ARCHIVE"
+    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $KEYSTORE_ARCHIVE"
+  fi
   if [ "${XNU_NATIVE_ADRENO:-0}" = 1 ]; then
     # NativeAdreno plus its kits (scripts/build-native-adreno-kits.py). No personality is installed: the
     # board probe calls NativeAdrenoGmuContextBringup directly once it has powered the GPU CX domain.
