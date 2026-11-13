@@ -14058,3 +14058,50 @@ H323 的修法：超时不再永久放弃，改为**复位 host controller（HCE
 
 判据：环里应出现 SpringBoard / lsd / backboardd 自己的日志；`NATIVE_ACCEL_HB` 的 `val`/`fr`
 若变成非 0，则说明 CA 真正开始提交。
+
+#### H328/H329：审计"未接线"组件——AppleKeyStore 是死代码（2026-11-14）
+
+**发现方式**：不猜，直接把驱动、归档列表、钩子定义三方对齐。
+
+**1. AppleKeyStore（已修，H329）**
+
+`drivers/NativeKeyStoreEvents/` 三处都没接：
+
+| 项 | 状态 |
+| --- | --- |
+| `board.toml [kernel] archives` | **缺**（内核 `nm` 里 `AppleKeyStore` 符号数 = 0） |
+| `native_keyevents_allocate()` | **无任何调用者**（服务永远不创建） |
+| `native_aks_state_enabled/lock_state/call/opened`、`native_keyevents_open_refused` | **无定义**（原由本仓库没有的内核补丁提供） |
+
+而 SpringBoard 在启动时反复匹配它：
+
+```
+op=match comm=SpringBoard d=AppleKeyStore ok=0     （H327，243 s）
+```
+
+这正是 eShard 记录过的 keybag/SEP 阻塞类问题。H329 的三处补齐：钩子实现在驱动内（`sheng-aks=1` 打开状态应答）、归档列表加入、由 UFS 探针在 start 时实例化并发布。
+
+**2. NativeHidInput（未修，触摸）**
+
+同一类死代码：`native_hid_input_observed` / `native_hid_live_checkpoint` 只有声明和调用、**无定义**，
+且 `scripts/build-native-hid-input.py` 从未被 `macos-build-kernel.sh` 调用，内核中 `HidInput` 符号数 0。
+触摸因此**完全没有接进内核**——不影响画面出现，但影响交互，属于下一阶段。
+
+**3. 加速器缺失的连锁反应**
+
+无 addon / `offline-accelerator=0` 的配置下：
+
+```
+op=match comm=(SpringBoard|backboardd) d=IOAcceleratorES ok=0    ×288
+op=match comm=… d=AppleCLCD ok=0                                  ×1
+```
+
+即 backboardd 反复索取 GPU 加速器服务（`AGXAccelerator` 类在核心里，但实例未发布）。
+所以"关掉插件让 CA 走 CPU"这条路在**本移植上并不成立**：加速器服务一旦缺席，窗口服务器会一直等。
+H329 起恢复 addon + `offline-accelerator=1`，与 sandbox 掩码修复、AKS 修复一起验证。
+
+**4. 验证方法上的坑（已记录）**
+
+- 内核控制台与 CA 共用 scanout，**探针输出会把画面覆盖**，所以"屏幕是日志"不能当作没有出帧；
+  唯一可靠判据是 `NATIVE_ACCEL_HB` 的 `val/xf/fr`；
+- 环只有 256 个 slot：拉取太晚（>10 分钟）会把 SpringBoard 启动段挤掉，需要在 ~420 秒时拉取。
