@@ -290,7 +290,7 @@ h107GateOpen (void)
 // H311: ten seconds without a heartbeat beat means the heartbeat thread is stuck.  The sampler
 // keeps running on its own, so it leaves a "stall" record in the reserved block; finding that
 // record instead of a "panic" one says the machine hung rather than panicked.
-static void h103Marker (const char *kind);  // defined after the driver class is complete
+static void h103Marker (const char *kind, bool urgent);  // defined after the driver class is complete
 
 static void
 h103StallCheck (void)
@@ -304,13 +304,13 @@ h103StallCheck (void)
     return;
   }
   reportedAt = now;
-  h103Marker ("stall");
+  h103Marker ("stall", true);
   gH103StallRecorded = 1;
 }
 
 // H312: the sampler thread ends around 550 s, which is exactly the gap that left H311 silent at
 // 933 s with no record at all.  This thread never returns: it overwrites the marker block with
-// "alive" once a minute (proving the marker path itself works) and stops stamping once a stall
+// "alive" every five minutes (proving the marker path itself works) and stops stamping once a stall
 // has been recorded, so the stall is not erased.
 // H313: the ring only keeps its last slots, so the "client enter" lines that say who registered
 // on the legacy display are long gone by the time a boot dies.  Dump the whole client table - it
@@ -341,9 +341,9 @@ nativeWatchdogThread (void *, wait_result_t)
     if (seconds == 120 || seconds == 300 || seconds == 600 || seconds == 900) {
       h103DumpDisplayClients ();
     }
-    if (++ticks >= 60) {
+    if (++ticks >= 300) {
       ticks = 0;
-      h103Marker ("alive");
+      h103Marker ("alive", false);
     }
   }
 }
@@ -1085,11 +1085,11 @@ class NativeUfsProbe : public IOService {
   // H311: one-block record outside the ring so a dead machine still says whether it panicked
   // or stalled.  Block 250 sits in the reserved header area (slots begin at 257) and takes no
   // lock, so it can still land when the flush path is stuck.
-  bool logMarker (const char *kind);
+  bool logMarker (const char *kind, bool urgent);
 
 public:
   // H311: free-function access to the panic/stall marker (the panic hook is extern "C").
-  void marker (const char *kind) { (void) logMarker (kind); }
+  void marker (const char *kind, bool urgent) { (void) logMarker (kind, urgent); }
   bool start (IOService *provider) override;
   void free () override;
   bool h103Snapshot (const char *tag, bool pause, bool verify);
@@ -1205,7 +1205,7 @@ native_panic_flush (void)
     }
     native_legacy_panic_paint (color);
   }
-  gH103Probe->marker ("panic");
+  gH103Probe->marker ("panic", true);
   IOLog ("NATIVE_PANIC: flags=%x client=%u xfer=%u frames=%u\n",
          native_boot_flags, native_legacy_client_calls,
          native_legacy_transfer_calls, native_legacy_frame_count);
@@ -1224,12 +1224,12 @@ native_panic_flush (void)
 // H311: the sampler's stall detector only needs the marker call, and the driver class is still
 // incomplete where the detector sits, so this wrapper holds the typed access.
 static void
-h103Marker (const char *kind)
+h103Marker (const char *kind, bool urgent)
 {
   if (gH103Probe == nullptr) {
     return;
   }
-  gH103Probe->marker (kind);
+  gH103Probe->marker (kind, urgent);
 }
 
 // H128: driven from heartbeatThread() only.  The spawned slot thread never
@@ -2523,7 +2523,7 @@ NativeUfsProbe::logWrite (uint64_t rel, uint32_t blocks, const void *src)
 // queue makes ufsWriteCommand() return immediately instead of waiting, which is what we want
 // from a dying machine.  Read it back at offset 250*4096 of a normal 8192-block log pull.
 bool
-NativeUfsProbe::logMarker (const char *kind)
+NativeUfsProbe::logMarker (const char *kind, bool urgent)
 {
   if (!fReady || !fLogData || !fLogDma || !fLogDataPhys || !fLogCapacity || !fQueue.data) {
     return false;
@@ -2562,6 +2562,13 @@ NativeUfsProbe::logMarker (const char *kind)
       used += want;
       block[used] = 0;
     }
+  }
+  // H316: a periodic marker must not touch the queue without the lock.  H315's unlocked alive
+  // stamps starved the log writer (logWrite waited 2.7 s with 20 waiters, six failures) and the
+  // boot froze at 294 s with the heartbeat already three seconds late.  Only the panic and stall
+  // paths, where the lock may be held by the dead thread, take the unlocked route.
+  if (!urgent) {
+    return logWrite (250, 1, block);
   }
   if (fLogDma->writeBytes (0, block, sizeof block) !=
       static_cast<IOByteCount> (sizeof block)) {
