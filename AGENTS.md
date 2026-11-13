@@ -53,6 +53,11 @@ Known traps on a fresh tree, in the order they bite:
    The script now links `out/feeds/*` into `tree/refer/` first and stops with a
    readable message when a feed is missing; `unixnu tree` itself never touches
    `refer/`.
+6. A patch that was generated from an already-patched tree applies with fuzz and
+   silently duplicates declarations. The series must apply with plain `git apply`
+   and no `-F`; check after adding a patch. `patches/xnu/experimental/` holds the
+   H251-H254 probe patches until they are rebased onto the current line, with
+   `zzzz…-h25x-probe-stubs.patch` keeping the UFS probe's symbols linkable.
 
 The driver is `./unixnu`. Device modules override base modules with the same
 name; `./unixnu status` shows the resolved origin of every module.
