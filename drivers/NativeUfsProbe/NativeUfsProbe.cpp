@@ -123,6 +123,9 @@ static volatile uint32_t gH103LogSecs = 10;
 // UFS I/O, so a frozen cell means a real kernel/work-loop hang.
 static volatile int gH103HbTimerOn;
 static volatile uint64_t gH103StartTicks;
+// H311: the heartbeat stamps this every beat; the sampler writes a "stall" marker into the
+// reserved block when it has not moved for ten seconds, which distinguishes a hang from a panic.
+static volatile uint64_t gH103BeatTicks;
 static volatile uint32_t gH103SlotWriteErrors;
 /* H289: the persistent ring stopped at 258 s in H288 while the system kept running for
  * another 300 s, so the flush path needs to say whether it is failing or merely idle. */
@@ -277,6 +280,26 @@ h107GateOpen (void)
   }
   // The launchd ordering race (~200-230 s) is decided long before this.
   return now - gH107SpringBoardTicks >= 60 * 19200000ULL;
+}
+
+// H311: ten seconds without a heartbeat beat means the heartbeat thread is stuck.  The sampler
+// keeps running on its own, so it leaves a "stall" record in the reserved block; finding that
+// record instead of a "panic" one says the machine hung rather than panicked.
+static void
+h103StallCheck (void)
+{
+  static uint64_t reportedAt;
+  uint64_t now = mach_absolute_time ();
+  if (!gH103BeatTicks || now - gH103BeatTicks < 10 * 19200000ULL) {
+    return;
+  }
+  if (reportedAt && now - reportedAt < 30 * 19200000ULL) {
+    return;
+  }
+  reportedAt = now;
+  if (gH103Probe) {
+    gH103Probe->marker ("stall");
+  }
 }
 
 static bool
@@ -548,6 +571,7 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
       // Flush once a second across the whole gap instead.
       for (unsigned gap = 0; gap < 30; ++gap) {
         IOSleep (1000);
+        h103StallCheck ();
         native_log_flush_hook ();
       }
     }
@@ -567,6 +591,7 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
     // H303: the slow series used to sleep ten seconds with no sync; keep the ring moving.
     for (unsigned gap = 0; gap < 10; ++gap) {
       IOSleep (1000);
+      h103StallCheck ();
       native_log_flush_hook ();
     }
   }
@@ -590,6 +615,8 @@ heartbeatThread (void *, wait_result_t)
     h103MaybeSetAcceleratorPlugin ();
     h103ProbeAcceleratorService ();
     beat++;
+    // H311: stamped before the flush, so a stuck flush shows up as a stale beat.
+    gH103BeatTicks = mach_absolute_time ();
     // H305: five seconds was still enough to lose the moment launchd faults; sync every beat.
     native_log_flush_hook ();
     native_sigbus_drain ();
@@ -1004,8 +1031,14 @@ class NativeUfsProbe : public IOService {
   void hbTimerTick (IOTimerEventSource *sender);
   bool logWrite (uint64_t rel, uint32_t blocks, const void *src);
   bool logSync (void);
+  // H311: one-block record outside the ring so a dead machine still says whether it panicked
+  // or stalled.  Block 250 sits in the reserved header area (slots begin at 257) and takes no
+  // lock, so it can still land when the flush path is stuck.
+  bool logMarker (const char *kind);
 
 public:
+  // H311: free-function access to the panic/stall marker (the panic hook is extern "C").
+  void marker (const char *kind) { (void) logMarker (kind); }
   bool start (IOService *provider) override;
   void free () override;
   bool h103Snapshot (const char *tag, bool pause, bool verify);
@@ -1080,6 +1113,10 @@ native_panic_flush (void)
   if (gH103Probe == nullptr) {
     return;
   }
+  // H311: the ring flush below can lose the race for fLock, which is why several boots ended
+  // with no panic in the log at all.  This block needs no lock, so its presence (or absence)
+  // answers "panicked or stalled" even when nothing else survives.
+  gH103Probe->marker ("panic");
   IOLog ("NATIVE_PANIC: flags=%x client=%u xfer=%u frames=%u\n",
          native_boot_flags, native_legacy_client_calls,
          native_legacy_transfer_calls, native_legacy_frame_count);
@@ -2378,6 +2415,49 @@ NativeUfsProbe::logWrite (uint64_t rel, uint32_t blocks, const void *src)
   fQueue.dataPhys = savedPhys;
   fQueue.dataCapacity = savedCapacity;
   IOLockUnlock (fLock);
+  return ok;
+}
+
+// H311: the ring can die before the machine does, and the panic path's flush can lose the lock,
+// so the panic/stall question gets its own single block.  It is deliberately lock-free: a busy
+// queue makes ufsWriteCommand() return immediately instead of waiting, which is what we want
+// from a dying machine.  Read it back at offset 250*4096 of a normal 8192-block log pull.
+bool
+NativeUfsProbe::logMarker (const char *kind)
+{
+  if (!fReady || !fLogData || !fLogDma || !fLogDataPhys || !fLogCapacity || !fQueue.data) {
+    return false;
+  }
+  if (fLogBlocks <= 250) {
+    return false;
+  }
+  static char block[4096];
+  memset (block, 0, sizeof block);
+  const uint32_t uptime = gH103StartTicks ?
+      static_cast<uint32_t> ((mach_absolute_time () - gH103StartTicks) / 19200000ULL) : 0;
+  snprintf (block, sizeof block,
+      "NXMARK1 kind=%s uptime=%u beat=%u cmds=%llu flags=%x build=%s\n",
+      kind ? kind : "?", (unsigned) uptime, (unsigned) gH103SlotCursor,
+      (unsigned long long) gUfsCommands, (unsigned) native_boot_flags, H103_BUILD);
+  if (fLogDma->writeBytes (0, block, sizeof block) !=
+      static_cast<IOByteCount> (sizeof block)) {
+    return false;
+  }
+  uint8_t cdb[16] = { 0x2a };
+  cdb[1] = 0x08;  // FUA: nothing else is going to sync this write
+  putBe32 (cdb + 2, static_cast<uint32_t> (fLogFirst + 250));
+  cdb[7] = 0;
+  cdb[8] = 1;
+  uint8_t *savedData = fQueue.data;
+  uint64_t savedPhys = fQueue.dataPhys;
+  uint32_t savedCapacity = fQueue.dataCapacity;
+  fQueue.data = fLogData;
+  fQueue.dataPhys = fLogDataPhys;
+  fQueue.dataCapacity = fLogCapacity;
+  bool ok = ufsWriteCommand (&fQueue, 0, cdb, 4096, fLogData);
+  fQueue.data = savedData;
+  fQueue.dataPhys = savedPhys;
+  fQueue.dataCapacity = savedCapacity;
   return ok;
 }
 
