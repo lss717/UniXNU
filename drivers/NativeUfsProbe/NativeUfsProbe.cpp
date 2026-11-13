@@ -205,6 +205,9 @@ extern "C" void native_log_flush_hook(void);
 // H315: the display archive paints the panel solid on panic; weak because a build without that
 // archive must still link.
 extern "C" void native_legacy_panic_paint (uint32_t color) __attribute__((weak_import));
+// H329: the AppleKeyStore driver publishes SpringBoard's keybag service; weak so a build without
+// that archive still links.
+extern "C" IOService * native_keyevents_allocate (void) __attribute__((weak_import));
 
 // H108: independent heartbeat. ios-sweet's log thread sleeps on tsleep, not
 // IOSleep; this port never woke from IOSleep, so this thread first proves
@@ -3956,7 +3959,6 @@ NativeUfsProbe::start (IOService *provider)
   // finds nothing on this port, which is where its setup path stops; the driver existed but was
   // never instantiated, archived or given its hook implementations.
   {
-    extern "C" IOService * native_keyevents_allocate (void) __attribute__((weak_import));
     if (native_keyevents_allocate != nullptr) {
       IOService * keystore = native_keyevents_allocate ();
       if (keystore != nullptr && keystore->init ()) {
