@@ -3952,6 +3952,28 @@ NativeUfsProbe::start (IOService *provider)
   PE_parse_boot_argn ("h103-load-iogpu", &loadIogpu, sizeof loadIogpu);
   gH103LoadIogpu = loadIogpu ? 1 : 0;
   gH103StartTicks = mach_absolute_time ();
+  // H328: publish the AppleKeyStore service.  SpringBoard's MobileKeyBag matches that class and
+  // finds nothing on this port, which is where its setup path stops; the driver existed but was
+  // never instantiated, archived or given its hook implementations.
+  {
+    extern "C" IOService * native_keyevents_allocate (void) __attribute__((weak_import));
+    if (native_keyevents_allocate != nullptr) {
+      IOService * keystore = native_keyevents_allocate ();
+      if (keystore != nullptr && keystore->init ()) {
+        if (keystore->attach (this)) {
+          keystore->start (this);
+          IOLog ("NATIVE_AKS: AppleKeyStore published\n");
+        } else {
+          IOLog ("NATIVE_AKS: attach failed\n");
+          keystore->release ();
+        }
+      } else {
+        IOLog ("NATIVE_AKS: allocation failed\n");
+      }
+    } else {
+      IOLog ("NATIVE_AKS: driver not linked\n");
+    }
+  }
   // H178: a warm reboot leaves the kernel message ring in place, and its write
   // cursor does not necessarily start at zero.  With previous=0 the first
   // flush therefore copied the whole ring up to the current cursor, i.e. the

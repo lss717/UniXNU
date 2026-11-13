@@ -199,6 +199,7 @@ for ARCHIVE in \
   "scripts/build-arm-driver.py NativeVirtioBlock" \
   "scripts/build-arm-driver.py NativeRamBlock" \
   "scripts/build-arm-driver.py NativeUfsProbe" \
+  "scripts/build-arm-driver.py NativeKeyStoreEvents" \
   "scripts/build-mockfs-fixture.py" \
   "scripts/build-libpthread-kernel.py"; do
   echo "== archive $ARCHIVE"
