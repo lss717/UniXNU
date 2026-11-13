@@ -13957,3 +13957,45 @@ H318 的修法：去掉该路径上的 `proc_selfname`（不再在注册表锁�
 **顺带记录**：无插件这一轮仍然 `s345=0/0/0 val=0 xf=0 fr=0`，只看到 selector 15/22/33/88，
 其中 22/33/57 落到 `client fixup … unsupported->0`。所以"关掉插件让 CA 走 CPU 渲染"这条
 假设**尚未得到验证**——两轮都没活过 300 秒。
+
+#### H320：日志全量比对锁定 `lsd`（LaunchServices）为 SpringBoard 的阻塞对端（2026-11-14）
+
+不再新增探针，改为把 80 份历史 ring 日志全部统计一遍，得到两条硬结论。
+
+**1. SpringBoard 绝大多数时间在等 `lsd`**
+
+对所有日志里的 `NATIVE_SBPORT … req … peer=<pid>/<name>` 计数：
+
+| 对端 | 次数 |
+| --- | --- |
+| `92/lsd` | 3633 |
+| `1/launchd` | 1659 |
+| `93/lsd` / `91/lsd` | 463 / 342 |
+| `82/notifyd` | 78 |
+| `25/logd` | 69 |
+| `runningboardd` | 2 |
+
+接收侧几乎全是 `rcv … sr=1 peer=27/SpringBoard`（自己的回复端口，1 个发送权在外）——
+即**等待某个对端回包**，而那个对端基本都是 `lsd`。
+
+**2. `lsd` 的 MIG 调用被 sandbox 拒绝**
+
+日志里出现 113 次：
+
+```
+Protobox: lsd(92) deny(1) syscall-mig 139
+```
+
+`Protobox` 来自 Apple 的 `sandbox.kext`。iOS 的 sandbox 会把 `syscall-unix`/`syscall-mach`/
+`syscall-mig` 编成**按任务的位掩码**，由 XNU 在 mach trap / kobject(MIG) 派发路径上**内联**判定；
+`lsd` 因此无法完成自己的 IPC，SpringBoard 的请求永远等不到回复 → 没有 scene → 没有 CAContext
+→ CA 不提交帧 → 黑屏。
+
+外部参照（vphone 的内核补丁研究）给出的等价做法：把
+`task_get_mach_trap_filter_mask`、`task_get_mach_kobj_filter_mask` 返回 **0 掩码**（= 未过滤任务），
+其余 sandbox 规则（文件、mach-lookup、IOKit）不动。
+
+H321 即按此实现（`patches/xnu/…-h321-sandbox-mask-off.patch`）。
+
+**另外记录**：h280b 是历史日志里 SpringBoard 状态最好的一轮（n=4~5），但它同样
+`val=0 xf=0 fr=0` ——**80 份日志里没有任何一轮真正出过帧**。
