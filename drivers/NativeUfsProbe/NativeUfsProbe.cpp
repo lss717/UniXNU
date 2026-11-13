@@ -78,6 +78,8 @@ extern volatile uint32_t native_a540_sel_last;
 }
 
 static volatile uint64_t gUfsCommands;
+// H305: every failed window read is what APFS surfaces as err 5 and what a process faults on.
+volatile uint32_t native_ufs_read_failures;
 static volatile uint64_t gUfsInFlight;
 static volatile uint64_t gUfsLastLba;
 static volatile uint64_t gUfsLastBytes;
@@ -564,9 +566,8 @@ heartbeatThread (void *, wait_result_t)
     h103MaybeSetAcceleratorPlugin ();
     h103ProbeAcceleratorService ();
     beat++;
-    if ((beat % 5) == 0) {
-      native_log_flush_hook ();
-    }
+    // H305: five seconds was still enough to lose the moment launchd faults; sync every beat.
+    native_log_flush_hook ();
     // H220: the long ALIVE line can be truncated inside a log slot, and its abi=/accel= fields
     // are the ones that matter here. This short line carries them alone, once per beat.
     // H225: two GPUCC registers per beat, inside the line that always survives the log window
@@ -2272,6 +2273,15 @@ NativeUfsProbe::readWindowBulk (uint64_t lba, uint32_t blocks, void *out)
     calls++;
     if (!ok) {
       allOk = false;
+      // H305: a window read that fails is what APFS reports as err 5 and what a process later
+      // faults on (SIGBUS). Count it and name the LBA, rate-limited so a storm stays readable.
+      extern volatile uint32_t native_ufs_read_failures;
+      native_ufs_read_failures = native_ufs_read_failures + 1;
+      if (native_ufs_read_failures <= 8 || (native_ufs_read_failures % 64) == 0) {
+        IOLog ("NATIVE_UFS_READFAIL: n=%u lba=0x%llx blocks=%u\n",
+               (unsigned) native_ufs_read_failures, (unsigned long long) at,
+               (unsigned) chunkBlocks);
+      }
       break;
     }
     dst += bytes;
