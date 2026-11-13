@@ -13206,3 +13206,31 @@ NATIVE_MTL: scene# workspace nil
 `lsd`(148) / `launchd`(82) / `backboardd`(1)，没有任何 UI/scene 相关往来；结合
 H251 记录的"SpringBoard 阻塞在 libsystem_kernel"，最可能是**启动早期等待某个 IPC 不回**，
 而不是 scene 请求被拒绝。
+
+### H282：UFS 窗口锁超时引发的内核数据中止（2026-11-13）
+
+镜像内核 `a45990de…`（H281 探针）。上机后进入既有的 I/O 超时路径并 panic：
+
+```
+NATIVE_UFS_LOCK: SystemOS timeout ticks=116879746 owner=18446744036059219176 held_ms=6220 waiters=7
+NATIVE_UFS_LOCK: window SystemOS blocked req=114657 block=5e5aa8 count=8
+IOBlockStorageDriver: executeRequest: request failed to start!
+disk6: I/O timeout（err 60，num read errs 5）
+NATIVE_PANIC_STR: Kernel data abort at pc 0xfffffff007aa9734 lr 0xfffffff00b68971c
+```
+
+符号化：
+
+| 地址 | 符号 |
+| --- | --- |
+| `pc 0xfffffff007aa9734` | `_memmove + 0x64` |
+| `lr 0xfffffff00b68971c` | 落在 `__PRELINK_TEXT` 区（原生内核符号表之外，需 prelink 记录才能归因） |
+
+判断：
+
+1. 这是 `diagnostics/IO-TIMEOUT-longrun-blocker-2026-11-12.md` 记录的同一族问题——
+   SystemOS 窗口的 UFS 请求在锁内阻塞（`held_ms=6220`、`waiters=7`），驱动报
+   `request failed to start`，随后一次 `memmove` 访问已失效的请求缓冲而中止；
+2. **与 H281 探针无关**：panic 发生在 UFS 路径，不在采样器；
+3. `owner` 值是内核指针样式的巨大数（`0xffffffff…`），说明 owner 记录本身可能已被复用/释放，
+   与"锁未正常释放"的假设一致——需要在 `native_ufs_lock` 的释放路径核对 owner 清理。
