@@ -1,0 +1,83 @@
+diff --git a/bsd/kern/kern_sig.c b/bsd/kern/kern_sig.c
+--- a/bsd/kern/kern_sig.c
++++ b/bsd/kern/kern_sig.c
+@@ -2571,13 +2571,75 @@
+ }
+ 
++/* H308: launchd dies of signal 10 without ever reaching the mach-exception probes, so the
++ * delivery has to be a plain psignal; and printf is not callable from that path because
++ * proc_exit runs with preemption disabled (H154).  Park the record in a lock-free ring and
++ * let the driver's one-second heartbeat print it from a normal context. */
++#define NATIVE_SIGREC_N 32
++struct native_sigrec {
++	uint32_t pid;
++	int sig;
++	uint64_t caller;
++	char comm[16];
++};
++static struct native_sigrec native_sig_ring[NATIVE_SIGREC_N];
++static volatile uint32_t native_sig_head;
++static volatile uint32_t native_sig_tail;
++static volatile uint32_t native_sig_dropped;
++
++static void
++native_sigbus_probe(proc_t p, int signum, void *caller)
++{
++	struct native_sigrec *r;
++	uint32_t slot;
++
++	if (signum != SIGBUS && proc_getpid(p) != 1) {
++		return;
++	}
++	slot = __atomic_fetch_add(&native_sig_head, 1, __ATOMIC_RELAXED);
++	if (slot - native_sig_tail >= NATIVE_SIGREC_N) {
++		__atomic_fetch_add(&native_sig_dropped, 1, __ATOMIC_RELAXED);
++		return;
++	}
++	r = &native_sig_ring[slot % NATIVE_SIGREC_N];
++	r->pid = (uint32_t)proc_getpid(p);
++	r->sig = signum;
++	r->caller = (uint64_t)(uintptr_t)caller;
++	for (int i = 0; i < 15; i++) {
++		r->comm[i] = p->p_comm[i];
++		if (r->comm[i] == 0) {
++			break;
++		}
++	}
++	r->comm[15] = 0;
++}
++
++void
++native_sigbus_drain(void)
++{
++	uint32_t tail = native_sig_tail;
++	uint32_t head = native_sig_head;
++	uint32_t dropped;
++
++	while (tail != head) {
++		struct native_sigrec *r = &native_sig_ring[tail % NATIVE_SIGREC_N];
++		printf("NATIVE_SIG: pid=%u sig=%d comm=%.15s caller=0x%llx\n",
++		    r->pid, r->sig, r->comm, (unsigned long long)r->caller);
++		tail++;
++	}
++	native_sig_tail = tail;
++	dropped = native_sig_dropped;
++	if (dropped != 0) {
++		native_sig_dropped = 0;
++		printf("NATIVE_SIG: dropped=%u\n", dropped);
++	}
++}
++
+ void
+ psignal(proc_t p, int signum)
+ {
++	native_sigbus_probe(p, signum, __builtin_return_address(0));
+ 	psignal_internal(p, NULL, NULL, 0, signum, NULL);
+ }
+ 
+ void
+ psignal_with_reason(proc_t p, int signum, struct os_reason *signal_reason)
+ {
++	native_sigbus_probe(p, signum, __builtin_return_address(0));
+ 	psignal_internal(p, NULL, NULL, 0, signum, signal_reason);
+ }

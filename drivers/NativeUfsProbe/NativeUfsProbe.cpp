@@ -466,6 +466,9 @@ static const char *const a540SbNames[] = {
 };
 
 extern "C" void native_log_flush_hook (void);
+// H308: kern_sig.c parks signal deliveries in a lock-free ring; printing them from here keeps
+// printf (and its msgbuf mutex) out of proc_exit, which runs with preemption disabled.
+extern "C" void native_sigbus_drain (void);
 
 static void
 a540SpringBoardSamplerThread (void *, wait_result_t)
@@ -568,6 +571,7 @@ heartbeatThread (void *, wait_result_t)
     beat++;
     // H305: five seconds was still enough to lose the moment launchd faults; sync every beat.
     native_log_flush_hook ();
+    native_sigbus_drain ();
     // H220: the long ALIVE line can be truncated inside a log slot, and its abi=/accel= fields
     // are the ones that matter here. This short line carries them alone, once per beat.
     // H225: two GPUCC registers per beat, inside the line that always survives the log window
