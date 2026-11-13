@@ -1041,7 +1041,16 @@ native_panic_flush (void)
   IOLog ("NATIVE_PANIC: flags=%x client=%u xfer=%u frames=%u\n",
          native_boot_flags, native_legacy_client_calls,
          native_legacy_transfer_calls, native_legacy_frame_count);
-  h103FlushNow ();
+  // H302: the ring contained nothing after 242 s in H301 even though this hook ran, so say
+  // whether the flush that follows actually advanced the slot cursor or failed to write.
+  {
+    uint32_t beforeSeq = gH103SlotCursor;
+    uint32_t beforeErrors = gH103SlotWriteErrors;
+    h103FlushNow ();
+    IOLog ("NATIVE_PANIC_FLUSH: seq=%u->%u errors=%u->%u\n",
+           (unsigned) beforeSeq, (unsigned) gH103SlotCursor,
+           (unsigned) beforeErrors, (unsigned) gH103SlotWriteErrors);
+  }
 }
 
 // H128: driven from heartbeatThread() only.  The spawned slot thread never
