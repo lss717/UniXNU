@@ -39,6 +39,28 @@ if [ "${1:-}" = "--clean" ]; then
   rm -rf "$WORK"
 fi
 
+# `unixnu tree` clears every symlink under tree/refer, and the bootstrap clone below reads
+# $FEED, so the fetched checkouts must be linked before anything else touches refer/. On a
+# brand-new tree the old placement (just before build-xnu-4k-baseline.sh) made the clone die
+# with "fatal: repository '.../tree/refer/xnu' does not exist". Feeds are checked out as
+# out/feeds/<module>-<8 hex>, so the link name is the module name.
+mkdir -p "$TREE/refer"
+for feed in "$HOME/UniXNU/out/feeds"/*/; do
+  feed="${feed%/}"
+  [ -d "$feed" ] || continue
+  name="$(basename "$feed")"
+  name="${name%-????????}"
+  link="$TREE/refer/$name"
+  if [ -e "$link/.git" ] || { [ -d "$link" ] && [ ! -L "$link" ]; }; then
+    continue
+  fi
+  ln -sfn "$feed" "$link"
+done
+if [ ! -d "$FEED/.git" ]; then
+  echo "missing $FEED: run \"unixnu fetch\" and confirm $HOME/UniXNU/out/feeds/xnu-* exists" >&2
+  exit 1
+fi
+
 # Bootstrap decision: a tree is reusable only when it is a git checkout that
 # already carries our patch set. Anything else is rebuilt from the feed.
 NEED_PATCH=0
@@ -126,9 +148,5 @@ if [ ! -x "$SDK_PL" ] && [ ! -x "$FAKE_PL" ] && [ -f "$GEN" ]; then
   touch "$GEN"
 fi
 
-cd "$TREE/refer"
-[ -e xnu/.git ] || { [ -d xnu ] && [ ! -L xnu ] && mv xnu "xnu.partial.$(date +%s)" 2>/dev/null || true; ln -sfn "$HOME/UniXNU/out/feeds/xnu-0b4b910d" xnu; }
-ln -sfn "$HOME/UniXNU/out/feeds/libdispatch-50d3508d" libdispatch
-ln -sfn "$HOME/UniXNU/out/feeds/libplatform-08d11127" libplatform
 cd "$TREE"
 exec bash scripts/build-xnu-4k-baseline.sh

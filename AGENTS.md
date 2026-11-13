@@ -47,10 +47,12 @@ Known traps on a fresh tree, in the order they bite:
    XNU build — the first pass therefore defers the display archive (`9de1ca7`);
 4. `OP5_A540_FIRMWARE` must point at a real A540 firmware cache, or the display archive
    step aborts with "A540 firmware cache not found";
-5. `unixnu tree` runs `git -C tree/refer/xnu …` **before** creating that symlink, so on
-   an empty `refer/` it dies with `fatal: repository '…/refer/xnu' does not exist` even
-   when the feed is present. Until this is fixed, create the links by hand or run
-   `tree` twice.
+5. `scripts/macos-build-kernel.sh` cloned `.cache/xnu-work` from `tree/refer/xnu`
+   **before** creating that symlink, so an empty `refer/` died with
+   `fatal: repository '…/refer/xnu' does not exist` even when the feed was present.
+   The script now links `out/feeds/*` into `tree/refer/` first and stops with a
+   readable message when a feed is missing; `unixnu tree` itself never touches
+   `refer/`.
 
 The driver is `./unixnu`. Device modules override base modules with the same
 name; `./unixnu status` shows the resolved origin of every module.
