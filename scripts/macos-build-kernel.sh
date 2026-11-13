@@ -69,6 +69,18 @@ fi
 
 # Bootstrap decision: a tree is reusable only when it is a git checkout that
 # already carries our patch set. Anything else is rebuilt from the feed.
+# The series overlaps (a later patch rewrites a hunk an earlier one added), so an
+# applied patch can fail its reverse check while still not applying forward. Reuse
+# is only safe when every patch is either applied or applicable; otherwise rebuild.
+if [ -d "$WORK/.git" ]; then
+  for stale in "$HOME"/UniXNU/patches/xnu/*.patch "$HOME"/UniXNU/kits/NativePrelink/patches/*.patch; do
+    git -C "$WORK" apply --reverse --check "$stale" >/dev/null 2>&1 && continue
+    git -C "$WORK" apply --check "$stale" >/dev/null 2>&1 && continue
+    echo "xnu-work cannot take $(basename "$stale"); rebuilding it from the feed"
+    rm -rf "$WORK"
+    break
+  done
+fi
 NEED_PATCH=0
 if [ ! -d "$WORK/.git" ]; then
   NEED_PATCH=1
