@@ -1,7 +1,7 @@
 diff --git a/bsd/kern/kern_sig.c b/bsd/kern/kern_sig.c
 --- a/bsd/kern/kern_sig.c
 +++ b/bsd/kern/kern_sig.c
-@@ -2571,13 +2571,75 @@
+@@ -2571,13 +2571,79 @@
  }
  
 +/* H308: launchd dies of signal 10 without ever reaching the mach-exception probes, so the
