@@ -35,7 +35,9 @@ set -e
 # kit patch, not the job count. H330: read the job count from the machine instead of
 # hard-coding it, so the same command is right on any builder; JOBS still overrides.
 if [ -z "${JOBS:-}" ]; then
-  JOBS=$(sysctl -n hw.perflevel0.physicalcpu 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+  # hw.ncpu is every logical core (this builder reports 4 performance + 4 efficiency = 8).
+  # perflevel0 alone reported 4 and halved the throughput.
+  JOBS=$(sysctl -n hw.ncpu 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 fi
 export JOBS
 
