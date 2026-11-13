@@ -36,7 +36,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  		return;
  	}
  	uint32_t count = 0;
-@@ -7603,8 +7606,20 @@
+@@ -7603,8 +7606,23 @@
  static void
  native_gpu_addon_prepare(proc_t p, user_addr_t scratch)
  {
@@ -54,6 +54,9 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +	printf("NATIVE_GPU_ADDON: probe found=%d enabled=%u length=%u token=%d tail=%s\n", found, enabled,
 +	    (unsigned)boot_length, token ? (int)(token - boot_arguments) : -1,
 +	    boot_arguments + (boot_length > 120 ? boot_length - 120 : 0));
++	printf("NATIVE_GPU_ADDON: data stage=%d status=%d calls=%d\n",
++	    (int) native_owner_data_stage, (int) native_owner_data_status,
++	    (int) native_gpu_addon_calls);
 +	if (!found || enabled != 1) {
  		return;
  	}
