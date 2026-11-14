@@ -14576,3 +14576,27 @@ panic ... NATIVE_UFS_STALL: req=0x7d7/4 cmds=32607 winBytes=332240760 ufsFlight=
 
 **已确认的资产（后续不必重查）**：存储三处修复有效（`h103-ufs-report.py` 判 PASS）、
 AppleKeyStore 发布有效、容器链正常、`ufsRecover()` 的 `UCRDY` 判定有效（`ready=1` 已实测）。
+
+#### H366：日志环首次跑满 520 秒；卡点稳定回到 lsd（2026-11-15）
+
+内核 `bb2dd616`（新增"环停写时往保留块打 `logstop` 标记"）。
+
+| 观测 | 值 |
+| --- | --- |
+| `h103-ufs-report.py` | **PASS**（窗口 392 s，环写到 **470.8 s**，`refused=0`） |
+| `dpy` | `3/18/0/1/0`（显示调用数继续上升） |
+| SpringBoard | `n=4`，最后阻塞在 **`peer=92/lsd`，`so=1 rn=0x3903`** |
+| `NATIVE_SBSTRING … comm=lsd x0=` | 字符串为空 → **x0 不是路径参数**，该探针需要换寄存器/换手段 |
+| `NATIVE_BOOTSTRAP … name=` | 未出现 → 该请求不是 bootstrap look-up（无内联服务名） |
+| 其他 | 出现网络栈活动（`Reinit'd ND information for interface utun0`），说明系统整体在跑 |
+
+**结论**：存储与观测都已达标（环能跑满 470 s、零拒绝、PASS）。用户态只剩一个稳定的卡点：
+**lsd 收到 SpringBoard 的请求后不再回复**（`so=1`），而 lsd 的采样线程落在
+`Security::CodeSigning::DiskRep::bestGuess` / `FileDiskRep` 里。
+
+**下一步（明确、可执行）**：
+1. `x0` 探针为空说明参数不在 x0；改为**把 lsd 线程的 8 层帧全部符号化**（H362 只有 1 帧，
+   因为帧链断在第一层），或直接在 `vn_open`/`vn_read` 上按 pid==92 过滤，打印 lsd 正在读的
+   vnode 路径 —— 这才是"它在给哪个文件做签名"的确证；
+2. 若路径指向系统卷 → 补 trust cache；指向 Data 卷 → 补安装库/容器；
+3. 参考同机型记录（`dinner-cheeseburger`）的 Data 侧偏好落盘，作为并行验证。
