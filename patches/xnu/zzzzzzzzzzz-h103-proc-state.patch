@@ -485,7 +485,7 @@ index 5dcf00e..dcadbaf 100644
 +		if (want && native_sb_task != TASK_NULL &&
 +		    native_sb_rows[i].fp != 0) {
 +			uint64_t walk = native_sb_rows[i].fp;
-+			for (unsigned d = 0; d < 8 && walk != 0; d++) {
++			for (unsigned d = 0; d < ((strncmp(name, "SpringBoard", 11) == 0 || strncmp(name, "lsd", 3) == 0) ? 24U : 8U) && walk != 0; d++) {
 +				uint64_t frame[2] = { 0, 0 };
 +				if (copyinmap(get_task_map(native_sb_task), (user_addr_t)walk,
 +				    frame, sizeof(frame)) != 0) {

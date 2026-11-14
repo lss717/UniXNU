@@ -109,7 +109,7 @@ static uint32_t gH103SlotCursor;
 // boot wrote it.  The header alone is not enough: it is written after the
 // slot, and a late header write failure leaves a stale slots_written behind,
 // which made earlier logs mix slots from several boots.
-#define H103_BUILD "H392"
+#define H103_BUILD "H393"
 static uint64_t gH103BootId;
 static volatile int gH103Quiet;
 static volatile uint64_t gH103LastSlotTicks;
@@ -689,6 +689,7 @@ extern "C" void native_sb_set_quiet (int on);
 extern "C" void native_sb_trace_start (void);
 extern "C" void native_sb_trace_dump (unsigned burst);
 extern "C" volatile uint32_t native_data_persist_state, native_data_persist_header;
+extern "C" uint32_t cs_text_fixup_parsed, cs_text_fixup_applied;
 extern "C" volatile uint64_t native_data_persist_first_lba, native_data_persist_present,
     native_data_persist_loaded, native_data_persist_writes, native_data_persist_errors;
 
@@ -901,14 +902,15 @@ heartbeatThread (void *, wait_result_t)
       PE_parse_boot_argn ("sheng-data-persist", &dataMode, sizeof dataMode);
       PE_parse_boot_argn ("cheeseburger-usb", &usbMode, sizeof usbMode);
       IOLog ("NATIVE_DATA_STATUS: requested=%u state=%u header=%u first=%llx "
-             "present=%llu loaded=%llu writes=%llu errors=%llu usb_requested=%u\n",
+             "present=%llu loaded=%llu writes=%llu errors=%llu usb_requested=%u text=%u/%u\n",
              dataMode, (unsigned) native_data_persist_state,
              (unsigned) native_data_persist_header,
              (unsigned long long) native_data_persist_first_lba,
              (unsigned long long) native_data_persist_present,
              (unsigned long long) native_data_persist_loaded,
              (unsigned long long) native_data_persist_writes,
-             (unsigned long long) native_data_persist_errors, usbMode);
+             (unsigned long long) native_data_persist_errors, usbMode,
+             cs_text_fixup_parsed, cs_text_fixup_applied);
       IOLog ("NATIVE_ACCEL_HB: accel=%u/%u/%u/%u abi=%d/%d/%d rep=%.31s gc=%d:%08x "
              "dpy=%u/%u/%u/%u/%u s345=%u/%u/%u val=%u xf=%u fr=%u\n",
              (unsigned) native_a540_open_count, (unsigned) native_a540_open_type,
