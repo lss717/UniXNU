@@ -1,5 +1,13 @@
 # OnePlus 5 进度复核与实验调整
 
+## 并行复核与日志修复预编译
+
+用户授权并行后，日志代理完成slot/header静态缓冲复用（132KiB BSS）和可选slot线程CAS入口修复，提交e0b60c6。Mac拉取后构建和prelink成功，包内内核逐字节核验通过。独立LOG386沿用CPU385的无GPU上电参数，kernel SHA-256为 `0b2b502654e341f6696f2f9ad39b2ed7eb10f82faee24fdc4f08c0cfe1c00497`，payload为 `8378b5e9e7cca8ec951fd45881498f75e8716bd2c87891ce2ff151e102441fb7`，boot为 `c88ea4bac4b88f3da614d3a68cf88aa0e8087d87c1eae6508d331addc3f07c64`。该产物在CPU385运行期间预编译，尚未上机。
+
+CPU主线只读复核H384符号：SpringBoard栈为_BKSDisplayGetMainScreenInfo、_BKSDisplayServicesGetMainScreenInfo、BKSDisplayServicesStart、BKSSystemShellService _activateServerConnectionWithIdleSleepInterval:、FBSystemShell _initWithOptions:，当前候选门槛为BackBoard主屏RPC/check-in。backboardd在208秒已有CA::Render::Server::server_thread与CA::WindowServer::IOMFBServer::thread_body，不应单凭IOAcceleratorES匹配失败宣布CPU回退被阻塞。另一个初始化线程停在AnalyticsConfigurationObserver对象构造，cpu=0 st=0x49，是初始化或页入等待候选，尚待同轮持续采样确认。
+
+历史H318关于proc_selfname遍历进程链表并取锁的解释与当前实际构建源码不符：bsd/kern/kern_proc.c中的proc_selfname直接从current_proc读取p_name。保留历史记录，但不能直接照搬其根因结论。STATUS H190已做nil插件稳定运行但零帧实验，当前CPU路线避免重复该组合。
+
 ## CPU385 纯CPU参数对照
 
 用户确认当前主线为先用CPU进入桌面。历史STATUS H333/H334明确纯CPU配置应移除gpu-power。H384虽关闭accelerator和addon，却仍带sheng-gpu-power=7；该参数由heartbeat独立调用，可进入SPMI及A540初始化。CPU385沿用H384全部产物，仅从实际payload参数删除该项，保留cpus=1、accelerator=0、addon=0。内核日志build仍为H384，必须配合boot ID及镜像哈希辨别。本轮不合入独立代理的日志静态缓冲修复。
