@@ -292,10 +292,6 @@ h107GateOpen (void)
   return now - gH107SpringBoardTicks >= 60 * 19200000ULL;
 }
 
-// H336: the keystore service is published late, from the watchdog thread, so the early launchd
-// and securityd start without it.
-static IOService *gNativeProvider;
-static bool gNativeKeystoreDone;
 static void h103Marker (const char *kind, bool urgent);
 static void nativePublishKeystore (void)
 {
@@ -4004,7 +4000,6 @@ NativeUfsProbe::start (IOService *provider)
   // H336: publishing AppleKeyStore from start() made launchd/securityd talk to it immediately and
   // the boot stopped right after the first log flush.  Remember the provider and publish from the
   // watchdog thread half a minute in, once launchd is up.
-  gNativeProvider = provider;
   // H178: a warm reboot leaves the kernel message ring in place, and its write
   // cursor does not necessarily start at zero.  With previous=0 the first
   // flush therefore copied the whole ring up to the current cursor, i.e. the
