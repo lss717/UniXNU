@@ -385,6 +385,12 @@ nativeWatchdogThread (void *, wait_result_t)
     if (gH103StallRecorded) {
       continue;
     }
+    // H342: the first alive stamp waited a full minute, so a boot that died around the display
+    // start (40-50 s) left no trace at all and the block still held an older boot's text.  Stamp
+    // early and often in the first half minute, on the unlocked path, so the death time is exact.
+    if (seconds == 5 || seconds == 15 || seconds == 30) {
+      h103Marker ("alive", true);
+    }
     if (seconds == 30) {
       nativePublishKeystore ();
     }
