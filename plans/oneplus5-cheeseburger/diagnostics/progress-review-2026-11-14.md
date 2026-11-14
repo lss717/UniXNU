@@ -1,5 +1,16 @@
 # OnePlus 5 进度复核与实验调整
 
+## H381 构建与单核对照产物
+
+- 源码提交为 `62e260a`，Mac 在拉取并更新子模块后构建，正式内核和 prelink 成功，包内内核逐字节比较一致，日志 build 标识为 H381。
+- Mac 设备仓库原有 unixnu.lock 增加 edk2 引用，已保留并备份至 `~/op5-h381/existing-device-lock.diff`，本轮沿用 H380 固件。
+- 基底采用从实际 boot-H380.img 提取的 ramdisk。独立 payload-H380.img 携带早期配置，与启动镜像内配置不同。真实 H380 参数已确认是 cpus=2，H381 仅将其切换为 cpus=1，并替换本轮新内核。
+- boot_args 最坏长度为 900/1024 字节，长度检查通过。
+- kernel SHA-256 为 `ef7fea49b2e25ad31660743b9d283096c971f77a6f0f3b5e2079c30c8fa64337`。
+- payload SHA-256 为 `c4bc694ceea9b25463c73966870e40f9934b6c46300c4266596593a912a267c5`。
+- boot SHA-256 为 `e49df846fefdefca95427d612565d4140f91b3532cb4845a2ec0408691d5ae67`。
+- 启动前已备份设备现有日志环为 assets/log-review/pre-H381-log.bin。后续日志需要按新的 boot ID 分组。
+
 本次复核依据当前工作树、HANDOFF.md、STATUS.md 末尾 H378、H380 探针、assets 启动配置与 UFS 报告脚本。assets 只有镜像和配置，没有各轮原始日志。本次没有构建或真机复测。历史记录含 2026-11-15 日期，本文保留其 H 编号，时间顺序仍需以 boot ID 和产物记录核对。
 
 更新：随后从用户指定的 192.168.10.127 `/tmp/opencode` 获取 52 份 h3*-log.txt，并下载 H366/H378/H380 原始日志环，保存于根目录 assets/log-review。以下结论以原始环重新解码为依据。
