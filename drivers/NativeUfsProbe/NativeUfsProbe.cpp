@@ -677,6 +677,11 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
         // in this boot, so sample it too (sample ids divisible by 30 make the kernel walk its
         // frame chain).
         native_sb_pc_sample ("backboardd", 900 + burst * 30);
+        // H354: backboardd is blocked in xpc_user_sessions_info to launchd's bootstrap port, and
+        // the user-session database belongs to usermanagerd; cfprefsd is the other peer a
+        // SpringBoard thread waits on.
+        native_sb_pc_sample ("usermanagerd", 1200 + burst * 30);
+        native_sb_pc_sample ("cfprefsd", 1500 + burst * 30);
       }
       IOSleep (50);
     }

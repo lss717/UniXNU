@@ -2,7 +2,7 @@ diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
 index 5dcf00e..dcadbaf 100644
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -10285,3 +10285,760 @@ task_best_name(task_t task, char *buf, size_t size)
+@@ -10285,3 +10285,759 @@ task_best_name(task_t task, char *buf, size_t size)
  	char *name = proc_best_name(task_get_proc_raw(task));
  	strlcpy(buf, name, size);
  }
@@ -218,6 +218,7 @@ index 5dcf00e..dcadbaf 100644
 +	unsigned mscount;
 +	int queued;             /* H351: messages waiting on the port */
 +	unsigned rname;         /* H352: port's name in the receiver's space */
++	unsigned sorights;      /* H354: send-once rights, i.e. unconsumed replies */
 +	int pid;
 +	uint64_t port;          /* H242: port object, compared only */
 +};
@@ -280,6 +281,7 @@ index 5dcf00e..dcadbaf 100644
 +			 * either NULL or a valid kmsg, and we only test it. */
 +			out->queued = circle_queue_empty(&port->ip_messages.imq_messages) ? 0 : 1;
 +			out->rname = port->ip_messages.imq_receiver_name;
++			out->sorights = port->ip_sorights;
 +		}
 +	}
 +	is_write_unlock(space);
@@ -406,11 +408,8 @@ index 5dcf00e..dcadbaf 100644
 +		    (unsigned long long)native_sb_rows[i].pc,
 +		    (unsigned long long)native_sb_rows[i].lr,
 +		    (unsigned long long)native_sb_rows[i].wait);
-+		int want = strncmp(name, "SpringBoard", 11) == 0;
-+		if (!want && (sample % 30) == 0 && i < 8 &&
-+		    (strncmp(name, "launchd", 7) == 0 || strncmp(name, "backboardd", 10) == 0)) {
-+			want = 1;
-+		}
++		int want = strncmp(name, "SpringBoard", 11) == 0 ||
++		    ((sample % 30) == 0 && i < 8);
 +		if (want && native_sb_task != TASK_NULL &&
 +		    native_sb_rows[i].fp != 0) {
 +			uint64_t walk = native_sb_rows[i].fp;
@@ -524,16 +523,16 @@ index 5dcf00e..dcadbaf 100644
 +		    sample, name, (unsigned long long)native_sb_buf, native_sb_hdr_ok,
 +		    native_sb_hdr[0], native_sb_hdr[1], native_sb_hdr[2],
 +		    native_sb_hdr[3], native_sb_hdr[4], native_sb_hdr[5]);
-+		printf("NATIVE_SBPORT: sample=%u rcv name=0x%x seen=%d set=%d ie=0x%llx sr=%u ms=%u q=%d peer=%d/%s\n",
++		printf("NATIVE_SBPORT: sample=%u rcv name=0x%x seen=%d set=%d ie=0x%llx sr=%u ms=%u so=%u q=%d peer=%d/%s\n",
 +		    sample, native_sb_rcv_name, native_sb_rcv.seen, native_sb_rcv.is_set,
 +		    (unsigned long long)native_sb_rcv.ie_bits,
-+		    native_sb_rcv.srights, native_sb_rcv.mscount, native_sb_rcv.queued,
-+		    native_sb_rcv.pid, native_sb_qname1);
-+		printf("NATIVE_SBPORT: sample=%u req name=0x%x seen=%d set=%d ie=0x%llx sr=%u ms=%u q=%d rn=0x%x peer=%d/%s\n",
++		    native_sb_rcv.srights, native_sb_rcv.mscount, native_sb_rcv.sorights,
++		    native_sb_rcv.queued, native_sb_rcv.pid, native_sb_qname1);
++		printf("NATIVE_SBPORT: sample=%u req name=0x%x seen=%d set=%d ie=0x%llx sr=%u ms=%u so=%u q=%d rn=0x%x peer=%d/%s\n",
 +		    sample, native_sb_hdr[2], native_sb_req.seen, native_sb_req.is_set,
 +		    (unsigned long long)native_sb_req.ie_bits,
-+		    native_sb_req.srights, native_sb_req.mscount, native_sb_req.queued,
-+		    native_sb_req.rname, native_sb_req.pid, native_sb_qname2);
++		    native_sb_req.srights, native_sb_req.mscount, native_sb_req.sorights,
++		    native_sb_req.queued, native_sb_req.rname, native_sb_req.pid, native_sb_qname2);
 +		native_xpc_register(native_sb_rcv.port, native_sb_pid, name, 'r');
 +		native_xpc_register(native_sb_req.port, native_sb_pid, name, 'q');
 +		native_xpc_dump(sample);
