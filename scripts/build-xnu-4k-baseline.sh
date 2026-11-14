@@ -674,6 +674,12 @@ if [ "${XNU_SOURCE_CORECRYPTO14:-0}" = 1 ] && [ "$BOOTSTRAP" = 0 ]; then
     KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$UFS_PROBE_ARCHIVE"
     KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $UFS_PROBE_ARCHIVE"
   fi
+  if [ "${XNU_NATIVE_USB_PROBE:-0}" = 1 ]; then
+    USB_PROBE_ARCHIVE=$ROOT/build/cheeseburger-usb/libCheeseburgerUsb.a
+    test -f "$USB_PROBE_ARCHIVE"
+    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$USB_PROBE_ARCHIVE"
+    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $USB_PROBE_ARCHIVE"
+  fi
   if [ "${XNU_NATIVE_KEYSTORE:-0}" = 1 ]; then
     # H329: SpringBoard matches AppleKeyStore during setup; without this archive the service never
     # exists and its keybag query has nothing to talk to.
@@ -831,7 +837,8 @@ python3 - "${XNU_NATIVE_AES:-0}" "${XNU_NATIVE_AES_ARCHIVE:-$ROOT/build/native-a
   "$NATIVE_VIRTIO_CONSOLE" "$ROOT/build/native-virtio-console/libNativeVirtioConsole.a" \
   "$NATIVE_OFFLINE_GPU" "$ROOT/build/native-offline-gpu/libNativeOfflineGPU.late.a" \
   "$SHENG_PMGR" "$ROOT/build/sheng-platform-power/libShengPlatformPower.a" \
-  "${XNU_NATIVE_ADRENO:-0}" "$ROOT/build/native-adreno/libNativeAdreno.a" <<'PY'
+  "${XNU_NATIVE_ADRENO:-0}" "$ROOT/build/native-adreno/libNativeAdreno.a" \
+  "${XNU_NATIVE_USB_PROBE:-0}" "$ROOT/build/cheeseburger-usb/libCheeseburgerUsb.a" <<'PY'
 import hashlib
 from pathlib import Path
 import sys

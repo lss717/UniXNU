@@ -132,6 +132,7 @@ export XNU_OWNER_DATA_VOLATILE=1
 export XNU_OWNER_CRYPTEX_FILES=0
 export XNU_NATIVE_UFS=0
 export XNU_NATIVE_UFS_PROBE=1
+export XNU_NATIVE_USB_PROBE=1
 export XNU_NATIVE_KEYSTORE=1
 export XNU_OWNER_ROOT_AUDIT=0
 export XNU_VERIFIED_ROOT_PROBE=0
@@ -206,6 +207,7 @@ for ARCHIVE in \
   "scripts/build-arm-driver.py NativeVirtioBlock" \
   "scripts/build-arm-driver.py NativeRamBlock" \
   "scripts/build-arm-driver.py NativeUfsProbe" \
+  "scripts/build-arm-driver.py CheeseburgerUsb" \
   "scripts/build-arm-driver.py NativeKeyStoreEvents" \
   "scripts/build-mockfs-fixture.py" \
   "scripts/build-libpthread-kernel.py"; do
