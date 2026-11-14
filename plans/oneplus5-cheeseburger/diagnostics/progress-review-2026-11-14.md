@@ -1,5 +1,11 @@
 # OnePlus 5 进度复核与实验调整
 
+## H388a 与 H389 后期采样计划
+
+H388a 在 H388q 基线上仅增加 `sheng-disable-jobs=com.apple.mobileactivationd`。运行超过823秒，mobileactivationd 崩溃记录为0，尸体计数从4降到0，UFS无异常，但 `val/xf/fr` 仍全部为0。因此该崩溃循环不是桌面未出现的直接必要条件，但它会破坏长启动稳定性，后续控制实验继续保留停用。
+
+H389增加 `native-probe-quiet=2`：前面240秒不采样，之后每60秒只采样SpringBoard、lsd和第0/1个containermanager实例。所有采样ID保持30的倍数以取得帧链，不恢复原高频burst。目标是在600秒以后仍能获得最低限度的进程栈，并判断剩余等待是在LaunchServices数据库扫描、场景创建还是容器服务。
+
 ## H387 容器管理器等待链采样
 
 CPU385 的日志窗口持续到约 494.5 秒。SpringBoard 末尾请求转为 `peer=92/lsd`，lsd 的 tid491 在 `_LSInstallProgressService performJournalRecovery` 内同步等待 dispatch ownership，tid493 和 tid680 等待同一个安装或数据库恢复 group。tid664 则在 InstalledContentLibrary 完成目录与 bundle 校验后，转入 `container_xpc_send_sync_message`，说明 lsd 初始化仍有阶段推进，单轮证据不能认定为进程内死锁。

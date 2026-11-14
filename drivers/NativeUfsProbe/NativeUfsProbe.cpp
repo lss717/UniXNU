@@ -107,7 +107,7 @@ static uint32_t gH103SlotCursor;
 // boot wrote it.  The header alone is not enough: it is written after the
 // slot, and a late header write failure leaves a stale slots_written behind,
 // which made earlier logs mix slots from several boots.
-#define H103_BUILD "H388"
+#define H103_BUILD "H389"
 static uint64_t gH103BootId;
 static volatile int gH103Quiet;
 static volatile uint64_t gH103LastSlotTicks;
@@ -707,11 +707,24 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
     static int quiet = -1;
     if (quiet < 0) {
       int value = 0;
-      quiet = PE_parse_boot_argn ("native-probe-quiet", &value, sizeof value) && value ? 1 : 0;
+      quiet = PE_parse_boot_argn ("native-probe-quiet", &value, sizeof value) &&
+          value >= 1 && value <= 2 ? value : 0;
     }
-    if (quiet) {
+    if (quiet == 1) {
       IOLog ("NATIVE_SBPC: sampler parked (native-probe-quiet=1)\n");
       for (;;) {
+        IOSleep (60000);
+      }
+    }
+    if (quiet == 2) {
+      IOLog ("NATIVE_SBPC: late sampler active (native-probe-quiet=2)\n");
+      IOSleep (240000);
+      for (unsigned sample = 0;; sample++) {
+        native_sb_pc_sample ("SpringBoard", 6000 + sample * 30);
+        native_sb_pc_sample ("lsd", 7000 + sample * 30);
+        native_sb_pc_sample_instance ("containermanager", 8000 + sample * 30, 0);
+        native_sb_pc_sample_instance ("containermanager", 9000 + sample * 30, 1);
+        native_log_flush_hook ();
         IOSleep (60000);
       }
     }
