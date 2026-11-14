@@ -668,6 +668,8 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
         // sampler never looked at runningboardd after that point, so the scene-side peer was
         // invisible.  Sample it in the bursts as well.
         native_sb_pc_sample ("runningboardd", 300 + burst * 100 + b);
+        // H349: SpringBoard's blocked request in H348 pointed at launchd, so sample launchd too.
+        native_sb_pc_sample ("launchd", 400 + burst * 100 + b);
       }
       IOSleep (50);
     }
@@ -685,6 +687,7 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
         IOSleep (1000);
         h103StallCheck ();
         native_sb_pc_sample ("runningboardd", 3000 + burst * 100 + gap);
+        native_sb_pc_sample ("launchd", 4000 + burst * 100 + gap);
         native_log_flush_hook ();
       }
     }
