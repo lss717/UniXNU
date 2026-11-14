@@ -23,6 +23,8 @@ def main():
         "NATIVE_UFS_DBTO": 0,
         "NATIVE_UFS_RECOVER": 0,
         "NATIVE_UFS_STALL_LOG": 0,
+        "NATIVE_UFS_STALL_NOPANIC": 0,
+        "NATIVE_UFS_STALL:": 0,
         "NATIVE_UFS_LOG_FAIL": 0,
         "NATIVE_UFS_GPT: OCS timeout": 0,
         "NATIVE_UFS_RETRY": 0,
@@ -65,11 +67,16 @@ def main():
     if first is None:
         print("verdict: no timestamped lines, wrong file?")
         return
-    ran_long = (last or 0) >= 300
+    ran_long = last - first >= 300
     refused_storm = start_fail > 20
     ring_alive = ring_last is not None and ring_last > 0.8 * (last or 1)
+    storage_errors = any(counts[key] for key in (
+        "NATIVE_UFS_DBTO", "NATIVE_UFS_RECOVER", "NATIVE_UFS_STALL_LOG",
+        "NATIVE_UFS_STALL_NOPANIC", "NATIVE_UFS_STALL:",
+        "NATIVE_UFS_LOG_FAIL", "NATIVE_UFS_GPT: OCS timeout", "NATIVE_UFS_RETRY",
+    )) or any(counters.values())
     print("verdict: %s (ran %.0f s, refused=%d, ring=%s)"
-          % ("PASS" if ran_long and not refused_storm and ring_alive else "CHECK",
+          % ("PASS" if ran_long and not refused_storm and ring_alive and not storage_errors else "CHECK",
              last - first, start_fail, "alive" if ring_alive else "stalled"))
 
 
