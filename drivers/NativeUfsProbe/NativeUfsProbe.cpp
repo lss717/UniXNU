@@ -107,7 +107,7 @@ static uint32_t gH103SlotCursor;
 // boot wrote it.  The header alone is not enough: it is written after the
 // slot, and a late header write failure leaves a stale slots_written behind,
 // which made earlier logs mix slots from several boots.
-#define H103_BUILD "H381"
+#define H103_BUILD "H382"
 static uint64_t gH103BootId;
 static volatile int gH103Quiet;
 static volatile uint64_t gH103LastSlotTicks;
@@ -1928,10 +1928,8 @@ ufsRecover (UfsQueue *q)
   const uint32_t beforeDb = read32 (q->hc, UFS_REG_UTRLDBR);
   uint32_t hcs = 0;
   bool ready = false;
-  // H361: this controller reports HCS.UCRDY (bit 0) only; Linux's UFSHCS_READY also wants
-  // UTMRLDBR, and requiring it here made every recovery report ready=0 even though the
-  // controller was usable, which turned one OCS timeout into an EIO storm and a corpse panic.
-  // Retry the HCE toggle a few times and accept UCRDY.
+  // Bit 0 is HCS.DP (device present). HCS.UCRDY is bit 3 and only indicates that
+  // UIC commands may be issued. Keep the existing device-presence check here.
   for (unsigned attempt = 0; attempt < 4 && !ready; ++attempt) {
     write32 (q->hc, UFS_REG_HCE, read32 (q->hc, UFS_REG_HCE) & ~1U);
     spinTicks (38400);                                /* 2 ms to quiesce */
@@ -2809,17 +2807,22 @@ NativeUfsProbe::logWrite (uint64_t rel, uint32_t blocks, const void *src,
   return ok;
 }
 
-// H311: the ring can die before the machine does, and the panic path's flush can lose the lock,
-// so the panic/stall question gets its own single block.  It is deliberately lock-free: a busy
-// queue makes ufsWriteCommand() return immediately instead of waiting, which is what we want
-// from a dying machine.  Read it back at offset 250*4096 of a normal 8192-block log pull.
+// The reserved marker shares the normal queue and DMA buffers. Every caller must
+// acquire the I/O lock without waiting. Read it at offset 250*4096 of the log pull.
 bool
-NativeUfsProbe::logMarker (const char *kind, bool urgent)
+NativeUfsProbe::logMarker (const char *kind, bool)
 {
-  if (!fReady || !fLogData || !fLogDma || !fLogDataPhys || !fLogCapacity || !fQueue.data) {
+  if (!fReady || !fLock || !fLogData || !fLogDma || !fLogDataPhys || !fLogCapacity || !fQueue.data) {
     return false;
   }
   if (fLogBlocks <= 250) {
+    return false;
+  }
+  if (!IOLockTryLock (fLock)) {
+    return false;
+  }
+  if (fQueue.poisoned) {
+    IOLockUnlock (fLock);
     return false;
   }
   static char block[4096];
@@ -2861,15 +2864,9 @@ NativeUfsProbe::logMarker (const char *kind, bool urgent)
       block[used] = 0;
     }
   }
-  // H316: a periodic marker must not touch the queue without the lock.  H315's unlocked alive
-  // stamps starved the log writer (logWrite waited 2.7 s with 20 waiters, six failures) and the
-  // boot froze at 294 s with the heartbeat already three seconds late.  Only the panic and stall
-  // paths, where the lock may be held by the dead thread, take the unlocked route.
-  if (!urgent) {
-    return logWrite (250, 1, block);
-  }
   if (fLogDma->writeBytes (0, block, sizeof block) !=
       static_cast<IOByteCount> (sizeof block)) {
+    IOLockUnlock (fLock);
     return false;
   }
   uint8_t cdb[16] = { 0x2a };
@@ -2883,26 +2880,11 @@ NativeUfsProbe::logMarker (const char *kind, bool urgent)
   fQueue.data = fLogData;
   fQueue.dataPhys = fLogDataPhys;
   fQueue.dataCapacity = fLogCapacity;
-  // H312: a queue poisoned by an earlier timeout refused every later command, which is one way
-  // the marker could stay empty.  The controller-busy check inside ufsWriteCommand still guards
-  // the hardware, so a marker attempt may clear the flag for its own duration.
-  const bool savedPoisoned = fQueue.poisoned;
-  fQueue.poisoned = false;
-  // H345: the urgent record must not be lost to a busy queue.  Retry for up to a second; this
-  // runs on the watchdog thread, never on a storage completion.
-  bool ok = false;
-  for (unsigned attempt = 0; attempt < 50; ++attempt) {
-    ok = ufsWriteCommand (&fQueue, 0, cdb, 4096, fLogData);
-    if (ok) {
-      break;
-    }
-    IOSleep (20);
-  }
-  // Keep the poisoned state if it was already set or if this attempt set it again.
-  fQueue.poisoned = savedPoisoned || fQueue.poisoned;
+  bool ok = ufsWriteCommand (&fQueue, 0, cdb, 4096, fLogData);
   fQueue.data = savedData;
   fQueue.dataPhys = savedPhys;
   fQueue.dataCapacity = savedCapacity;
+  IOLockUnlock (fLock);
   return ok;
 }
 

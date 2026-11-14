@@ -1,5 +1,13 @@
 # OnePlus 5 进度复核与实验调整
 
+## H381 失败与 H382 修复
+
+H381 原始日志已从 TWRP 提取，NATIVE_BUILD 为 H381，boot=24aaf3ab，正文约 32–213 秒。保留块为 logstop，记录日志在崩溃前已经停止。用户照片显示锁等待超时、块请求拒绝、OCS timeout、hcs=8 ready=0、backboardd SIGBUS，最终 ipc_space.h:173 断言，与 H360 的级联故障相似。当前证据不足以单独归因于单核。
+
+源码审查发现紧急 logMarker 在没有 fLock 的情况下修改 fQueue 的 DMA 数据指针，清除 poisoned 状态，并尝试重发同一写请求最多 50 次。该路径被早期 boot/alive、logstop 和 stall 调用，可与正常 I/O 竞争同一槽和 DMA 缓冲。H382 将所有 marker 路径改为 try-lock 保护，包含静态标记缓冲的填充，忙时直接放弃，保留 poisoned 状态，写入仅尝试一次。该修复消除已确认的共享状态竞争，控制器恢复能力仍待验证。
+
+同时更正 H361 注释。仓库内 EDK2 UfsPassThruHci.h 定义 HCS.DP=BIT0、HCS.UCRDY=BIT3。现有 hcs & 1 的判定实际检查设备存在，照片 hcs=8 仅表示 UIC 就绪。本轮保留恢复谓词，完整链路重建需单独设计和验证。
+
 ## H381 构建与单核对照产物
 
 - 源码提交为 `62e260a`，Mac 在拉取并更新子模块后构建，正式内核和 prelink 成功，包内内核逐字节比较一致，日志 build 标识为 H381。
