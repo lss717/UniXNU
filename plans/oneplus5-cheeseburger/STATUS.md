@@ -14492,3 +14492,22 @@ keybagd 与 containermanagerd 一直在等一个**并不存在**的 `AppleKeySto
 
 **下一步**：采样 lsd 的线程与栈（它此前只有个位数采样），确认它卡在自己的哪一步；
 同时把 H361 的"请求持有 30 秒"期限与 `dbto/rec/wfail` 计数纳入常态观测。
+
+#### H361 追查：lsd 卡在代码签名，不是 IPC 等待（2026-11-15）
+
+用 `dscsym` 查本地符号表，lsd 被采样线程的两个地址分别是：
+
+```
+Security +0x12d24c -> Security::CodeSigning::FileDiskRep::FileDiskRep(char const*)
+Security +0x3c268  -> Security::CodeSigning::DiskRep::bestGuess(char const*, Context const*)
+```
+
+也就是说 **lsd 正在对某个 bundle 做代码签名解析**（`DiskRep::bestGuess` → `FileDiskRep` 构造），
+而 SpringBoard 的 tid=291 停在 `mach_msg2`（`pc=libsystem_kernel+0x1b58`）等那条连接，
+`so=1` 持续 270 秒以上 → 对端（lsd）收到请求但没有回复。
+
+已确认同轮其他环节正常：`amfid(48)`、`securityd(106)` 都已启动；AppleKeyStore 已发布；
+显示客户端 `IOMFB_FDR_Loader` 工作正常。
+
+**H362**（构建中）：把 lsd 与 securityd 的帧链按 backboardd 的节奏采样（sample 编号取 30 的倍数），
+下一轮可直接看到 lsd 在 `Security` 里更深一层的调用，以及它是否在等 `securityd`/`amfid`。
