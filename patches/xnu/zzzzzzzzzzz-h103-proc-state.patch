@@ -2,7 +2,7 @@ diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
 index 5dcf00e..dcadbaf 100644
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -10285,3 +10285,907 @@ task_best_name(task_t task, char *buf, size_t size)
+@@ -10285,3 +10285,906 @@ task_best_name(task_t task, char *buf, size_t size)
  	char *name = proc_best_name(task_get_proc_raw(task));
  	strlcpy(buf, name, size);
  }
@@ -790,8 +790,7 @@ index 5dcf00e..dcadbaf 100644
 +	struct native_xpc_note *e;
 +
 +	/* H379: name-based, never pid-based (lsd's pid varies per boot). */
-+	if (current_proc() != PROC_NULL &&
-+	    strncmp(current_proc()->p_comm, "SpringBoard", MAXCOMLEN) == 0) {
++	if (strncmp(current_proc()->p_comm, "SpringBoard", MAXCOMLEN) == 0) {
 +		unsigned k = native_sb_send_n % 32;
 +		native_sb_send[k].dst = (unsigned)to;
 +		native_sb_send[k].id = (unsigned)hdr->msgh_id;
