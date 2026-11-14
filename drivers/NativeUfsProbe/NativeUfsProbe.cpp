@@ -306,6 +306,8 @@ static void nativePublishKeystore (void)
 // record instead of a "panic" one says the machine hung rather than panicked.
 static void h103Marker (const char *kind, bool urgent);  // defined after the driver class is complete
 
+static void h103MaybeKillExclavekit (void);
+
 static void
 h103StallCheck (void)
 {
