@@ -14285,3 +14285,18 @@ ifnet_attach: All kernel threads created for interface lo0 have been scheduled a
 
 **下一步**：保持这个稳定参数集，一次只改一处；先用非静默参数观察 `backboardd` 是否打开显示、
 `SpringBoard` 的线程数与对端，再决定改哪里。
+
+#### H348：稳定基线上的真实卡点——SpringBoard 只有 2 个线程，停在等 launchd（2026-11-15）
+
+内核 `8f70b3e7`（d8e2ab3 源码重建）+ H326 原配参数 + 非静默。窗口 **71–318 s**。
+
+| 观测 | 值 | 含义 |
+| --- | --- | --- |
+| `comm=SpringBoard n=2` | 2 个线程 | SpringBoard 起不来（正常应有几十个） |
+| `NATIVE_SBPORT … req … peer=1/launchd` | 32 次 | **它在等 launchd 的回复**（这一轮不是 lsd） |
+| `NATIVE_LEGACY_CLIENTS: n=0`（120 s 时） | 尚无 client | 显示 client 更晚才注册 |
+| `dpy=3/11/0/0/0` | 3 client / 11 调用 | 显示侧已注册 |
+| `val/xf/fr` | 0/0/0 | 从未提交帧 |
+
+**结论**：稳定基线下，卡点从"等 lsd"变成了"等 launchd"。下一步采样 launchd 自身，
+判断它究竟卡在 mach_msg（等别人）还是别的路径——这决定整条用户态链是否在 launchd 处断掉。
