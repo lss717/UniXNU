@@ -293,12 +293,47 @@ h107GateOpen (void)
 }
 
 static void h103Marker (const char *kind, bool urgent);
+// H358: the AppleKeyStore driver publishes the keybag service keybagd looks for; weak so a
+// kernel built without that archive still links.
+extern "C" IOService * native_keyevents_allocate (void) __attribute__((weak_import));
+static IOService *gNativeProvider;
+static bool gNativeKeystoreDone;
+
 static void nativePublishKeystore (void)
 {
-  // H344: the AppleKeyStore archive is the only difference left between the boots that stay up
-  // (H326, no archive) and every boot that dies early.  It is unlinked and unpublished until the
-  // reason is understood; the diagnostics that matter (bar, marker, display fix) stay.
-  IOLog ("NATIVE_AKS: publish disabled (H344)\n");
+  // H358: restore the publish.  The sibling port's record ties a backboardd stuck in a Mach
+  // receive to a missing persona keybag, and our logs show the sandbox finding no container
+  // paths at all, so the keystore is the first thing to put back.  Still opt-in.
+  static int publishWanted = -1;
+  if (publishWanted < 0) {
+    int value = 0;
+    publishWanted = PE_parse_boot_argn ("sheng-aks-publish", &value, sizeof value) && value ? 1 : 0;
+    IOLog ("NATIVE_AKS: gate=%d\n", publishWanted);
+  }
+  if (!publishWanted) {
+    return;
+  }
+  if (gNativeKeystoreDone) {
+    return;
+  }
+  gNativeKeystoreDone = true;
+  if (native_keyevents_allocate == nullptr) {
+    IOLog ("NATIVE_AKS: driver not linked\n");
+    return;
+  }
+  IOService * keystore = native_keyevents_allocate ();
+  IOService * parent = gNativeProvider != nullptr ? gNativeProvider : nullptr;
+  if (keystore != nullptr && parent != nullptr && keystore->init ()) {
+    if (keystore->attach (parent)) {
+      keystore->start (parent);
+      IOLog ("NATIVE_AKS: AppleKeyStore published (late)\n");
+    } else {
+      IOLog ("NATIVE_AKS: attach failed\n");
+      keystore->release ();
+    }
+  } else {
+    IOLog ("NATIVE_AKS: allocation failed\n");
+  }
 }
 
 // H311: ten seconds without a heartbeat beat means the heartbeat thread is stuck.  The sampler
@@ -3514,6 +3549,8 @@ NativeUfsProbe::start (IOService *provider)
   if (!IOService::start (provider)) {
     return false;
   }
+  // H358: remember the provider the keystore is attached to when it is published later.
+  gNativeProvider = provider;
 
   OSData *compatible = provider ?
       OSDynamicCast (OSData, provider->getProperty ("compatible")) : nullptr;
