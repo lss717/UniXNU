@@ -1,13 +1,12 @@
 diff --git a/bsd/vfs/vfs_vnops.c b/bsd/vfs/vfs_vnops.c
 --- a/bsd/vfs/vfs_vnops.c
 +++ b/bsd/vfs/vfs_vnops.c
-@@ -167,4 +167,22 @@ vn_open_modflags(struct nameidata *ndp, int *fmodep, int cmode)
+@@ -167,4 +167,21 @@ vn_open_modflags(struct nameidata *ndp, int *fmodep, int cmode)
  vn_open_modflags(struct nameidata *ndp, int *fmodep, int cmode)
  {
-+++ b/bsd/vfs/vfs_vnops.c
-+	/* H370: launchservicesd (pid 92) is the process SpringBoard waits on, and its sampled
-+	 * thread sits in Security's code signing.  Print the paths it opens, bounded, so the log
-+	 * names the bundle being validated without depending on a sample landing in the ring. */
++	/* H370: launchservicesd is what SpringBoard waits on, and its sampled thread sits
++	 * in Security's code signing.  Print the paths it opens, bounded: guarded_open_np
++	 * reaches this function directly, so the vn_open wrapper never sees them. */
 +	if (current_proc() != PROC_NULL &&
 +	    strncmp(current_proc()->p_comm, "lsd", MAXCOMLEN) == 0) {
 +		static unsigned native_vnopen_n;
@@ -17,8 +16,8 @@ diff --git a/bsd/vfs/vfs_vnops.c b/bsd/vfs/vfs_vnops.c
 +			native_vnopen_n++;
 +			if (copyinstr(ndp->ni_dirp, native_vnopen_path,
 +			    sizeof native_vnopen_path, &native_vnopen_len) == 0) {
-+				printf("NATIVE_VNOPEN: n=%u path=%s\n", native_vnopen_n,
-+				    native_vnopen_path);
++				printf("NATIVE_VNOPEN: n=%u path=%s\n",
++				    native_vnopen_n, native_vnopen_path);
 +			}
 +		}
 +	}
