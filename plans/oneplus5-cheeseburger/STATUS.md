@@ -14439,3 +14439,24 @@ keybagd 与 containermanagerd 一直在等一个**并不存在**的 `AppleKeySto
 
 **H359**：看门狗改为 10 秒只记录（`NATIVE_UFS_STALL_LOG` + 保留块 `ufsstall` 标记）、60 秒才 panic，
 给 `ufsRecover()` 的复位重试留出时间，看系统能否自行跨过这一波 I/O。
+
+#### H359：放宽 UFS 看门狗后系统跑得更远，但日志环本身先写不动了（2026-11-15）
+
+内核 `23a79024`，参数与 H358 相同（含 `sheng-aks-publish=1`）。窗口 42–231 s。
+
+| 观测 | 值 |
+| --- | --- |
+| `NATIVE_AKS` | `gate=1` → `AppleKeyStore published (late)` |
+| `comm=backboardd n=` | **5**（AKS 之后线程数上去） |
+| `dpy=` | **2/11**（显示客户回到 2 个） |
+| 日志尾部 | `NATIVE_UFS_SLOT: attempt=5 slot=4 lba=1c6097c body=1 blocks=1 delta=1249 n=1249 fires=0` 之后**环不再写入** |
+| `NATIVE_UFS_STALL_LOG` | 未出现——因为记录本身也写不进环 |
+
+**结论**：H359 的 10 秒记录/60 秒 panic 改动没有害处，但这一轮真正的现象是：
+**UFS 队列一卡，持久日志的 slot 写入也一起卡住**（同一个队列），于是"停机时刻"本身没有被记录下来。
+系统在 231 s 之后的状态只能靠屏幕与保留块判断。
+
+**下一步（UFS 方向）**：
+1. 让持久日志在 UFS 忙时**永不重试**（直接丢弃），避免日志与数据路径争抢同一队列；
+2. 查清楚 `UFS_REG_UTRLDBR` 为什么在超时后仍然置位（恢复路径 `ufsRecover()` 会写 0，但需要确认之后 doorbell 真的清零）；
+3. 再考虑提高命令超时或改用中断驱动完成，而不是在持有块请求的情况下轮询。
