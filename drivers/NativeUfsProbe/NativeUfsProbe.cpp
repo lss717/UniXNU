@@ -107,7 +107,7 @@ static uint32_t gH103SlotCursor;
 // boot wrote it.  The header alone is not enough: it is written after the
 // slot, and a late header write failure leaves a stale slots_written behind,
 // which made earlier logs mix slots from several boots.
-#define H103_BUILD "H386"
+#define H103_BUILD "H387"
 static uint64_t gH103BootId;
 static volatile int gH103Quiet;
 static volatile uint64_t gH103LastSlotTicks;
@@ -678,6 +678,8 @@ h103MaybeKillExclavekit (unsigned seconds)
 // H236im: the sampling itself lives in the kernel (osfmk/kern/task.c, native_sb_pc_sample); the// driver only names the processes.  Kept in a dedicated thread exactly like il (which boots) and
 // only the name list grew, so a boot failure here points at the list, not at a new mechanism.
 extern "C" void native_sb_pc_sample (const char *name, unsigned sample);
+extern "C" void native_sb_pc_sample_instance (const char *name, unsigned sample,
+                                              unsigned instance);
 extern "C" void native_sb_set_quiet (int on);
 extern "C" void native_sb_trace_start (void);
 extern "C" void native_sb_trace_dump (unsigned burst);
@@ -777,6 +779,8 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
         // so take lsd's and securityd's frame chains on the same cadence as backboardd's.
         native_sb_pc_sample ("lsd", 1800 + burst * 30);
         native_sb_pc_sample ("securityd", 2100 + burst * 30);
+        native_sb_pc_sample_instance ("containermanager", 2400 + burst * 30, 0);
+        native_sb_pc_sample_instance ("containermanager", 2700 + burst * 30, 1);
       }
       IOSleep (1000);
     }
