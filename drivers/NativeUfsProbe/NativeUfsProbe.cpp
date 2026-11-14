@@ -205,9 +205,6 @@ extern "C" void native_log_flush_hook(void);
 // H315: the display archive paints the panel solid on panic; weak because a build without that
 // archive must still link.
 extern "C" void native_legacy_panic_paint (uint32_t color) __attribute__((weak_import));
-// H329: the AppleKeyStore driver publishes SpringBoard's keybag service; weak so a build without
-// that archive still links.
-extern "C" IOService * native_keyevents_allocate (void) __attribute__((weak_import));
 // H343: the panel progress bar, drawn from the watchdog thread.
 extern "C" void native_legacy_progress (unsigned step, unsigned total) __attribute__((weak_import));
 
@@ -302,38 +299,10 @@ static bool gNativeKeystoreDone;
 static void h103Marker (const char *kind, bool urgent);
 static void nativePublishKeystore (void)
 {
-  // H339: publishing is opt-in.  Every kernel that carried this call hung one second after the
-  // first log flush, while the kernel without it ran for eight hundred seconds; until the reason
-  // is understood the publish stays behind sheng-aks-publish=1.
-  static int publishWanted = -1;
-  if (publishWanted < 0) {
-    int value = 0;
-    publishWanted = PE_parse_boot_argn ("sheng-aks-publish", &value, sizeof value) && value ? 1 : 0;
-  }
-  if (!publishWanted) {
-    return;
-  }
-  if (gNativeKeystoreDone) {
-    return;
-  }
-  gNativeKeystoreDone = true;
-  if (native_keyevents_allocate == nullptr) {
-    IOLog ("NATIVE_AKS: driver not linked\n");
-    return;
-  }
-  IOService * keystore = native_keyevents_allocate ();
-  IOService * parent = gNativeProvider != nullptr ? gNativeProvider : nullptr;
-  if (keystore != nullptr && parent != nullptr && keystore->init ()) {
-    if (keystore->attach (parent)) {
-      keystore->start (parent);
-      IOLog ("NATIVE_AKS: AppleKeyStore published (late)\n");
-    } else {
-      IOLog ("NATIVE_AKS: attach failed\n");
-      keystore->release ();
-    }
-  } else {
-    IOLog ("NATIVE_AKS: allocation failed\n");
-  }
+  // H344: the AppleKeyStore archive is the only difference left between the boots that stay up
+  // (H326, no archive) and every boot that dies early.  It is unlinked and unpublished until the
+  // reason is understood; the diagnostics that matter (bar, marker, display fix) stay.
+  IOLog ("NATIVE_AKS: publish disabled (H344)\n");
 }
 
 // H311: ten seconds without a heartbeat beat means the heartbeat thread is stuck.  The sampler
