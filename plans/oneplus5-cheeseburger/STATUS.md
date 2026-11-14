@@ -14600,3 +14600,21 @@ AppleKeyStore 发布有效、容器链正常、`ufsRecover()` 的 `UCRDY` 判定
    vnode 路径 —— 这才是"它在给哪个文件做签名"的确证；
 2. 若路径指向系统卷 → 补 trust cache；指向 Data 卷 → 补安装库/容器；
 3. 参考同机型记录（`dinner-cheeseburger`）的 Data 侧偏好落盘，作为并行验证。
+
+#### H370–H372：lsd 路径探针就位；失败全是"启动没走到位"（2026-11-15）
+
+新增 `patches/xnu/zzzzzzzzzzzz-h370-vnopen-probe.patch`：在 `vn_open()` 入口按**进程名**
+匹配 lsd，`copyinstr(ndp->ni_dirp, …)` 打印前 48 个路径。已验证它进了内核（`strings` 计数 1）。
+
+| 轮次 | lsd | 探针输出 | 结论 |
+| --- | --- | --- | --- |
+| H370 | 有（**pid=93**） | 无 | 条件写死 `pid==92`，**是我的 bug** |
+| H371 | **未 exec** | 无 | 启动退化（`dpy=0`） |
+| H372 | 有（pid=92） | 无（窗口 53.8–228 s，`dpy=0`） | lsd 早期只走 dyld 共享缓存，尚未 `vn_open`；本轮启动也没走到显示 |
+
+**教训**：进程 pid 每轮会变（lsd 见过 92、93），所有按进程的探针必须按 `p_comm` 匹配；
+另外窗口太短（<240 s）时 lsd 还没开始 open，路径探针要等到它进入 LaunchServices 工作阶段。
+
+**下一次**：同一镜像可反复 `fastboot boot`，挑一次 `NATIVE_EXEC … comm=lsd` 且 `dpy≠0`
+的启动，T+240 s 拉日志；若那时仍无 `NATIVE_VNOPEN`，说明 lsd 的卡点不在文件 I/O，
+应转去查 securityd 的应答链路。
