@@ -1,5 +1,11 @@
 # OnePlus 5 进度复核与实验调整
 
+## CPU385 纯CPU参数对照
+
+用户确认当前主线为先用CPU进入桌面。历史STATUS H333/H334明确纯CPU配置应移除gpu-power。H384虽关闭accelerator和addon，却仍带sheng-gpu-power=7；该参数由heartbeat独立调用，可进入SPMI及A540初始化。CPU385沿用H384全部产物，仅从实际payload参数删除该项，保留cpus=1、accelerator=0、addon=0。内核日志build仍为H384，必须配合boot ID及镜像哈希辨别。本轮不合入独立代理的日志静态缓冲修复。
+
+Mac先拉取后打包，boot_args最坏882/1024字节。payload SHA-256为 `5cf4f400076d1a6b09741a392f6f2b039fdb49132d4fc25742dd54b1165ecec1`，boot为 `2ec0e2364e85afce4d7d811305a546b46ff76c501d96382ec6c4b49e3d502453`。先前准备的GPU385包未启动。
+
 ## H384 限频与启动前清理
 
 用户指出HANDOFF要求每轮启动前清零日志环。此前各轮未执行清零，已通过boot ID分组解码。本轮用户明确授权后，确认userdata_ios大小52840607744字节，清零末尾32MiB（4096字节块，seek=12892347，count=8192），完整读回验证全零。H383日志已备份。
