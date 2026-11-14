@@ -14353,3 +14353,34 @@ launchd 所有可见线程都处于空闲停放状态（`sigsuspend_nocancel` / 
 **工具**：`scripts/h103-symbolicate.py` 把采样到的地址换算成「镜像 + 偏移」（需要挂载同一 IPSW 的
 SystemOS 卷读取 dyld 共享缓存）；syscall stub 的名字可以直接读 `movz x16,#N` 再查
 `bsd/sys/syscall.h`，比猜符号可靠。
+
+#### H353：backboardd 真正卡在向 launchd 查询 user session，而不是显示（2026-11-15）
+
+内核 `1972aded`，backboardd / launchd 各取前 8 个线程的栈（`slide=0x1bf24000`）。
+
+**backboardd 的三条线程**
+
+| 线程 | 栈（内→外） | 判定 |
+| --- | --- | --- |
+| tid=474 | `_xpc_pipe_mach_msg` → `_xpc_pipe_routine` → `_xpc_interface_routine` → `_xpc_user_sessions_info_routine` | **卡在向 launchd 查询 user session** |
+| tid=517 | `CA::Render::Server::server_thread`（QuartzCore） | CA 渲染服务线程在等消息，正常 |
+| tid=542 | `__CFRunLoopServiceMachPort` ← `CA::WindowServer::IOMFBServer::thread_body` | **显示服务线程已经起来**，在等消息 |
+
+tid=474 的请求端口：`rport=0x807 sr=76`（76 个发送权 = 引导端口，即 launchd），
+`q=0` —— 消息已被 launchd 取走，但没有回复。
+
+**launchd 的线程状态**（97 次采样）
+
+| pc | syscall（读 `movz x16,#N`） | 线程 |
+| --- | --- | --- |
+| `libsystem_kernel+0x6128` | 410 `sigsuspend_nocancel` | 主线程，libdispatch 空闲停放 |
+| `libsystem_kernel+0x18e8` | 368 `workq_kernreturn` | workqueue 空闲 |
+| `libsystem_kernel+0xf9c8` | 400 `wait4_nocancel` | 在等子进程 |
+
+**结论**：显示路径比先前判断的更靠前——backboardd 的 IOMFB 服务线程已经建立，
+真正挡住它的是**启动早期向 launchd 的 `xpc_user_sessions_info` 同步调用没有回复**。
+backboardd 因此永远走不到 check-in，SpringBoard 的 `BKSSystemShellService` 请求就一直排在
+launchd 代持的端口上（`q=1`）。
+
+**下一步判据**：打印回复端口的 send-once 计数（`ip_sorights`）。
+若 launchd 从未回复，该计数保持 1；若回复已经发出（而在投递环节丢失），它会降到 0。
