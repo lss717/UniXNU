@@ -204,6 +204,13 @@ index 5dcf00e..dcadbaf 100644
 +static struct native_sb_row native_sb_rows[16];
 +static unsigned native_sb_count;
 +static const char *native_sb_note;
++/* H355: does launchd ever send anything?  A bootstrap reply is an ordinary send from
++ * pid 1, so counting those separates "launchd never answers" from "the answer is lost
++ * on the way".  Declared here because the sampler below prints them. */
++static unsigned long long native_launchd_out, native_launchd_in;
++struct native_launchd_note { unsigned dst; unsigned id; };
++static struct native_launchd_note native_launchd_last[8];
++static unsigned native_launchd_count;
 +static const char *native_sb_name;
 +
 +/* H239: describe the port the blocked thread is receiving from, and the port
@@ -666,13 +673,6 @@ index 5dcf00e..dcadbaf 100644
 +static unsigned native_xpc_lost;
 +static unsigned long long native_xpc_sb_out, native_xpc_sb_in, native_xpc_sb_other;
 +static unsigned long long native_xpc_p_out, native_xpc_p_in, native_xpc_p_other;
-+/* H355: does launchd ever send anything?  The reply to a bootstrap request is an
-+ * ordinary send from pid 1, so counting those separates "launchd never answers"
-+ * from "the answer is lost on the way". */
-+static unsigned long long native_launchd_out, native_launchd_in;
-+struct native_launchd_note { unsigned dst; unsigned id; };
-+static struct native_launchd_note native_launchd_last[8];
-+static unsigned native_launchd_count;
 +
 +static int
 +native_xpc_tracked(int pid)
