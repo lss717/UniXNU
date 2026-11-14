@@ -107,7 +107,7 @@ static uint32_t gH103SlotCursor;
 // boot wrote it.  The header alone is not enough: it is written after the
 // slot, and a late header write failure leaves a stale slots_written behind,
 // which made earlier logs mix slots from several boots.
-#define H103_BUILD "H389"
+#define H103_BUILD "H390"
 static uint64_t gH103BootId;
 static volatile int gH103Quiet;
 static volatile uint64_t gH103LastSlotTicks;
@@ -723,6 +723,9 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
         native_sb_pc_sample ("SpringBoard", 6000 + sample * 30);
         // The kernel emits non-SpringBoard frame chains only for sample % 30 == 0.
         native_sb_pc_sample ("lsd", 7020 + sample * 30);
+        // Follow both per-user and system services; ordinal is not a fixed UID.
+        native_sb_pc_sample_instance ("lsd", 10020 + sample * 30, 1);
+        native_sb_pc_sample ("installd", 11010 + sample * 30);
         native_sb_pc_sample_instance ("containermanager", 8010 + sample * 30, 0);
         native_sb_pc_sample_instance ("containermanager", 9000 + sample * 30, 1);
         native_log_flush_hook ();
