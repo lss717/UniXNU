@@ -2,7 +2,7 @@ diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
 index 5dcf00e..dcadbaf 100644
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -10285,3 +10285,830 @@ task_best_name(task_t task, char *buf, size_t size)
+@@ -10285,3 +10285,858 @@ task_best_name(task_t task, char *buf, size_t size)
  	char *name = proc_best_name(task_get_proc_raw(task));
  	strlcpy(buf, name, size);
  }
@@ -547,6 +547,34 @@ index 5dcf00e..dcadbaf 100644
 +		    (vm_offset_t)native_sb_buf, native_sb_hdr,
 +		    sizeof native_sb_hdr) == KERN_SUCCESS) {
 +			native_sb_hdr_ok = 1;
++			/* H364: a bootstrap look-up carries the service name inline.  Scan the blocked
++			 * request's body for it, whatever the routine id, so the log names the service
++			 * that has not checked in instead of only its port name. */
++			{
++				char body[256];
++				memset(body, 0, sizeof body);
++				if (vm_map_read_user(get_task_map(native_sb_task),
++				    (vm_offset_t)native_sb_buf, body, sizeof body - 1) == KERN_SUCCESS) {
++					for (unsigned off = 24; off + 11 < sizeof body; off++) {
++						unsigned len = 0;
++						if (memcmp(body + off, "com.apple.", 10) != 0) {
++							continue;
++						}
++						while (len < 79 && off + len < sizeof body &&
++						    body[off + len] >= 0x21 && body[off + len] <= 0x7e) {
++							len++;
++						}
++						if (len >= 11) {
++							char svc[80];
++							memcpy(svc, body + off, len);
++							svc[len] = 0;
++							printf("NATIVE_BOOTSTRAP: sample=%u comm=%s name=%s\n",
++							    sample, name, svc);
++						}
++						break;
++					}
++				}
++			}
 +		}
 +		native_sb_probe_name(native_sb_task->itk_space, native_sb_rcv_name, &native_sb_rcv);
 +		native_sb_qname1[0] = '-'; native_sb_qname1[1] = 0;
