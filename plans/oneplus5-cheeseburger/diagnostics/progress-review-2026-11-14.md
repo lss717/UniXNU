@@ -1,5 +1,13 @@
 # OnePlus 5 进度复核与实验调整
 
+## H382 延长运行与 H383 观测修复
+
+同一 H382 镜像于北京时间约 20:19:40 再次启动，用户在运行中反馈仍有日志输出且没有 panic，约 20:35 返回 TWRP。新 boot=21d39521，有效槽226个，另有上轮遗留槽21个，解码已按新轮次筛选。正文仅覆盖29.6–236.4秒，末尾显示dpy=0、SpringBoard仍为launchd代持端口q=1，未记录到lsd exec。窗口内无OCS timeout、恢复或块请求拒绝。该轮没有覆盖15分钟后半段，不能用它判断seeding最终完成与否。
+
+当前构建XNU_NATIVE_UFS=0、XNU_NATIVE_RAM_BLOCK=1，启动参数未启用sheng-data-persist。NativeRamBlock在该组合下使用volatile Data，跨重启从同一种子重新开始，因此需要考虑每轮重新建立数据库的开销。
+
+源码复核发现h103FlushNow在h103SlotWrite失败后仍将gH103LastSlotMsgX推进到当前游标，丢弃尚未落盘的字节，busy标志也通过非原子读写保护多个刷新入口。H383使用CAS串行化slot/header刷新，仅在每个slot及其header成功后推进游标，并由独立watchdog线程每秒调用刷新入口。沿用H382的单核、AKS和显示参数，先验证长时间观测可靠性。
+
 ## H382 真机日志与符号化结果
 
 从 TWRP 取回原始环 assets/log-review/h103log-H382.bin。247 个有效槽均为 boot=24bde90f、build=H382。正文覆盖约 82.3–441.1 秒，早期记录已被环覆盖。窗口内 OCS timeout、DBTO、RECOVER、块请求拒绝和 UFS stall 均为零，UFS 命令数在 326–405 秒由 38106 增至 44109，累计读取约 3.78 GB。相较 H381 有改善，仍需重复验证。

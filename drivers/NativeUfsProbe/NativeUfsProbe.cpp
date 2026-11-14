@@ -107,7 +107,7 @@ static uint32_t gH103SlotCursor;
 // boot wrote it.  The header alone is not enough: it is written after the
 // slot, and a late header write failure leaves a stale slots_written behind,
 // which made earlier logs mix slots from several boots.
-#define H103_BUILD "H382"
+#define H103_BUILD "H383"
 static uint64_t gH103BootId;
 static volatile int gH103Quiet;
 static volatile uint64_t gH103LastSlotTicks;
@@ -408,6 +408,8 @@ nativeWatchdogThread (void *, wait_result_t)
       }
       continue;
     }
+    // Keep persistence independent of process sampling and display callbacks.
+    native_log_flush_hook ();
     h103StallCheck ();
     h103MaybeKillExclavekit (seconds);
     h103MaybeRestartSpringBoard (native_legacy_client_calls);
@@ -1326,7 +1328,7 @@ h103HeaderWriteThunk (void)
 static void
 h103FlushNow (void)
 {
-  if (gH103SlotBusy) {
+  if (__atomic_load_n (&gH103SlotBusy, __ATOMIC_ACQUIRE)) {
     return;
   }
   if (gH103FlushBackoffTicks != 0 && mach_absolute_time () < gH103FlushBackoffTicks) {
@@ -1337,15 +1339,14 @@ h103FlushNow (void)
   if (!m || !m->msg_bufc || m->msg_size <= 0) {
     return;
   }
-  int x = m->msg_bufx;
-  if (x < 0 || x >= m->msg_size) {
-    x = 0;
+  int expected = 0;
+  if (!__atomic_compare_exchange_n (&gH103SlotBusy, &expected, 1, false,
+                                   __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
+    return;
   }
-  gH103SlotBusy = 1;
   gH103LastSlotTicks = mach_absolute_time ();
   h103SlotWriteThunk ();
-  gH103SlotBusy = 0;
-  gH103LastSlotMsgX = x;
+  __atomic_store_n (&gH103SlotBusy, 0, __ATOMIC_RELEASE);
 }
 
 // H116: called by the display archive from the client-open and frame-copy paths.
@@ -1616,7 +1617,7 @@ h103SlotTick (void)
       return;
     }
   }
-  if (gH103SlotBusy) {
+  if (__atomic_load_n (&gH103SlotBusy, __ATOMIC_ACQUIRE)) {
     return;
   }
   if (!dumped && !force && now - gH103LastSlotTicks < interval) {
@@ -1635,11 +1636,15 @@ h103SlotTick (void)
     // write. Only the header is rewritten, at the same slow interval, so
     // uptime_s still shows whether the read path is alive.
     if (now - gH103LastHeaderTicks >= interval) {
+      int expected = 0;
+      if (!__atomic_compare_exchange_n (&gH103SlotBusy, &expected, 1, false,
+                                       __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
+        return;
+      }
       gH103LastSlotTicks = now;
       gH103LastHeaderTicks = now;
-      gH103SlotBusy = 1;
       h103HeaderWriteThunk ();
-      gH103SlotBusy = 0;
+      __atomic_store_n (&gH103SlotBusy, 0, __ATOMIC_RELEASE);
     }
     return;
   }
@@ -3208,6 +3213,9 @@ NativeUfsProbe::h103SlotWrite (void)
     gH103LastHeaderTicks = mach_absolute_time ();
     native_h103_slot_state = 2;
     offset = size ? (offset + n) % size : 0;
+    // Advance only after both this slot and its header were persisted. A busy
+    // queue or failed write leaves the remaining delta available to retry.
+    gH103LastSlotMsgX = static_cast<int> (offset);
     remaining -= n;
   } while (remaining);
   IOFreeAligned (body, 32U * 4096U);
