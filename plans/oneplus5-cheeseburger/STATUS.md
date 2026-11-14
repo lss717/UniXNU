@@ -14384,3 +14384,27 @@ launchd 代持的端口上（`q=1`）。
 
 **下一步判据**：打印回复端口的 send-once 计数（`ip_sorights`）。
 若 launchd 从未回复，该计数保持 1；若回复已经发出（而在投递环节丢失），它会降到 0。
+
+#### H354：launchd 的用户态启动任务停在 init-exclavekit（2026-11-15）
+
+内核 `3a89697c`，新增 `so=`（send-once 计数），并采样 `usermanagerd` / `cfprefsd`。窗口 88–376 s。
+
+| 观测 | 值 | 含义 |
+| --- | --- | --- |
+| SpringBoard 的 `req … sr=5 so=0 q=1 peer=1/launchd` | 持续 | 服务端口上待处理消息一直在，回复权未产生 |
+| `usermanagerd`、`cfprefsd`、`runningboardd` 的线程 | `CFRunLoopServiceMachPort` / `workq_kernreturn` / `sigsuspend` | **都在空闲**，不是它们卡住 |
+| launchd 线程 | 主线程 `sigsuspend_nocancel`；其余 `workq_kernreturn`；一条 `wait4_nocancel` | 主循环空闲 |
+| **launchd 自身日志**（`[System Event] [Subsystem: launchd]`） | 30 条，最后一条 **`init-exclavekit: Doing boot task`（151.3 s）**，没有 `Finished boot task` | **启动任务序列停在这里** |
+| `NATIVE_EXEC: pid=23 … init_exclavekit` | 150.5 s | 该助手进程随后再无任何退出/完成记录 |
+
+**推论**：launchd 的 boot task 队列被 `init_exclavekit` 挡住（这一条正好对应那条
+`wait4_nocancel` 线程）。`init-exclavekit` 初始化的是本板并不存在的 enclave 硬件，因此不会自行结束。
+boot task 序列未完成，后续初始化（含会话建立）就不会发生——这与"所有服务都无法 check-in、
+所有同步 XPC 都停在等 launchd"的现象一致。
+
+**H355 判据**：在 IPC 发送路径上按进程统计 launchd 的**发出/收到**消息数。
+若 `out` 随 `in` 一起增长而客户端仍阻塞，则回复已发出而在投递环节丢失（内核端口路径）；
+若 `out` 基本不动，则 launchd 确实没有回复。
+
+**H356 实验**：用 boot arg `native-kill-exclavekit=1` 在 200 s 给 `init_exclavekit` 发一次 SIGKILL，
+看 launchd 是否记录 `Finished boot task` 并继续后续启动任务。
