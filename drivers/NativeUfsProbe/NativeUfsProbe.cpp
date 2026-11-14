@@ -107,11 +107,15 @@ static uint32_t gH103SlotCursor;
 // boot wrote it.  The header alone is not enough: it is written after the
 // slot, and a late header write failure leaves a stale slots_written behind,
 // which made earlier logs mix slots from several boots.
-#define H103_BUILD "H384"
+#define H103_BUILD "H386"
 static uint64_t gH103BootId;
 static volatile int gH103Quiet;
 static volatile uint64_t gH103LastSlotTicks;
 static volatile int gH103SlotBusy;
+// Kernel-lifetime scratch, serialized by gH103SlotBusy. Logging must not wait
+// for heap allocation while the system is under startup memory pressure.
+alignas(4096) static uint8_t gH103SlotBody[32U * 4096U];
+alignas(4096) static uint8_t gH103SlotHeader[4096];
 static volatile int gH103LastSlotMsgX = -1;
 // H103fl diagnostics: 0=no slot writer, 1=default cadence, 2=2 s fast control.
 static volatile int gH103SlotMode = 1;
@@ -1029,7 +1033,7 @@ h103SlotThread (void *, wait_result_t)
   for (;;) {
     IOSleep (2000);
     if (native_boot_flags & 4) {
-      h103SlotWriteThunk ();
+      h103FlushNow ();
     }
   }
 }
@@ -3081,13 +3085,7 @@ NativeUfsProbe::h103SlotWrite (void)
     return;
   }
   native_h103_slot_state = 1;
-  uint8_t *body = static_cast<uint8_t *> (IOMallocAligned (32U * 4096U, 4096));
-  if (!body) {
-    if (attempts++ < 8) {
-      IOLog ("NATIVE_UFS_SLOT: body allocation failed\n");
-    }
-    return;
-  }
+  uint8_t *body = gH103SlotBody;
   // H106/H179: write only the bytes produced since the previous flush.  A
   // delta larger than one 32-block slot is split across consecutive slots
   // instead of dropping its older half (that is how the mount and display
@@ -3193,10 +3191,7 @@ NativeUfsProbe::h103SlotWrite (void)
     h.export_below = static_cast<uint32_t> (gUfsLastLoops);
     h.state = 3;
     strlcpy (h.tag, "cheeseburger-H103", sizeof h.tag);
-    uint8_t *head = static_cast<uint8_t *> (IOMallocAligned (4096, 4096));
-    if (!head) {
-      break;
-    }
+    uint8_t *head = gH103SlotHeader;
     memset (head, 0, 4096);
     memcpy (head, &h, sizeof h);
     bool headOk = logWrite (0, 1, head);
@@ -3204,7 +3199,6 @@ NativeUfsProbe::h103SlotWrite (void)
       IOLog ("NATIVE_UFS_SLOT: header=%u cursor=%u\n",
              headOk ? 1 : 0, gH103SlotCursor);
     }
-    IOFreeAligned (head, 4096);
     if (!headOk) {
       gH103SlotWriteErrors = gH103SlotWriteErrors + 1;
       break;
@@ -3219,7 +3213,6 @@ NativeUfsProbe::h103SlotWrite (void)
     gH103LastSlotMsgX = static_cast<int> (offset);
     remaining -= n;
   } while (remaining);
-  IOFreeAligned (body, 32U * 4096U);
 }
 
 void
@@ -3257,10 +3250,7 @@ NativeUfsProbe::h103HeaderOnly (void)
   h.export_below = static_cast<uint32_t> (gUfsLastLoops);
   h.state = gH103SlotCursor ? 3 : 2;
   strlcpy (h.tag, "cheeseburger-H103", sizeof h.tag);
-  uint8_t *head = static_cast<uint8_t *> (IOMallocAligned (4096, 4096));
-  if (!head) {
-    return;
-  }
+  uint8_t *head = gH103SlotHeader;
   memset (head, 0, 4096);
   memcpy (head, &h, sizeof h);
   bool ok = logWrite (0, 1, head);
@@ -3269,7 +3259,6 @@ NativeUfsProbe::h103HeaderOnly (void)
   } else {
     gH103LastHeaderTicks = mach_absolute_time ();
   }
-  IOFreeAligned (head, 4096);
 }
 
 void
