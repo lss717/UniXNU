@@ -306,7 +306,7 @@ static void nativePublishKeystore (void)
 // record instead of a "panic" one says the machine hung rather than panicked.
 static void h103Marker (const char *kind, bool urgent);  // defined after the driver class is complete
 
-static void h103MaybeKillExclavekit (void);
+static void h103MaybeKillExclavekit (unsigned seconds);
 
 static void
 h103StallCheck (void)
@@ -369,7 +369,7 @@ nativeWatchdogThread (void *, wait_result_t)
       continue;
     }
     h103StallCheck ();
-    h103MaybeKillExclavekit ();
+    h103MaybeKillExclavekit (seconds);
     if (gH103StallRecorded) {
       continue;
     }
@@ -605,7 +605,7 @@ a540ExclavekitKill (proc_t p, void *)
 }
 
 static void
-h103MaybeKillExclavekit (void)
+h103MaybeKillExclavekit (unsigned seconds)
 {
   static int enabled = -1, done;
   if (done) {
@@ -619,7 +619,7 @@ h103MaybeKillExclavekit (void)
   if (!enabled) {
     return;
   }
-  if (mach_absolute_time () < 200 * 19200000ULL) {
+  if (seconds < 200) {
     return;
   }
   done = 1;
@@ -704,7 +704,6 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
       if ((b % 20) == 19) {
         native_log_flush_hook ();
         h103StallCheck ();
-        h103MaybeKillExclavekit ();
         // H313: SpringBoard's blocked receive has a port whose peer is lsd (pid 92), and H283
         // put the trap in libsystem_kernel's receive path, so the unanswered half of that RPC is
         // lsd.  Sample it once a second alongside SpringBoard to see where it is stuck.
@@ -743,7 +742,6 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
       for (unsigned gap = 0; gap < 30; ++gap) {
         IOSleep (1000);
         h103StallCheck ();
-        h103MaybeKillExclavekit ();
         native_sb_pc_sample ("runningboardd", 3000 + burst * 100 + gap);
         native_sb_pc_sample ("launchd", 4000 + burst * 100 + gap);
         native_log_flush_hook ();
