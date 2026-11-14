@@ -107,7 +107,7 @@ static uint32_t gH103SlotCursor;
 // boot wrote it.  The header alone is not enough: it is written after the
 // slot, and a late header write failure leaves a stale slots_written behind,
 // which made earlier logs mix slots from several boots.
-#define H103_BUILD "H386"
+#define H103_BUILD "H390"
 static uint64_t gH103BootId;
 static volatile int gH103Quiet;
 static volatile uint64_t gH103LastSlotTicks;
@@ -136,6 +136,7 @@ static volatile int gH103StallRecorded;
 static volatile uint64_t gH103FlushBackoffTicks;
 static volatile uint32_t gH103FlushSkips;
 static volatile uint32_t gH103SlotWriteErrors;
+static volatile uint64_t gH103LastSlotSuccessTicks;
 /* H289: the persistent ring stopped at 258 s in H288 while the system kept running for
  * another 300 s, so the flush path needs to say whether it is failing or merely idle. */
 static uint32_t gH103FlushRounds, gH103FlushIdleRounds;
@@ -221,6 +222,7 @@ extern "C" void native_legacy_progress (unsigned step, unsigned total) __attribu
 // The heartbeat and the dump wakeup now come from a timer_call, which runs
 // from the timer interrupt and needs no thread timer at all.
 extern "C" void native_legacy_heartbeat_cell(void);
+extern "C" void native_legacy_slot_cell(void);
 // H223: the GPUCC survey runs at the late probe (~35 s), before the persistent log ring starts
 // capturing (~40 s); repeat it once from the heartbeat so the values reach the pulled log.
 extern "C" int sheng_gpucc_next(unsigned *index, uint32_t *value);
@@ -679,6 +681,8 @@ h103MaybeKillExclavekit (unsigned seconds)
 // H236im: the sampling itself lives in the kernel (osfmk/kern/task.c, native_sb_pc_sample); the// driver only names the processes.  Kept in a dedicated thread exactly like il (which boots) and
 // only the name list grew, so a boot failure here points at the list, not at a new mechanism.
 extern "C" void native_sb_pc_sample (const char *name, unsigned sample);
+extern "C" void native_sb_pc_sample_instance (const char *name, unsigned sample,
+                                              unsigned instance);
 extern "C" void native_sb_set_quiet (int on);
 extern "C" void native_sb_trace_start (void);
 extern "C" void native_sb_trace_dump (unsigned burst);
@@ -704,11 +708,28 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
     static int quiet = -1;
     if (quiet < 0) {
       int value = 0;
-      quiet = PE_parse_boot_argn ("native-probe-quiet", &value, sizeof value) && value ? 1 : 0;
+      quiet = PE_parse_boot_argn ("native-probe-quiet", &value, sizeof value) &&
+          value >= 1 && value <= 2 ? value : 0;
     }
-    if (quiet) {
+    if (quiet == 1) {
       IOLog ("NATIVE_SBPC: sampler parked (native-probe-quiet=1)\n");
       for (;;) {
+        IOSleep (60000);
+      }
+    }
+    if (quiet == 2) {
+      IOLog ("NATIVE_SBPC: late sampler active (native-probe-quiet=2)\n");
+      IOSleep (240000);
+      for (unsigned sample = 0;; sample++) {
+        native_sb_pc_sample ("SpringBoard", 6000 + sample * 30);
+        // The kernel emits non-SpringBoard frame chains only for sample % 30 == 0.
+        native_sb_pc_sample ("lsd", 7020 + sample * 30);
+        // Follow both per-user and system services; ordinal is not a fixed UID.
+        native_sb_pc_sample_instance ("lsd", 10020 + sample * 30, 1);
+        native_sb_pc_sample ("installd", 11010 + sample * 30);
+        native_sb_pc_sample_instance ("containermanager", 8010 + sample * 30, 0);
+        native_sb_pc_sample_instance ("containermanager", 9000 + sample * 30, 1);
+        native_log_flush_hook ();
         IOSleep (60000);
       }
     }
@@ -778,6 +799,8 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
         // so take lsd's and securityd's frame chains on the same cadence as backboardd's.
         native_sb_pc_sample ("lsd", 1800 + burst * 30);
         native_sb_pc_sample ("securityd", 2100 + burst * 30);
+        native_sb_pc_sample_instance ("containermanager", 2400 + burst * 30, 0);
+        native_sb_pc_sample_instance ("containermanager", 2700 + burst * 30, 1);
       }
       IOSleep (1000);
     }
@@ -925,6 +948,17 @@ heartbeatThread (void *, wait_result_t)
     // completion path and from inside NativeUfsWindow's request lock, where
     // they could hold a block-storage request for tens of seconds.
     h103SlotTick ();
+    {
+      uint64_t now = mach_absolute_time ();
+      uint64_t staleSeconds = gH103LogSecs > 1 ? gH103LogSecs * 3ULL : 3ULL;
+      if (gH103LastSlotSuccessTicks &&
+          now - gH103LastSlotSuccessTicks <= staleSeconds * 19200000ULL) {
+        native_h103_slot_state = (beat & 1U) ? 4U : 2U;
+      } else if (native_h103_slot_state == 2U || native_h103_slot_state == 4U) {
+        native_h103_slot_state = 1U;
+      }
+      native_legacy_slot_cell ();
+    }
     // H124/H128: the 2x2 repaint moved here with the dumps.  Repaint on a gate
     // bit change, and keep blinking until backboardd execs.
     {
@@ -3207,7 +3241,8 @@ NativeUfsProbe::h103SlotWrite (void)
     gH103SlotCursor++;
     gH103LastMsgBytes = n;
     gH103LastHeaderTicks = mach_absolute_time ();
-    native_h103_slot_state = 2;
+    gH103LastSlotSuccessTicks = mach_absolute_time ();
+    native_h103_slot_state = 2U;
     offset = size ? (offset + n) % size : 0;
     // Advance only after both this slot and its header were persisted. A busy
     // queue or failed write leaves the remaining delta available to retry.
@@ -3258,6 +3293,7 @@ NativeUfsProbe::h103HeaderOnly (void)
   if (!ok) {
     gH103SlotWriteErrors = gH103SlotWriteErrors + 1;
   } else {
+    gH103LastSlotSuccessTicks = mach_absolute_time ();
     gH103LastHeaderTicks = mach_absolute_time ();
   }
 }

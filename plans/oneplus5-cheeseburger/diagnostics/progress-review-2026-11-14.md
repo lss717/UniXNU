@@ -1,5 +1,21 @@
 # OnePlus 5 进度复核与实验调整
 
+## H388a 与 H389 后期采样计划
+
+H388a 在 H388q 基线上仅增加 `sheng-disable-jobs=com.apple.mobileactivationd`。运行超过823秒，mobileactivationd 崩溃记录为0，尸体计数从4降到0，UFS无异常，但 `val/xf/fr` 仍全部为0。因此该崩溃循环不是桌面未出现的直接必要条件，但它会破坏长启动稳定性，后续控制实验继续保留停用。
+
+H389增加 `native-probe-quiet=2`：前面240秒不采样，之后每60秒只采样SpringBoard、lsd和第0/1个containermanager实例。所有采样ID保持30的倍数以取得帧链，不恢复原高频burst。目标是在600秒以后仍能获得最低限度的进程栈，并判断剩余等待是在LaunchServices数据库扫描、场景创建还是容器服务。
+
+## H387 容器管理器等待链采样
+
+CPU385 的日志窗口持续到约 494.5 秒。SpringBoard 末尾请求转为 `peer=92/lsd`，lsd 的 tid491 在 `_LSInstallProgressService performJournalRecovery` 内同步等待 dispatch ownership，tid493 和 tid680 等待同一个安装或数据库恢复 group。tid664 则在 InstalledContentLibrary 完成目录与 bundle 校验后，转入 `container_xpc_send_sync_message`，说明 lsd 初始化仍有阶段推进，单轮证据不能认定为进程内死锁。
+
+源码复核发现 `native_sb_name` 为 `containermanager` 时，旧比较使用完整 16 字符长度；进程 `p_comm` 被截为 `containermanage`，所以该服务此前一直未命中。H387 将进程名比较限制在 16 字节字段内，按 `proc_name` 的前缀匹配；每次采样开始把 pid 重置为 -1，避免失败时沿用上一进程身份。
+
+新增 `native_sb_pc_sample_instance()`，允许按匹配实例编号采样。驱动在每轮 CPU 低开销 burst 中分别采集第 0、1 个 containermanager 实例，sample id 保持 30 的倍数以取得帧链。每个样本只持有一个匹配任务，避免 system 与用户服务实例混入同一用户内存读取。
+
+本轮保持 CPU 路线：不使用 GPU addon，`offline-accelerator=0`，`sheng-gpu-addon=0`，无 `sheng-gpu-power`。H387 只增加容器服务观测，不改变桌面启动逻辑。
+
 ## 并行复核与日志修复预编译
 
 用户授权并行后，日志代理完成slot/header静态缓冲复用（132KiB BSS）和可选slot线程CAS入口修复，提交e0b60c6。Mac拉取后构建和prelink成功，包内内核逐字节核验通过。独立LOG386沿用CPU385的无GPU上电参数，kernel SHA-256为 `0b2b502654e341f6696f2f9ad39b2ed7eb10f82faee24fdc4f08c0cfe1c00497`，payload为 `8378b5e9e7cca8ec951fd45881498f75e8716bd2c87891ce2ff151e102441fb7`，boot为 `c88ea4bac4b88f3da614d3a68cf88aa0e8087d87c1eae6508d331addc3f07c64`。该产物在CPU385运行期间预编译，尚未上机。
