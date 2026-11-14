@@ -1,5 +1,42 @@
 # OnePlus 5 进度复核与实验调整
 
+## H382 真机日志与符号化结果
+
+从 TWRP 取回原始环 assets/log-review/h103log-H382.bin。247 个有效槽均为 boot=24bde90f、build=H382。正文覆盖约 82.3–441.1 秒，早期记录已被环覆盖。窗口内 OCS timeout、DBTO、RECOVER、块请求拒绝和 UFS stall 均为零，UFS 命令数在 326–405 秒由 38106 增至 44109，累计读取约 3.78 GB。相较 H381 有改善，仍需重复验证。
+
+LOG_STAT 的 errors 累计到 68，存在日志丢写，脚本输出 CHECK。该计数也包含 try-lock 失败，不能直接解释成 68 次磁盘命令失败。保留块为 H382 的 stall，uptime=213、hbago=10，但正文之后持续到 441 秒，说明这个历史心跳延迟标记不能当作最终停机时刻。
+
+使用本轮 NATIVE_SBPC_IMAGE 的 slide=0x1ddcc000、base=0x19ddcc000，在 Mac 对同一系统共享缓存提取文件符号化。SpringBoard 主线程末尾栈如下。
+
+```text
+mach_msg2_trap
+mach_msg_overwrite
+mach_msg
+_dispatch_mach_send_and_wait_for_reply
+dispatch_mach_send_with_result_and_wait_for_reply$VARIANT$mp
+xpc_connection_send_message_with_reply_sync
+__NSXPCCONNECTION_IS_WAITING_FOR_A_SYNCHRONOUS_REPLY__
+-[NSXPCConnection _sendInvocation:orArguments:count:methodSignature:selector:withProxy:]
+```
+
+因此同步等待成立。单独看到 ssz=0 的 receive 阶段不足以判断其外层是否同步 RPC，必须结合栈。此时缓冲的 rport=0x5a0f 被探针关联到 pid91/lsd，但当前消息 ID 和头部均为零，目标关联仍需发送时的事件确认。
+
+lsd 在 257.8 秒 exec。316 秒栈包含 _LSCreateRegistrationDataForDirectoryNode、_LSCreateRegistrationData、_LSServerCreateBundleDataAndRegister、_LSDispatchRegistration、_LSRegisterDirectoryNode、_LSRegisterBundleNode、_LSFindOrRegisterBundleNode、_LSDatabaseClean，表明它正在执行注册和数据库清理。
+
+422.6 秒 tid814 栈如下。
+
+```text
+_dispatch_group_wait_slow
+__LAUNCH_SERVICES_CLIENTS_ARE_WAITING_FOR_THE_DATABASE_TO_FINISH_SEEDING__
+-[LSDatabaseBlockingFetchClient getServerStoreBlockingWithCompletionHandler:]
+__NSXPCCONNECTION_IS_CALLING_OUT_TO_EXPORTED_OBJECT_S1__
+-[NSXPCConnection _decodeAndInvokeMessageWithEvent:reply:flags:]
+```
+
+另一工作线程还出现 -[_LSInstallProgressService restoreInactiveInstalls]。当前最具体的候选阻塞为 LaunchServices 数据库 seeding 尚未完成。尚无法证明它是死锁，也无法把 SpringBoard 的等待直接关联到这条服务调用。
+
+下一轮优先使用同一 H382 产物延长观察至 15 分钟，记录数据库 seeding 的工作线程、注册路径和 I/O 进展，核实 Data 种子是否使每轮都重新初始化。保留现有单核、AKS 和显示参数。若工作进展停滞，再针对其等待组及执行队列补充诊断。显示 val/xf/fr 仍为零，第一帧待验收。
+
 ## H381 失败与 H382 修复
 
 H381 原始日志已从 TWRP 提取，NATIVE_BUILD 为 H381，boot=24aaf3ab，正文约 32–213 秒。保留块为 logstop，记录日志在崩溃前已经停止。用户照片显示锁等待超时、块请求拒绝、OCS timeout、hcs=8 ready=0、backboardd SIGBUS，最终 ipc_space.h:173 断言，与 H360 的级联故障相似。当前证据不足以单独归因于单核。
