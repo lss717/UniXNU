@@ -721,8 +721,9 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
       IOSleep (240000);
       for (unsigned sample = 0;; sample++) {
         native_sb_pc_sample ("SpringBoard", 6000 + sample * 30);
-        native_sb_pc_sample ("lsd", 7000 + sample * 30);
-        native_sb_pc_sample_instance ("containermanager", 8000 + sample * 30, 0);
+        // The kernel emits non-SpringBoard frame chains only for sample % 30 == 0.
+        native_sb_pc_sample ("lsd", 7020 + sample * 30);
+        native_sb_pc_sample_instance ("containermanager", 8010 + sample * 30, 0);
         native_sb_pc_sample_instance ("containermanager", 9000 + sample * 30, 1);
         native_log_flush_hook ();
         IOSleep (60000);
