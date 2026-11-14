@@ -87,7 +87,7 @@ static volatile uint64_t gUfsLastLoops;
 static volatile uint64_t gUfsLastTicks;
 static bool gNopActive;
 
-#define UFS_TIMEOUT_TICKS 100000000ULL   // about 5.2 s at the 19.2 MHz timebase
+#define UFS_TIMEOUT_TICKS 153600000ULL   // H361: 8 s; loaded boots run commands slower than 5.2 s
 static volatile uint64_t gWindowRequests;
 static volatile uint64_t gWindowBytes;
 static volatile uint64_t gWindowInFlight;
@@ -1917,20 +1917,30 @@ ufsRecover (UfsQueue *q)
   }
   const uint32_t beforeIs = read32 (q->hc, UFS_REG_IS);
   const uint32_t beforeDb = read32 (q->hc, UFS_REG_UTRLDBR);
-  write32 (q->hc, UFS_REG_HCE, read32 (q->hc, UFS_REG_HCE) & ~1U);
-  spinTicks (38400);                                  /* 2 ms to quiesce */
-  write32 (q->hc, UFS_REG_IS, 0xffffffffU);
-  write32 (q->hc, UFS_REG_UTRLDBR, 0);                /* drop the stuck transfer */
-  write32 (q->hc, UFS_REG_HCE, read32 (q->hc, UFS_REG_HCE) | 1U);
   uint32_t hcs = 0;
-  for (unsigned i = 0; i < 200; ++i) {
-    hcs = read32 (q->hc, UFS_REG_HCS);
-    if ((hcs & 3) == 3) {
-      break;
+  bool ready = false;
+  // H361: this controller reports HCS.UCRDY (bit 0) only; Linux's UFSHCS_READY also wants
+  // UTMRLDBR, and requiring it here made every recovery report ready=0 even though the
+  // controller was usable, which turned one OCS timeout into an EIO storm and a corpse panic.
+  // Retry the HCE toggle a few times and accept UCRDY.
+  for (unsigned attempt = 0; attempt < 4 && !ready; ++attempt) {
+    write32 (q->hc, UFS_REG_HCE, read32 (q->hc, UFS_REG_HCE) & ~1U);
+    spinTicks (38400);                                /* 2 ms to quiesce */
+    write32 (q->hc, UFS_REG_IS, 0xffffffffU);
+    write32 (q->hc, UFS_REG_UTRLDBR, 0);              /* drop the stuck transfer */
+    write32 (q->hc, UFS_REG_HCE, read32 (q->hc, UFS_REG_HCE) | 1U);
+    for (unsigned i = 0; i < 200; ++i) {
+      hcs = read32 (q->hc, UFS_REG_HCS);
+      if (hcs & 1U) {
+        ready = true;
+        break;
+      }
+      spinTicks (1920);                               /* 100 us */
     }
-    spinTicks (1920);                                 /* 100 us */
+    if (!ready) {
+      spinTicks (192000);                             /* 10 ms before the next toggle */
+    }
   }
-  const bool ready = (hcs & 3) == 3;
   q->poisoned = false;
   gUfsInFlight = 0;
   if (ready) {
@@ -1945,7 +1955,7 @@ static bool
 ufsCommandRetry (UfsQueue *q, uint8_t lun, const uint8_t *cdb, unsigned bytes, void *dst,
                  const char *who)
 {
-  for (unsigned attempt = 0; attempt < 8; ++attempt) {
+  for (unsigned attempt = 0; attempt < 16; ++attempt) {
     if (ufsCommand (q, lun, cdb, bytes, dst)) {
       if (attempt) {
         IOLog ("NATIVE_UFS_RETRY: %s ok attempt=%u\n", who, attempt);
@@ -1959,7 +1969,10 @@ ufsCommandRetry (UfsQueue *q, uint8_t lun, const uint8_t *cdb, unsigned bytes, v
       // H323: recover instead of abandoning the read for the rest of the boot.
       IOLog ("NATIVE_UFS_RETRY: %s poisoned at attempt=%u, recovering\n", who, attempt);
       if (!ufsRecover (q)) {
-        return false;
+        // H361: a controller that is not ready yet is not a reason to fail a page-in (EIO kills
+        // the process that touched the page). Wait and try the toggle again instead.
+        IOSleep (5);
+        continue;
       }
       continue;
     }
