@@ -3147,6 +3147,11 @@ NativeUfsProbe::h103SlotWrite (void)
     }
     if (!wrote) {
       gH103SlotWriteErrors = gH103SlotWriteErrors + 1;
+      // H366: the ring going quiet is the one event we cannot read back from the ring, so also
+      // stamp it into the lock-free reserved block while the disk still lets us.
+      if ((gH103SlotWriteErrors % 8) == 1) {
+        h103Marker ("logstop", true);
+      }
       if (gH103SlotWriteErrors <= 8 || (gH103SlotWriteErrors % 32) == 0) {
         IOLog ("NATIVE_UFS_LOG_FAIL: slot=%u seq=%u errors=%u delta=%u n=%u blocks=%u\n",
                slot, (unsigned) gH103SlotCursor, (unsigned) gH103SlotWriteErrors,
