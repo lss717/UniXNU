@@ -1,0 +1,23 @@
+diff --git a/bsd/vfs/vfs_vnops.c b/bsd/vfs/vfs_vnops.c
+--- a/bsd/vfs/vfs_vnops.c
++++ b/bsd/vfs/vfs_vnops.c
+@@ -161,3 +161,19 @@ vn_open(struct nameidata *ndp, int fmode, int cmode)
+ {
++	/* H370: launchservicesd (pid 92) is the process SpringBoard waits on, and its sampled
++	 * thread sits in Security's code signing.  Print the paths it opens, bounded, so the log
++	 * names the bundle being validated without depending on a sample landing in the ring. */
++	if (proc_getpid(current_proc()) == 92) {
++		static unsigned native_vnopen_n;
++		char native_vnopen_path[96];
++		size_t native_vnopen_len = 0;
++		if (native_vnopen_n < 48) {
++			native_vnopen_n++;
++			if (copyinstr(ndp->ni_dirp, native_vnopen_path,
++			    sizeof native_vnopen_path, &native_vnopen_len) == 0) {
++				printf("NATIVE_VNOPEN: n=%u path=%s\n", native_vnopen_n,
++				    native_vnopen_path);
++			}
++		}
++	}
+ 	return vn_open_modflags(ndp, &fmode, cmode);
+ }
