@@ -1,6 +1,8 @@
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -198,1 +198,35 @@
+@@ -196,5 +196,39 @@
+ #endif
+ 
  SECURITY_READ_ONLY_LATE(task_t) kernel_task;
 +
 +#include <vm/vm_object.h>
@@ -36,3 +38,5 @@
 +	    (unsigned long long)tid, state, (unsigned long long)wait,
 +	    (unsigned long long)cont, scanned, visited);
 +}
+ 
+ int64_t         next_taskuniqueid = 0;
