@@ -14300,3 +14300,56 @@ ifnet_attach: All kernel threads created for interface lo0 have been scheduled a
 
 **结论**：稳定基线下，卡点从"等 lsd"变成了"等 launchd"。下一步采样 launchd 自身，
 判断它究竟卡在 mach_msg（等别人）还是别的路径——这决定整条用户态链是否在 launchd 处断掉。
+
+#### H349–H352：SpringBoard 的第一道门是 `FBSystemShell` 连接 backboardd，而 launchd 把所有线程停在空闲（2026-11-15）
+
+**H349（内核 `2456840b`）**：给 `launchd` 也做每秒采样。窗口 49–321 s。
+
+| 观测 | 值 |
+| --- | --- |
+| `comm=launchd n=` | 2–3 |
+| `comm=SpringBoard n=` | 2 |
+| `val/fr` | 0/0 |
+
+launchd 自己线程极少、且都在等，仅凭 pc/lr 无法判断，于是补上**用户态调用栈**。
+
+**H350（内核 `dbdd0f72`）**：采样器沿 `fp` 链用 `copyinmap` 走最多 8 帧（`NATIVE_SBFRAME`）。
+本轮 358 条帧记录、7 种不同栈。共享缓存 `slide=0x14f28000`，把每帧换算成「库 + 偏移」后：
+
+```
+d=0 libsystem_kernel +0x51b0        (mach_msg2 trap)
+d=1 libsystem_kernel +0x4fb8
+d=2 BackBoardServices +0x6cac
+d=3 BackBoardServices +0x6b98
+d=4 BackBoardServices +0x6884
+d=5 BackBoardServices +0x3cbb8
+d=6 BackBoardServices +0x3bef4
+d=7 FrontBoard +0x30e58
+```
+
+再用缓存里的本地符号表解析出名字：**`-[FBSystemShell _initWithOptions:]` →
+`-[BKSSystemShellService _activateServerConnectionWithIdleSleepInterval:]` → mach_msg**。
+SpringBoard 另一条线程停在 `_CFXPreferences withConnectionForRole:…`（等 cfprefsd）。
+二者都是**同步等待某个 launchd 服务的回复**。
+
+**H352（内核 `7a4bf1c9`）**：给端口诊断加 `q=`（接收方队列是否还有消息）与 `rn=`（端口在接收方空间里的名字）。
+
+| 观测 | 值 | 含义 |
+| --- | --- | --- |
+| `NATIVE_SBPORT … req … q=1 rn=0x14003 peer=1/launchd` | 持续 | **消息确实排在 launchd 的队列里，从未被取走** |
+| launchd 主线程 tid=260 | `libsystem_kernel+0x6128` | 该 stub 前一条是 `movz x16,#410`，即 `SYS_sigsuspend_nocancel`：libdispatch 空闲停放 |
+| launchd 其余线程 | `libsystem_kernel+0x18e8` | `movz x16,#368` → `SYS_workq_kernreturn`：workqueue 空闲 |
+| backboardd tid=368 | mach_msg2 trap | backboardd 自己在 mach_msg2 里等回复 |
+| 时间线 | 168 s SpringBoard 发请求 → 201 s backboardd exec → 307 s 显示只被 `IOMFB_FDR_Loader` 打开 | launchd 按需拉起了 backboardd，但 backboardd **没有 check-in**，端口接收权一直在 launchd |
+
+**结论**：这不是"桌面渲染"的问题，而是**用户态服务注册链断了**：
+SpringBoard 在 `BKSSystemShellService` 初始化时同步调用 backboardd 的 MachService；
+该端口由 launchd 代持并排队（`q=1`）；backboardd 已经启动，却卡在自己的 mach_msg2 调用里；
+launchd 所有可见线程都处于空闲停放状态（`sigsuspend_nocancel` / `workq_kernreturn`）。
+
+**下一步**：确认 backboardd 那个 mach_msg2 调用的**上层帧**（是 `bootstrap_check_in` 还是别的服务），
+这决定要修 check-in 路径还是它依赖的下一个服务。
+
+**工具**：`scripts/h103-symbolicate.py` 把采样到的地址换算成「镜像 + 偏移」（需要挂载同一 IPSW 的
+SystemOS 卷读取 dyld 共享缓存）；syscall stub 的名字可以直接读 `movz x16,#N` 再查
+`bsd/sys/syscall.h`，比猜符号可靠。
