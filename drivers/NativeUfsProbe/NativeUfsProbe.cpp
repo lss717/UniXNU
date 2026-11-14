@@ -367,6 +367,7 @@ nativeWatchdogThread (void *, wait_result_t)
       continue;
     }
     h103StallCheck ();
+    h103MaybeKillExclavekit ();
     if (gH103StallRecorded) {
       continue;
     }
@@ -582,8 +583,49 @@ h103MaybeRestartSpringBoard (uint32_t displayClients)
   IOLog ("NATIVE_RESTART: sent\n");
 }
 
-// H236im: the sampling itself lives in the kernel (osfmk/kern/task.c, native_sb_pc_sample); the
-// driver only names the processes.  Kept in a dedicated thread exactly like il (which boots) and
+// H356: launchd's boot-task sequence stops at init-exclavekit ("Doing boot task" and never
+// "Finished boot task"), and every boot task after it is skipped.  The helper is an exclave
+// initialiser, which this board has no hardware for, so if it is still alive minutes later it is
+// never going to finish.  Kill it once so launchd records a failure and moves on.  Gated so the
+// baseline stays reproducible.
+static int
+a540ExclavekitFilter (proc_t p, void *)
+{
+  return p && strncmp (p->p_comm, "init_exclavekit", MAXCOMLEN) == 0;
+}
+
+static int
+a540ExclavekitKill (proc_t p, void *)
+{
+  IOLog ("NATIVE_EXCLAVE: pid=%d sigkill\n", proc_pid (p));
+  psignal (p, SIGKILL);
+  return PROC_RETURNED;
+}
+
+static void
+h103MaybeKillExclavekit (void)
+{
+  static int enabled = -1, done;
+  if (done) {
+    return;
+  }
+  if (enabled < 0) {
+    int value = 0;
+    enabled = PE_parse_boot_argn ("native-kill-exclavekit", &value, sizeof value) && value ? 1 : 0;
+    IOLog ("NATIVE_EXCLAVE: gate=%d\n", enabled);
+  }
+  if (!enabled) {
+    return;
+  }
+  if (mach_absolute_time () < 200 * 19200000ULL) {
+    return;
+  }
+  done = 1;
+  proc_iterate (PROC_ALLPROCLIST, a540ExclavekitKill, NULL, a540ExclavekitFilter, NULL);
+  IOLog ("NATIVE_EXCLAVE: pass done\n");
+}
+
+// H236im: the sampling itself lives in the kernel (osfmk/kern/task.c, native_sb_pc_sample); the// driver only names the processes.  Kept in a dedicated thread exactly like il (which boots) and
 // only the name list grew, so a boot failure here points at the list, not at a new mechanism.
 extern "C" void native_sb_pc_sample (const char *name, unsigned sample);
 extern "C" void native_sb_set_quiet (int on);
@@ -660,6 +702,7 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
       if ((b % 20) == 19) {
         native_log_flush_hook ();
         h103StallCheck ();
+        h103MaybeKillExclavekit ();
         // H313: SpringBoard's blocked receive has a port whose peer is lsd (pid 92), and H283
         // put the trap in libsystem_kernel's receive path, so the unanswered half of that RPC is
         // lsd.  Sample it once a second alongside SpringBoard to see where it is stuck.
@@ -698,6 +741,7 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
       for (unsigned gap = 0; gap < 30; ++gap) {
         IOSleep (1000);
         h103StallCheck ();
+        h103MaybeKillExclavekit ();
         native_sb_pc_sample ("runningboardd", 3000 + burst * 100 + gap);
         native_sb_pc_sample ("launchd", 4000 + burst * 100 + gap);
         native_log_flush_hook ();
