@@ -1,8 +1,10 @@
 diff --git a/bsd/vfs/vfs_vnops.c b/bsd/vfs/vfs_vnops.c
 --- a/bsd/vfs/vfs_vnops.c
 +++ b/bsd/vfs/vfs_vnops.c
-@@ -161,3 +161,20 @@ vn_open(struct nameidata *ndp, int fmode, int cmode)
+@@ -167,4 +167,22 @@ vn_open_modflags(struct nameidata *ndp, int *fmodep, int cmode)
+ vn_open_modflags(struct nameidata *ndp, int *fmodep, int cmode)
  {
++++ b/bsd/vfs/vfs_vnops.c
 +	/* H370: launchservicesd (pid 92) is the process SpringBoard waits on, and its sampled
 +	 * thread sits in Security's code signing.  Print the paths it opens, bounded, so the log
 +	 * names the bundle being validated without depending on a sample landing in the ring. */
@@ -20,5 +22,5 @@ diff --git a/bsd/vfs/vfs_vnops.c b/bsd/vfs/vfs_vnops.c
 +			}
 +		}
 +	}
- 	return vn_open_modflags(ndp, &fmode, cmode);
- }
+ 	int error;
+ 	struct vnode_attr *vap;
