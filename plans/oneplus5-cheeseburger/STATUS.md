@@ -14554,3 +14554,25 @@ panic ... NATIVE_UFS_STALL: req=0x7d7/4 cmds=32607 winBytes=332240760 ufsFlight=
 因此 H365 改为：**该看门狗不再 panic，只记录 `NATIVE_UFS_STALL_NOPANIC`**，
 让系统在"磁盘很慢"的状态下继续跑，看用户态能否仍走到桌面（桌面只需要少量 I/O）。
 若确认"不 panic 就能进桌面"，再回来优化控制器停摆（分片、限并发、全量 link 重启）。
+
+#### H365：取消存储看门狗 panic 后系统不再被 I/O 直接打死（2026-11-15）
+
+内核 `43adcf17`（唯一改动：请求持有 30 秒由 `panic` 改为 `IOLog("NATIVE_UFS_STALL_NOPANIC")`）。
+
+| 观测 | 值 |
+| --- | --- |
+| 运行窗口 | 约 289 s（环写到 164.6 s 后停止） |
+| `NATIVE_UFS_STALL_NOPANIC` | **0 次** |
+| `block requests refused` | **0** |
+| 显示 | `dpy=3/11`，`NATIVE_LEGACY_CLIENTS: C0 pid=79 comm=MobileGestaltHel calls=0` |
+| 帧 | `val/xf/fr = 0/0/0` |
+| 尾部 | `NATIVE_SIG: pid=1 sig=20 comm=launchd`（子进程退出信号） |
+
+**结论**：`panic` 不再是死因（本轮一次都没触发），存储侧维持"零拒绝"。系统在 164.6 s 之后
+**日志环停止写入**——这一轮没有 panic 记录，说明是"慢/挂"而不是"崩"。
+下一次需要屏幕确认（是 `<panic>` 还是黑屏/滚动停止），据此区分：
+- 若屏幕上仍有滚动 → 是用户态阻塞 + 环写不进（继续按 `so=1 peer=launchd` 查）；
+- 若屏幕停在某处不动且无 panic → 是存储停摆后的软挂，需要继续做控制器侧的限流/分片。
+
+**已确认的资产（后续不必重查）**：存储三处修复有效（`h103-ufs-report.py` 判 PASS）、
+AppleKeyStore 发布有效、容器链正常、`ufsRecover()` 的 `UCRDY` 判定有效（`ready=1` 已实测）。
