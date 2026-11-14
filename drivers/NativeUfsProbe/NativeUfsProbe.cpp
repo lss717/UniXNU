@@ -2721,7 +2721,16 @@ NativeUfsProbe::logMarker (const char *kind, bool urgent)
   // the hardware, so a marker attempt may clear the flag for its own duration.
   const bool savedPoisoned = fQueue.poisoned;
   fQueue.poisoned = false;
-  bool ok = ufsWriteCommand (&fQueue, 0, cdb, 4096, fLogData);
+  // H345: the urgent record must not be lost to a busy queue.  Retry for up to a second; this
+  // runs on the watchdog thread, never on a storage completion.
+  bool ok = false;
+  for (unsigned attempt = 0; attempt < 50; ++attempt) {
+    ok = ufsWriteCommand (&fQueue, 0, cdb, 4096, fLogData);
+    if (ok) {
+      break;
+    }
+    IOSleep (20);
+  }
   // Keep the poisoned state if it was already set or if this attempt set it again.
   fQueue.poisoned = savedPoisoned || fQueue.poisoned;
   fQueue.data = savedData;
