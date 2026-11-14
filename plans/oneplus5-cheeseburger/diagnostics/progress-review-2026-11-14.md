@@ -8,6 +8,8 @@ H381 原始日志已从 TWRP 提取，NATIVE_BUILD 为 H381，boot=24aaf3ab，�
 
 同时更正 H361 注释。仓库内 EDK2 UfsPassThruHci.h 定义 HCS.DP=BIT0、HCS.UCRDY=BIT3。现有 hcs & 1 的判定实际检查设备存在，照片 hcs=8 仅表示 UIC 就绪。本轮保留恢复谓词，完整链路重建需单独设计和验证。
 
+H382 在 Mac 拉取 b07327f 后完成构建和 prelink，包内内核逐字节比较通过，标识 H382。沿用 H381 的 cpus=1 和其他全部启动参数、固件及 payload 侧文件，boot_args 最坏 900/1024 字节。kernel SHA-256 为 `dabd3360aaa7d2c8f832fd5233bb302643f5e24432df3885fa4b2635eaa87322`，payload 为 `e44ade9a7e57a88374269d7d68a0b5efe651e022f3e8ea5fae5d94fec9514f51`，boot 为 `8a5a6099ae4ee4a09689a165e2def26e0412c97c09028a4bca282b3e6c3e2ad7`。真机恢复及稳定性待本轮日志验证。
+
 ## H381 构建与单核对照产物
 
 - 源码提交为 `62e260a`，Mac 在拉取并更新子模块后构建，正式内核和 prelink 成功，包内内核逐字节比较一致，日志 build 标识为 H381。
