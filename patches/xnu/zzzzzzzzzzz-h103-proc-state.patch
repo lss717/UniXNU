@@ -2,7 +2,7 @@ diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
 index 5dcf00e..dcadbaf 100644
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -10285,3 +10285,787 @@ task_best_name(task_t task, char *buf, size_t size)
+@@ -10285,3 +10285,815 @@ task_best_name(task_t task, char *buf, size_t size)
  	char *name = proc_best_name(task_get_proc_raw(task));
  	strlcpy(buf, name, size);
  }
@@ -211,6 +211,11 @@ index 5dcf00e..dcadbaf 100644
 +struct native_launchd_note { unsigned dst; unsigned id; };
 +static struct native_launchd_note native_launchd_last[8];
 +static unsigned native_launchd_count;
++/* H357: a reply carries the request's msgh_id, so remembering the ids launchd has just
++ * received tells us whether what it sends back is a reply or something unrelated. */
++static struct native_launchd_note native_launchd_recv[16];
++static unsigned native_launchd_recv_count;
++static unsigned long long native_launchd_replies, native_launchd_other;
 +static const char *native_sb_name;
 +
 +/* H239: describe the port the blocked thread is receiving from, and the port
@@ -506,12 +511,17 @@ index 5dcf00e..dcadbaf 100644
 +	/* H355: launchd's send/receive totals, printed from the sampler (never from
 +	 * the IPC hot path). */
 +	if ((sample % 30) == 0) {
-+		printf("NATIVE_LAUNCHD_IPC: sample=%u out=%llu in=%llu\n", sample,
-+		    native_launchd_out, native_launchd_in);
++		printf("NATIVE_LAUNCHD_IPC: sample=%u out=%llu in=%llu reply=%llu other=%llu\n", sample,
++		    native_launchd_out, native_launchd_in, native_launchd_replies, native_launchd_other);
 +		unsigned first = native_launchd_count > 8 ? native_launchd_count - 8 : 0;
 +		for (unsigned q = first; q < native_launchd_count; q++) {
 +			printf("NATIVE_LAUNCHD_IPC: sample=%u dst=%u id=0x%x\n", sample,
 +			    native_launchd_last[q % 8].dst, native_launchd_last[q % 8].id);
++		}
++		unsigned rfirst = native_launchd_recv_count > 4 ? native_launchd_recv_count - 4 : 0;
++		for (unsigned q = rfirst; q < native_launchd_recv_count; q++) {
++			printf("NATIVE_LAUNCHD_IPC: sample=%u from=%u id=0x%x\n", sample,
++			    native_launchd_recv[q % 16].dst, native_launchd_recv[q % 16].id);
 +		}
 +	}
 +	/* H239: the buffer of a mach_msg2 call still holds the header of the
@@ -699,12 +709,30 @@ index 5dcf00e..dcadbaf 100644
 +
 +	/* H355: record launchd's traffic before the tracked-pid filter. */
 +	if ((unsigned)from == 1u) {
++		/* H357: is this send an answer to something launchd just received? */
++		unsigned seen = native_launchd_recv_count < 16 ? native_launchd_recv_count : 16;
++		int matched = 0;
++		for (unsigned i = 0; i < seen; i++) {
++			unsigned slot = (native_launchd_recv_count - 1 - i) % 16;
++			if (native_launchd_recv[slot].id == (unsigned)hdr->msgh_id) {
++				matched = 1;
++				break;
++			}
++		}
++		if (matched) {
++			native_launchd_replies++;
++		} else {
++			native_launchd_other++;
++		}
 +		native_launchd_last[native_launchd_count % 8].dst = (unsigned)to;
 +		native_launchd_last[native_launchd_count % 8].id = (unsigned)hdr->msgh_id;
 +		native_launchd_count++;
 +		native_launchd_out++;
 +	} else if ((unsigned)to == 1u) {
 +		native_launchd_in++;
++		native_launchd_recv[native_launchd_recv_count % 16].dst = (unsigned)from;
++		native_launchd_recv[native_launchd_recv_count % 16].id = (unsigned)hdr->msgh_id;
++		native_launchd_recv_count++;
 +	}
 +
 +	if (!native_xpc_tracked(from) && !native_xpc_tracked(to)) {
