@@ -8,6 +8,8 @@
 
 源码复核发现h103FlushNow在h103SlotWrite失败后仍将gH103LastSlotMsgX推进到当前游标，丢弃尚未落盘的字节，busy标志也通过非原子读写保护多个刷新入口。H383使用CAS串行化slot/header刷新，仅在每个slot及其header成功后推进游标，并由独立watchdog线程每秒调用刷新入口。沿用H382的单核、AKS和显示参数，先验证长时间观测可靠性。
 
+Mac 拉取8919cfa后完成H383内核构建和prelink，包内内核逐字节核验通过。boot_args最坏900/1024字节。kernel SHA-256为 `6f6fdee01ac8803cab390c204316620e919bb1ce1d84d22f2cff45e89b4f4686`，payload为 `d920ca9d18235546aa44a2c53ce1a8d4139652806d997805b898dee45dfaf9a1`，boot为 `6ef1e5baf055ccf4f27aebca5893e8fed8997c3940f8e9e34b09d621754620fb`。
+
 ## H382 真机日志与符号化结果
 
 从 TWRP 取回原始环 assets/log-review/h103log-H382.bin。247 个有效槽均为 boot=24bde90f、build=H382。正文覆盖约 82.3–441.1 秒，早期记录已被环覆盖。窗口内 OCS timeout、DBTO、RECOVER、块请求拒绝和 UFS stall 均为零，UFS 命令数在 326–405 秒由 38106 增至 44109，累计读取约 3.78 GB。相较 H381 有改善，仍需重复验证。
