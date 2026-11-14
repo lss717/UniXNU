@@ -107,7 +107,7 @@ static uint32_t gH103SlotCursor;
 // boot wrote it.  The header alone is not enough: it is written after the
 // slot, and a late header write failure leaves a stale slots_written behind,
 // which made earlier logs mix slots from several boots.
-#define H103_BUILD "H383"
+#define H103_BUILD "H384"
 static uint64_t gH103BootId;
 static volatile int gH103Quiet;
 static volatile uint64_t gH103LastSlotTicks;
@@ -733,19 +733,18 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
   // after the bursts are over).
   native_sb_pc_sample ("runningboardd", 1);
   native_sb_pc_sample ("backboardd", 1);
-  // H264: ten 4 s bursts, 30 s apart (150 s .. 450 s).  The driver is linked
-  // into the kernel, so this needs a kernel rebuild, but driver-only changes
-  // have not been the ones that produce non-booting kernels (H261 proved it).
+  // Ten four-second bursts separated by thirty seconds. Sample once per second
+  // and capture peer stacks once per burst to bound diagnostic overhead.
   for (unsigned burst = 0; burst < 10; ++burst) {
     IOLog ("NATIVE_SBPC: burst=%u start\n", burst);
     native_sb_trace_start ();
     native_sb_set_quiet (1);
-    for (unsigned b = 0; b < 80; ++b) {
-      native_sb_pc_sample ("SpringBoard", 100 + burst * 100 + b);
+    for (unsigned b = 0; b < 4; ++b) {
+      native_sb_pc_sample ("SpringBoard", 300 + burst * 30 + b);
       // H293: the persistent ring stops early in most boots (196 s in H292, 187 s in H289)
       // while this sampler keeps running past 500 s.  Flush from here as well, so the
       // record survives even when the heartbeat path stops calling h103FlushNow().
-      if ((b % 20) == 19) {
+      if (b == 0) {
         native_log_flush_hook ();
         h103StallCheck ();
         // H313: SpringBoard's blocked receive has a port whose peer is lsd (pid 92), and H283
@@ -775,7 +774,7 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
         native_sb_pc_sample ("lsd", 1800 + burst * 30);
         native_sb_pc_sample ("securityd", 2100 + burst * 30);
       }
-      IOSleep (50);
+      IOSleep (1000);
     }
     native_sb_set_quiet (0);
     // H253: sample first, so the send-ring dump can compare the reply port of
@@ -790,8 +789,10 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
       for (unsigned gap = 0; gap < 30; ++gap) {
         IOSleep (1000);
         h103StallCheck ();
-        native_sb_pc_sample ("runningboardd", 3000 + burst * 100 + gap);
-        native_sb_pc_sample ("launchd", 4000 + burst * 100 + gap);
+        if (gap == 29) {
+          native_sb_pc_sample ("runningboardd", 3000 + burst * 100 + gap);
+          native_sb_pc_sample ("launchd", 4000 + burst * 100 + gap);
+        }
         native_log_flush_hook ();
       }
     }
