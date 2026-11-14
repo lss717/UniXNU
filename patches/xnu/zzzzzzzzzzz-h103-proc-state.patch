@@ -2,7 +2,10 @@ diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
 index 5dcf00e..dcadbaf 100644
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -10285,3 +10285,723 @@ task_best_name(task_t task, char *buf, size_t size)
+@@ -10285,3 +10285,745 @@
++/* H350: user stack frames for the sampled process (fp chain through copyinmap). */
++extern kern_return_t copyinmap(vm_map_t map, user_addr_t uaddr, void *kaddr, vm_size_t len);
++extern vm_map_t get_task_map(task_t task); task_best_name(task_t task, char *buf, size_t size)
  	char *name = proc_best_name(task_get_proc_raw(task));
  	strlcpy(buf, name, size);
  }
@@ -183,6 +186,7 @@ index 5dcf00e..dcadbaf 100644
 +	uint64_t pc;
 +	uint64_t lr;
 +	uint64_t wait;
++	uint64_t fp;
 +	/* H237: arm64 syscall arguments from the same saved state.  A thread
 +	 * blocked in mach_msg2_trap has its packed call arguments in x1..x7
 +	 * (struct mach_msg2_trap_args: data/options/bits/ports/id/...), and the
@@ -329,6 +333,7 @@ index 5dcf00e..dcadbaf 100644
 +			native_sb_rows[native_sb_count].pc = pc;
 +			native_sb_rows[native_sb_count].lr = get_saved_state_lr(state);
 +			native_sb_rows[native_sb_count].wait = (uint64_t)(uintptr_t)th->wait_event;
++			native_sb_rows[native_sb_count].fp = (uint64_t)get_saved_state_reg(state, 29);
 +			native_sb_rows[native_sb_count].x1 = (uint64_t)get_saved_state_reg(state, 1);
 +			native_sb_rows[native_sb_count].x2 = (uint64_t)get_saved_state_reg(state, 2);
 +			native_sb_rows[native_sb_count].x3 = (uint64_t)get_saved_state_reg(state, 3);
@@ -394,6 +399,23 @@ index 5dcf00e..dcadbaf 100644
 +		    (unsigned long long)native_sb_rows[i].pc,
 +		    (unsigned long long)native_sb_rows[i].lr,
 +		    (unsigned long long)native_sb_rows[i].wait);
++		if (strncmp(name, "SpringBoard", 11) == 0 && native_sb_task != TASK_NULL &&
++		    native_sb_rows[i].fp != 0) {
++			uint64_t walk = native_sb_rows[i].fp;
++			for (unsigned d = 0; d < 8 && walk != 0; d++) {
++				uint64_t frame[2] = { 0, 0 };
++				if (copyinmap(get_task_map(native_sb_task), (user_addr_t)walk,
++				    frame, sizeof(frame)) != 0) {
++					break;
++				}
++				printf("NATIVE_SBFRAME: sample=%u comm=%s d=%u lr=0x%llx\n",
++				    sample, name, d, (unsigned long long)frame[1]);
++				if (frame[0] <= walk) {
++					break;
++				}
++				walk = frame[0];
++			}
++		}
 +	}
 +	/* H237: decode the packed mach_msg2_trap arguments of any thread that is
 +	 * inside that trap.  opt=options, bits/send_size, remote/local port names,
