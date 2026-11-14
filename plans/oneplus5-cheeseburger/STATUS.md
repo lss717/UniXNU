@@ -14236,3 +14236,31 @@ H341 的改动：把 `val/xf/fr` 三个显示计数写进**每分钟的保留块
 H344 因此把 AKS 整条线从内核里去掉（`XNU_NATIVE_KEYSTORE=0`、发布改为 no-op），
 其余改进（进度条、0.5 秒打点、显示死锁修复、sandbox 掩码）全部保留，用已验证的
 boot id + 保留块方法判定。若 H344 恢复存活，则 AKS 归档的引入就是回归源。
+
+#### H344/H345：移除 AKS 后启动前进，但两条记录通道都失效（2026-11-14）
+
+**H344（`XNU_NATIVE_KEYSTORE=0` + 发布改为 no-op）**：控制台第一次越过此前所有停点：
+
+```
+NATIVE_LEGACY: base start ok primary=1 …
+NATIVE_LEGACY: phase=4 dt=1 probe=1 attach=1 start=1 reg=1
+ifnet_attach: All kernel threads created for interface lo0 have been scheduled at least once. Proceeding.
+```
+
+但拉取后：ring 与新保留块**都没有本轮写入**（本轮 boot id 是 `30223e69`，环里没有它的 slot）。
+
+**两条记录通道为什么都失效（已定位到机制）**
+
+| 通道 | 失效点 |
+| --- | --- |
+| ring | 首次写入由"一次存储请求"触发；本轮没有走 probe 的块设备路径，因此从未触发 |
+| 保留块（看门狗） | 队列忙时 `ufsWriteCommand` 立即返回失败，0.5 秒一次的 8 次重试全部落空 |
+| 面板进度条（看门狗驱动） | 该路径没有真正执行，屏幕顶部始终是日志文本 |
+
+**H345 的两处修法**
+
+1. 进度条改由**显示驱动自己的 `IOTimerEventSource`** 每秒重画（显示一启动就开始计数），
+   与 UFS/看门狗/日志完全解耦；
+2. 保留块的紧急写入**重试到 1 秒**（50 × 20 ms），仍只在看门狗线程执行。
+
+判据不变：ring 出现新 boot id、或保留块出现新 `uptime`/`kind=boot`，或屏幕上进度条在增长。
