@@ -292,6 +292,8 @@ h107GateOpen (void)
   return now - gH107SpringBoardTicks >= 60 * 19200000ULL;
 }
 
+// H360: doorbell/recovery accounting for the stall work (see the UFS plan document).
+static volatile uint64_t gUfsDbTimeouts, gUfsRecovered, gUfsWriteFailed;
 static void h103Marker (const char *kind, bool urgent);
 // H358: the AppleKeyStore driver publishes the keybag service keybagd looks for; weak so a
 // kernel built without that archive still links.
@@ -941,7 +943,7 @@ heartbeatThread (void *, wait_result_t)
                  (unsigned long long) waited);
         }
       }
-      if (waited > 60 * 19200000ULL) {
+      if (waited > 30 * 19200000ULL) {
         panic ("NATIVE_UFS_STALL: req=%llx/%llu cmds=%llu winBytes=%llu "
                "lastCmd=%llx/%llu ufsFlight=%llu",
                (unsigned long long) gWindowLastReqBlock,
@@ -1931,6 +1933,9 @@ ufsRecover (UfsQueue *q)
   const bool ready = (hcs & 3) == 3;
   q->poisoned = false;
   gUfsInFlight = 0;
+  if (ready) {
+    gUfsRecovered = gUfsRecovered + 1;
+  }
   IOLog ("NATIVE_UFS_RECOVER: is=%x db=%x hcs=%x ready=%u\n",
          beforeIs, beforeDb, hcs, ready ? 1u : 0u);
   return ready;
@@ -2284,7 +2289,6 @@ ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes,
            uint64_t timeoutTicks = UFS_TIMEOUT_TICKS)
 {
   if (!q || q->poisoned || bytes > q->dataCapacity ||
-      read32 (q->hc, UFS_REG_UTRLDBR) ||
       (read32 (q->hc, UFS_REG_IS) & UFS_FATAL_STATUS)) {
     return false;
   }
@@ -2329,6 +2333,24 @@ ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes,
            read32 (q->hc, UFS_REG_UTRLDBR));
     spinTicks (19200);
     IOLog ("NATIVE_UFS_NOP: submit before doorbell\n");
+  }
+  // H360: the controller clears UTRLDBR bit 0 when it consumes the command.  A bit still set
+  // from the previous command is a doorbell timeout in ufshcd terms, not a permanently unusable
+  // queue: wait 10 ms for it, then poison and let the caller's recovery reset the controller.
+  {
+    uint64_t dbStart = mach_absolute_time ();
+    while (read32 (q->hc, UFS_REG_UTRLDBR) & 1U) {
+      if (mach_absolute_time () - dbStart > 192000ULL) {         /* 10 ms */
+        gUfsDbTimeouts = gUfsDbTimeouts + 1;
+        IOLog ("NATIVE_UFS_DBTO: db=%x is=%x hcs=%x hce=%x\n",
+               read32 (q->hc, UFS_REG_UTRLDBR), read32 (q->hc, UFS_REG_IS),
+               read32 (q->hc, UFS_REG_HCS), read32 (q->hc, UFS_REG_HCE));
+        q->poisoned = true;
+        gUfsInFlight = 0;
+        return false;
+      }
+      __asm__ volatile ("yield" ::: "memory");
+    }
   }
   write32 (q->hc, UFS_REG_IS, 0xffffffffU);
   write32 (q->hc, UFS_REG_UTRLDBR, 1);
@@ -2379,7 +2401,7 @@ ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes,
     if (!gH103Quiet) {
       IOLog ("NATIVE_UFS_PROGRESS: cmds=%llu last=%llx/%llu loops=%llu ticks=%llu "
              "winReq=%llu winBytes=%llu winFlight=%llu lastWin=%llx/%llu "
-             "req=%llx/%llu\n",
+             "req=%llx/%llu dbto=%llu rec=%llu wfail=%llu\n",
              (unsigned long long) gUfsCommands,
              (unsigned long long) gUfsLastLba,
              (unsigned long long) gUfsLastBytes,
@@ -2391,7 +2413,10 @@ ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes,
              (unsigned long long) gWindowLastBlock,
              (unsigned long long) gWindowLastCount,
              (unsigned long long) gWindowLastReqBlock,
-             (unsigned long long) gWindowLastReqCount);
+             (unsigned long long) gWindowLastReqCount,
+             (unsigned long long) gUfsDbTimeouts,
+             (unsigned long long) gUfsRecovered,
+             (unsigned long long) gUfsWriteFailed);
     }
   }
   return true;
@@ -2401,7 +2426,7 @@ static bool
 ufsCommand (UfsQueue *q, uint8_t lun, const uint8_t *cdb, unsigned bytes, void *dst)
 {
   if (!q || !readCommandAllowed (cdb[0], bytes ? 2 : 0, bytes) || q->poisoned ||
-      bytes > q->dataCapacity || read32 (q->hc, UFS_REG_UTRLDBR)) {
+      bytes > q->dataCapacity) {
     return false;
   }
   zero32 (q->ucd, UFS_FW_UCD_SIZE);
@@ -2437,7 +2462,9 @@ ufsWriteCommand (UfsQueue *q, uint8_t lun, const uint8_t *cdb, unsigned bytes,
                  const void *src)
 {
   if (!q || q->poisoned || !src || !bytes || bytes > q->dataCapacity ||
-      (bytes & 3) || read32 (q->hc, UFS_REG_UTRLDBR)) {
+      (bytes & 3)) {
+    // H360: a failed write is never retried or replayed; only reads may be resent.
+    gUfsWriteFailed = gUfsWriteFailed + 1;
     return false;
   }
   if (src != q->data) {
@@ -2470,7 +2497,7 @@ ufsWriteCommand (UfsQueue *q, uint8_t lun, const uint8_t *cdb, unsigned bytes,
 static bool
 ufsSync (UfsQueue *q)
 {
-  if (!q || q->poisoned || read32 (q->hc, UFS_REG_UTRLDBR)) {
+  if (!q || q->poisoned) {
     return false;
   }
   zero32 (q->ucd, UFS_FW_UCD_SIZE);
