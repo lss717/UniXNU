@@ -14511,3 +14511,24 @@ Security +0x3c268  -> Security::CodeSigning::DiskRep::bestGuess(char const*, Con
 
 **H362**（构建中）：把 lsd 与 securityd 的帧链按 backboardd 的节奏采样（sample 编号取 30 的倍数），
 下一轮可直接看到 lsd 在 `Security` 里更深一层的调用，以及它是否在等 `securityd`/`amfid`。
+
+#### H362–H363：存储达标；卡点在 lsd 与"未 check-in 的服务"之间摇摆（2026-11-15）
+
+**H362（内核 `f1a2fd08`）**：按 `scripts/h103-ufs-report.py` 判定 **PASS**——运行 367 s、
+环写到 407 s、`block requests refused = 0`、无 OCS 超时/恢复。存储侧 H360/H361 的三处修复成立。
+
+同轮两条关键事实：
+
+| 观测 | 含义 |
+| --- | --- |
+| `ustate: caching container path {'com.apple.mobilesafari': '/private/var/mobile/Containers/Data/Application/2064679A-…'}` | **容器链正常**，Data 卷里有真实应用容器（AKS 打开后才可能） |
+| SpringBoard 阻塞端口 | 又回到 `q=1 rn=0x11803 peer=1/launchd`（**服务未 check-in**），与 H361 的 `so=1 peer=92/lsd`（**收到未回复**）不是同一形态 |
+
+**H363（内核 `abe9704e`）**：新增"把被采样线程的 x0 当字符串打印"（针对 lsd/securityd），
+但本轮 `lsd n=0`（没有可采样的用户态线程）、`dpy=0`、环在 184.6 s 停下，属于又一次早死，
+没有产生 `NATIVE_SBSTRING`。**结论：启动间差异很大，必须让每次采样都带上下文，不能只靠单轮。**
+
+**下一步（最有信息量的一步）**：SpringBoard 阻塞在 launchd 代持端口（`q=1`）时，
+`ipc_kmsg_send` 钩子里那段扫描消息体找 `com.apple.` 的代码（原本只对
+`msgh_id 0x40000324/0x40000325` 生效）应对**任何**被采样的阻塞请求生效，
+直接打印出"哪个服务没 check-in"。这比端口名 `rn=` 有用得多，也是进桌面最短的一步。
