@@ -1,0 +1,38 @@
+--- a/osfmk/kern/task.c
++++ b/osfmk/kern/task.c
+@@ -198,1 +198,35 @@
+ SECURITY_READ_ONLY_LATE(task_t) kernel_task;
++
++#include <vm/vm_object.h>
++
++/* Read-only owner snapshot: never acquire the contended object lock and never
++ * dereference a thread through an unreferenced/recycled compact thread ID. */
++void
++native_kernel_object_sample(unsigned sample)
++{
++	lck_rw_t *lock = &kernel_object_default->Lock;
++	uint32_t word = __atomic_load_n(&lock->lck_rw.data, __ATOMIC_RELAXED);
++	uint32_t owner = __atomic_load_n(&lock->lck_rw_owner, __ATOMIC_RELAXED);
++	uint64_t tid = 0, wait = 0, cont = 0;
++	unsigned state = 0, visited = 0;
++	int scanned = 0;
++	if (owner && task_lock_try(kernel_task)) {
++		thread_t th;
++		scanned = 1;
++		queue_iterate(&kernel_task->threads, th, thread_t, task_threads) {
++			if (++visited > 1024) break;
++			if (th->ctid == owner) {
++				tid = th->thread_id;
++				wait = th->wait_event;
++				cont = (uintptr_t)th->continuation;
++				state = th->state;
++				break;
++			}
++		}
++		task_unlock(kernel_task);
++	}
++	printf("NATIVE_KOBJECT: sample=%u object=%p event=%p word=%x owner_ctid=%u kernel_tid=%llu st=%x wait=%llx cont=%llx scanned=%d visited=%u\n",
++	    sample, kernel_object_default, (void *)((uintptr_t)lock + 1), word, owner,
++	    (unsigned long long)tid, state, (unsigned long long)wait,
++	    (unsigned long long)cont, scanned, visited);
++}
