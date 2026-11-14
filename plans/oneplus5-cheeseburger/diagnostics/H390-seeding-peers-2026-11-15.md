@@ -15,3 +15,13 @@ H390 在原每分钟一次的后期采样中补充第二个 lsd 实例和 instal
 Before building, pull the committed source and pinned submodules on Mac and check driver status; verify prelink, changed kernel hash, payload kernel equality and argument length. Before boot, back up and clear only the authorized 32 MiB log ring. Use fastboot boot only. Observe approximately ten minutes to retain two or more complete late passes.
 
 构建前拉取并核对代码及子模块，检查 prelink、内核哈希、包内内核一致性与参数长度。启动前备份并清零已授权日志区，仅临时启动，观察约十分钟。
+
+## Build / 构建
+
+Mac pulled `e2e5c0dc6`, checked clean driver/submodule state, and completed kernel build and prelink. Payload kernel equality passed; worst-case boot arguments are 950/1024 bytes. The unchanged packed Data seed has logical size 1 GiB, SHA-256 `94114d7b78ee01f05dcc4c5558b6603d2f201c4627bf070345db5699798312b8`.
+
+Mac 已拉取提交并完成构建、prelink、包内内核及参数长度校验。Data 种子保持不变，逻辑容量 1 GiB。真机结果待验证。
+
+- Kernel: `3d1ac5c219bc131af92abf75fb2415c6b2f27ac1c182f152a82f7306439c31ee`
+- Payload: `691b5b261c53f72549ec0b531dfb734699b04e7871032839e2917f040c46543b`
+- Boot: `0a67e3b1fe7e3f3440c5ebcf500d03e6aa9b04faea859089a9373bc3e57e10db`
