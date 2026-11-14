@@ -344,6 +344,9 @@ static void nativePublishKeystore (void)
 static void h103Marker (const char *kind, bool urgent);  // defined after the driver class is complete
 
 static void h103MaybeKillExclavekit (unsigned seconds);
+// H368: the SpringBoard restart probe was written but never wired up, so the "relaunch against a
+// warm launchservicesd" experiment never actually ran.
+static void h103MaybeRestartSpringBoard (uint32_t displayClients);
 
 static void
 h103StallCheck (void)
@@ -407,6 +410,7 @@ nativeWatchdogThread (void *, wait_result_t)
     }
     h103StallCheck ();
     h103MaybeKillExclavekit (seconds);
+    h103MaybeRestartSpringBoard (native_legacy_client_calls);
     if (gH103StallRecorded) {
       continue;
     }
@@ -587,7 +591,6 @@ springboard_restart (proc_t p, void *)
 }
 
 static void
-__attribute__((unused))
 h103MaybeRestartSpringBoard (uint32_t displayClients)
 {
   static int enabled = -1, sawClient, waited, done;
