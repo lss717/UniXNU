@@ -598,9 +598,11 @@ h103MaybeRestartSpringBoard (uint32_t displayClients)
     return;
   }
   if (enabled < 0) {
-    int gop = 0;
-    PE_parse_boot_argn ("offline-legacy-gop", &gop, sizeof gop);
-    enabled = gop == 1;
+    // H369: H368 proved the gate now runs, but launchd did not bring SpringBoard back within the
+    // 90 s we could watch, so killing it by default leaves the machine without a SpringBoard at
+    // all. Keep it behind its own argument and leave the display baseline untouched.
+    int wanted = 0;
+    enabled = PE_parse_boot_argn ("sheng-restart-sb", &wanted, sizeof wanted) && wanted ? 1 : 0;
     IOLog ("NATIVE_RESTART: gate=%d\n", enabled);
   }
   if (!enabled) {
