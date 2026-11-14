@@ -14460,3 +14460,35 @@ keybagd 与 containermanagerd 一直在等一个**并不存在**的 `AppleKeySto
 1. 让持久日志在 UFS 忙时**永不重试**（直接丢弃），避免日志与数据路径争抢同一队列；
 2. 查清楚 `UFS_REG_UTRLDBR` 为什么在超时后仍然置位（恢复路径 `ufsRecover()` 会写 0，但需要确认之后 doorbell 真的清零）；
 3. 再考虑提高命令超时或改用中断驱动完成，而不是在持有块请求的情况下轮询。
+
+#### H360–H361：存储按计划修掉，"一堵全堵"消失，卡点再次前移到 lsd（2026-11-15）
+
+**H360（内核 `2b956399`）** 落地阶段 A + B2/B4：门铃 10 ms 回收（`NATIVE_UFS_DBTO`）、
+去掉 `UTRLDBR` 置位即拒绝、写失败永不重放（`wfail`）、请求 30 秒才 panic。
+
+| 观测 | 值 |
+| --- | --- |
+| `block requests refused` | **0**（此前是成百上千的 `request failed to start!`） |
+| 运行窗口 | 39.7–243.4 s |
+| 屏幕上的死因 | `OCS timeout` → `NATIVE_UFS_RECOVER … ready=0` → 读 EIO → `runningboardd`/`SpringBoard` 崩溃潮 → `ipc_space.h:173 assertion failed: table != NULL` panic |
+
+**H361（内核 `336fa192`）**：恢复判定改为接受 `HCS.UCRDY`（这块控制器只置 bit0，
+按 Linux 的 `UFSHCS_READY` 要求 bit0|bit1 会永远判失败）；恢复失败改为 HCE 反复 toggle（4 次）
++ 等待重试，不再把读失败直接变成 EIO；命令超时 5.2 s → 8 s，读重试 8 → 16 次。
+
+| 观测 | 值 | 含义 |
+| --- | --- | --- |
+| 运行窗口 | **70.3–465.6 s（395 s）** | 比 H360 多跑了一倍多 |
+| 环内 UFS 错误 | `DBTO=0 RECOVER=0 OCS timeout=0 LOG_FAIL=4` | **没有再进入超时/恢复路径** |
+| `NATIVE_AKS` | `AppleKeyStore published (late)` | keybag 链保持工作 |
+| `comm=SpringBoard n=` | **4** | 线程数继续上升（H348 时是 2） |
+| 显示 | `NATIVE_LEGACY_CLIENTS: n=280 C0 pid=56 comm=IOMFB_FDR_Loader calls=9 fails=0` | 显示客户端工作正常 |
+| **新卡点** | `NATIVE_SBPORT … req … so=1 q=0 rn=0x4103 **peer=92/lsd**` | SpringBoard 改为等 **lsd**，且回复权的 send-once 尚未被消费 |
+
+**结论**：存储侧的三处欠债（一刀切拒绝、恢复判定错误、失败即 EIO）修掉后，
+系统首次在 AKS 打开的情况下稳定跑过 465 秒且环内无 I/O 错误。用户态卡点随之**前移**：
+不再是 backboardd 的 system shell，而是 **launchservicesd（lsd）没有回复**。
+`so=1` 说明请求已送达 lsd、回复权还在，属于"对端收到但没回"。
+
+**下一步**：采样 lsd 的线程与栈（它此前只有个位数采样），确认它卡在自己的哪一步；
+同时把 H361 的"请求持有 30 秒"期限与 `dbto/rec/wfail` 计数纳入常态观测。
