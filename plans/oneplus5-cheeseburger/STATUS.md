@@ -14618,3 +14618,42 @@ AppleKeyStore 发布有效、容器链正常、`ufsRecover()` 的 `UCRDY` 判定
 **下一次**：同一镜像可反复 `fastboot boot`，挑一次 `NATIVE_EXEC … comm=lsd` 且 `dpy≠0`
 的启动，T+240 s 拉日志；若那时仍无 `NATIVE_VNOPEN`，说明 lsd 的卡点不在文件 I/O，
 应转去查 securityd 的应答链路。
+
+#### 硬性规则：探针一律按进程名匹配，禁止写死 pid（2026-11-15）
+
+已在两轮里踩过同一个坑，记在这里防止复发：
+
+- lsd 的 pid 实测为 **91 / 92 / 93**（不同启动不同）；
+- `h370` 的 `vn_open` 探针写死 `pid == 92` → 该轮 lsd 是 93，探针一条都没触发，白跑一轮；
+- 同类风险存在于所有"按 pid 过滤"的既有代码（采样器、IPC 钩子、`proc_find` 类调用）。
+
+**规则**：
+1. 内核侧过滤一律用 `current_proc()->p_comm` / `proc_name()` 前缀匹配；
+2. 名称比较注意 `p_comm` 只有 16 字节：`containermanagerd` → `containermanage`，
+   `mobile_installation_proxy` → `mobile_installat`，日志检索要按前缀；
+3. 需要跨轮对比时，pid 只能作为"当轮内"的关联键，且必须在同一轮日志内解释。
+
+#### H378：lsd 是空闲的，它根本没收到那条请求（2026-11-15）
+
+内核 `0fa3661f`，新增 `st=`（`thread->state`）与 `cpu=`（`thread->cpu_usage`）。
+
+```
+NATIVE_SBPC: sample=1890 comm=lsd tid=544 pc=+0x18e8 lr=… cpu=0 st=0x1
+NATIVE_SBMSG2: sample=1890 comm=lsd tid=536 rcvname=0xa03 rcvsz=16384
+```
+
+判定：lsd 的 worker `cpu=0`、停在 `workq_kernreturn`（空闲）；另一条线程正在**接收**
+（16 KB 缓冲）等待请求。**lsd 健康且空闲**。
+
+因此前一轮"H361：lsd 收到请求不回复"的结论**作废**——`q=0` 只说明端口队列为空，
+无法区分"已取走"与"从未送达"。
+
+**新的故障定位**：SpringBoard 认为自己在等 lsd 的回复（`so=1`，回复权未消费），
+而 lsd 在自己的接收端口上闲着。**消息在投递/连接层就丢了**，与 lsd 内部无关。
+
+**下一次探针（按名称匹配，不写 pid）**：
+在 `ipc_kmsg_send` 钩子里，当发送方 `p_comm` 为 `SpringBoard` 时，把
+`(目标端口当前接收者 pid, msgh_id)` 记入小环；采样器随后打印该环，并与本轮采到的
+lsd 实际 pid 对比：
+- 目标 pid ≠ lsd 当轮 pid → **发到了旧连接/陈旧端口权**（连接层问题）；
+- 目标 pid = lsd 当轮 pid 而 lsd 无收包 → **内核投递路径丢消息**。
