@@ -2,7 +2,7 @@ diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
 index 5dcf00e..dcadbaf 100644
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -10285,3 +10285,858 @@ task_best_name(task_t task, char *buf, size_t size)
+@@ -10285,3 +10285,877 @@ task_best_name(task_t task, char *buf, size_t size)
  	char *name = proc_best_name(task_get_proc_raw(task));
  	strlcpy(buf, name, size);
  }
@@ -189,6 +189,7 @@ index 5dcf00e..dcadbaf 100644
 +	uint64_t wait;
 +	uint64_t fp;
 +	uint64_t x0;
++	uint64_t sp;
 +	/* H237: arm64 syscall arguments from the same saved state.  A thread
 +	 * blocked in mach_msg2_trap has its packed call arguments in x1..x7
 +	 * (struct mach_msg2_trap_args: data/options/bits/ports/id/...), and the
@@ -358,6 +359,7 @@ index 5dcf00e..dcadbaf 100644
 +			native_sb_rows[native_sb_count].wait = (uint64_t)(uintptr_t)th->wait_event;
 +			native_sb_rows[native_sb_count].fp = (uint64_t)get_saved_state_reg(state, 29);
 +			native_sb_rows[native_sb_count].x0 = (uint64_t)get_saved_state_reg(state, 0);
++			native_sb_rows[native_sb_count].sp = (uint64_t)get_saved_state_sp(state);
 +			native_sb_rows[native_sb_count].x1 = (uint64_t)get_saved_state_reg(state, 1);
 +			native_sb_rows[native_sb_count].x2 = (uint64_t)get_saved_state_reg(state, 2);
 +			native_sb_rows[native_sb_count].x3 = (uint64_t)get_saved_state_reg(state, 3);
@@ -426,6 +428,23 @@ index 5dcf00e..dcadbaf 100644
 +		    ((sample % 30) == 0 && i < 8);
 +		/* H363: lsd blocks inside Security's code signing; its first argument is usually the
 +		 * path being validated, so print it as a string from user memory. */
++		/* H367: lsd's frame chain breaks at depth 0, so dump the top of its user stack as well;
++		 * the return addresses into Security.framework are still there for offline decoding. */
++		if ((strncmp(name, "lsd", 3) == 0 || strncmp(name, "securityd", 9) == 0) &&
++		    native_sb_task != TASK_NULL && native_sb_rows[i].sp != 0) {
++			uint64_t words[24];
++			memset(words, 0, sizeof words);
++			if (copyinmap(get_task_map(native_sb_task), (user_addr_t)native_sb_rows[i].sp,
++			    words, sizeof words) == 0) {
++				printf("NATIVE_SBSTACK: sample=%u comm=%s tid=%llu sp=0x%llx",
++				    sample, name, (unsigned long long)native_sb_rows[i].tid,
++				    (unsigned long long)native_sb_rows[i].sp);
++				for (unsigned d = 0; d < 24; d++) {
++					printf(" %llx", (unsigned long long)words[d]);
++				}
++				printf("\n");
++			}
++		}
 +		if ((strncmp(name, "lsd", 3) == 0 || strncmp(name, "securityd", 9) == 0) &&
 +		    native_sb_task != TASK_NULL && native_sb_rows[i].x0 != 0) {
 +			char path[128];
