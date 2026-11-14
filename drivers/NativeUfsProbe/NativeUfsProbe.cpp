@@ -302,6 +302,7 @@ static void h103Marker (const char *kind, bool urgent);
 // H358: the AppleKeyStore driver publishes the keybag service keybagd looks for; weak so a
 // kernel built without that archive still links.
 extern "C" IOService * native_keyevents_allocate (void) __attribute__((weak_import));
+extern "C" void cheeseburger_usb_probe_start (void) __attribute__((weak_import));
 static IOService *gNativeProvider;
 static bool gNativeKeystoreDone;
 
@@ -3626,6 +3627,9 @@ NativeUfsProbe::start (IOService *provider)
     return false;
   }
   IOLog ("NATIVE_UFS_GPT: warm-link probe start\n");
+  if (cheeseburger_usb_probe_start != nullptr) {
+    cheeseburger_usb_probe_start ();
+  }
 
   IOMemoryDescriptor *gccDesc = IOMemoryDescriptor::withPhysicalAddress (
     MSM8998_GCC_BASE, MSM8998_GCC_SIZE, kIODirectionInOut);
