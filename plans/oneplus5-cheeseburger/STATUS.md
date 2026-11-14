@@ -14408,3 +14408,34 @@ boot task 序列未完成，后续初始化（含会话建立）就不会发生�
 
 **H356 实验**：用 boot arg `native-kill-exclavekit=1` 在 200 s 给 `init_exclavekit` 发一次 SIGKILL，
 看 launchd 是否记录 `Finished boot task` 并继续后续启动任务。
+
+#### H358：重新发布 AppleKeyStore 后，backboardd 终于匹配到它——新卡点是 UFS（2026-11-15）
+
+内核 `356ab013`，参数 = H326 基线 + `sheng-aks-publish=1`；`XNU_NATIVE_KEYSTORE` 改回 1，
+`nativePublishKeystore()` 恢复原实现（仍由 boot arg 控制）。
+
+**此前被忽略的直接证据**（H355 日志）：
+
+```
+NATIVE_IOKIT: op=match comm=keybagd          d=AppleKeyStore ok=0
+NATIVE_IOKIT: op=match comm=containermanager d=AppleKeyStore ok=0
+```
+
+keybagd 与 containermanagerd 一直在等一个**并不存在**的 `AppleKeyStore` 服务。这与同路线
+`sagit-ios-port` 的记录一致：persona keybag 缺失 → 容器 RPC 不返回 → backboardd 卡在 Mach receive。
+
+**H358 结果**
+
+| 观测 | 值 |
+| --- | --- |
+| `NATIVE_AKS` | `gate=1` → **`AppleKeyStore published (late)`** |
+| backboardd 的 IOKit | 大量 `d=AppleKeyStore ok=…` 匹配（此前从未出现） |
+| 运行窗口 | 41–210 s 持续写日志，随后日志环停止 |
+| 死因（屏幕） | `IOBlockStorageDriver::executeRequest: request failed to start!` 风暴、`disk3/4/5 I/O timeout`，最后 `NATIVE_UFS_STALL` panic（我们自己的 10 s 看门狗） |
+
+**结论**：AKS 这一环确实是缺的，补上后系统明显走得更远（keybag/容器链开始工作）。
+代价是**磁盘负载大幅上升**，把 UFS 命令队列打出 OCS 超时；队列被 poison 后所有新请求被拒，
+窗口请求一直挂着，10 秒看门狗于是 panic。
+
+**H359**：看门狗改为 10 秒只记录（`NATIVE_UFS_STALL_LOG` + 保留块 `ufsstall` 标记）、60 秒才 panic，
+给 `ufsRecover()` 的复位重试留出时间，看系统能否自行跨过这一波 I/O。
