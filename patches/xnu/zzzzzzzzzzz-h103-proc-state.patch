@@ -2,7 +2,7 @@ diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
 index 5dcf00e..dcadbaf 100644
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -10285,3 +10285,759 @@ task_best_name(task_t task, char *buf, size_t size)
+@@ -10285,3 +10285,787 @@ task_best_name(task_t task, char *buf, size_t size)
  	char *name = proc_best_name(task_get_proc_raw(task));
  	strlcpy(buf, name, size);
  }
@@ -496,6 +496,17 @@ index 5dcf00e..dcadbaf 100644
 +sbthr_done:
 +		;
 +	}
++	/* H355: launchd's send/receive totals, printed from the sampler (never from
++	 * the IPC hot path). */
++	if ((sample % 30) == 0) {
++		printf("NATIVE_LAUNCHD_IPC: sample=%u out=%llu in=%llu\n", sample,
++		    native_launchd_out, native_launchd_in);
++		unsigned first = native_launchd_count > 8 ? native_launchd_count - 8 : 0;
++		for (unsigned q = first; q < native_launchd_count; q++) {
++			printf("NATIVE_LAUNCHD_IPC: sample=%u dst=%u id=0x%x\n", sample,
++			    native_launchd_last[q % 8].dst, native_launchd_last[q % 8].id);
++		}
++	}
 +	/* H239: the buffer of a mach_msg2 call still holds the header of the
 +	 * message that was sent last, so read it back and describe both ports. */
 +	if (native_sb_capture && native_sb_task != TASK_NULL) {
@@ -655,6 +666,13 @@ index 5dcf00e..dcadbaf 100644
 +static unsigned native_xpc_lost;
 +static unsigned long long native_xpc_sb_out, native_xpc_sb_in, native_xpc_sb_other;
 +static unsigned long long native_xpc_p_out, native_xpc_p_in, native_xpc_p_other;
++/* H355: does launchd ever send anything?  The reply to a bootstrap request is an
++ * ordinary send from pid 1, so counting those separates "launchd never answers"
++ * from "the answer is lost on the way". */
++static unsigned long long native_launchd_out, native_launchd_in;
++struct native_launchd_note { unsigned dst; unsigned id; };
++static struct native_launchd_note native_launchd_last[8];
++static unsigned native_launchd_count;
 +
 +static int
 +native_xpc_tracked(int pid)
@@ -678,6 +696,16 @@ index 5dcf00e..dcadbaf 100644
 +	int to = ipc_port_get_receiver_task_locked(port, NULL);
 +	unsigned w;
 +	struct native_xpc_note *e;
++
++	/* H355: record launchd's traffic before the tracked-pid filter. */
++	if ((unsigned)from == 1u) {
++		native_launchd_last[native_launchd_count % 8].dst = (unsigned)to;
++		native_launchd_last[native_launchd_count % 8].id = (unsigned)hdr->msgh_id;
++		native_launchd_count++;
++		native_launchd_out++;
++	} else if ((unsigned)to == 1u) {
++		native_launchd_in++;
++	}
 +
 +	if (!native_xpc_tracked(from) && !native_xpc_tracked(to)) {
 +		return;
