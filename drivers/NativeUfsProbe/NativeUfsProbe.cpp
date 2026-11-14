@@ -918,16 +918,40 @@ heartbeatThread (void *, wait_result_t)
       }
     }
     uint64_t start = gWindowStartTicks;
-    if (gWindowInFlight && start && mach_absolute_time () - start > 10 * 19200000ULL) {
-      panic ("NATIVE_UFS_STALL: req=%llx/%llu cmds=%llu winBytes=%llu "
-             "lastCmd=%llx/%llu ufsFlight=%llu",
-             (unsigned long long) gWindowLastReqBlock,
-             (unsigned long long) gWindowLastReqCount,
-             (unsigned long long) gUfsCommands,
-             (unsigned long long) gWindowBytes,
-             (unsigned long long) gUfsLastLba,
-             (unsigned long long) gUfsLastBytes,
-             (unsigned long long) gUfsInFlight);
+    if (gWindowInFlight && start) {
+      uint64_t waited = mach_absolute_time () - start;
+      // H359: with the keystore running the disk load is far higher, and a queue
+      // that hits an OCS timeout is recovered and retried.  Ten seconds of a
+      // held request is therefore a symptom, not a death sentence: record it at
+      // ten and only panic if the request is still held a minute later.
+      if (waited > 10 * 19200000ULL) {
+        static int logged;
+        if (!logged) {
+          logged = 1;
+          h103Marker ("ufsstall", true);
+          IOLog ("NATIVE_UFS_STALL_LOG: req=%llx/%llu cmds=%llu winBytes=%llu "
+                 "lastCmd=%llx/%llu ufsFlight=%llu waited=%llu\n",
+                 (unsigned long long) gWindowLastReqBlock,
+                 (unsigned long long) gWindowLastReqCount,
+                 (unsigned long long) gUfsCommands,
+                 (unsigned long long) gWindowBytes,
+                 (unsigned long long) gUfsLastLba,
+                 (unsigned long long) gUfsLastBytes,
+                 (unsigned long long) gUfsInFlight,
+                 (unsigned long long) waited);
+        }
+      }
+      if (waited > 60 * 19200000ULL) {
+        panic ("NATIVE_UFS_STALL: req=%llx/%llu cmds=%llu winBytes=%llu "
+               "lastCmd=%llx/%llu ufsFlight=%llu",
+               (unsigned long long) gWindowLastReqBlock,
+               (unsigned long long) gWindowLastReqCount,
+               (unsigned long long) gUfsCommands,
+               (unsigned long long) gWindowBytes,
+               (unsigned long long) gUfsLastLba,
+               (unsigned long long) gUfsLastBytes,
+               (unsigned long long) gUfsInFlight);
+      }
     }
   }
 }
