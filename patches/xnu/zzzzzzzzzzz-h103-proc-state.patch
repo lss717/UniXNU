@@ -407,7 +407,7 @@ index 5dcf00e..dcadbaf 100644
 +		    (unsigned long long)native_sb_rows[i].lr,
 +		    (unsigned long long)native_sb_rows[i].wait);
 +		int want = strncmp(name, "SpringBoard", 11) == 0;
-+		if (!want && (sample % 30) == 0 && i < 2 &&
++		if (!want && (sample % 30) == 0 && i < 8 &&
 +		    (strncmp(name, "launchd", 7) == 0 || strncmp(name, "backboardd", 10) == 0)) {
 +			want = 1;
 +		}
