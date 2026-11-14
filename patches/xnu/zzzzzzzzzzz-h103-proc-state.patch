@@ -2,7 +2,7 @@ diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
 index 5dcf00e..dcadbaf 100644
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -10285,3 +10285,877 @@ task_best_name(task_t task, char *buf, size_t size)
+@@ -10285,3 +10285,880 @@ task_best_name(task_t task, char *buf, size_t size)
  	char *name = proc_best_name(task_get_proc_raw(task));
  	strlcpy(buf, name, size);
  }
@@ -190,6 +190,7 @@ index 5dcf00e..dcadbaf 100644
 +	uint64_t fp;
 +	uint64_t x0;
 +	uint64_t sp;
++	uint32_t cpu;
 +	/* H237: arm64 syscall arguments from the same saved state.  A thread
 +	 * blocked in mach_msg2_trap has its packed call arguments in x1..x7
 +	 * (struct mach_msg2_trap_args: data/options/bits/ports/id/...), and the
@@ -360,6 +361,7 @@ index 5dcf00e..dcadbaf 100644
 +			native_sb_rows[native_sb_count].fp = (uint64_t)get_saved_state_reg(state, 29);
 +			native_sb_rows[native_sb_count].x0 = (uint64_t)get_saved_state_reg(state, 0);
 +			native_sb_rows[native_sb_count].sp = (uint64_t)get_saved_state_sp(state);
++			native_sb_rows[native_sb_count].cpu = th->cpu_usage;
 +			native_sb_rows[native_sb_count].x1 = (uint64_t)get_saved_state_reg(state, 1);
 +			native_sb_rows[native_sb_count].x2 = (uint64_t)get_saved_state_reg(state, 2);
 +			native_sb_rows[native_sb_count].x3 = (uint64_t)get_saved_state_reg(state, 3);
@@ -419,11 +421,12 @@ index 5dcf00e..dcadbaf 100644
 +	native_xpc_emit(sample, 25);
 +	printf("NATIVE_SBPC: sample=%u comm=%s n=%u note=%s\n", sample, name, native_sb_count, native_sb_note);
 +	for (unsigned i = 0; i < native_sb_count; i++) {
-+		printf("NATIVE_SBPC: sample=%u comm=%s tid=%llu pc=0x%llx lr=0x%llx wait=0x%llx\n", sample, name,
++		printf("NATIVE_SBPC: sample=%u comm=%s tid=%llu pc=0x%llx lr=0x%llx wait=0x%llx cpu=%u\n", sample, name,
 +		    (unsigned long long)native_sb_rows[i].tid,
 +		    (unsigned long long)native_sb_rows[i].pc,
 +		    (unsigned long long)native_sb_rows[i].lr,
-+		    (unsigned long long)native_sb_rows[i].wait);
++		    (unsigned long long)native_sb_rows[i].wait,
++		    (unsigned)native_sb_rows[i].cpu);
 +		int want = strncmp(name, "SpringBoard", 11) == 0 ||
 +		    ((sample % 30) == 0 && i < 8);
 +		/* H363: lsd blocks inside Security's code signing; its first argument is usually the
