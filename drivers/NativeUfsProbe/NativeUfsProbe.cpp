@@ -100,6 +100,8 @@ static volatile uint32_t gH103LogMode;
 static volatile uint64_t gH103LogFirst;
 static volatile uint64_t gH103RootFirst;
 static volatile uint64_t gH103RootLast;
+static uint64_t gH391RootImageBytes;
+static uint64_t gH391StoreFirst, gH391StoreBlocks;
 static uint64_t gH103HeartbeatStart;
 static volatile int gH103SkipPattern;
 static uint32_t gH103SlotCursor;
@@ -107,7 +109,7 @@ static uint32_t gH103SlotCursor;
 // boot wrote it.  The header alone is not enough: it is written after the
 // slot, and a late header write failure leaves a stale slots_written behind,
 // which made earlier logs mix slots from several boots.
-#define H103_BUILD "H390"
+#define H103_BUILD "H391"
 static uint64_t gH103BootId;
 static volatile int gH103Quiet;
 static volatile uint64_t gH103LastSlotTicks;
@@ -304,6 +306,7 @@ static void h103Marker (const char *kind, bool urgent);
 // H358: the AppleKeyStore driver publishes the keybag service keybagd looks for; weak so a
 // kernel built without that archive still links.
 extern "C" IOService * native_keyevents_allocate (void) __attribute__((weak_import));
+extern "C" void cheeseburger_usb_probe_start (void) __attribute__((weak_import));
 static IOService *gNativeProvider;
 static bool gNativeKeystoreDone;
 
@@ -1344,6 +1347,60 @@ public:
   bool readWindowBulk (uint64_t lba, uint32_t blocks, void *out);
   bool readWindow4k (uint64_t lba, void *out);
 };
+
+// Read-only bridge; uses the active controller, never a second driver.
+extern "C" unsigned native_ufs_store_mode (void)
+{
+  uint32_t mode = 0;
+  PE_parse_boot_argn ("sheng-data-persist", &mode, sizeof mode);
+  return mode == 1 ? 1 : 0; // Writable mode deliberately unsupported.
+}
+
+extern "C" int native_ufs_store_open (uint64_t blocks, uint64_t *first, const char **why)
+{
+  const char *reason = "off or writable mode unsupported";
+  bool ok = false;
+  if (native_ufs_store_mode () == 1 && gH103Probe && gH103RootFirst &&
+      gH103RootLast >= gH103RootFirst && gH391RootImageBytes) {
+    uint32_t mib = 1024;
+    PE_parse_boot_argn ("sheng-log-reserve", &mib, sizeof mib);
+    uint64_t partition = gH103RootLast - gH103RootFirst + 1;
+    uint64_t reserve = uint64_t (mib) * 256;
+    uint64_t image = (gH391RootImageBytes - 1) / 4096 + 1;
+    reason = "invalid size, reserve, or root overlap";
+    if (mib >= 288 && mib <= 16384 && reserve < partition && blocks &&
+        blocks <= partition - reserve && blocks <= partition / 4 &&
+        image <= partition - reserve - blocks &&
+        partition - reserve - blocks - image >= 1024) {
+      uint64_t start = gH103RootLast + 1 - reserve - blocks;
+      reason = "store already open with different geometry";
+      if (!gH391StoreBlocks || (gH391StoreFirst == start && gH391StoreBlocks == blocks)) {
+        gH391StoreFirst = start;
+        gH391StoreBlocks = blocks;
+        if (first) *first = start;
+        reason = "read-only";
+        ok = true;
+      }
+    }
+  }
+  if (why) *why = reason;
+  IOLog ("NATIVE_DATA_STORE: ro=%u first=%llx blocks=%llu reason=%s\n",
+         ok ? 1 : 0, (unsigned long long) gH391StoreFirst,
+         (unsigned long long) blocks, reason);
+  return ok ? 1 : 0;
+}
+
+extern "C" int native_ufs_store_read (uint64_t block, uint32_t count, void *out)
+{
+  if (!gH103Probe || !out || !count || !gH391StoreBlocks ||
+      block >= gH391StoreBlocks || count > gH391StoreBlocks - block) return 0;
+  return gH103Probe->readWindowBulk (gH391StoreFirst + block, count, out) ? 1 : 0;
+}
+
+extern "C" int native_ufs_store_write (uint64_t, uint32_t, const void *) { return 0; }
+extern "C" int native_ufs_store_sync (void) { return 0; }
+// Unknown: GPT recheck is not implemented by this read-only bridge.
+extern "C" unsigned native_ufs_store_gpt_check (void) { return 0xff; }
 
 static void
 h103SlotWriteThunk (void)
@@ -3662,6 +3719,9 @@ NativeUfsProbe::start (IOService *provider)
     return false;
   }
   IOLog ("NATIVE_UFS_GPT: warm-link probe start\n");
+  if (cheeseburger_usb_probe_start != nullptr) {
+    cheeseburger_usb_probe_start ();
+  }
 
   IOMemoryDescriptor *gccDesc = IOMemoryDescriptor::withPhysicalAddress (
     MSM8998_GCC_BASE, MSM8998_GCC_SIZE, kIODirectionInOut);
@@ -4344,6 +4404,7 @@ NativeUfsProbe::start (IOService *provider)
   gH103LogFirst = fLogFirst;
   gH103RootFirst = rootFirst;
   gH103RootLast = rootLast;
+  gH391RootImageBytes = rootImageBytes;
   if (logSafe) {
     IOLog ("NATIVE_UFS_LOG: window lba=%llx blocks=%u image=%llx\n",
            (unsigned long long) fLogFirst, fLogBlocks,
