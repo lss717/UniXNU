@@ -14532,3 +14532,25 @@ Security +0x3c268  -> Security::CodeSigning::DiskRep::bestGuess(char const*, Con
 `ipc_kmsg_send` 钩子里那段扫描消息体找 `com.apple.` 的代码（原本只对
 `msgh_id 0x40000324/0x40000325` 生效）应对**任何**被采样的阻塞请求生效，
 直接打印出"哪个服务没 check-in"。这比端口名 `rn=` 有用得多，也是进桌面最短的一步。
+
+#### H364：恢复路径已生效（ready=1），但控制器在持续负载下仍会停摆（2026-11-15）
+
+屏幕证据（内核 `d01a73f5`）：
+
+```
+NATIVE_UFS_GPT: OCS timeout type=65000000 ocs=0x0f loops=501680 db=0 is=0x5 hcs=0x1
+NATIVE_UFS_RETRY: readwindow poisoned at attempt=0, recovering
+NATIVE_UFS_RECOVER: is=8 db=0 hcs=0 ready=1          <- H361 的 UCRDY 判定生效
+... 随后再次 OCS timeout（loops=5195687 / 309567）
+panic ... NATIVE_UFS_STALL: req=0x7d7/4 cmds=32607 winBytes=332240760 ufsFlight=1
+```
+
+判定：
+1. **恢复判定修对了**（`ready=1` 首次出现），单次超时可以被跨过；
+2. 但控制器在持续负载下会**再次**进入"命令不完成"（`ufsFlight=1`，doorbell 已清），
+   属于控制器层面的停摆，不是我们的记账错误；
+3. 30 秒看门狗 panic 把它变成不可观测的死亡。
+
+因此 H365 改为：**该看门狗不再 panic，只记录 `NATIVE_UFS_STALL_NOPANIC`**，
+让系统在"磁盘很慢"的状态下继续跑，看用户态能否仍走到桌面（桌面只需要少量 I/O）。
+若确认"不 panic 就能进桌面"，再回来优化控制器停摆（分片、限并发、全量 link 重启）。

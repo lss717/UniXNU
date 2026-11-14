@@ -948,7 +948,7 @@ heartbeatThread (void *, wait_result_t)
         }
       }
       if (waited > 30 * 19200000ULL) {
-        panic ("NATIVE_UFS_STALL: req=%llx/%llu cmds=%llu winBytes=%llu "
+        IOLog ("NATIVE_UFS_STALL_NOPANIC: req=%llx/%llu cmds=%llu winBytes=%llu "
                "lastCmd=%llx/%llu ufsFlight=%llu",
                (unsigned long long) gWindowLastReqBlock,
                (unsigned long long) gWindowLastReqCount,
