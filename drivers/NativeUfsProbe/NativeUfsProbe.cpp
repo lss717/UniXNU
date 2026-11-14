@@ -763,6 +763,10 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
         // SpringBoard thread waits on.
         native_sb_pc_sample ("usermanagerd", 1200 + burst * 30);
         native_sb_pc_sample ("cfprefsd", 1500 + burst * 30);
+        // H362: the gate moved to launchservicesd, whose sampled thread sits in Security.framework,
+        // so take lsd's and securityd's frame chains on the same cadence as backboardd's.
+        native_sb_pc_sample ("lsd", 1800 + burst * 30);
+        native_sb_pc_sample ("securityd", 2100 + burst * 30);
       }
       IOSleep (50);
     }
