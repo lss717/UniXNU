@@ -2,7 +2,7 @@ diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
 index 5dcf00e..dcadbaf 100644
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -10285,3 +10285,883 @@ task_best_name(task_t task, char *buf, size_t size)
+@@ -10285,3 +10285,907 @@ task_best_name(task_t task, char *buf, size_t size)
  	char *name = proc_best_name(task_get_proc_raw(task));
  	strlcpy(buf, name, size);
  }
@@ -211,6 +211,12 @@ index 5dcf00e..dcadbaf 100644
 +/* H355: does launchd ever send anything?  A bootstrap reply is an ordinary send from
 + * pid 1, so counting those separates "launchd never answers" from "the answer is lost
 + * on the way".  Declared here because the sampler below prints them. */
++/* H379: where does SpringBoard's request actually go?  Record (destination receiver pid,
++ * msgh_id) for every send from a process whose p_comm is SpringBoard; the sampler prints the
++ * ring next to the pid it sampled for lsd, so both sides are compared inside one boot. */
++struct native_sb_send_note { unsigned dst; unsigned id; unsigned size; };
++static struct native_sb_send_note native_sb_send[32];
++static unsigned native_sb_send_n;
 +static unsigned long long native_launchd_out, native_launchd_in;
 +struct native_launchd_note { unsigned dst; unsigned id; };
 +static struct native_launchd_note native_launchd_last[8];
@@ -550,6 +556,14 @@ index 5dcf00e..dcadbaf 100644
 +	}
 +	/* H355: launchd's send/receive totals, printed from the sampler (never from
 +	 * the IPC hot path). */
++	if ((sample % 30) == 0 && strncmp(name, "lsd", 3) == 0 && native_sb_send_n != 0) {
++		unsigned first = native_sb_send_n > 8 ? native_sb_send_n - 8 : 0;
++		for (unsigned q = first; q < native_sb_send_n; q++) {
++			printf("NATIVE_SBSEND: sample=%u lsd_pid=%d dst=%u id=0x%x size=%u\n",
++			    sample, native_sb_pid, native_sb_send[q % 32].dst,
++			    native_sb_send[q % 32].id, native_sb_send[q % 32].size);
++		}
++	}
 +	if ((sample % 30) == 0) {
 +		printf("NATIVE_LAUNCHD_IPC: sample=%u out=%llu in=%llu reply=%llu other=%llu\n", sample,
 +		    native_launchd_out, native_launchd_in, native_launchd_replies, native_launchd_other);
@@ -774,6 +788,16 @@ index 5dcf00e..dcadbaf 100644
 +	int to = ipc_port_get_receiver_task_locked(port, NULL);
 +	unsigned w;
 +	struct native_xpc_note *e;
++
++	/* H379: name-based, never pid-based (lsd's pid varies per boot). */
++	if (current_proc() != PROC_NULL &&
++	    strncmp(current_proc()->p_comm, "SpringBoard", MAXCOMLEN) == 0) {
++		unsigned k = native_sb_send_n % 32;
++		native_sb_send[k].dst = (unsigned)to;
++		native_sb_send[k].id = (unsigned)hdr->msgh_id;
++		native_sb_send[k].size = (unsigned)hdr->msgh_size;
++		native_sb_send_n++;
++	}
 +
 +	/* H355: record launchd's traffic before the tracked-pid filter. */
 +	if ((unsigned)from == 1u) {
