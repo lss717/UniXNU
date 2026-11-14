@@ -208,6 +208,8 @@ extern "C" void native_legacy_panic_paint (uint32_t color) __attribute__((weak_i
 // H329: the AppleKeyStore driver publishes SpringBoard's keybag service; weak so a build without
 // that archive still links.
 extern "C" IOService * native_keyevents_allocate (void) __attribute__((weak_import));
+// H343: the panel progress bar, drawn from the watchdog thread.
+extern "C" void native_legacy_progress (unsigned step, unsigned total) __attribute__((weak_import));
 
 // H108: independent heartbeat. ios-sweet's log thread sleeps on tsleep, not
 // IOSleep; this port never woke from IOSleep, so this thread first proves
@@ -378,9 +380,27 @@ nativeWatchdogThread (void *, wait_result_t)
 {
   unsigned ticks = 0;
   unsigned seconds = 0;
+  unsigned half = 0;
   for (;;) {
-    IOSleep (1000);
-    seconds++;
+    IOSleep (500);
+    half++;
+    if ((half & 1U) == 0U) {
+      seconds++;
+      // H343: how far the bar got is how long the machine lived, whatever the log does.
+      if (seconds <= 900 && native_legacy_progress != nullptr) {
+        native_legacy_progress (seconds, 900);
+      }
+    } else {
+      // H343: the first ten seconds are stamped every half second; these are the only records
+      // that exist before the ring's first write is allowed.
+      if (half <= 20) {
+        for (unsigned attempt = 0; attempt < 8; ++attempt) {
+          h103Marker ("boot", true);
+          IOSleep (5);
+        }
+      }
+      continue;
+    }
     h103StallCheck ();
     if (gH103StallRecorded) {
       continue;
