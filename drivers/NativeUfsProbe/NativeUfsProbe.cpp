@@ -669,7 +669,9 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
         // invisible.  Sample it in the bursts as well.
         native_sb_pc_sample ("runningboardd", 300 + burst * 100 + b);
         // H349: SpringBoard's blocked request in H348 pointed at launchd, so sample launchd too.
-        native_sb_pc_sample ("launchd", 400 + burst * 100 + b);
+        // H353: the kernel only walks a frame chain for samples divisible by 30 (and only for
+        // the first two threads), so the sample id must be a multiple of 30 as well.
+        native_sb_pc_sample ("launchd", 600 + burst * 30);
         // H352: the request's receive right is still launchd's, i.e. it went to a MachService
         // that has not checked in.  backboardd is the service that has not opened the display
         // in this boot, so sample it too (sample ids divisible by 30 make the kernel walk its

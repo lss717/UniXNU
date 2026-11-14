@@ -356,9 +356,7 @@ index 5dcf00e..dcadbaf 100644
 +	task_unlock(t);
 +	/* The proc reference keeps the task alive, so taking the task reference
 +	 * after dropping task_lock is safe and cannot deadlock. */
-+	if ((native_sb_capture || strncmp(native_sb_name, "launchd", 7) == 0) &&
-+	    native_sb_task == TASK_NULL) {
-+		native_sb_capture = 0;
++	if (native_sb_task == TASK_NULL) {
 +		task_reference(t);
 +		native_sb_task = t;
 +	}
@@ -501,7 +499,7 @@ index 5dcf00e..dcadbaf 100644
 +	}
 +	/* H239: the buffer of a mach_msg2 call still holds the header of the
 +	 * message that was sent last, so read it back and describe both ports. */
-+	if (native_sb_task != TASK_NULL) {
++	if (native_sb_capture && native_sb_task != TASK_NULL) {
 +		if (native_sb_buf != 0 &&
 +		    vm_map_read_user(get_task_map(native_sb_task),
 +		    (vm_offset_t)native_sb_buf, native_sb_hdr,
@@ -539,6 +537,8 @@ index 5dcf00e..dcadbaf 100644
 +		native_xpc_register(native_sb_rcv.port, native_sb_pid, name, 'r');
 +		native_xpc_register(native_sb_req.port, native_sb_pid, name, 'q');
 +		native_xpc_dump(sample);
++	}
++	if (native_sb_task != TASK_NULL) {
 +		task_deallocate(native_sb_task);
 +		native_sb_task = TASK_NULL;
 +	}
