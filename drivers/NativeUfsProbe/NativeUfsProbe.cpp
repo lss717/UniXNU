@@ -1363,21 +1363,24 @@ public:
                    IOMemoryDescriptor *dst, uint64_t *done);
   bool readWindowBulk (uint64_t lba, uint32_t blocks, void *out);
   bool readWindow4k (uint64_t lba, void *out);
+  bool writeWindowBulk (uint64_t lba, uint32_t blocks, const void *src);
+  bool syncWindow (void);
 };
 
-// Read-only bridge; uses the active controller, never a second driver.
+// Persistent Data bridge; uses the active controller, never a second driver.
 extern "C" unsigned native_ufs_store_mode (void)
 {
   uint32_t mode = 0;
   PE_parse_boot_argn ("sheng-data-persist", &mode, sizeof mode);
-  return mode == 1 ? 1 : 0; // Writable mode deliberately unsupported.
+  return mode == 1 || mode == 2 ? mode : 0;
 }
 
 extern "C" int native_ufs_store_open (uint64_t blocks, uint64_t *first, const char **why)
 {
-  const char *reason = "off or writable mode unsupported";
+  const unsigned mode = native_ufs_store_mode ();
+  const char *reason = "off or unsupported mode";
   bool ok = false;
-  if (native_ufs_store_mode () == 1 && gH103Probe && gH103RootFirst &&
+  if (mode && gH103Probe && gH103RootFirst &&
       gH103RootLast >= gH103RootFirst && gH391RootImageBytes) {
     uint32_t mib = 1024;
     PE_parse_boot_argn ("sheng-log-reserve", &mib, sizeof mib);
@@ -1395,14 +1398,14 @@ extern "C" int native_ufs_store_open (uint64_t blocks, uint64_t *first, const ch
         gH391StoreFirst = start;
         gH391StoreBlocks = blocks;
         if (first) *first = start;
-        reason = "read-only";
+        reason = mode == 2 ? "read-write" : "read-only";
         ok = true;
       }
     }
   }
   if (why) *why = reason;
-  IOLog ("NATIVE_DATA_STORE: ro=%u first=%llx blocks=%llu reason=%s\n",
-         ok ? 1 : 0, (unsigned long long) gH391StoreFirst,
+  IOLog ("NATIVE_DATA_STORE: mode=%u open=%u first=%llx blocks=%llu reason=%s\n",
+         mode, ok ? 1 : 0, (unsigned long long) gH391StoreFirst,
          (unsigned long long) blocks, reason);
   return ok ? 1 : 0;
 }
@@ -1414,8 +1417,18 @@ extern "C" int native_ufs_store_read (uint64_t block, uint32_t count, void *out)
   return gH103Probe->readWindowBulk (gH391StoreFirst + block, count, out) ? 1 : 0;
 }
 
-extern "C" int native_ufs_store_write (uint64_t, uint32_t, const void *) { return 0; }
-extern "C" int native_ufs_store_sync (void) { return 0; }
+extern "C" int native_ufs_store_write (uint64_t block, uint32_t count, const void *src)
+{
+  if (native_ufs_store_mode () != 2 || !gH103Probe || !src || !count ||
+      !gH391StoreBlocks || block >= gH391StoreBlocks ||
+      count > gH391StoreBlocks - block) return 0;
+  return gH103Probe->writeWindowBulk (gH391StoreFirst + block, count, src) ? 1 : 0;
+}
+
+extern "C" int native_ufs_store_sync (void)
+{
+  return native_ufs_store_mode () == 2 && gH103Probe && gH103Probe->syncWindow () ? 1 : 0;
+}
 // Unknown: GPT recheck is not implemented by this read-only bridge.
 extern "C" unsigned native_ufs_store_gpt_check (void) { return 0xff; }
 
@@ -2869,6 +2882,60 @@ bool
 NativeUfsProbe::readWindow4k (uint64_t lba, void *out)
 {
   return readWindowBulk (lba, 1, out);
+}
+
+bool
+NativeUfsProbe::writeWindowBulk (uint64_t lba, uint32_t blocks, const void *src)
+{
+  if (!fReady || !fLock || !src || !blocks ||
+      blocks > UFS_DATA_MAX / 4096 ||
+      lba > 0xffffffffULL - (blocks - 1)) {
+    return false;
+  }
+  const uint32_t chunkBlocks = fQueue.dataCapacity / 4096U;
+  if (!chunkBlocks) {
+    return false;
+  }
+  const uint8_t *bytesIn = static_cast<const uint8_t *> (src);
+  uint64_t at = lba;
+  uint32_t left = blocks;
+  while (left) {
+    const uint32_t chunk = left < chunkBlocks ? left : chunkBlocks;
+    if (!lockWithTimeout (fLock, "writeWindowBulk", UFS_DATA_LOCK_TICKS, false)) {
+      return false;
+    }
+    uint8_t cdb[16] = { 0x2a };
+    cdb[1] = 0x08;  // FUA: the overlay reports success only after durable media commit.
+    putBe32 (cdb + 2, static_cast<uint32_t> (at));
+    cdb[7] = static_cast<uint8_t> (chunk >> 8);
+    cdb[8] = static_cast<uint8_t> (chunk);
+    const unsigned bytes = chunk * 4096U;
+    gUfsLastLba = at;
+    gUfsLastBytes = bytes;
+    const bool ok = ufsWriteCommand (&fQueue, 0, cdb, bytes, bytesIn);
+    IOLockUnlock (fLock);
+    if (!ok) {
+      IOLog ("NATIVE_DATA_WRITE_FAIL: lba=%llx blocks=%u left=%u\n",
+             (unsigned long long) at, chunk, left);
+      return false;
+    }
+    bytesIn += bytes;
+    at += chunk;
+    left -= chunk;
+  }
+  return true;
+}
+
+bool
+NativeUfsProbe::syncWindow (void)
+{
+  if (!fReady || !fLock ||
+      !lockWithTimeout (fLock, "syncWindow", UFS_DATA_LOCK_TICKS, false)) {
+    return false;
+  }
+  const bool ok = ufsSync (&fQueue);
+  IOLockUnlock (fLock);
+  return ok;
 }
 
 bool
