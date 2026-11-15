@@ -29,6 +29,7 @@
   Volume.c
 
 [Packages]
+  EmbeddedPkg/EmbeddedPkg.dec
   MdePkg/MdePkg.dec
   UniXNUPkg/UniXNUPkg.dec
 
