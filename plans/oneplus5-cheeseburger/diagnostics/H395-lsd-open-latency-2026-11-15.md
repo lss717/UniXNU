@@ -16,3 +16,5 @@ H395r pulled source `3bcee5d3a` and device `e7442276b` before rebuilding, thereb
 
 - H395r USB2 payload: `2ba6777de3db73e63b269c23f142de5caa931155e38371aa1a511456d41078d2`
 - H395r USB2 boot: `e617d841f99d5140eddead2a159a7542ef197c5a304fdcc6e3b9683545670c45`
+
+H396q is the low-observer-overhead desktop comparison. It changes only `native-probe-quiet=2` to `1` and both `h103-log-secs=1` occurrences to `60`; CPU2, GPU-off and all functional settings remain unchanged. The actual payload reports the requested values and passes992/1024 worst-case. Payload `334b628b147c3e454d74b5b6b878cd81e7f173bf774a77b2ae5636bff2d3c27d`; boot `5801d3c11ada4d123651025cb55a091f3d062df69a685b1fc12e10fe35450a65`.
