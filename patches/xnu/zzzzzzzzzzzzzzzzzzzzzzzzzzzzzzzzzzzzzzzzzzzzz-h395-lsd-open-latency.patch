@@ -1,13 +1,10 @@
 diff --git a/bsd/vfs/vfs_vnops.c b/bsd/vfs/vfs_vnops.c
 --- a/bsd/vfs/vfs_vnops.c
 +++ b/bsd/vfs/vfs_vnops.c
-@@ -74,5 +74,6 @@
- #include <sys/kernel.h>
+@@ -78,2 +78,3 @@
  #include <sys/file_internal.h>
 +#include <mach/mach_time.h>
- 
- #include <sys/kauth.h>
- #include <sys/vnode_internal.h>
+ #include <sys/stat.h>
 @@ -183,7 +184,24 @@ vn_open_modflags(struct nameidata *ndp, int *fmodep, int cmode)
  			}
  		}
