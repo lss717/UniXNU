@@ -1103,7 +1103,11 @@ h103SlotThread (void *, wait_result_t)
 #define UFS_FW_UCD_SIZE 0xF00U
 #define UFS_FW_DATA_OFFSET 0x800U
 #define UFS_FW_DATA_MAX 0x700U
-#define UFS_DATA_MAX 0x20000U
+// The UTP PRDT length field holds length-1 in 18 bits, so 256 KiB is the
+// largest single DMA that can be encoded here. allocLowContiguous() still
+// falls back to 128 KiB and smaller when low memory is fragmented.
+#define UFS_DATA_MAX 0x40000U
+#define UFS_READAHEAD_MAX 0x100000U
 
 // H171: the UFS read/log buffers must be physically contiguous below 4 GB (the
 // controller here is addressed with a 32-bit physical mask).  A 128 KB request
@@ -1279,6 +1283,7 @@ class NativeUfsWindow : public IOBlockStorageDevice {
   uint64_t bytes = 0;
   uint8_t *bounce = nullptr;
   uint8_t *readAhead = nullptr;
+  uint32_t readAheadCapacity = 0;
   uint64_t readAheadLba = 0;
   uint64_t readAheadBytes = 0;
   IOLock *lock = nullptr;
@@ -1290,7 +1295,9 @@ public:
                   uint64_t length);
   bool start (IOService *) override { online = true; return true; }
   void free () override {
-    if (readAhead) { IOFree (readAhead, UFS_DATA_MAX); readAhead = nullptr; }
+    if (bounce) { IOFree (bounce, UFS_DATA_MAX); bounce = nullptr; }
+    if (readAhead) { IOFree (readAhead, readAheadCapacity); readAhead = nullptr; }
+    readAheadCapacity = 0;
     IOBlockStorageDevice::free ();
   }
   IOReturn doEjectMedia () override { return kIOReturnUnsupported; }
@@ -2804,7 +2811,7 @@ bool
 NativeUfsProbe::readWindowBulk (uint64_t lba, uint32_t blocks, void *out)
 {
   if (!fReady || !fLock || !out || !blocks ||
-      blocks > UFS_DATA_MAX / 4096 ||
+      blocks > UFS_READAHEAD_MAX / 4096 ||
       lba > 0xffffffffULL - (blocks - 1)) {
     return false;
   }
@@ -2813,7 +2820,9 @@ NativeUfsProbe::readWindowBulk (uint64_t lba, uint32_t blocks, void *out)
   // failed instantly (ufsCommand rejects bytes > dataCapacity), which is why
   // every window read returned ok=0 and mountroot never saw APFS.  Split the
   // request into capacity-sized commands, one lock per command (H128).
-  const uint32_t chunkBlocks = fQueue.dataCapacity / 4096U;
+  const uint32_t chunkBlocks =
+      (fQueue.dataCapacity / 4096U) < (UFS_DATA_MAX / 4096U) ?
+      (fQueue.dataCapacity / 4096U) : (UFS_DATA_MAX / 4096U);
   if (!chunkBlocks) {
     return false;
   }
@@ -2943,7 +2952,7 @@ NativeUfsProbe::logWrite (uint64_t rel, uint32_t blocks, const void *src,
                           uint64_t lockTicks)
 {
   if (!fReady || !fLock || !src || !blocks || rel >= fLogBlocks ||
-      blocks > fLogBlocks - rel || blocks > UFS_DATA_MAX / 4096) {
+      blocks > fLogBlocks - rel || blocks > fLogCapacity / 4096) {
     return false;
   }
   if (!fLogDma || !fLogData || !fLogDataPhys) {
@@ -3551,7 +3560,12 @@ NativeUfsWindow::configure (NativeUfsProbe *parent, const char *name,
   absolute = absoluteByte;
   bytes = length;
   bounce = static_cast<uint8_t *> (IOMalloc (UFS_DATA_MAX));
-  readAhead = static_cast<uint8_t *> (IOMalloc (UFS_DATA_MAX));
+  readAheadCapacity = UFS_READAHEAD_MAX;
+  readAhead = static_cast<uint8_t *> (IOMalloc (readAheadCapacity));
+  if (!readAhead) {
+    readAheadCapacity = UFS_DATA_MAX;
+    readAhead = static_cast<uint8_t *> (IOMalloc (readAheadCapacity));
+  }
   readAheadLba = 0;
   readAheadBytes = 0;
   lock = IOLockAlloc ();
@@ -3562,8 +3576,9 @@ NativeUfsWindow::configure (NativeUfsProbe *parent, const char *name,
   setProperty ("B5Offset", absolute, 64);
   setProperty ("B5Bytes", bytes, 64);
   setProperty ("B5ReadOnly", true);
+  setProperty ("B5ReadAheadBytes", readAheadCapacity, 32);
   if (readAhead) {
-    IOLog ("NATIVE_UFS_CACHE: %s read-ahead=%u bytes\n", label, UFS_DATA_MAX);
+    IOLog ("NATIVE_UFS_CACHE: %s read-ahead=%u bytes\n", label, readAheadCapacity);
   }
   return host && absolute && bytes && !(absolute & 4095) && !(bytes & 511) &&
          bounce && readAhead && lock;
@@ -3639,15 +3654,15 @@ NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
     }
     uint64_t windowEnd = absolute + bytes;
     uint64_t available = windowEnd > page ? windowEnd - page : 0;
-    if (available > UFS_DATA_MAX) {
-      available = UFS_DATA_MAX;
+    if (available > readAheadCapacity) {
+      available = readAheadCapacity;
     }
     uint32_t blocks = static_cast<uint32_t> ((available + 4095) / 4096);
     if (!blocks) {
       blocks = 1;
     }
-    if (blocks > UFS_DATA_MAX / 4096) {
-      blocks = UFS_DATA_MAX / 4096;
+    if (blocks > readAheadCapacity / 4096) {
+      blocks = readAheadCapacity / 4096;
     }
     uint64_t phase = mach_absolute_time ();
     bool readOk = host->readWindowBulk (page / 4096, blocks, readAhead);
