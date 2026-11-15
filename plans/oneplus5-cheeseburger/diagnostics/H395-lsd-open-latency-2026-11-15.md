@@ -11,3 +11,8 @@ Mac pulled source c5470df56 and device4a8df7a before building. A clean-tree boot
 - Kernel: `65ac3eb16fbcc5a91fbc2746881751dd5651578eb5a041bf19eff235583a1204`
 - Payload: `69e746695ba663749b3cadaabdde6de102d86f554aa4ffa43612c04b8902e812`
 - Boot: `6c2462b6841fdbe2d8f9ece44486ee2fda48f48bba2485bb774f9bdc7b0ea7a1`
+
+H395r pulled source `3bcee5d3a` and device `e7442276b` before rebuilding, thereby including the latest CheeseburgerUsb implementation. Build and prelink passed; the kernel changed to `c1a4ddaf8a5f767692cffa428ae81601796782c6f5c7f264eb483a47936fdf9a`. The candidate explicitly changes the requested argument to `cheeseburger-usb=2`; extracted configuration confirms no `=1`, arguments remain990/1024 worst-case, and the extracted kernel compares equal.
+
+- H395r USB2 payload: `2ba6777de3db73e63b269c23f142de5caa931155e38371aa1a511456d41078d2`
+- H395r USB2 boot: `e617d841f99d5140eddead2a159a7542ef197c5a304fdcc6e3b9683545670c45`
