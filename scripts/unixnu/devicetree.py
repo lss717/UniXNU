@@ -318,8 +318,8 @@ def generate(dtb, config, *, unique_chip_id=None, data=False, trust=False, addon
         raise Error('Pass --unique-chip-id HEX for this board')
     if options.get('owned_memory_size'):
         size = int(str(options['owned_memory_size']), 0)
-        if not 0x10000000 <= size <= 0x200000000 or size % 0x200000:
-            raise Error('Owned memory must be 256 MiB to 8 GiB in 2 MiB steps')
+        if not 0x08000000 <= size <= 0x200000000 or size % 0x200000:
+            raise Error('Owned memory must be 128 MiB to 8 GiB in 2 MiB steps')
         chosen.append(('darwinboot-memory-size', struct.pack('<Q', size)))
     # A table DarwinBoot fills with the ranges of the window the kernel must not use (gaps between DRAM banks, memory the firmware
     # keeps). With it the window may span more than one run of free memory; only an OS profile whose XNU reads the property sets it.
