@@ -289,8 +289,12 @@ def prelink(ctx):
     if spec.get('early_security_init'):
         command += ['--early-security-init', spec['early_security_init']]
     command += spec.get('extra_args', [])
-    # A failed rebuild must not remove the last candidate or its record.
-    with tempfile.TemporaryDirectory(dir=output.parent, prefix='.prelink-') as directory:
+    # A stable staging path keeps embedded diagnostics reproducible. A failed
+    # rebuild must not remove the last candidate or its record.
+    directory = output.parent / '.prelink'
+    shutil.rmtree(directory, ignore_errors=True)
+    directory.mkdir()
+    try:
         candidate = Path(directory) / output.name
         saved_map = output.with_suffix('.map.json')
         candidate_map = candidate.with_suffix('.map.json')
@@ -322,5 +326,7 @@ def prelink(ctx):
                 if not success:
                     log(f'kernel: prelink failed; diagnostic record {destination}')
         os.replace(candidate, output)
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
     log(f'kernel: {output} sha256 {sha256_file(output)}')
     return output
