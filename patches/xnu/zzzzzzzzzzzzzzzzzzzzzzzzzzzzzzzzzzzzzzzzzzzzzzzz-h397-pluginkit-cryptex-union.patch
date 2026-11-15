@@ -1,0 +1,74 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -8373,7 +8373,53 @@ native_cryptex_usrlib_prepare(proc_t p, user_addr_t scratch)
+ 	printf("NATIVE_CRYPTEX_USRLIB: before=%d mount=%d result=%d after=%d\n",
+ 	    before, error, result, after);
+ 	return error;
+ }
++
++/*
++ * H397: the OS root carries PlugInKitDaemon.framework metadata and signature,
++ * while SystemOS carries its executable. A union at PrivateFrameworks cannot
++ * merge the two same-named child directories, so compose this exact framework
++ * directory. Both inputs remain read-only and the OS metadata stays visible.
++ */
++static int
++native_cryptex_pluginkit_prepare(proc_t p, user_addr_t scratch)
++{
++	const char *source = "/private/preboot/Cryptexes/OS/System/Library/PrivateFrameworks/PlugInKitDaemon.framework";
++	const char *point = "/System/Library/PrivateFrameworks/PlugInKitDaemon.framework";
++	const char *wanted = "/System/Library/PrivateFrameworks/PlugInKitDaemon.framework/PlugInKitDaemon";
++	vnode_t probe = NULLVP;
++	struct mount_args request = {.type = scratch, .path = scratch + 0x40,
++	    .flags = MNT_RDONLY | MNT_UNION, .data = scratch + 0x100};
++	int32_t result = 0;
++	int before = 0, after = 0, error = 0;
++
++	before = vnode_lookup(wanted, 0, &probe, vfs_context_current());
++	if (!before) {
++		vnode_put(probe);
++		probe = NULLVP;
++	}
++	error = vnode_lookup(source, 0, &probe, vfs_context_current());
++	if (error) goto done;
++	vnode_put(probe);
++	probe = NULLVP;
++	if ((error = copyout("bindfs", request.type, 7)) ||
++	    (error = copyout(point, request.path, strlen(point) + 1)) ||
++	    (error = copyout(source, request.data, strlen(source) + 1))) goto done;
++	native_bindfs_boot_mount = 1;
++	error = mount(p, &request, &result);
++	native_bindfs_boot_mount = 0;
++done:
++	if (probe) vnode_put(probe);
++	probe = NULLVP;
++	after = vnode_lookup(wanted, 0, &probe, vfs_context_current());
++	if (!after) {
++		vnode_put(probe);
++		probe = NULLVP;
++	}
++	printf("NATIVE_CRYPTEX_PLUGINKIT: before=%d mount=%d result=%d after=%d\n",
++	    before, error, result, after);
++	return error ? error : after;
++}
+ #endif
+ 
+ 
+@@ -8720,10 +8766,16 @@ bsd_init(void)
+ 	/* H131: add the cryptex-only /usr/lib entries the OS image lacks. */
+ 	boot_progress_stage("cryptex usrlib union enter");
+ 	int usrlib_error = native_cryptex_usrlib_prepare(p, (user_addr_t)scratch_addr);
+ 	boot_progress_stage("cryptex usrlib union returned");
+ 	if (usrlib_error) {
+ 		printf("NATIVE_CRYPTEX_USRLIB: union not applied: %d\n", usrlib_error);
+ 	}
++	boot_progress_stage("cryptex PlugInKit union enter");
++	int pluginkit_error = native_cryptex_pluginkit_prepare(p, (user_addr_t)scratch_addr);
++	boot_progress_stage("cryptex PlugInKit union returned");
++	if (pluginkit_error) {
++		printf("NATIVE_CRYPTEX_PLUGINKIT: union not applied: %d\n", pluginkit_error);
++	}
+ #endif
+ #if CONFIG_MEMORYSTATUS
+ 	(void) memorystatus_init_at_boot_snapshot();
