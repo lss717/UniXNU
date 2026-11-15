@@ -690,7 +690,6 @@ extern "C" void native_sb_trace_start (void);
 extern "C" void native_sb_trace_dump (unsigned burst);
 extern "C" volatile uint32_t native_data_persist_state, native_data_persist_header;
 extern "C" uint32_t cs_text_fixup_parsed, cs_text_fixup_applied;
-extern "C" void native_kernel_object_sample (unsigned sample);
 extern "C" volatile uint64_t native_data_persist_first_lba, native_data_persist_present,
     native_data_persist_loaded, native_data_persist_writes, native_data_persist_errors;
 
@@ -728,7 +727,6 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
       IOLog ("NATIVE_SBPC: late sampler active (native-probe-quiet=2)\n");
       IOSleep (240000);
       for (unsigned sample = 0;; sample++) {
-        native_kernel_object_sample (6000 + sample * 30);
         native_sb_pc_sample ("SpringBoard", 6000 + sample * 30);
         // The kernel emits non-SpringBoard frame chains only for sample % 30 == 0.
         native_sb_pc_sample ("lsd", 7020 + sample * 30);

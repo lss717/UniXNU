@@ -23,3 +23,9 @@ Mac build/prelink passed at240c83178 with device b99e798. Linked kernel exports 
 - Kernel: 6d1fbc09742a11ff376b9cf76e8cfa3de5d5ed1474df778ecb4bd6e3b6415e24
 - Payload: 2b25f0845c62c7776c1e857873f3ca17322b8bb2052fefd8cc6a7743289f23cf
 - Boot: e497d32d3e69ed65da1cda309ab1be3bfa656205e6a96470c554fc7e08b348b0
+
+The completed long run retained665.6--807.9s and stayed alive with zero frames. At685.528s and754.880s the snapshots were identical: `object=0xfffffff007bc6840 event=0xfffffff007bc6849 word=0x420000 owner_ctid=0`. The low16-bit shared-reader count is zero, and no writer/upgrade waiter bit is set. H393 therefore captured transient contention, not a persistent `kernel_object` lock owner; forced unlock is rejected.
+
+SpringBoard still synchronously waited for lsd, while lsd had an active worker and new application/plugin container records continued through800s. The desktop gate is now the very slow LaunchServices system-content scan. H395 stops periodic kernel-object sampling and measures lsd `vn_open_modflags` latency: 50ms slow rows include path/error and are bounded to96, while every256 opens reports total count, slow count and maximum latency.
+
+长时间真机结果排除了`kernel_object`长期持锁。LaunchServices仍在推进但速度异常，H395转为量化lsd打开路径的耗时与总量，不做强制解锁。

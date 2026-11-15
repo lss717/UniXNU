@@ -1,0 +1,63 @@
+diff --git a/bsd/vfs/vfs_vnops.c b/bsd/vfs/vfs_vnops.c
+--- a/bsd/vfs/vfs_vnops.c
++++ b/bsd/vfs/vfs_vnops.c
+@@ -74,5 +74,6 @@
+ #include <sys/kernel.h>
+ #include <sys/file_internal.h>
++#include <mach/mach_time.h>
+ 
+ #include <sys/kauth.h>
+ #include <sys/vnode_internal.h>
+@@ -183,7 +184,24 @@ vn_open_modflags(struct nameidata *ndp, int *fmodep, int cmode)
+ 			}
+ 		}
+ 	}
++	/* H395: H394 disproved a persistent kernel_object lock, while lsd was still
++	 * enumerating system content after 800 seconds. Measure only this process's
++	 * opens. Slow rows retain the path and error; bounded rows plus periodic
++	 * totals distinguish one blocking file from broad repeated scan cost. */
++	boolean_t native_lsd = current_proc() != PROC_NULL &&
++	    strncmp(current_proc()->p_comm, "lsd", MAXCOMLEN) == 0;
++	uint64_t native_lsd_start = 0;
++	char native_lsd_path[160];
++	if (native_lsd) {
++		size_t native_lsd_len = 0;
++		native_lsd_start = mach_absolute_time();
++		native_lsd_path[0] = '\0';
++		if (copyinstr(ndp->ni_dirp, native_lsd_path,
++		    sizeof native_lsd_path, &native_lsd_len) != 0) {
++			strlcpy(native_lsd_path, "<copy-failed>", sizeof native_lsd_path);
++		}
++	}
+ 	int error;
+ 	struct vnode_attr *vap;
+ 
+ 	vap = kalloc_type(struct vnode_attr, Z_WAITOK);
+@@ -195,6 +212,27 @@ vn_open_modflags(struct nameidata *ndp, int *fmodep, int cmode)
+ 
+ 	kfree_type(struct vnode_attr, vap);
+ 
++	if (native_lsd) {
++		static uint32_t native_lsd_opens;
++		static uint32_t native_lsd_slow;
++		static uint32_t native_lsd_rows;
++		static uint64_t native_lsd_max_ns;
++		uint64_t native_lsd_ns = 0;
++		uint32_t native_lsd_n = __atomic_add_fetch(&native_lsd_opens, 1, __ATOMIC_RELAXED);
++		absolutetime_to_nanoseconds(mach_absolute_time() - native_lsd_start, &native_lsd_ns);
++		if (native_lsd_ns > __atomic_load_n(&native_lsd_max_ns, __ATOMIC_RELAXED)) {
++			__atomic_store_n(&native_lsd_max_ns, native_lsd_ns, __ATOMIC_RELAXED);
++		}
++		if (native_lsd_ns >= 50000000ULL) {
++			uint32_t slow = __atomic_add_fetch(&native_lsd_slow, 1, __ATOMIC_RELAXED);
++			uint32_t row = __atomic_add_fetch(&native_lsd_rows, 1, __ATOMIC_RELAXED);
++			if (row <= 96) printf("NATIVE_LSD_OPEN: n=%u slow=%u ms=%llu err=%d path=%s\n",
++			    native_lsd_n, slow, native_lsd_ns / 1000000ULL, error, native_lsd_path);
++		}
++		if ((native_lsd_n & 255) == 0) printf("NATIVE_LSD_OPEN_STAT: n=%u slow=%u max_ms=%llu\n",
++		    native_lsd_n, __atomic_load_n(&native_lsd_slow, __ATOMIC_RELAXED),
++		    __atomic_load_n(&native_lsd_max_ns, __ATOMIC_RELAXED) / 1000000ULL);
++	}
+ 	return error;
+ }
+ 
