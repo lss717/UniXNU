@@ -14850,3 +14850,156 @@ SET_CONFIGURATION 和非 EP0 端点配置。
 Linux DTS 同时确认 OnePlus 5 板级只启用 USB2、移除 USB3 PHY，并限制为
 high-speed。结论：`status=12` 判错已修复，USB device-mode 的 EP0
 descriptor/control 路径成立；完整数据接口仍需配置阶段。
+
+#### H407：从当前 main 源码恢复 Format 1 主路线（2026-11-17）
+
+**目标/唯一变量**：停止只对 H406 内核做定向补丁，改为用当前 main 的 Format 1
+源码、设备仓库已验证 USB 修复和 H406 启动参数，重新生成 kernel、ADT、payload
+与 UEFI，验证源码重建产物可达到与 H406 相同的启动链和 USB 阶段。
+
+正式编号为 H407。主路线源码为 `main-integration-1586`，构建时 HEAD
+`cfce2a107219b63740caf24448789a2d02b2a560`；设备仓库为
+`format1-main-restore`，HEAD
+`c4f84bbc01002e8b6d37d04a228b44a5f01eebe8`。设备仓库构建时为 clean。
+主仓库保留用户修改的 `drivers/DarwinBoot` 子模块：子模块 HEAD
+`2202b34a0787ed643812e06f89ae76eef98407e5`，dirty 文件
+`DarwinBootPkg/Driver/DarwinBoot.inf` 与 `DarwinBootPkg/Driver/Entry.S`；
+没有清理、reset 或回退这些修改。
+
+**构建工具**：
+
+- Python `3.12.16`（`/opt/local/bin/python3.12`）
+- Xcode `26.3`，build `17C529`
+- kernel/UEFI host C/C++：Xcode Apple clang `17.0.0 (1700.6.4.2)`
+- XNU/kernel/prelink/package PATH：
+  `/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`
+- UEFI/EDK2 PATH：
+  `/opt/local/libexec/llvm-20/bin:/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`
+- UEFI link/archive：LLD `20.1.8`；`llvm-ar` 必须解析为
+  `/opt/local/libexec/llvm-20/bin/llvm-ar`
+
+工具链路径已于门禁修订后通过字面 `ssh mac` 复核：Python
+`/opt/local/bin/python3.12` 为 `3.12.16`，`xcrun --find clang/ld` 均返回
+XcodeDefault 默认工具链，UEFI PATH 下 `llvm-ar` 为 LLVM `20.1.8`。
+UEFI 的 LLVM 20 PATH 只用于 EDK2 阶段，XNU、prelink 和 packaging 阶段恢复
+main PATH。
+
+首次 EDK2 全量构建在约 24 秒后因 `llvm-ar` 不在 PATH 停止，**没有生成 FD**。
+该次 `12-uefi.log` 被记录为工具链路径失败，不是源码失败。后续
+`12-uefi-retry2.log` 成功生成 FD，但本门禁修订要求再用正确的 UEFI PATH 全量
+重建一次，以排除旧执行环境带来的产物歧义。
+
+**两遍 PMGR 构建**：
+
+- stub pass 选择 `build-sheng-pmgr-stub.py`，stub archive
+  `357d60996daeb9d0a57b28d46d7792b621ad6a64f27b9417d7b2860d74118c1e`；
+  prelink kernel
+  `98f9e710bb781521d5aca35a94c529c2df7771373e12fa40f61987473926d94d`
+- real pass 选择 `build-sheng-pmgr.py`，real archive
+  `9d3675ae0cb60f1baed1a2fdcaba45564a2974e7911349a93af15fdaf1a67403`，
+  source
+  `e22f0de0cfd148ee37b612bec6412e045523d84eb95237e0bd91c64cfbe46b8f`
+- final kernel
+  `fd01e7c7c7399b1a0757c6edf6a37f80acd2d5704de45bc177ad19649697e3ef`
+
+stub 与 real prelink kernel 哈希不同，且第二次 prelink 日志明确记录用 real
+PMGR archive 输出最终 kernel，满足两遍构建门禁。
+
+**启动参数**：完整保留 H406 参数集，`args` 为 992 B；加 8 位 `zap-base`
+为 `1012/1024`，按 16 位地址计算的最坏情形为 `1020/1024`。
+`cpus=2`、`cheeseburger-usb=2`、`h103-slot=1`、`h103-log-secs=60`、
+`sheng-pmgr=2` 均存在。
+
+**产物**：
+
+- kernel `fd01e7c7c7399b1a0757c6edf6a37f80acd2d5704de45bc177ad19649697e3ef`
+- payload `e990047f0ccf9d7bec01f63fdb2451246180477177ef4bf806d880fc5a008d53`
+- payload report
+  `ddd649ee8df2c16a2e17ee7c785164234136c4a84a18d2fa837327f9d6dd2d71`
+- ADT `5a3dcad58ffffb0bcc28cf7dfe61f43c07ebfd7513605e03fef21414f22e348b`
+- trust cache
+  `7416ca4f8377146626bb284e2133c76bee6cb4e3ee0af5d648b186235a7323a7`
+- Data seed
+  `0ffea0e7ef0bd10198e0d19009105af00ee3ba959d0bfdd94d1b2d442f56aa64`
+- UEFI FD `8861cdb8e8eced238b24e8177adc4f5682c465d0b0aec42c9f499eb7b8093bce`
+- UEFI gzip+DTB
+  `f1f1f707539ead3c59e34a6da5550c1f276dbcac71aeeed790563a69b2015c7b`
+- boot `16398d6703d9691d8b183d7d1c473f8aab6a1bf5264292c256c06c9363ed4ab4`
+- `unixnu.toml`
+  `c64e6ffb9c09df96eafbb2689851cefbfceeb718d3069379063d8d61004c072d`
+- local evidence:
+  `main-route/artifacts/format1-main-integration-20261117/H407/`
+
+**静态门禁**：
+
+- payload 内反提取 `kernel.macho` 与源构建 kernel 逐字节一致；
+- kernel FAT 链为单个连续区段 `4350–55765`，没有三段碎片布局；
+- ADT、trust cache、Data seed 与 `payload.json` 一致；
+- ADT checker 通过；`TrustCache` 与 `PackedRAMDisk` memory-map 占位均存在；
+- boot 内嵌 payload 与 `H407-payload.img` 逐字节一致；
+- boot 内嵌 UEFI gzip 解压后与 6 MiB FD 逐字节一致，尾部 421,048 B
+  为 FDT DTB；
+- boot kernel/ramdisk/tags 地址为 `0x10000000/0x12000000/0x18000000`，
+  81,217,536 B 文件被 header 精确消费，无尾随数据；
+- `check-cheeseburger.py` 与 `check-adt.py` 均为 exit 0；
+- 可复现检查脚本与结果：
+  `H407/verify_h407.py`、`H407/H407-static-verification.json`。
+
+**门禁前启动证据**：在工具链门禁补充完成前，已有一次旧 H407 包的
+`fastboot boot` 尝试。该结果只绑定到 boot SHA
+`16398d6703d9691d8b183d7d1c473f8aab6a1bf5264292c256c06c9363ed4ab4`，
+不自动证明按最终门禁重建后的新 H407。
+
+启动前，2026-11-17 00:22 在唯一 TWRP 设备
+`16149951 recovery` 拉取 `userdata_ios` 末端 32 MiB，所得 ring SHA-256 为
+`c003faadcff4a339cd3ef6744ace5f98da84e3895b2d0ec4f4d4a14eeb799673`，
+与 H406 ring 完全相同；header boot ID 仍为 `0x1c3e698ed`。因此该环证明的是
+H406，不能作为 H407 启动证据。
+
+随后已按授权清空同一 32 MiB ring，回读 SHA-256 为
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`，
+并对上述旧 boot SHA 执行了一次 `fastboot boot`。启动后约 295 秒，Windows
+出现 `VID_1209&PID_0001` 的 UniXNU USB EP0 节点。
+
+回到 TWRP 后已回收完整 ring：
+
+- header boot ID `10338622125`（`0x2683adaad`）；slot boot ID
+  `28f67a4e`；slot build **H407**；header uptime 502 s；
+- ring `fbf0424f298a9a7655885c6da504fec5721fcf43e053bc9d82a4713b31185555`；
+- decoded log
+  `062185eb9029f6ddd41e0b5c3e02fd0a6d542c94051c68f483d4058eb35818f8`；
+- 合并日志窗口 **221.740252–538.158377 s**；247 个 ring slots，
+  保留 454 个写入轮次。
+
+启动与用户态：
+
+- `NATIVE_PANIC`、`Undefined kernel instruction` 均为 0；
+- backboardd、SpringBoard、lsd 分别在 222.571、235.684、255.782 s
+  进入日志；窗口内共记录 111 次 exec 和 211 次 trust-cache query；
+- display heartbeat 最终达到 `dpy=3/18/0/1/0`。
+
+UFS：
+
+- `NATIVE_UFS_DBTO=0`、`RECOVER=0`、stall=0、OCS timeout=0、retry=0；
+- `block requests refused=0`；ring last write 513.3 s；
+- header `write_errors=133`，对应 3 条 `NATIVE_UFS_LOG_FAIL`。该计数器记录
+  非阻塞日志槽在队列/I/O 锁争用或写入返回 false 时被主动丢弃，并与 UFS
+  数据路径故障分开计数；454 个日志轮次成功落盘，不能把 133 解释为 UFS
+  数据写失败。
+
+USB：
+
+- 274.359 s `EP0 running`；276.542 s bus reset；276.678 s
+  `connect done speed=0 generation=1`；
+- 7 个 SETUP：两次 GET_DESCRIPTOR(device)、SET_ADDRESS、
+  GET_DESCRIPTOR(configuration)、BOS 和三个 string descriptor；
+- `transfer error=0`、`EP0 fault=0`；未出现 SET_CONFIGURATION，故仍只是
+  EP0 descriptor/control 阶段；
+- 00:32:49 Windows 再次创建 `UniXNU USB EP0` /
+  `USB\VID_1209&PID_0001\OP5USB0001` PnP 节点，状态为 class-FF
+  无系统驱动导致的 problem 28。
+
+本轮旧产物分类为 **pre-gate packaged-and-statically-verified / booted with
+H407 build identity**。这份 ring 是行为证据，不解除工具链门禁：仍需用明确
+XNU PATH 重建 kernel/payload、用 LLVM 20 UEFI PATH 重建 FD、恢复 XNU PATH
+完成 packaging，再对新 boot SHA 重复静态门禁和一次真机验证。
