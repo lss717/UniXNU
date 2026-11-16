@@ -14657,3 +14657,121 @@ NATIVE_SBMSG2: sample=1890 comm=lsd tid=536 rcvname=0xa03 rcvsz=16384
 lsd 实际 pid 对比：
 - 目标 pid ≠ lsd 当轮 pid → **发到了旧连接/陈旧端口权**（连接层问题）；
 - 目标 pid = lsd 当轮 pid 而 lsd 无收包 → **内核投递路径丢消息**。
+
+#### H404：main 用户态恢复候选恢复 H403-cp 用户态（2026-11-16）
+
+**目标/唯一变量**：从 `origin/main` 父线恢复 H403-cp 唯一缺失的
+`5589df107` UFS read-ahead/DMA span 提交，并把内核文件放回已验证的两段 FAT 链。
+临时别名 `MAIN-UR-1`。
+
+**源码与工具**：
+
+- UniXNU branch `main-userland-restore`，commit
+  `836c5075c1a223e71c776f6473068c95eea33343`
+- device branch detached `0c66d9998a91da526a2de1bad0e58d4f1847c88f`
+- Python `3.12.16`、Xcode `26.3 (17C529)`、XcodeDefault clang/ld
+- config SHA-256
+  `63a8df81f5aadd2d07a9b93d935f39debc93844051eae0a1bb21227eaa5ca431`
+- payload `unixnu.toml` SHA-256
+  `3e7a8786b3568ec2127a7b169ddf02b8e8b09418c95c99ea6fd4f9644e21a26c`
+- stub-PMGR 与 real-PMGR 两遍构建均完成
+
+**产物**：
+
+- kernel `7d3ad1bea69aea580dac087450b32392ecbb0491ba22816ecfe05fa04980049b`
+- ADT `a3e18b07e55a52c93bcd829615611ba4bb6df745cb5ef7e6d594a5610c1a0f4f`
+- trust cache `5701db3e65224bf6ad13a58ab546abfc595b2837752f96916c2a6a54ae34637e`
+- Data seed `d474b36616dca3227beb09243276e20818e32b11f55ad0cc2c3f1d5c0a656d41`
+- UEFI `ac56ddbd542cb3dbfeab1d84ad67eb6f76da13dac6dc0b28473232300af9fca4`
+- payload `7b0af81e07da789729710d109f1e5880de9c89cf5ff8ffb657a5b1454493a167`
+- boot `962793348b67196d92d18ad83cfc66dbd5b39f0aa97be572af38b15c3be80915`
+- local evidence:
+  `main-route/artifacts/main-userland-restore-20261116/H404/`
+- build time: 2026-11-16 21:21–21:47 +08:00
+
+静态门禁通过：payload 内 kernel 反提取一致，two-run FAT 链，boot 内 payload
+逐字节一致，boot args 1020/1024 worst-case。
+
+**设备结果**：2026-11-16 21:50:20 `fastboot boot`。
+
+- header boot ID `1b959bb1f`；slot boot ID `205e3ef7`；build `MAIN-UR-1`
+- 日志窗口 28.3–385.6 s；`NATIVE_PANIC` 0
+- SpringBoard、backboardd、lsd 均启动
+- backboardd 打开 NativeLegacyDisplay 9 次
+- UFS `block requests refused=0`；ring last write 174.7 s，报告 CHECK
+- USB 参数已请求，但旧驱动仍报 `gctl=00101004 role=1`、
+  `ep0 command 9 timeout value=00000409`
+
+结论：main 源码与两段 FAT 链的恢复候选成功达到 H403-cp 等同用户态。该轮 USB
+失败是独立的设备模式与端点命令参数问题，不回退 H404。
+
+#### H405：DWC3 切到 device mode 并修正 EP 命令参数（2026-11-16）
+
+**目标/唯一变量**：以设备验证过的 H404 内核 `7d3ad1be` 为基线，只修改 DWC3
+设备模式选择值以及 EP 命令参数寄存器偏移，并继续使用 H404 的两段 FAT 链与
+`cheeseburger-usb=2` 参数。正式编号为 H405。
+
+设备源码修复为 branch `usb-device-mode-fix-0c66`、commit
+`ca6e41706f005f1110545dd93fa0999b78510440`。直接源码重建得到
+`93ed2a651d30aa654396498b673956b33d2cf6361a112f929ae203d561dc01f9`，
+但在 27.655673 s 出现 `rootvp not authenticated after mounting`，因此没有把该
+重建产物用于 H405。正式镜像直接对已验证内核做三个字节的定向补丁。
+
+**产物**：
+
+- kernel `1bf16fb4bc547a74e42e16c87c8f4995f2407e774a62480fa129984a69f25905`
+- payload `9d2ba9e77356f7bf7d6ebdcd468706740e70a3718e941ebded2a460c30708c66`
+- boot `1b42ff8999a1ca2692af319e4fe6fb49c952d778c1dbbd7bd563e768556d9593`
+- ADT `a3e18b07e55a52c93bcd829615611ba4bb6df745cb5ef7e6d594a5610c1a0f4f`
+- trust cache `5701db3e65224bf6ad13a58ab546abfc595b2837752f96916c2a6a54ae34637e`
+- Data seed `d474b36616dca3227beb09243276e20818e32b11f55ad0cc2c3f1d5c0a656d41`
+- UEFI `ac56ddbd542cb3dbfeab1d84ad67eb6f76da13dac6dc0b28473232300af9fca4`
+- payload `unixnu.toml` `3e7a8786b3568ec2127a7b169ddf02b8e8b09418c95c99ea6fd4f9644e21a26c`
+- local evidence:
+  `main-route/artifacts/usb-device-mode-20261116/H405/`
+
+静态门禁通过：
+
+- H405 内核与 H404 内核等长，全部差异恰为三个字节：
+  `0x9d11ae: 14→13`、`0x9d23f1: 00→01`、`0x9d2419: 01→00`；
+- payload 内反提取 `kernel.macho` 与 H405 内核逐字节一致；
+- boot 内嵌 payload 与 `H405-payload.img` 逐字节一致，UEFI 与 H404 一致，
+  1454232 B kernel 后无尾随字节；
+- H405 的 `kernel.macho` FAT 链仍为与 H404 相同的两段：
+  `55594–77205`、`4175–34018`；
+- ADT、trust cache、Data seed、`unixnu.toml` 全部与 H404 一致；
+- boot args 992 B，带 8 位及 16 位 `zap-base` 的最坏情形为
+  `1012/1024`、`1020/1024`，且 `cheeseburger-usb=2` 存在；
+- 可复现检查脚本与结果：
+  `H405/verify_h405.py`、`H405/H405-static-verification.json`。
+
+**设备结果**：H405 共启动两次。
+
+1. 2026-11-16 22:50:18 `fastboot boot`，65 s 时第一次拉环：
+   header boot ID `0x6bd7e1d7`、slot boot ID `20e00f32`、build `MAIN-UR-1`，
+   `NATIVE_PANIC` 0。该窗口尚未到 USB 的 240 s 诊断点。
+2. 2026-11-16 22:52:32 再次 `fastboot boot`，23:00:07 拉取长时日志：
+   header boot ID `0x2024e5e6c`、slot boot ID `20df73a4`、361 slots、
+   header uptime 420 s，合并日志最后时间戳 **449.077521 s**。
+
+长时运行结果：
+
+- `NATIVE_PANIC` 与 `Undefined kernel instruction` 均为 0；
+- SpringBoard、backboardd、lsd 分别于 138.96 s、182.61 s、203.39 s 启动；
+- backboardd 打开 NativeLegacyDisplay 3 次；413.18 s 时 `dpy=3/18/0/1/0`；
+- `block requests refused=0`，UFS stall、OCS timeout、recover 均为 0；
+- USB 修正确实生效：267.947 s `EP0 running`，270.101 s `bus reset`，
+  270.135 s `connect done speed=0 generation=1`；此前失败的命令 9 超时为 0，
+  command 9 已完成且 EP0 已运行；
+- USB 枚举仍未完成：270.194 s 出现 `transfer error ep=0 status=12`，
+  270.196 s 出现 `EP0 fault event=3 setup=0`，没有收到有效 SETUP 包。
+
+证据哈希：
+
+- long ring `c88b4812b7a69a8ee8f511422dd244efb0d97939e27f04617f0f5b255710b716`
+- short ring `0a9b72872b268a517c46705741bdbdfad1cfad9d198acd332fa43b291eca5e7c1`
+- decoded long log `08d30d61c9dc183cf7df196c2c7fc4c6041b8b0f804186ed887616a938a17cb6`
+
+结论：H405 保留 H404 的可用用户态基线并修复了 DWC3 host/device role 与
+PAR2/PAR0 偏移错误；EP0 配置、bus reset 和 connect 已通过。下一步只剩 device
+controller 的 SETUP/transfer 路径，USB 目前不能视为完成。
