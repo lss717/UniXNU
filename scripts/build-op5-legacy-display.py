@@ -7,7 +7,7 @@ builder locates the original Legacy vtable/constructor from that kernelcache,
 derives every binding, and links a minimal display probe. It never patches the
 original kext.
 """
-import argparse, hashlib, json, os, re, shutil, struct, subprocess, sys
+import argparse, hashlib, json, os, re, shutil, struct, subprocess, sys, tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +32,9 @@ def defer_init_registration(source, output, symbol):
     run([sys.executable, ROOT / 'scripts/macho-defer-init.py',
          '--remove-section', '__DATA,__mod_init_func',
          '--globalize-symbol', symbol, source, output])
+    if not output.is_file() or output.stat().st_size == 0:
+        raise SystemExit(f'deferred initializer output is missing or empty: {output}')
+    return output.resolve(strict=True)
 
 
 def header(pure, slots, instance=0x18a0):
@@ -277,19 +280,20 @@ def main():
     accel_asm.write_text(''.join(f'.private_extern {name}\n.set {name}, {value:#x}\n' for name, value in sorted(accel_bindings.items())))
     run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0.0', '-c', accel_asm, '-o', OUT / 'original-accelerator-bindings.o'])
 
-    defer_init_registration(
+    late_dir = Path(tempfile.mkdtemp(prefix='unixnu-late-display-', dir='/tmp')).resolve()
+    display_late = defer_init_registration(
         display_obj,
-        OUT / 'NativeLegacyDisplay.late.o',
+        late_dir / 'NativeLegacyDisplay.late.o',
         '__GLOBAL__sub_I_NativeLegacyDisplay.cpp',
     )
-    defer_init_registration(
+    presenter_late = defer_init_registration(
         presenter_obj,
-        OUT / 'NativeGOPresenter.late.o',
+        late_dir / 'NativeGOPresenter.late.o',
         '__GLOBAL__sub_I_NativeGOPresenter.cpp',
     )
-    defer_init_registration(
+    accelerator_late = defer_init_registration(
         OUT / 'NativeA540AcceleratorProbe.o',
-        OUT / 'NativeA540AcceleratorProbe.late.o',
+        late_dir / 'NativeA540AcceleratorProbe.late.o',
         '__GLOBAL__sub_I_NativeA540AcceleratorProbe.cpp',
     )
     archive = OUT / 'libNativeLegacyDisplay.late.a'
@@ -297,11 +301,31 @@ def main():
     # Keep the archive member set identical to the stable H103cg layout. The
     # A540 object remains linked even though the display object no longer draws
     # its state; this compensates for the small gray-strip addition.
-    members = [OUT / 'NativeLegacyDisplay.late.o', OUT / 'NativeGOPPresenter.late.o', OUT / 'original-bindings.o',
+    members = [display_late, presenter_late, OUT / 'original-bindings.o',
                OUT / 'LegacyDisplayProbe.o', OUT / 'NativeLegacyProbeSupport.o',
-               OUT / 'NativeA540AcceleratorProbe.late.o', OUT / 'original-accelerator-bindings.o',
+               accelerator_late, OUT / 'original-accelerator-bindings.o',
                OUT / 'NativeA540C3.o'] + smmu_objs
-    run(['xcrun', 'ar', 'rcs', archive] + members)
+    resolved_members = [path.resolve(strict=True) for path in members]
+    missing = [str(path) for path in resolved_members if not path.is_file()]
+    if missing:
+        raise SystemExit(f'archive inputs disappeared before ar: {missing}')
+    print('+ archive cwd=/')
+    print('+ archive output=' + str(archive.resolve()))
+    for member in resolved_members:
+        print('+ archive input=' + str(member))
+    run(['xcrun', 'ar', 'rcs', archive.resolve()] + resolved_members, cwd='/')
+    archived_members = subprocess.check_output(
+        ['/usr/bin/xcrun', 'ar', 't', str(archive.resolve())],
+        text=True,
+        cwd='/',
+    ).splitlines()
+    for required in (
+        'NativeLegacyDisplay.late.o',
+        'NativeGOPresenter.late.o',
+        'NativeA540AcceleratorProbe.late.o',
+    ):
+        if required not in archived_members:
+            raise SystemExit(f'archive verification missing {required}: {archived_members}')
     sources = [ROOT / 'scripts/audit-mobile-graphics-legacy-op5.py',
                ROOT / 'scripts/gen-a540-firmware.py',
                ROOT / 'drivers/NativeMobileDisplay/NativeLegacyDisplay.cpp',
@@ -321,6 +345,8 @@ def main():
         kernelcache_sha256=audit['source_kernelcache_sha256'],
         original_family_text_sha256=audit['original_family_text_sha256'],
         archive_sha256=sha(archive),
+        late_staging=str(late_dir),
+        archived_members=archived_members,
         legacy_vtable=hex(int(audit['legacy_vtable'], 16) + slide), legacy_constructor=hex(int(audit['legacy_constructor_vptr_pc'], 16) + slide),
         prelink_slide=hex(slide),
         virtual_entries=audit['legacy_virtual_entries'], abstract_slots=audit['abstract_slots'],
