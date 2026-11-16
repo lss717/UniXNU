@@ -14884,12 +14884,16 @@ XcodeDefault 默认工具链，UEFI PATH 下 `llvm-ar` 为 LLVM `20.1.8`。
 UEFI 的 LLVM 20 PATH 只用于 EDK2 阶段，XNU、prelink 和 packaging 阶段恢复
 main PATH。
 
-最终重建门禁准备提交为 `6fca0115`（`fix(build): enforce split XNU and UEFI
-toolchains`）：`macos-build-kernel.sh` 不再自行注入 Xcode toolchain bin 或
-LLVM 20，所有 archive/helper 均显式调用 `/opt/local/bin/python3.12`；
-legacy display builder 的 `llvm-objcopy` 只能经固定 PATH 或
-`/usr/bin/xcrun --find` 解析，禁止硬编码回退到 LLVM 20。最终重建将以该
-提交为起点，旧 boot SHA 仍只对应上面的门禁前 HEAD。
+最终重建门禁准备提交为 `8b697f32`（`fix(build): enforce split XNU and UEFI
+toolchains`）和 `6c2f0b16`（`build: defer Mach-O initializers without LLVM
+objcopy`）：`macos-build-kernel.sh` 不再自行注入 Xcode toolchain bin 或
+LLVM 20，所有 archive/helper 均显式调用 `/opt/local/bin/python3.12`。
+Xcode 26.3 不提供 `llvm-objcopy`，且 LLVM 20 不允许进入 XNU 阶段，因此
+legacy display 的三个 late object 改由仓库内 `scripts/macho-defer-init.py`
+完成确定的 Mach-O 元数据变换：稳定重排 nlist、更新 LC_DYSYMTAB、重映射
+relocation symbol index，并把 `__DATA,__mod_init_func` 原地替换为未引用的
+零大小 section。合成 Mach-O 自测覆盖了符号重排、relocation 重映射和 section
+失效。最终重建以 `6c2f0b16` 为起点；旧 boot SHA 仍只对应更早的门禁前 HEAD。
 
 首次 EDK2 全量构建在约 24 秒后因 `llvm-ar` 不在 PATH 停止，**没有生成 FD**。
 该次 `12-uefi.log` 被记录为工具链路径失败，不是源码失败。后续
