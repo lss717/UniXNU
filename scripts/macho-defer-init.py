@@ -170,10 +170,36 @@ class MachOObject:
         assert self.dysymtab is not None
         entries = self.symbol_entries()
         matches = [entry for entry in entries if entry["name"] == name]
-        if len(matches) != 1:
-            raise ValueError(f"expected one symbol named {name!r}, found {len(matches)}")
-        target = matches[0]
-        target["n_type"] |= N_EXT
+        if not matches:
+            suffix = name.removeprefix("__")
+            candidates = [
+                entry
+                for entry in entries
+                if entry["name"].removeprefix("__") == suffix
+                or (
+                    "GLOBAL__sub_I_" in entry["name"]
+                    and entry["name"].endswith(".cpp")
+                )
+            ]
+            if len(candidates) == 1:
+                matches = candidates
+        if not matches:
+            available = [
+                entry["name"]
+                for entry in entries
+                if "GLOBAL__sub_I_" in entry["name"]
+            ]
+            raise ValueError(
+                f"expected symbol named {name!r}, found 0; "
+                f"initializer candidates: {available}"
+            )
+        names = {entry["name"] for entry in matches}
+        if len(names) != 1:
+            raise ValueError(
+                f"symbol {name!r} matched multiple initializer names: {sorted(names)}"
+            )
+        for target in matches:
+            target["n_type"] |= N_EXT
 
         locals_ = []
         externals = []
@@ -194,7 +220,11 @@ class MachOObject:
                 entry["old_index"] for entry in ordered
             )
         }
-        if mapping[target["old_index"]] >= len(locals_) + len(externals):
+        target_new_indices = [mapping[entry["old_index"]] for entry in matches]
+        if any(
+            new_index >= len(locals_) + len(externals)
+            for new_index in target_new_indices
+        ):
             raise AssertionError("globalized symbol was not placed in external definitions")
 
         self.relocate_symbol_indices(mapping)
