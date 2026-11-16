@@ -14857,8 +14857,8 @@ descriptor/control 路径成立；完整数据接口仍需配置阶段。
 源码、设备仓库已验证 USB 修复和 H406 启动参数，重新生成 kernel、ADT、payload
 与 UEFI，验证源码重建产物可达到与 H406 相同的启动链和 USB 阶段。
 
-正式编号为 H407。主路线源码为 `main-integration-1586`，构建时 HEAD
-`cfce2a107219b63740caf24448789a2d02b2a560`；设备仓库为
+正式编号为 H407。主路线源码为 `main-integration-1586`。门禁前旧包的构建
+HEAD 为 `cfce2a107219b63740caf24448789a2d02b2a560`；设备仓库为
 `format1-main-restore`，HEAD
 `c4f84bbc01002e8b6d37d04a228b44a5f01eebe8`。设备仓库构建时为 clean。
 主仓库保留用户修改的 `drivers/DarwinBoot` 子模块：子模块 HEAD
@@ -14883,6 +14883,13 @@ descriptor/control 路径成立；完整数据接口仍需配置阶段。
 XcodeDefault 默认工具链，UEFI PATH 下 `llvm-ar` 为 LLVM `20.1.8`。
 UEFI 的 LLVM 20 PATH 只用于 EDK2 阶段，XNU、prelink 和 packaging 阶段恢复
 main PATH。
+
+最终重建门禁准备提交为 `6fca0115`（`fix(build): enforce split XNU and UEFI
+toolchains`）：`macos-build-kernel.sh` 不再自行注入 Xcode toolchain bin 或
+LLVM 20，所有 archive/helper 均显式调用 `/opt/local/bin/python3.12`；
+legacy display builder 的 `llvm-objcopy` 只能经固定 PATH 或
+`/usr/bin/xcrun --find` 解析，禁止硬编码回退到 LLVM 20。最终重建将以该
+提交为起点，旧 boot SHA 仍只对应上面的门禁前 HEAD。
 
 首次 EDK2 全量构建在约 24 秒后因 `llvm-ar` 不在 PATH 停止，**没有生成 FD**。
 该次 `12-uefi.log` 被记录为工具链路径失败，不是源码失败。后续

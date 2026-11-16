@@ -112,8 +112,13 @@ else
   export XNU_SKIP_PATCH_LOOP=1
 fi
 
-export PATH=/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin:/opt/local/bin:/opt/local/libexec/llvm-20/bin:/opt/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+export PATH=/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+PYTHON=/opt/local/bin/python3.12
+if [ ! -x "$PYTHON" ]; then
+  echo "required Python is missing: $PYTHON" >&2
+  exit 1
+fi
 
 cd "$TREE"
 export XNU_TRUST_CACHE_RUNTIME=0
@@ -181,7 +186,7 @@ fi
 # result: a missing TrustCache/API.h otherwise surfaces much later, in the mockfs archive.
 if [ ! -d "$WORK/EXTERNAL_HEADERS/TrustCache" ]; then
   echo "== restore omitted headers"
-  ( cd "$TREE" && python3 "$HOME/UniXNU/scripts/prepare-xnu-source.py" )
+  ( cd "$TREE" && "$PYTHON" "$HOME/UniXNU/scripts/prepare-xnu-source.py" )
   if [ ! -d "$WORK/EXTERNAL_HEADERS/TrustCache" ]; then
     echo "TrustCache headers were not restored; the archive step cannot compile" >&2
     exit 1
@@ -193,7 +198,7 @@ fi
 # archive list, so the wrapper does the same.
 if [ -d "$TREE/refer/IOStorageFamily" ] && [ ! -d "$TREE/build/storage-abi/include/IOKit/storage" ]; then
   echo "== storage headers"
-  python3 scripts/prepare-storage-headers.py
+  "$PYTHON" scripts/prepare-storage-headers.py
 fi
 
 # The board archive list of ../UniXNU-cheeseburger board.toml [kernel] archives,
@@ -213,7 +218,7 @@ for ARCHIVE in \
   "scripts/build-libpthread-kernel.py"; do
   echo "== archive $ARCHIVE"
   # shellcheck disable=SC2086
-  python3 $ARCHIVE
+  "$PYTHON" $ARCHIVE
 done
 
 # The full sheng PMGR archive reads the AON vtable out of the *previously* prelinked
@@ -222,10 +227,10 @@ done
 # build, which has a kernel.macho, replaces it with the real bindings.
 if [ -f "$HOME/UniXNU/out/cheeseburger/kernel/kernel.macho" ]; then
   echo "== archive scripts/build-sheng-pmgr.py"
-  python3 scripts/build-sheng-pmgr.py
+  "$PYTHON" scripts/build-sheng-pmgr.py
 else
   echo "== archive scripts/build-sheng-pmgr-stub.py (no prelinked kernel yet)"
-  python3 scripts/build-sheng-pmgr-stub.py
+  "$PYTHON" scripts/build-sheng-pmgr-stub.py
 fi
 
 # build-native-ufs-runtime.py embeds the signed owner policies (built from the IPSW's
@@ -234,7 +239,7 @@ fi
 # means running scripts/build-owner-os-policy.py and the systemos equivalent first.
 if [ "${XNU_NATIVE_UFS:-0}" = 1 ]; then
   echo "== archive scripts/build-native-ufs-runtime.py"
-  python3 scripts/build-native-ufs-runtime.py
+  "$PYTHON" scripts/build-native-ufs-runtime.py
 else
   echo "== archive scripts/build-native-ufs-runtime.py skipped (XNU_NATIVE_UFS=0, the link does not use it)"
 fi
@@ -243,7 +248,7 @@ DISPLAY_ARCHIVE="$TREE/build/native-legacy-display/libNativeLegacyDisplay.late.a
 if [ ! -f "$DISPLAY_ARCHIVE" ] || \
    [ -n "$(find -L "$HOME/UniXNU/drivers/NativeMobileDisplay" -type f -newer "$DISPLAY_ARCHIVE" -print -quit 2>/dev/null)" ]; then
   echo "rebuilding the legacy display archive (sources newer than $DISPLAY_ARCHIVE)"
-  SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)" python3 scripts/build-op5-legacy-display.py
+  SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)" "$PYTHON" scripts/build-op5-legacy-display.py
 fi
 
 # The SDK's availability.pl is gone in Xcode 26.2; the fakeroot build in
