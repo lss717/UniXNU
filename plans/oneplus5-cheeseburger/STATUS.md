@@ -14775,3 +14775,51 @@ lsd 实际 pid 对比：
 结论：H405 保留 H404 的可用用户态基线并修复了 DWC3 host/device role 与
 PAR2/PAR0 偏移错误；EP0 配置、bus reset 和 connect 已通过。下一步只剩 device
 controller 的 SETUP/transfer 路径，USB 目前不能视为完成。
+
+#### H406：接受 DWC3 XferComplete 状态标志，USB 完成枚举（2026-11-16）
+
+**根因**：Linux DWC3 定义把 XferComplete 的 status 当作位图：bit0 是
+`DEPEVT_STATUS_BUSERR`，bit1 是 SHORT，bit2 是 IOC，bit3 是 LST。H405
+日志中的 `status=12` 即 `IOC|LST`，是正常完成标志；旧驱动使用 `status != 0`
+判错，在第一个合法 SETUP 完成事件上主动设置 `fault=true` 并停止轮询。
+
+**源码修复**：device branch `usb-device-mode-fix-0c66`，commit
+`6884c78`（`fix(usb): treat DWC3 completion flags as success`）。现在只有
+`status & BIT(0)` 才进入 Bus Error 分支。
+
+**产物**：
+
+- kernel `6b2f0acd12c4fd84266a7d892f3dea0baf2a6bde97a98facbbc3e65683d37143`
+- payload `4227f2ba673dced1df619268923af9a9622a4c511e824d5c37d5e00e94ac1553`
+- boot `13c6e854fc6ebb187d215df846f0a44dbccf235247b275d4873725cab017b074`
+- local evidence:
+  `main-route/artifacts/usb-device-mode-20261116/H406/`
+
+静态门禁：
+
+- 以 H405 为基线仅改 1 字节：`0x9d14eb: 34→36`；
+- 反汇编确认 `fffffff0079d54e8` 从 `cbz w9,success` 变为
+  `tbz w9,#0,success`；
+- payload 内 kernel 反提取一致，boot 内 payload 逐字节一致；
+- UEFI、ADT、trust cache、Data seed、`unixnu.toml` 保持 H404 基线；
+- kernel FAT 链仍为两段 `55594–77205`、`4175–34018`；
+- boot args 992 B，最坏情形 `1020/1024`，`cheeseburger-usb=2` 存在。
+
+**设备结果（进行中）**：2026-11-16 23:09:33 `fastboot boot`。23:14:51
+Windows PnP 已出现：
+
+```text
+UniXNU USB EP0
+USB\VID_1209&PID_0001\OP5USB0001
+USB\VID_1209&PID_0001&REV_0100
+USB\COMPAT_VID_1209&Class_FF&SubClass_00&Prot_00
+```
+
+Windows 已走到设备节点创建，证明 SETUP、GET_DESCRIPTOR 和控制传输已能完成。
+设备显示 `CM_PROB_FAILED_INSTALL`（Problem 28）且 `Service` 为空，是由当前
+配置的 vendor-specific class `FF` 没有 Windows 类驱动导致，不是 USB
+枚举失败。PnP 证据：`H406/H406-windows-pnp.txt`。
+
+Linux DTS 同时确认 OnePlus 5 板级只启用 USB2、移除 USB3 PHY，并限制为
+high-speed；H406 的 DWC3 日志仍待回到 TWRP 后拉取，以记录 SETUP 数量、
+最终事件和运行稳定性。
