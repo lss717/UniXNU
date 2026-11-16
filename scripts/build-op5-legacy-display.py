@@ -24,26 +24,14 @@ def run(cmd, **kw):
     return subprocess.run([str(x) for x in cmd], check=True, **kw)
 
 
-def xcrun_tool(name):
-    direct = shutil.which(name)
-    if direct:
-        return direct
-    result = subprocess.run(
-        ['/usr/bin/xcrun', '--find', name],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    path = result.stdout.strip()
-    if result.returncode == 0 and path:
-        return path
-    raise SystemExit(
-        f'{name} is unavailable through the fixed XNU PATH and Xcode xcrun'
-    )
-
-
 def sha(p):
     return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+
+
+def defer_init_registration(source, output, symbol):
+    run([sys.executable, ROOT / 'scripts/macho-defer-init.py',
+         '--remove-section', '__DATA,__mod_init_func',
+         '--globalize-symbol', symbol, source, output])
 
 
 def header(pure, slots, instance=0x18a0):
@@ -289,13 +277,21 @@ def main():
     accel_asm.write_text(''.join(f'.private_extern {name}\n.set {name}, {value:#x}\n' for name, value in sorted(accel_bindings.items())))
     run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0.0', '-c', accel_asm, '-o', OUT / 'original-accelerator-bindings.o'])
 
-    objcopy = xcrun_tool('llvm-objcopy')
-    run([objcopy, '--remove-section=__DATA,__mod_init_func', '--globalize-symbol=__GLOBAL__sub_I_NativeLegacyDisplay.cpp',
-         display_obj, OUT / 'NativeLegacyDisplay.late.o'])
-    run([objcopy, '--remove-section=__DATA,__mod_init_func', '--globalize-symbol=__GLOBAL__sub_I_NativeGOPPresenter.cpp',
-         presenter_obj, OUT / 'NativeGOPPresenter.late.o'])
-    run([objcopy, '--remove-section=__DATA,__mod_init_func', '--globalize-symbol=__GLOBAL__sub_I_NativeA540AcceleratorProbe.cpp',
-         OUT / 'NativeA540AcceleratorProbe.o', OUT / 'NativeA540AcceleratorProbe.late.o'])
+    defer_init_registration(
+        display_obj,
+        OUT / 'NativeLegacyDisplay.late.o',
+        '__GLOBAL__sub_I_NativeLegacyDisplay.cpp',
+    )
+    defer_init_registration(
+        presenter_obj,
+        OUT / 'NativeGOPresenter.late.o',
+        '__GLOBAL__sub_I_NativeGOPresenter.cpp',
+    )
+    defer_init_registration(
+        OUT / 'NativeA540AcceleratorProbe.o',
+        OUT / 'NativeA540AcceleratorProbe.late.o',
+        '__GLOBAL__sub_I_NativeA540AcceleratorProbe.cpp',
+    )
     archive = OUT / 'libNativeLegacyDisplay.late.a'
     archive.unlink(missing_ok=True)
     # Keep the archive member set identical to the stable H103cg layout. The
