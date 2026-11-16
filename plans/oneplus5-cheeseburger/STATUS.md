@@ -14776,7 +14776,7 @@ lsd 实际 pid 对比：
 PAR2/PAR0 偏移错误；EP0 配置、bus reset 和 connect 已通过。下一步只剩 device
 controller 的 SETUP/transfer 路径，USB 目前不能视为完成。
 
-#### H406：接受 DWC3 XferComplete 状态标志，USB 完成枚举（2026-11-16）
+#### H406：接受 DWC3 XferComplete 状态标志，USB EP0 描述符枚举通过（2026-11-16）
 
 **根因**：Linux DWC3 定义把 XferComplete 的 status 当作位图：bit0 是
 `DEPEVT_STATUS_BUSERR`，bit1 是 SHORT，bit2 是 IOC，bit3 是 LST。H405
@@ -14805,8 +14805,24 @@ controller 的 SETUP/transfer 路径，USB 目前不能视为完成。
 - kernel FAT 链仍为两段 `55594–77205`、`4175–34018`；
 - boot args 992 B，最坏情形 `1020/1024`，`cheeseburger-usb=2` 存在。
 
-**设备结果（进行中）**：2026-11-16 23:09:33 `fastboot boot`。23:14:51
-Windows PnP 已出现：
+**设备结果**：2026-11-16 23:09:33 `fastboot boot`，23:16:31 回到 TWRP
+拉取日志。
+
+- header boot ID `0x1c3e698ed`；slot boot ID `14a3cdfd`；298 slots；
+  header uptime 376 s，合并日志窗口 **85.9–394.7 s**
+- `NATIVE_PANIC`、`Undefined kernel instruction` 均为 0
+- SpringBoard、backboardd、lsd 分别于 128.43 s、171.30 s、211.85 s 启动；
+  `dpy=3/18/0/1/0`
+- `block requests refused=0`，UFS stall、OCS timeout、recover 均为 0
+- `NATIVE_DATA_STATUS … usb_requested=2`
+- 260.234 s `EP0 running`；262.223 s bus reset；262.301 s
+  `connect done speed=0 generation=1`
+- USB 共记录 37 个 device/endpoint event、8 个 SETUP：
+  两次 GET_DESCRIPTOR(device)、SET_ADDRESS、GET_DESCRIPTOR(configuration)、
+  BOS、三个 string descriptor 请求
+- `transfer error`、`EP0 fault`、`mode2 EP0 bring-up failed` 均为 0
+
+23:14:51 Windows PnP 已出现：
 
 ```text
 UniXNU USB EP0
@@ -14815,11 +14831,22 @@ USB\VID_1209&PID_0001&REV_0100
 USB\COMPAT_VID_1209&Class_FF&SubClass_00&Prot_00
 ```
 
-Windows 已走到设备节点创建，证明 SETUP、GET_DESCRIPTOR 和控制传输已能完成。
+Windows 已走到设备节点创建，证明 SETUP、GET_DESCRIPTOR、SET_ADDRESS 和
+EP0 控制传输已能完成。
 设备显示 `CM_PROB_FAILED_INSTALL`（Problem 28）且 `Service` 为空，是由当前
 配置的 vendor-specific class `FF` 没有 Windows 类驱动导致，不是 USB
 枚举失败。PnP 证据：`H406/H406-windows-pnp.txt`。
 
+本轮窗口内未出现 `SET_CONFIGURATION`，也没有
+`host configured EP0-only device`。因此 H406 证明的是 EP0 描述符与控制传输
+阶段已经修通；若后续要建立 bulk/interrupt 数据通道，下一道门才是
+SET_CONFIGURATION 和非 EP0 端点配置。
+
+证据哈希：
+
+- ring `c003faadcff4a339cd3ef6744ace5f98da84e3895b2d0ec4f4d4a14eeb799673`
+- decoded log `7d7fdf7f4d444bb9cef8647ed673f38ac64e3f0f0f9829567e697f10ef7c01b6`
+
 Linux DTS 同时确认 OnePlus 5 板级只启用 USB2、移除 USB3 PHY，并限制为
-high-speed；H406 的 DWC3 日志仍待回到 TWRP 后拉取，以记录 SETUP 数量、
-最终事件和运行稳定性。
+high-speed。结论：`status=12` 判错已修复，USB device-mode 的 EP0
+descriptor/control 路径成立；完整数据接口仍需配置阶段。
