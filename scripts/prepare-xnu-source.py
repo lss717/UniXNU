@@ -2,6 +2,7 @@
 """Restore omitted DriverKit headers from Apple's earlier Darwin 23 source."""
 import concurrent.futures
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
@@ -30,7 +31,7 @@ def fetch(url, attempts=4):
         except urllib.error.HTTPError as error:
             if error.code not in (403, 429) or attempt == attempts - 1:
                 raise
-        except OSError:
+        except (OSError, http.client.IncompleteRead):
             # RemoteDisconnected, reset by peer, timeout: the build host's egress is flaky
             # and a half-restored header set only fails much later, in the archive step.
             if attempt == attempts - 1:
