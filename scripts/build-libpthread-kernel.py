@@ -25,6 +25,15 @@ for patch in sorted((ROOT / 'patches/libpthread').glob('*.patch')):
 SOURCE = WORK
 OUT = ROOT / 'build/libpthread-kernel'
 OUT.mkdir(parents=True, exist_ok=True)
+BOOTSTRAP = ROOT / '.cache/xnu-work/bsd/kern/source_pthread_bootstrap.c'
+if not BOOTSTRAP.is_file():
+    subprocess.run(
+        ['git', '-C', ROOT / '.cache/xnu-work', 'apply',
+         ROOT / 'patches/xnu/source-pthread-bootstrap.patch'],
+        check=True,
+    )
+if not BOOTSTRAP.is_file():
+    raise SystemExit('source pthread bootstrap was not generated')
 recipe = ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/osfmk/DEVELOPMENT/prng_random.o.json'
 record = json.loads(recipe.read_text().strip().rstrip(','))
 sdk = subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], text=True).strip()
@@ -111,6 +120,6 @@ if missing:
     raise SystemExit(f'Unavailable real kernel imports: {missing}')
 archive = OUT / 'libpthread_kernel.a'
 archive.unlink(missing_ok=True)
-compile_one(ROOT / '.cache/xnu-work/bsd/kern/source_pthread_bootstrap.c', OUT / 'source_pthread_bootstrap.o')
+compile_one(BOOTSTRAP, OUT / 'source_pthread_bootstrap.o')
 subprocess.run(['xcrun', 'ar', 'rcs', archive, *objects, OUT / 'source_pthread_bootstrap.o'], check=True)
 print('Matching libpthread: 3 real C sources + bootstrap, ARM64/iOS 17 audit, no unavailable kernel names')

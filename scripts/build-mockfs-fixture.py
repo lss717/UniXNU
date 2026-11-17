@@ -13,6 +13,19 @@ out.mkdir(parents=True, exist_ok=True)
 objects = []
 for name in ('mockfs_fsnode', 'mockfs_vfsops', 'mockfs_vnops'):
     source = ROOT / '.cache/xnu-work/bsd/miscfs/mockfs' / (name + '.c')
+    if name == 'mockfs_fsnode':
+        text = source.read_text()
+        replacements = {
+            'kalloc_type(mockfs_fsnode_t,': 'kalloc_type(struct mockfs_fsnode,',
+            'kfree_type(mockfs_fsnode_t,': 'kfree_type(struct mockfs_fsnode,',
+        }
+        for old, new in replacements.items():
+            if old in text:
+                text = text.replace(old, new)
+        if 'kalloc_type(mockfs_fsnode_t,' in text or 'kfree_type(mockfs_fsnode_t,' in text:
+            raise SystemExit('Unable to apply the required mockfs typed-allocation correction')
+        source = out / 'mockfs_fsnode.fixed.c'
+        source.write_text(text)
     destination = out / (name + '.o')
     arguments = record['arguments']
     command = []
