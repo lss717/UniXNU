@@ -15111,3 +15111,48 @@ ring header 的 87 次 `write_errors` 是非阻塞诊断槽争用，另有 9 条
 
 最终分类：**final-gated-candidate-device-verified**。该包具备请求批准合并
 条件；合并前仍不得修改远程 `main`。
+
+##### 2026-11-17 default-main switch
+
+用户随后明确授权：最终门禁通过后，将两仓库默认 `main` 更新到已验证主路线。
+执行前重新 fetch 并确认：
+
+- UniXNU `origin/main`
+  `1586e50c3edc3b38200cc3d8f5c6dc4364136ce6` 是
+  `main-integration-1586@56afe31b638d62d1c5c328e8759da2f13155228e`
+  的祖先，0 behind / 14 ahead；
+- 设备仓 main 与 `upstream-format2-cheeseburger` 均为
+  `5d65005a6a4ffe49e6f234c2a57619dd43bc1049`；
+- 两集成分支 worktree clean；
+- UniXNU 的 `Docs` workflow 由 `active` 改为 `disabled_manually`，其他
+  workflow 均仅手动；设备仓 workflow 同样仅手动。
+
+UniXNU 使用全新临时 main checkout 普通 fast-forward
+`1586e50 -> 56afe31b`，随后普通 push。设备仓没有合并 Format 2 历史：
+
+1. 新建并推送 `archive/format2-main-20261117`，精确指向
+   `5d65005a6a4ffe49e6f234c2a57619dd43bc1049`；
+2. 执行一次
+   `git push --force-with-lease=main:5d65005a6a4ffe49e6f234c2a57619dd43bc1049 origin c4f84bbc01002e8b6d37d04a228b44a5f01eebe8:main`；
+3. lease 匹配并成功，没有 retry。
+
+推送后远程状态：
+
+- UniXNU main `56afe31b638d62d1c5c328e8759da2f13155228e`
+- 设备仓 main `c4f84bbc01002e8b6d37d04a228b44a5f01eebe8`
+- 设备仓 `format1-main-restore` 同上
+- 设备仓 `upstream-format2-cheeseburger`
+  `5d65005a6a4ffe49e6f234c2a57619dd43bc1049`
+- 设备仓 `archive/format2-main-20261117`
+  `5d65005a6a4ffe49e6f234c2a57619dd43bc1049`
+
+全新设备 main checkout 验证 `board.toml` 存在、`porting.toml` 不存在，
+README 为 Format 1 的 UEFI + UniXNU + payload 流程；Format 2 专用分支仍包含
+`porting.toml` 和 `check-format2-adt.py`。GitHub 两仓库默认分支均为 `main`，
+两个新 main commit 的 workflow run 数量均为 0。
+
+最终 H407 boot SHA：
+`548e62be2e723f9f1540ab57348b88ab8add3920f668a63bd6573d53f415a4da`。
+boot2 ring：
+`42f28dabedb0f63b2c138e3b7a459f07d99439f0b38c38a3920dd0511412d799`。
+没有删除任何集成分支、Format 2 保护分支、归档 branch 或证据。
