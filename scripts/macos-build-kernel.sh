@@ -41,7 +41,8 @@ if [ -z "${JOBS:-}" ]; then
 fi
 export JOBS
 
-TREE="$HOME/UniXNU/out/cheeseburger/tree"
+SOURCE_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+TREE="$SOURCE_ROOT/out/cheeseburger/tree"
 WORK="$TREE/.cache/xnu-work"
 FEED="$TREE/refer/xnu"
 GEN="$TREE/build/xnu/ios-obj/bsd/sys/_symbol_aliasing.h"
@@ -57,7 +58,7 @@ fi
 # with "fatal: repository '.../tree/refer/xnu' does not exist". Feeds are checked out as
 # out/feeds/<module>-<8 hex>, so the link name is the module name.
 mkdir -p "$TREE/refer"
-for feed in "$HOME/UniXNU/out/feeds"/*/; do
+for feed in "$SOURCE_ROOT/out/feeds"/*/; do
   feed="${feed%/}"
   [ -d "$feed" ] || continue
   name="$(basename "$feed")"
@@ -69,7 +70,7 @@ for feed in "$HOME/UniXNU/out/feeds"/*/; do
   ln -sfn "$feed" "$link"
 done
 if [ ! -d "$FEED/.git" ]; then
-  echo "missing $FEED: run \"unixnu fetch\" and confirm $HOME/UniXNU/out/feeds/xnu-* exists" >&2
+  echo "missing $FEED: run \"unixnu fetch\" and confirm $SOURCE_ROOT/out/feeds/xnu-* exists" >&2
   exit 1
 fi
 
@@ -186,7 +187,7 @@ fi
 # result: a missing TrustCache/API.h otherwise surfaces much later, in the mockfs archive.
 if [ ! -d "$WORK/EXTERNAL_HEADERS/TrustCache" ]; then
   echo "== restore omitted headers"
-  ( cd "$TREE" && "$PYTHON" "$HOME/UniXNU/scripts/prepare-xnu-source.py" )
+  ( cd "$TREE" && "$PYTHON" "$SOURCE_ROOT/scripts/prepare-xnu-source.py" )
   if [ ! -d "$WORK/EXTERNAL_HEADERS/TrustCache" ]; then
     echo "TrustCache headers were not restored; the archive step cannot compile" >&2
     exit 1
@@ -225,7 +226,7 @@ done
 # kernel (out/<board>/kernel/kernel.macho), so it cannot run on a tree that has never
 # been prelinked. The device repository ships a stub for exactly that case; the next
 # build, which has a kernel.macho, replaces it with the real bindings.
-if [ -f "$HOME/UniXNU/out/cheeseburger/kernel/kernel.macho" ]; then
+if [ -f "$SOURCE_ROOT/out/cheeseburger/kernel/kernel.macho" ]; then
   echo "== archive scripts/build-sheng-pmgr.py"
   "$PYTHON" scripts/build-sheng-pmgr.py
 else
@@ -246,9 +247,11 @@ fi
 
 DISPLAY_ARCHIVE="$TREE/build/native-legacy-display/libNativeLegacyDisplay.late.a"
 if [ ! -f "$DISPLAY_ARCHIVE" ] || \
-   [ -n "$(find -L "$HOME/UniXNU/drivers/NativeMobileDisplay" -type f -newer "$DISPLAY_ARCHIVE" -print -quit 2>/dev/null)" ]; then
+   [ -n "$(find -L "$SOURCE_ROOT/drivers/NativeMobileDisplay" -type f -newer "$DISPLAY_ARCHIVE" -print -quit 2>/dev/null)" ]; then
   echo "rebuilding the legacy display archive (sources newer than $DISPLAY_ARCHIVE)"
-  SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)" "$PYTHON" scripts/build-op5-legacy-display.py
+  SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)" \
+    OP5_KERNELCACHE="$SOURCE_ROOT/out/ipsw/21H461/kernelcache.decompressed" \
+    "$PYTHON" scripts/build-op5-legacy-display.py
 fi
 
 # The SDK's availability.pl is gone in Xcode 26.2; the fakeroot build in
