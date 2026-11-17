@@ -15014,3 +15014,100 @@ USB：
 H407 build identity**。这份 ring 是行为证据，不解除工具链门禁：仍需用明确
 XNU PATH 重建 kernel/payload、用 LLVM 20 UEFI PATH 重建 FD、恢复 XNU PATH
 完成 packaging，再对新 boot SHA 重复静态门禁和一次真机验证。
+
+##### H407 final gated rebuild（2026-11-17）
+
+门禁修订后的最终源码提交为 `main-integration-1586@b59f54bfe2dd6adf28eb9e8090cbe2bd5090135f`，
+设备输入为 `format1-main-restore@c4f84bbc01002e8b6d37d04a228b44a5f01eebe8`。
+主仓库 `drivers/DarwinBoot` 仍保留已记录的 dirty 文件，设备仓库为 clean。
+
+阶段化工具链已记录：
+
+- XNU/kernel/prelink/package：
+  `PATH=/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`；所有 Python 调用为
+  `/opt/local/bin/python3.12`。
+- UEFI/EDK2：
+  `PATH=/opt/local/libexec/llvm-20/bin:/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`；
+  `llvm-ar` 严格解析为 `/opt/local/libexec/llvm-20/bin/llvm-ar`，
+  LLVM `20.1.8`。
+- 固定 LLVM 20 目录不含 `ld.lld`；UEFI 阶段通过
+  `COMPILER_PATH=/Users/lss/.local/lld-20/bin` 使用 LLD `20.1.8`。
+  该变量只存在于 UEFI 子进程环境，未进入 XNU 或 packaging PATH。
+
+Xcode 26.3 不提供 XNU 所需的 `llvm-objcopy`。最终构建使用仓库内
+`scripts/macho-defer-init.py`，对三个 legacy-display late object 做确定性
+Mach-O 元数据变换，并使用独立 `/tmp` staging、绝对输入路径、`ar` 前存在性断言
+和 `ar t` 后 member 断言。
+
+**最终两遍 PMGR/组件**：
+
+- stub PMGR archive
+  `0a5b7de9c448714b6ccde7b0f26d7aaf5afc549ea5d9271680d0ba1745d73695`
+- stub prelink kernel
+  `6f6b054f217f8587d335af8ce22b2d7abf9ace478e56611c2af3da1b38fe1767`
+- real PMGR archive
+  `b0db1f349dd1f721161a7d81a563502b86503c1ee5949a34adae1a0d77e088e7`
+- final real-PMGR kernel
+  `15cd040167e52ee3828b786b07654a3e8d2ff12202cc4cd5a78340f10b1df633`
+- payload `2c1885550698adc5dff580bbe9e6d5b96ae0c3d604562e8d4ca063b6cd6b0331`
+- payload report
+  `555bc07623f136ce4956fc24859e5da840c35cda9f162650aecc0db5e2ef1771`
+- ADT `841db7a0daebf12d26b385af97ebc07ea7c10155d51fcdf62ed32e2fefcefbfd`
+- trust cache
+  `7416ca4f8377146626bb284e2133c76bee6cb4e3ee0af5d648b186235a7323a7`
+- Data seed
+  `0ffea0e7ef0bd10198e0d19009105af00ee3ba959d0bfdd94d1b2d442f56aa64`
+- UEFI FD
+  `e9135e17397165425d0794e8e64c0a4ae63575ce222b06b80305fcde6b16f1b3`
+- UEFI gzip+DTB
+  `9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6`
+- final boot
+  `548e62be2e723f9f1540ab57348b88ab8add3920f668a63bd6573d53f415a4da`
+
+**最终静态门禁**：payload kernel 与源 kernel 一致；FAT 链为单段
+`4350–55765`；boot payload/UEFI blob 逐字节一致；UEFI gzip 解压后与 FD
+一致；boot 无尾随字节；ADT、trust cache、Data seed、`unixnu.toml` 与报告一致；
+boot args 992 B，最坏 `1020/1024`；`check-cheeseburger.py`、
+`check-adt.py` 和最终反向检查均 exit 0。
+
+证据目录：
+`main-route/artifacts/format1-main-integration-20261117/H407-final/`。
+
+**最终设备结果**：boot SHA
+`548e62be2e723f9f1540ab57348b88ab8add3920f668a63bd6573d53f415a4da`
+共验证两次。
+
+1. 长时运行 730 秒；header boot ID `14621540068`（`0x36782fee4`），
+   slot boot `236c99e0`，slot build `H407`。ring
+   `a11f9c581355fcd6ff0c1662ed10cb68abba7f4085222656b5d56eeb1bc55040`，
+   decoded log
+   `9d89b60075cd6f8da0299712f364c4f6d8d1b9e7a325f6d4c8c941c8c22eeab1`。
+   当前槽覆盖 564.943735–761.543910 s；no panic/undefined；SpringBoard、lsd
+   和 display heartbeat 持续存活；UFS 数据路径错误为 0。
+2. 为保留早期 USB 事件重新清窗启动；ring
+   `42f28dabedb0f63b2c138e3b7a459f07d99439f0b38c38a3920dd0511412d799`，
+   decoded log
+   `06b8ffe36743d8a99694bd1a292024a720827e79cc222e7ac39beba519d823a1`。
+   header boot ID `6461212823`（`0x1811e4897`），slot boot `1ebdc87e`，
+   slot build `H407`，窗口 **33.417565–336.503557 s**。
+
+boot2 明确记录：
+
+- `NATIVE_PANIC=0`、undefined instruction 为 0；
+- SpringBoard、backboardd、lsd 分别在 135.970、216.958、242.409 s 启动；
+- `dpy` 达到 `3/11/0/0/0`；
+- UFS DBTO/recover/stall/OCS timeout/retry/refused 均为 0；
+- 265.400 s `EP0 running`；267.600 s bus reset；267.729 s
+  `connect done speed=0 generation=1`；
+- 7 个 SETUP：两次 device descriptor、SET_ADDRESS、configuration
+  descriptor、BOS 和三个 string descriptor；
+- `transfer error=0`、`EP0 fault=0`；未出现 SET_CONFIGURATION；
+- Windows PnP 到达时间 `2026-11-17 09:18:13 +08:00`，创建
+  `USB\VID_1209&PID_0001\OP5USB0001` 的 UniXNU USB EP0 节点。
+
+ring header 的 87 次 `write_errors` 是非阻塞诊断槽争用，另有 9 条
+`NATIVE_UFS_LOG_FAIL`；UFS 存储路径错误为 0，252 个日志轮次成功写入，
+不能把该计数解释为存储失败。
+
+最终分类：**final-gated-candidate-device-verified**。该包具备请求批准合并
+条件；合并前仍不得修改远程 `main`。
