@@ -15111,3 +15111,67 @@ ring header 的 87 次 `write_errors` 是非阻塞诊断槽争用，另有 9 条
 
 最终分类：**final-gated-candidate-device-verified**。该包具备请求批准合并
 条件；合并前仍不得修改远程 `main`。
+
+#### H408：CDC ACM 实时日志最小集成（2026-11-18）
+
+**目标/唯一变量**：只集成已由真机证明可发送 `UXL1` 的 CDC ACM 实时日志路径，
+移除 feature 分支中的诊断冻结、EndTransfer 绕过、pending-data workaround 和
+实验 trace；UFS、display、PMGR 与启动参数保持不变。集成分支为
+`h408-usb-integration`，core `96b756321c12fd66189aece0182e3d2459c3af02`，
+device `2833467fa4eb72fd08e12e96f23ee0c2de347998`。两个构建 worktree 在构建前
+均为 clean detached checkout。
+
+**工具链**：
+
+- XNU/kernel/prelink/payload：
+  `PATH=/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`；
+  Python `3.12.16`；Xcode `26.3` build `17C529`；
+  `/usr/bin/xcrun` 解析到 XcodeDefault clang `17.0.0` 和 ld `1230.1`。
+- UEFI/EDK2：
+  `PATH=/opt/local/libexec/llvm-20/bin:/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`；
+  `llvm-ar` 为 LLVM `20.1.8`；`COMPILER_PATH=/Users/lss/.local/lld-20/bin`，
+  LLD `20.1.8`。LLVM PATH 未进入 XNU、prelink 或 packaging 阶段。
+- UEFI 全量构建使用 `--skip-rootfs-gen`。不带该参数时在当前 PATH 中因
+  `msgfmt` 缺失于编译前停止，未生成 FD；该失败不是源码或编译器失败。
+
+**两遍 PMGR/组件**：
+
+- stub PMGR archive `feb1a1bed99ffb88f3b2012c96e297b573b629379aa83e82438e864c8ce7b447`；
+- stub prelink kernel `ba31acac23a03530bda03f841dfa49165a7cffcc231bc660ae14ed77423104e4`；
+- real PMGR archive `8dbb16528b9f092a194f6eda5fd05feac5268ff45ba3d8505d8e2c4cdce8076f`；
+- final real-PMGR kernel `f89a058d4ae4532b46f82e68b794400d856095e64dbc92944a53737f941fb6ef`；
+- payload `f9ee9cb41ea3e64cb21027bc8c79fb132c193ecf190b8f20bd789e55c019005e`；
+- payload report `e97f9cf1411b055ecae604cd733283a5fc717aa9dc03db5089d9443cb8bfaa4f`；
+- ADT `b1e9210b7460ba04ab568511eb601060810281e93288c8af84c324f334b2f515`；
+- trust cache `7416ca4f8377146626bb284e2133c76bee6cb4e3ee0af5d648b186235a7323a7`；
+- Data seed `0ffea0e7ef0bd10198e0d19009105af00ee3ba959d0bfdd94d1b2d442f56aa64`；
+- UEFI FD `e9135e17397165425d0794e8e64c0a4ae63575ce222b06b80305fcde6b16f1b3`；
+- UEFI gzip+DTB `9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6`；
+- boot `0d096c05b5f0de4edebdc236a7aaf1a2492e59fc66c697cefddb34690569e3ec`。
+
+**静态门禁**：payload 内 kernel 与源构建 kernel 逐字节一致，FAT 链为单段
+`4350–55829`；ADT、trust cache、Data seed 与 `payload.json` 一致；boot args
+`992 B`，最坏 `1020/1024`；boot 内 UEFI gzip 解压后与 6 MiB FD 一致，尾部
+421,048 B 为 DTB；boot payload/UEFI blob 逐字节一致且无尾随数据。验证结果：
+`main-route/artifacts/H408/integration-2833467-96b7563/H408-integration-static-verification.json`。
+
+**设备结果**：
+
+- `fastboot boot` 一次成功；PnP 为
+  `USB\VID_1209&PID_0001\OP5CDCH408`，`usbser`、COM8、status OK、problem 0；
+- boot ID `34BF189C`，build `H408`；
+- 360 秒连续捕获 8775 帧；关闭后重开 120 秒 2274 帧；恢复观察 180 秒
+  1638 帧。三次序号连续覆盖 `0–12686`，总 payload 1,916,016 B；
+- CRC 错误、序号缺口、boot 切换和截断帧均为 0；DTR/RTS 断言成功；
+- SpringBoard、backboardd、lsd 均进入日志；`NATIVE_PANIC=0`、
+  undefined instruction 为 0；后期记录各 1 次 SpringBoard/backboardd
+  `Too many corpses`；
+- UFS `NATIVE_UFS_DBTO=0`、block refused=0，但长窗口出现 25 次 OCS timeout、
+  26 次 retry、25 次 recover。旧 H408 feature 日志已有同类 4 次 timeout/retry，
+  因此这不是本次 USB 清理新增的错误类别；但 UFS 回归门禁仍不能标记全绿；
+- 证据目录：
+  `main-route/artifacts/H408/integration-2833467-96b7563/`。
+
+**分类**：USB CDC live-log feature **merge-ready**。该分支不修改 UFS、display、
+PMGR 或启动参数，且 USB 传输门禁通过；完整系统仍受既有 UFS OCS
+timeout/process-crash 问题影响，不得描述为全系统无错误启动。

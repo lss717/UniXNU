@@ -1,0 +1,108 @@
+{
+  "candidate": "H408-integration",
+  "date": "2026-11-18",
+  "objective": "Integrate the hardware-proven H408 CDC ACM live-log path while removing diagnostic and workaround-only source changes.",
+  "source": {
+    "core": {
+      "branch": "h408-usb-integration",
+      "commit": "96b756321c12fd66189aece0182e3d2459c3af02",
+      "parent": "56afe31b638d62d1c5c328e8759da2f13155228e"
+    },
+    "device": {
+      "branch": "h408-usb-integration",
+      "commit": "2833467fa4eb72fd08e12e96f23ee0c2de347998",
+      "parent": "c4f84bbc01002e8b6d37d04a228b44a5f01eebe8"
+    }
+  },
+  "toolchain": {
+    "python": "/opt/local/bin/python3.12 3.12.16",
+    "xcode": "26.3 build 17C529",
+    "xnu_path": "/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    "clang": "Apple clang 17.0.0",
+    "ld": "Xcode ld 1230.1",
+    "uefi_path": "/opt/local/libexec/llvm-20/bin:/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    "llvm_ar": "LLVM 20.1.8",
+    "lld": "20.1.8"
+  },
+  "build": {
+    "pmgr": {
+      "stub_archive_sha256": "feb1a1bed99ffb88f3b2012c96e297b573b629379aa83e82438e864c8ce7b447",
+      "stub_prelink_kernel_sha256": "ba31acac23a03530bda03f841dfa49165a7cffcc231bc660ae14ed77423104e4",
+      "real_archive_sha256": "8dbb16528b9f092a194f6eda5fd05feac5268ff45ba3d8505d8e2c4cdce8076f",
+      "final_prelink_kernel_sha256": "f89a058d4ae4532b46f82e68b794400d856095e64dbc92944a53737f941fb6ef"
+    },
+    "artifacts": {
+      "kernel_sha256": "f89a058d4ae4532b46f82e68b794400d856095e64dbc92944a53737f941fb6ef",
+      "payload_sha256": "f9ee9cb41ea3e64cb21027bc8c79fb132c193ecf190b8f20bd789e55c019005e",
+      "payload_report_sha256": "e97f9cf1411b055ecae604cd733283a5fc717aa9dc03db5089d9443cb8bfaa4f",
+      "adt_sha256": "b1e9210b7460ba04ab568511eb601060810281e93288c8af84c324f334b2f515",
+      "trust_cache_sha256": "7416ca4f8377146626bb284e2133c76bee6cb4e3ee0af5d648b186235a7323a7",
+      "data_seed_sha256": "0ffea0e7ef0bd10198e0d19009105af00ee3ba959d0bfdd94d1b2d442f56aa64",
+      "uefi_fd_sha256": "e9135e17397165425d0794e8e64c0a4ae63575ce222b06b80305fcde6b16f1b3",
+      "uefi_blob_sha256": "9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6",
+      "boot_sha256": "0d096c05b5f0de4edebdc236a7aaf1a2492e59fc66c697cefddb34690569e3ec"
+    }
+  },
+  "static_gates": {
+    "payload_kernel_matches_source": true,
+    "payload_kernel_single_fat_run": true,
+    "sidecar_hashes_match_report": true,
+    "boot_args": {
+      "bytes": 992,
+      "worst_with_zap_base": 1020,
+      "limit": 1024,
+      "passed": true
+    },
+    "boot_uefi_matches_source_fd": true,
+    "boot_payload_matches_source_payload": true,
+    "boot_trailing_bytes": false
+  },
+  "device": {
+    "boot_id": "34BF189C",
+    "build": "H408",
+    "pnp": "USB\\VID_1209&PID_0001\\OP5CDCH408",
+    "com_port": "COM8",
+    "continuous_capture_seconds": 360,
+    "reopen_capture_seconds": 120,
+    "post_recovery_capture_seconds": 180,
+    "frames": 12687,
+    "payload_bytes": 1916016,
+    "sequence_ranges": [
+      [
+        0,
+        8774
+      ],
+      [
+        8775,
+        11048
+      ],
+      [
+        11049,
+        12686
+      ]
+    ],
+    "crc_errors": 0,
+    "sequence_gaps": 0,
+    "boot_switches": 0,
+    "truncated_frames": 0,
+    "native_panic": 0,
+    "undefined_instruction": 0,
+    "springboard": "observed; later too-many-corpses crash",
+    "backboardd": "observed; later too-many-corpses crash",
+    "lsd": "observed",
+    "ufs": {
+      "ocs_timeouts": 25,
+      "retries": 26,
+      "recoveries": 25,
+      "db_timeouts": 0,
+      "block_requests_refused": 0,
+      "old_h408_feature_baseline_ocs_timeouts": 4,
+      "status": "known-open; same error class predates this integration cleanup"
+    }
+  },
+  "verdict": {
+    "usb_cdc_live_log_feature": "merge-ready",
+    "full_system_error_free": false,
+    "main_updated": false
+  }
+}
