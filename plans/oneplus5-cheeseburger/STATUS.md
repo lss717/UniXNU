@@ -15111,3 +15111,27 @@ ring header 的 87 次 `write_errors` 是非阻塞诊断槽争用，另有 9 条
 
 最终分类：**final-gated-candidate-device-verified**。该包具备请求批准合并
 条件；合并前仍不得修改远程 `main`。
+
+#### H408：DWC3 SET_CONFIGURATION 资源索引对照（2026-11-17）
+
+已交叉核对 LineageOS `lineage-22.2@9932c9e...`（Linux 4.4.302）、
+OnePlus `oneplus/QC8998_Q_10.0@2103804...`（Linux 4.4.205）和
+Linux `master@666539e...`（7.4.0-rc3）。LineageOS 与 OnePlus 都同时构建
+cheeseburger/dumpling，DTS 的 USB PHY 均为 `qusb@c012000`；物理 EP0 OUT=0、
+EP0 IN=1，逻辑 CDC bulk OUT/IN 分别是物理 EP2/EP3。
+
+三方均把 `GET_LINE_CODING` 实现为 7 字节 IN data stage，并要求 data complete
+后才处理 STATUS NotReady。H408 冻结日志中的
+`setup-bytes=a1 21 00 00 00 00 07 00` 证明 Windows 没有发送另一条 SETUP，
+7 字节 Data TRB 仍保持 `HWO|IOC|LST`。证据把首个试验变量定位到
+SET_CONFIGURATION 的 DEPSTARTCFG：Linux 的主线接口把 resource index 2
+放在 DEPCMD 高 16 位，而 `6cd4c78` 错写进 DEPCMDPAR0。
+
+单变量修复 `cdb3574` 仅改为
+`kDepcmdTypeStartConfig | (2U << 16)`，并撤回无日志支持的提前事件忽略试验；
+原始 SETUP 诊断保留。候选 boot
+`0548e78ef7e786bb250068b8730dd7f1659550d7a6d3547c6d7286f3a1dea24f`
+已通过静态 boot/payload 检查，等待真机日志。完整来源、提交、文件行号与
+三方差异见
+`plans/oneplus5-cheeseburger/diagnostics/H408-source-crosscheck-2026-11-17.md`。
+
