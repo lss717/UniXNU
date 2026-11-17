@@ -121,6 +121,13 @@ alignas(4096) static uint8_t gH103SlotHeader[4096];
 static volatile int gH103LastSlotMsgX = -1;
 // H103fl diagnostics: 0=no slot writer, 1=default cadence, 2=2 s fast control.
 static volatile int gH103SlotMode = 1;
+extern "C" void
+native_h103_log_freeze(void)
+{
+  IOLog ("NATIVE_UFS_SLOT: frozen by H408 USB trace\n");
+  __atomic_store_n (&gH103SlotMode, 0, __ATOMIC_RELEASE);
+}
+
 // H106: ios-sweet 0069's batching. The flush runs at most once per interval,
 // writes only the message bytes produced since the previous flush, and writes
 // nothing while the kernel is quiet. h103-log-secs sets the interval (1..60).
