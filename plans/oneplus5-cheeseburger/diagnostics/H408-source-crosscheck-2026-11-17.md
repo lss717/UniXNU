@@ -140,3 +140,28 @@ This is the decisive board-independent mismatch:
 The next test therefore changes only the DEPSTARTCFG resource-index encoding.
 The earlier event-ignoring experiment (`b8692bb`) was deliberately reverted;
 the raw setup diagnostic is retained.
+## Post-fix device validation
+
+The resource-index fix (`cdb3574`) made the 7-byte IN data stage complete and
+allowed Windows to advance to `SET_LINE_CODING`. The 7-byte OUT stage then hung,
+matching the 4.4 `dep->number == 0` non-aligned bounce rule at
+`ep0.c:1066-1098` in both LineageOS and OnePlus Q10. Commit `5a63ff0` rounds
+the H408 control-OUT TRB length up to 64 while retaining a 7-byte logical
+payload.
+
+After removing the diagnostic H103 freeze in `0a74a02`, the final device
+acceptance passed:
+
+- three consecutive SerialPort open/close cycles;
+- DTR/RTS activation, close, reopen and close;
+- 1286 valid UXL1 frames in the primary 30-second capture and 138 in a
+  separate reopened 20-second capture;
+- identical boot ID `34BE3A2E`, build `H408`, zero CRC errors and no sequence
+  gaps;
+- no panic, EP0 fault or invalid completion in the captured live text.
+
+Raw capture initially produced no frames because `CreateFile("\\.\COM8")`
+does not assert DTR. `e3df5a1` adds `EscapeCommFunction(SETDTR/SETRTS)` before
+reading; CDC notification and Bulk-IN then worked.
+
+Evidence: `main-route/artifacts/H408/no-freeze-0a74a02/`.

@@ -15135,3 +15135,43 @@ SET_CONFIGURATION 的 DEPSTARTCFG：Linux 的主线接口把 resource index 2
 三方差异见
 `plans/oneplus5-cheeseburger/diagnostics/H408-source-crosscheck-2026-11-17.md`。
 
+
+##### H408 设备验收（2026-11-17）
+
+在 `cdb3574` 修正 DEPSTARTCFG 后，冻结日志首次出现完整的
+GET_LINE_CODING 7-byte Data-IN → Status-OUT → SETUP rearm，并继续到
+SET_LINE_CODING；这验证了原错误是把 resource index 写进 DEPCMDPAR0。
+新的唯一卡点是 7-byte Data-OUT 不完成。
+
+`5a63ff0` 将 EP0 OUT 控制数据 TRB 的硬件长度取整到 64 字节，保留实际
+7 字节复制。设备测试随后 Windows COM 首次返回 `OPEN OK`，Windows 继续
+发出 SET_LINE_CODING 和 SET_CONTROL_LINE_STATE。该轮后续 EP3 异常完成
+与首笔 GET_LINE 后 30 秒的 H103 诊断冻结定时器重合，因此不用于最终判断。
+
+`0a74a02` 删除诊断冻结后完成最终验收：
+
+- 普通 `SerialPort.Open()`、`Close()` 连续三轮成功；
+- DTR/RTS 开启 5 秒、关闭，再打开/关闭成功；
+- PnP 为 `USB\VID_1209&PID_0001\OP5CDCH408`，`usbser` 状态 OK、
+  Problem 0，端口 COM8；
+- 首轮 30 秒 raw capture：1286 个有效 UXL1 frame、264975 B，boot
+  `34BE3A2E`、build `H408`，CRC 错误 0、序号缺口 0；
+- 独立重开 20 秒：138 个 frame、49051 B，同一 boot/build，CRC 错误 0、
+  序号缺口 0；
+- 实时文本中没有 `NATIVE_PANIC`、`Undefined kernel instruction`、
+  `EP0 fault` 或 invalid completion；
+- `capture-h408-cdc.ps1` 在 `e3df5a1` 增加 raw handle 的 DTR/RTS 断言，
+  否则 CDC 驱动不会发送 H408 UXL1。
+
+最终设备候选：
+
+- kernel source commit `0a74a02`（host capture 工具后续 `e3df5a1`）
+- boot `2e085047b4e8ca01e3ca4ab89a8cabf8d378256e7e3cc0c7e69e2fd4d9a9cc2a`
+- payload `17c680d1622e16d11d9cf871d74a9095c691769dd31b33299228410f521d4aa4`
+- raw hash `c73bfacd6210f61ede6a482326b4ed1a5d51118b4778556d49564f9b7aa56115`
+- frame hash `b71f3e59231c85fefa9e30cf0b20388b93859f695f6408b03f13e0fa5e04caf3`
+- text hash `aefac60fab0071e542e0e6d8a971a21b4e5cfa589dc191886ca15d19a957ae50`
+
+证据目录：
+`main-route/artifacts/H408/no-freeze-0a74a02/`。
+
