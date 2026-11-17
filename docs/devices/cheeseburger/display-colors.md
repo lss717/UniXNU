@@ -11,6 +11,9 @@ are visible without user space. This page records what every colour in every cel
   `patches/xnu/zzzzzzzzz-h103-exit-flags.patch` and
   `patches/xnu/zzzzzzzzzz-h103-iokit-trace.patch`.
 
+> USB CDC live serial logging, UXL1 decoding and the normal-reboot command are in
+> [USB CDC log and normal-reboot console](usb-com-log-guide.md).
+
 ![Test pattern colour swatches](/panel-colors.svg)
 
 > The image above shows the exact pixel values. The hexadecimal value is authoritative;
@@ -108,14 +111,15 @@ even while the FDR loader holds the client.
 
 ## 16×16 status cells
 
-The cells are 16 px wide at x = 0, 20, 40 and 60, all at y = 0, measured from the top-left corner of the framebuffer.
+The cells are 16 px wide at x = 0, 20, 40, 60 and 80, all at y = 0, measured from the top-left corner of the framebuffer. The first four keep their order; H410 appends the USB status cell.
 
 | Position | Meaning | Colours and state values |
 | :--- | :--- | :--- |
 | (0, 0) | CPU frequency observation (`sheng_cpufreq_probe`) | dark gray `0`: not run<br>red `1`: an enabled cluster is below 1 GHz, or no cluster is enabled<br>green `2`: every enabled cluster is at or above 1 GHz<br>purple `3`: OSM mapping failed<br>orange `4` / blue `5`: reserved in the driver, never produced by the current probe |
 | (20, 0) | A540 accelerator probe | dark gray `#404040`: not attempted (`0`)<br>green: service published (`6`)<br>red: failure or intermediate state (`1` / `3` / `4` / `5`; see the `NATIVE_A540` log) |
 | (40, 0) | Heartbeat cell | white / orange: flips at 1 Hz (`timer_call`, 19 200 000 timebase ticks); the 2×2 repaint also repaints this cell |
-| (60, 0) | H103 persistent-log slot writer | red `0`: the write branch has not been reached yet (the default `h103-slot-thread=0` commonly keeps it red)<br>blue `3`: the 2-second slot thread is running but the write window is not ready (missing `fLogFirst` / `fLogBlocks` / `fLogDma` / `fReady` / `fLock`)<br>yellow `1`: the window is ready and writing started, but no write has succeeded yet<br>green `2`: at least one slot and header write succeeded |
+| (60, 0) | H103 persistent-log slot writer | red `0`: the write branch has not been reached yet (the default `h103-slot-thread=0` commonly keeps it red)<br>blue `3`: the 2-second slot thread is running but the write window is not ready (missing `fLogFirst` / `fLogBlocks` / `fLogDma` / `fReady` / `fLock`)<br>yellow `1`: the window is ready and writing started, but no write has succeeded yet<br>green `2`: at least one slot and header write succeeded<br>cyan `#00FFFF` (state `5`): USB live logging is healthy and the disk sink is intentionally paused, not a USB-start failure and not an error |
+| (80, 0) | H410 USB CDC live-log link | dark gray `#404040`: the USB driver has not started<br>yellow `#FFFF00`: started but the host has not configured the CDC data endpoints (not connected)<br>green `#00FF00`: connected and idle<br>green/white: Bulk-IN log frames are actually completing (alternates at the ~1 Hz panel repaint; returns to green ~500 ms after the last successful completion) |
 
 ## Quick triage
 
@@ -124,6 +128,7 @@ The cells are 16 px wide at x = 0, 20, 40 and 60, all at y = 0, measured from th
 3. **Bottom-right, top half**: dark gray, then white, then purple tells "nothing submitted" from "a copy was attempted" from "swap validation has run".
 4. **Bottom-left**: combined with the top-right cell, tells "nothing opened it" from "something opened it, but it was not backboardd".
 
+> The fourth cell is cyan while USB live logging is healthy and the disk sink is paused.
 > The colours are a sample taken at the last repaint. To locate the actual failure, combine
 > them with `plans/oneplus5-cheeseburger/STATUS.md`, the `NATIVE_EXEC` / `NATIVE_IOKIT` /
 > `NATIVE_LEGACY` console lines and the persistent log slots.

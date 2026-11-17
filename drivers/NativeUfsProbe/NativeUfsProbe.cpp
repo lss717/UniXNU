@@ -109,7 +109,7 @@ static uint32_t gH103SlotCursor;
 // boot wrote it.  The header alone is not enough: it is written after the
 // slot, and a late header write failure leaves a stale slots_written behind,
 // which made earlier logs mix slots from several boots.
-#define H103_BUILD "H407"
+#define H103_BUILD "H410"
 static uint64_t gH103BootId;
 static volatile int gH103Quiet;
 static volatile uint64_t gH103LastSlotTicks;
@@ -185,6 +185,20 @@ static void h103MaybePublishIogpu (void);
 extern "C" {
 volatile uint32_t native_h103_slot_state = 0;
 }
+// H410: pause state for the persistent 32 MiB userdata_ios log sink. It only
+// gates h103 log writes (slots/header), never ordinary UFS/APFS I/O. Written
+// by the heartbeat thread; USB completions merely update the counters above.
+static volatile int gH103DiskPaused;
+static volatile uint32_t gH103DiskPauseReason;
+static uint64_t gH103UsbHealthStartTicks;
+static uint32_t gH103UsbHealthStartCompletions;
+static uint64_t gH103UsbLossStartTicks;
+static uint64_t gH103UsbLastStatusLogTicks;
+static uint32_t gH103UsbPauseTransitions;
+#define H410_USB_PAUSE_DEBOUNCE_TICKS (2000ULL * 19200000ULL / 1000ULL)
+#define H410_USB_RESUME_DEBOUNCE_TICKS (1500ULL * 19200000ULL / 1000ULL)
+#define H410_USB_PAUSE_MIN_COMPLETIONS 8U
+#define H410_USB_STATUS_LOG_TICKS (30ULL * 19200000ULL)
 class NativeUfsProbe;
 static NativeUfsProbe *gH103Probe;
 static void h103SlotWriteThunk (void);
@@ -225,6 +239,18 @@ extern "C" void native_legacy_progress (unsigned step, unsigned total) __attribu
 // from the timer interrupt and needs no thread timer at all.
 extern "C" void native_legacy_heartbeat_cell(void);
 extern "C" void native_legacy_slot_cell(void);
+// H410: fifth status cell = USB CDC live-log link/transfer state.
+extern "C" void native_legacy_usb_cell(void) __attribute__((weak_import));
+// H410: status published by the device-side CheeseburgerUsb driver. The USB
+// thread only stores these counters; the disk-sink decision is made here in
+// the heartbeat ("log worker") thread so no disk I/O runs in a completion path.
+extern "C" volatile uint32_t native_usb_status_started;
+extern "C" volatile uint32_t native_usb_status_connected;
+extern "C" volatile uint32_t native_usb_status_active;
+extern "C" volatile uint32_t native_usb_status_fault;
+extern "C" volatile uint32_t native_usb_status_tx_completions;
+extern "C" volatile uint64_t native_usb_status_tx_bytes;
+extern "C" volatile uint64_t native_usb_status_last_complete_ticks;
 // H223: the GPUCC survey runs at the late probe (~35 s), before the persistent log ring starts
 // capturing (~40 s); repeat it once from the heartbeat so the values reach the pulled log.
 extern "C" int sheng_gpucc_next(unsigned *index, uint32_t *value);
@@ -970,13 +996,18 @@ heartbeatThread (void *, wait_result_t)
     {
       uint64_t now = mach_absolute_time ();
       uint64_t staleSeconds = gH103LogSecs > 1 ? gH103LogSecs * 3ULL : 3ULL;
-      if (gH103LastSlotSuccessTicks &&
+      if (gH103DiskPaused) {
+        native_h103_slot_state = 5U;
+      } else if (gH103LastSlotSuccessTicks &&
           now - gH103LastSlotSuccessTicks <= staleSeconds * 19200000ULL) {
         native_h103_slot_state = (beat & 1U) ? 4U : 2U;
       } else if (native_h103_slot_state == 2U || native_h103_slot_state == 4U) {
         native_h103_slot_state = 1U;
       }
       native_legacy_slot_cell ();
+      if (native_legacy_usb_cell) {
+        native_legacy_usb_cell ();
+      }
     }
     // H124/H128: the 2x2 repaint moved here with the dumps.  Repaint on a gate
     // bit change, and keep blinking until backboardd execs.
@@ -1464,6 +1495,12 @@ h103FlushNow (void)
   if (__atomic_load_n (&gH103SlotBusy, __ATOMIC_ACQUIRE)) {
     return;
   }
+  // H410: while USB live-log streaming is healthy the persistent disk sink is
+  // intentionally paused. Panic paths clear this flag before flushing.
+  if (__atomic_load_n (&gH103DiskPaused, __ATOMIC_ACQUIRE)) {
+    gH103FlushSkips = gH103FlushSkips + 1;
+    return;
+  }
   if (gH103FlushBackoffTicks != 0 && mach_absolute_time () < gH103FlushBackoffTicks) {
     gH103FlushSkips = gH103FlushSkips + 1;
     return;
@@ -1480,6 +1517,82 @@ h103FlushNow (void)
   gH103LastSlotTicks = mach_absolute_time ();
   h103SlotWriteThunk ();
   __atomic_store_n (&gH103SlotBusy, 0, __ATOMIC_RELEASE);
+}
+
+// H410: heartbeat-thread decision for the persistent log sink. Pausing needs a
+// sustained healthy window (>= 2 s and >= 8 real Bulk-IN completions), so a
+// SET_CONFIGURATION or a single submitted TRB cannot pause disk logging.
+// Resuming needs 1.5 s of disconnect/deconfiguration/fault/inactivity, which
+// debounces the green/white activity flicker. All values are lock-free reads.
+static void
+h103UsbDiskSinkTick (void)
+{
+  const uint32_t started = native_usb_status_started;
+  const uint32_t connected = native_usb_status_connected;
+  const uint32_t active = native_usb_status_active;
+  const uint32_t fault = native_usb_status_fault;
+  const uint32_t completions = native_usb_status_tx_completions;
+  const uint64_t last = native_usb_status_last_complete_ticks;
+  const uint64_t bytes = native_usb_status_tx_bytes;
+  const uint64_t now = mach_absolute_time ();
+  const bool live = started && connected && !fault;
+  const bool healthy = live && active;
+  if (!gH103DiskPaused) {
+    if (healthy) {
+      if (!gH103UsbHealthStartTicks) {
+        gH103UsbHealthStartTicks = now;
+        gH103UsbHealthStartCompletions = completions;
+      } else if (now - gH103UsbHealthStartTicks >=
+          H410_USB_PAUSE_DEBOUNCE_TICKS &&
+          completions - gH103UsbHealthStartCompletions >=
+          H410_USB_PAUSE_MIN_COMPLETIONS) {
+        gH103DiskPaused = 1;
+        gH103DiskPauseReason = 1U;
+        gH103UsbPauseTransitions++;
+        native_h103_slot_state = 5U;
+        IOLog ("NATIVE_USB_DISK: paused=1 reason=usb-healthy completions=%u "
+               "bytes=%llu age_ms=%llu\n", completions,
+               (unsigned long long) bytes,
+               (unsigned long long) (last ? (now - last) / 19200ULL : 0ULL));
+      }
+    } else {
+      gH103UsbHealthStartTicks = 0;
+      gH103UsbHealthStartCompletions = 0;
+    }
+  } else {
+    if (!healthy) {
+      if (!gH103UsbLossStartTicks) {
+        gH103UsbLossStartTicks = now;
+      } else if (now - gH103UsbLossStartTicks >=
+          H410_USB_RESUME_DEBOUNCE_TICKS) {
+        gH103DiskPaused = 0;
+        gH103DiskPauseReason = fault ? 2U : (!live ? 3U : 4U);
+        gH103UsbPauseTransitions++;
+        gH103UsbLossStartTicks = 0;
+        gH103UsbHealthStartTicks = 0;
+        gH103UsbHealthStartCompletions = 0;
+        native_h103_slot_state = 1U;
+        IOLog ("NATIVE_USB_DISK: paused=0 reason=%u connected=%u active=%u "
+               "fault=%u completions=%u age_ms=%llu\n",
+               gH103DiskPauseReason, connected, active, fault, completions,
+               (unsigned long long) (last ? (now - last) / 19200ULL : 0ULL));
+      }
+    } else {
+      gH103UsbLossStartTicks = 0;
+    }
+  }
+  if (!gH103UsbLastStatusLogTicks) {
+    gH103UsbLastStatusLogTicks = now;
+  } else if (now - gH103UsbLastStatusLogTicks >= H410_USB_STATUS_LOG_TICKS) {
+    gH103UsbLastStatusLogTicks = now;
+    IOLog ("NATIVE_USB_STATUS: paused=%u reason=%u started=%u connected=%u "
+           "active=%u fault=%u completions=%u bytes=%llu age_ms=%llu "
+           "transitions=%u\n", (unsigned) gH103DiskPaused,
+           gH103DiskPauseReason, started, connected, active, fault,
+           completions, (unsigned long long) bytes,
+           (unsigned long long) (last ? (now - last) / 19200ULL : 0ULL),
+           gH103UsbPauseTransitions);
+  }
 }
 
 // H116: called by the display archive from the client-open and frame-copy paths.
@@ -1545,6 +1658,9 @@ native_panic_flush (void)
     native_legacy_panic_paint (color);
   }
   gH103Probe->marker ("panic", true);
+  // H410: a panic is terminal; lift the USB pause so the final record lands.
+  gH103DiskPaused = 0;
+  gH103DiskPauseReason = 5U;
   IOLog ("NATIVE_PANIC: flags=%x client=%u xfer=%u frames=%u\n",
          native_boot_flags, native_legacy_client_calls,
          native_legacy_transfer_calls, native_legacy_frame_count);
@@ -1595,6 +1711,9 @@ h103ReportMetaSerialize (void)
 static void
 h103SlotTick (void)
 {
+  // H410: evaluate the USB-driven disk-sink pause before anything else;
+  // this is the only place the pause decision changes.
+  h103UsbDiskSinkTick ();
   // H109: prove the timer_call heartbeat from the log, independently of the
   // display: one line every 30 s when the tick counter advanced.
   static volatile uint32_t printedTicks;
@@ -3250,6 +3369,11 @@ NativeUfsProbe::h103Snapshot (const char *tag, bool pause, bool verify)
 void
 NativeUfsProbe::h103SlotWrite (void)
 {
+  // H410: never write slots while the USB-triggered pause is active.
+  if (__atomic_load_n (&gH103DiskPaused, __ATOMIC_ACQUIRE)) {
+    native_h103_slot_state = 5U;
+    return;
+  }
   static uint32_t attempts;
   bool ready = fLogFirst && fLogBlocks && fReady && fLock && fLogDma;
   if (!ready) {
@@ -3403,6 +3527,11 @@ NativeUfsProbe::h103SlotWrite (void)
 void
 NativeUfsProbe::h103HeaderOnly (void)
 {
+  // H410: the header rewrite is part of the same disk sink; pause it too.
+  if (__atomic_load_n (&gH103DiskPaused, __ATOMIC_ACQUIRE)) {
+    native_h103_slot_state = 5U;
+    return;
+  }
   const uint32_t slotCount = (fLogBlocks > 257) ? (fLogBlocks - 257) / 32 : 0;
   if (!fLogFirst || !fLogBlocks || !fLogDma || !fLogData || !fLogDataPhys ||
       !slotCount) {
