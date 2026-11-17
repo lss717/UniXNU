@@ -15175,3 +15175,94 @@ device `2833467fa4eb72fd08e12e96f23ee0c2de347998`。两个构建 worktree 在构
 **分类**：USB CDC live-log feature **merge-ready**。该分支不修改 UFS、display、
 PMGR 或启动参数，且 USB 传输门禁通过；完整系统仍受既有 UFS OCS
 timeout/process-crash 问题影响，不得描述为全系统无错误启动。
+
+#### H410：USB 第五状态块、健康后暂停磁盘日志与普通重启命令（2026-11-18）
+
+**范围**：在左上角原四块 16×16 状态格之后追加第五块（`x=80, y=0`），并让 H103
+持久日志 sink 在 USB 实时日志确实健康后暂停、失效后恢复；同时通过同一个 CDC COM
+句柄提供有界的普通重启命令。H409 属于显示线程，H410 为本次独立编号。
+
+**语义**：
+
+- `started`：`CheeseburgerUsb` 的 EP0/CDC bring-up `begin()` 成功；
+- `connected`：主机 `SET_CONFIGURATION(1)` 且 CDC 数据端点已启用；
+- `active`：Bulk-IN 日志帧在最近 500 ms 内实际完成（完成计数与字节数单调递增）；
+  仅提交 TRB、`SET_CONFIGURATION` 或 DTR 都不算 active；
+- 第五块：灰 `#404040` 未启动、黄 `#FFFF00` 已启动未连接、绿 `#00FF00` 已连接空闲、
+  绿/白交替为传输中；交替沿用约 1 Hz 面板重绘节奏，最后成功完成约 500 ms 后回绿；
+- 磁盘 sink 暂停条件：`connected && active` 持续 ≥ 2 s 且该窗口内 Bulk-IN 完成
+  ≥ 8 次；恢复条件：断开/取消配置/fault/传输错误/约 1.5 s 无新完成；
+- 暂停只跳过 H103 slot/header 写；内存 ring、USB 数据源和普通 UFS/APFS I/O 不受影响；
+  第四块在暂停期显示青色 `#00FFFF`（状态 5），第五块仍只表示 USB 状态；
+- 切换只在心跳/日志 worker 计算，USB 完成路径只更新原子计数，不直接写盘或持锁；
+- 普通重启使用 16 字节 `UXC1`（版本 1、opcode 1、payload 0、请求 ID、CRC32）；
+  设备先回 `NATIVE_USB_CMD: ack req=<id> op=reboot`，在 ACK 实际提交或有界 1 s
+  超时后由独立 worker 调用 `halt_all_cpus(TRUE)`；`ArmDTPlatform` 将
+  `PE_halt_restart` 接到既有 PSCI `SYSTEM_RESET`（`SMC 0x84000009`），未新增
+  PMIC 寄存器序列。普通重启后仍由用户/主线程决定何时 `adb reboot recovery`。
+
+**源码与工具链**：
+
+- core `h410-usb-status`，基于 `5e204e7d984aac66af3c57c9961926a8d4080062`；
+  修改 `drivers/NativeUfsProbe/NativeUfsProbe.cpp`、
+  `docs/{,zh/}devices/cheeseburger/display-colors.md`、
+  `docs/{,zh/}devices/cheeseburger/usb-com-log-guide.md`、
+  `plans/oneplus5-cheeseburger/STATUS.md`；
+- device `h410-usb-status`，基于 `001e694cc5211c79d283151a2c2204e443d72277`；
+  修改 `drivers/CheeseburgerUsb/CheeseburgerUsb.cpp`、`README.md`、`tools/README.md`、
+  `tools/check-h408-cdc.py`，新增 `tools/h410-cdc-console.ps1`；
+- 子模块：GopFramebuffer `cc31bd33e2209e0f261720babb7b4a9dc6b1b0c2`（第五块与青色
+  暂停态）；ArmDTPlatform `4d057d020124012e545853f6f75a2a6c202d3171`（重启路由）；
+- XNU/kernel/prelink/payload：`PATH=/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`；
+  Python `3.12.16`；Xcode `26.3` build `17C529`；XcodeDefault clang/ld；
+- package/bootimg：`PATH=/Users/lss/.local/lld-20/bin:/opt/local/libexec/llvm-20/bin:...`；
+  lld-link `20.1.8`，llvm-ar `20.1.8`；UEFI FD 复用已验证 H407/H408 镜像；
+- `build-arm-driver.py` 对 `ArmDTPlatform`、`NativeUfsProbe`、`CheeseburgerUsb`
+  均通过 `-Werror` 和实际 ARM64/iOS 17 对象审计。
+
+**组件 SHA-256**：
+
+- kernel `9c7640f149018af39e70f7b8eeff4231d7347c45cd1d349125596987edf01873`；
+- payload `20587408e4315a840feea6e4a9890d27e2978c12c26a855b2d9583bbc1612383`；
+- payload report `1a3dc68b144244303059ac6e70865b0ea9157714ced5eceb1a44991b2920e2ca`；
+- ADT `6e349c6f680d9363a1e2565ead83da99faed6397c5463eca42e3d7e2a358982e`；
+- trust cache `7416ca4f8377146626bb284e2133c76bee6cb4e3ee0af5d648b186235a7323a7`；
+- Data seed `0ffea0e7ef0bd10198e0d19009105af00ee3ba959d0bfdd94d1b2d442f56aa64`；
+- UEFI FD `e9135e17397165425d0794e8e64c0a4ae63575ce222b06b80305fcde6b16f1b3`；
+- UEFI gzip+DTB `9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6`；
+- boot `a4201dbc7825166b3724b47f2be8b94c64b41a094f91392e19841201876a4fbe`。
+
+**静态门禁**：payload 内 kernel 与源构建 kernel 逐字节一致，FAT 链为单段
+`4350–55769`；ADT/trust cache/Data seed 与 payload.json 一致；boot args `992 B`
+（< 1024）；boot 内 ramdisk 与 payload 逐字节一致；boot 的 UEFI gzip 解压后与
+6 MiB FD 一致，尾部 421,048 B 为 DTB；载荷/布局无尾随数据。验证结果：
+`main-route/artifacts/H410/H410-static-verification.json`。
+
+**真机结果**：
+
+- `fastboot boot` 一次成功；PnP 为
+  `USB\VID_1209&PID_0001\OP5CDCH408`，`usbser`、COM8、status OK；
+- boot ID `549D06A5`，build `H410`；
+- 300 s 连续捕获 5,323 帧 / 884,794 payload 字节，序号连续 `0–5322`；
+  CRC 错误、序号缺口、boot 切换、截断帧均为 0；
+- 启动约 319 s 时出现
+  `NATIVE_USB_DISK: paused=1 reason=usb-healthy completions=53`，之后每 30 s 的
+  `NATIVE_USB_STATUS` 持续为 `paused=1 started=1 connected=1 active=1 fault=0`；
+- 关闭 COM 句柄后重开：`transitions` 从 1 变为 3，说明暂停→恢复→再次暂停；
+  重连后帧继续、CRC/序号仍为 0；
+- `-Reboot -RequestId 424242` 发送 UXC1 后收到
+  `NATIVE_USB_CMD: ack req=424242 op=reboot`，设备随后重启并进入 Android 10
+  （ADB `device`，uptime 约 95 s）；未做 recovery 标记；
+- 已知 UFS 长时问题仍在：本次 300 s 窗口记录 27 次 OCS timeout、28 次 retry、
+  27 次 recover 和 33 次 `Too many corpses`（含 SpringBoard/backboardd/lsd 等），
+  `NATIVE_PANIC=0`、undefined instruction 为 0。该类别与 H408 相同，H410 未新增
+  UFS/PMGR/启动参数改动，但 UFS 回归门禁仍为 `known-open`，不得宣称全绿；
+- 像素级颜色未由主机摄像头单独采集；第五块/青色状态由同一套 `native_usb_status_*`
+  和 `native_h103_slot_state` 值驱动，设备日志已证明状态转换。
+
+**分类**：第五状态块、USB 健康后磁盘 sink 暂停/恢复、普通重启命令均已真机验证；
+UFS 长时 OCS timeout/corpse 保持已知未关闭。提交状态：core 与 device 的 `h410-usb-status` 分支、GopFramebuffer
+`cc31bd33e2209e0f261720babb7b4a9dc6b1b0c2` 和 ArmDTPlatform
+`4d057d020124012e545853f6f75a2a6c202d3171` 子模块提交均已创建，但未推送、
+未合并 `main`；core/device 的精确分支 head 记录在外部
+`H410-manifest.json`，等待主线程授权后收尾。

@@ -1,0 +1,85 @@
+{
+  "schema": "unixnu-h410-manifest-v1",
+  "date": "2026-11-18",
+  "route": "main/Format1",
+  "build": "H410",
+  "source": {
+    "core_branch": "h410-usb-status",
+    "core_base": "5e204e7d984aac66af3c57c9961926a8d4080062",
+    "device_branch": "h410-usb-status",
+    "device_base": "001e694cc5211c79d283151a2c2204e443d72277",
+    "submodules": {
+      "drivers/NativeMobileDisplay": "cc31bd33e2209e0f261720babb7b4a9dc6b1b0c2",
+      "drivers/ArmDTPlatform": "4d057d020124012e545853f6f75a2a6c202d3171"
+    }
+  },
+  "toolchain": {
+    "python": "3.12.16",
+    "xcode": "26.3 (17C529)",
+    "xnu_path": "/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    "uefi_path": "/Users/lss/.local/lld-20/bin:/opt/local/libexec/llvm-20/bin:/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    "lld_link": "20.1.8",
+    "llvm_ar": "20.1.8"
+  },
+  "file_sha256": {
+    "H410-kernel.macho": "9c7640f149018af39e70f7b8eeff4231d7347c45cd1d349125596987edf01873",
+    "H410-payload.img": "20587408e4315a840feea6e4a9890d27e2978c12c26a855b2d9583bbc1612383",
+    "H410-payload.json": "1a3dc68b144244303059ac6e70865b0ea9157714ced5eceb1a44991b2920e2ca",
+    "H410-MSM8998PKG_UEFI.fd": "e9135e17397165425d0794e8e64c0a4ae63575ce222b06b80305fcde6b16f1b3",
+    "H410-uefi.img.gz-dtb": "9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6",
+    "H410-boot.img": "a4201dbc7825166b3724b47f2be8b94c64b41a094f91392e19841201876a4fbe"
+  },
+  "sidecars": {
+    "kernel.macho.adt": "6e349c6f680d9363a1e2565ead83da99faed6397c5463eca42e3d7e2a358982e",
+    "kernel.macho.trustcache": "7416ca4f8377146626bb284e2133c76bee6cb4e3ee0af5d648b186235a7323a7",
+    "scratch-data.img": "0ffea0e7ef0bd10198e0d19009105af00ee3ba959d0bfdd94d1b2d442f56aa64"
+  },
+  "static_verification": "H410-static-verification.json",
+  "gating": {
+    "payload_kernel_equal": true,
+    "kernel_fat_runs": [
+      [
+        4350,
+        55769
+      ]
+    ],
+    "kernel_args_bytes": 992,
+    "uefi_fd_bytes": 6291456,
+    "trailing_dtb_bytes": 421048,
+    "boot_trailing_bytes": false,
+    "driver_werror_audit": [
+      "ArmDTPlatform",
+      "NativeUfsProbe",
+      "CheeseburgerUsb"
+    ]
+  },
+  "device": {
+    "boot_id": "549D06A5",
+    "build": "H410",
+    "pnp": "USB\\VID_1209&PID_0001\\OP5CDCH408",
+    "com": "COM8",
+    "capture_seconds": 300,
+    "frames": 5323,
+    "payload_bytes": 884794,
+    "first_sequence": 0,
+    "last_sequence": 5322,
+    "crc_errors": 0,
+    "sequence_gaps": 0,
+    "boot_switches": 0,
+    "truncated_frames": 0,
+    "disk_pause": "paused=1 reason=usb-healthy completions=53 at uptime 319s",
+    "disk_resume_transitions": 3,
+    "reboot_request_id": 424242,
+    "reboot_ack": "NATIVE_USB_CMD: ack req=424242 op=reboot",
+    "post_reboot": "Android 10 ADB device, uptime ~95s",
+    "ufs_known_open": {
+      "ocs_timeouts": 27,
+      "retries": 28,
+      "recovers": 27,
+      "too_many_corpses": 33,
+      "kernel_panic": 0,
+      "verdict": "known-open"
+    }
+  },
+  "classification": "feature-device-verified-ufs-known-open"
+}
