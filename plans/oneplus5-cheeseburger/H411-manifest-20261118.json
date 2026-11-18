@@ -13,12 +13,13 @@
     "unixnu_lock_git_blob": "9a0d3190a3e195eff523f7b898d6466e5ac0185a",
     "unixnu_lock_sha256_lf": "0bbf113d5be71b4c7141f67a82ffeee03ce03e578d03802d5fcca5ecfe0da1a9",
     "probe_commit": "46e5408bcfc2f491476f767f0faf711fa04d159b",
-    "docs_commit": "76f79ed9cf11c56d461b6e7aef8f0dc909e9fab7",
-    "branch_tip": "76f79ed9cf11c56d461b6e7aef8f0dc909e9fab7",
+    "docs_commit": "4957a38501e676d5c9f525d6179b278e942110fc",
+    "branch_tip": "4957a38501e676d5c9f525d6179b278e942110fc",
     "usb_thread_id": "01a1ea5a-ad97-7731-a910-b284dc4ddf76",
     "usb_thread_status": "idle-completed-and-main-pushed",
     "remote_core_main": "947a88b3cc5a264b5e9ba6b67ad228eb107b281f",
-    "remote_device_main": "481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91"
+    "remote_device_main": "481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91",
+    "status_commit": "76f79ed9cf11c56d461b6e7aef8f0dc909e9fab7"
   },
   "toolchain": {
     "python": "/opt/local/bin/python3.12 3.12.16",
@@ -102,6 +103,8 @@
     "static_suite": "builds/H411/H411-09-local-static-checks.log",
     "uefi_modules": "builds/H411/H411-10-uefi-module-check.log",
     "source_integration": "builds/H411/H411-11-source-integration.log",
-    "source_integration_sha256": "5651c444f8b1ebe9ff38c9c363b132b753e18cb112c5f0b0d69158b46220cb85"
+    "source_integration_sha256": "5651c444f8b1ebe9ff38c9c363b132b753e18cb112c5f0b0d69158b46220cb85",
+    "patch_apply": "builds/H411/H411-12-patch-apply-check.log",
+    "patch_apply_sha256": "a41d537b60bec05301c22cd7ac1ad969840bb7986941ca525a2bbdee8dc966f8"
   }
 }
