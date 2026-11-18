@@ -109,7 +109,7 @@ static uint32_t gH103SlotCursor;
 // boot wrote it.  The header alone is not enough: it is written after the
 // slot, and a late header write failure leaves a stale slots_written behind,
 // which made earlier logs mix slots from several boots.
-#define H103_BUILD "H410"
+#define H103_BUILD "H411"
 static uint64_t gH103BootId;
 static volatile int gH103Quiet;
 static volatile uint64_t gH103LastSlotTicks;
@@ -730,6 +730,30 @@ extern "C" void native_log_flush_hook (void);
 // printf (and its msgbuf mutex) out of proc_exit, which runs with preemption disabled.
 extern "C" void native_sigbus_drain (void);
 
+// H411: one compact, fixed-storage display record next to the existing
+// SpringBoard sample. This is observation-only and does not alter USB,
+// display, IPC, CA, surface, copy, scanout or GPU state.
+static void
+a540DisplayGate (unsigned sample)
+{
+  uint32_t clients = 0, calls = 0, failures = 0, selector6 = 0;
+  uint32_t registrations = 0, selector3 = 0, selector4 = 0, selector5 = 0;
+  if (native_legacy_client_stats != nullptr) {
+    native_legacy_client_stats (&clients, &calls, &failures, &selector6,
+        &registrations, &selector3, &selector4, &selector5);
+  }
+  IOLog ("NATIVE_DISPLAY_GATE: build=%s boot=%llx sample=%u "
+         "accel=%u/%u/%u/%u dpy=%u/%u/%u/%u/%u s345=%u/%u/%u "
+         "val=%u xf=%u fr=%u\n", H103_BUILD,
+         (unsigned long long)gH103BootId, sample,
+         (unsigned)native_a540_open_count, (unsigned)native_a540_open_type,
+         (unsigned)native_a540_sel_count, (unsigned)native_a540_sel_last,
+         clients, calls, failures, selector6, registrations,
+         selector3, selector4, selector5,
+         (unsigned)native_legacy_swap_validation_calls,
+         (unsigned)native_legacy_transfer_calls,
+         (unsigned)native_legacy_frame_count);
+}
 static void
 a540SpringBoardSamplerThread (void *, wait_result_t)
 {
@@ -754,6 +778,7 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
       IOSleep (240000);
       for (unsigned sample = 0;; sample++) {
         native_sb_pc_sample ("SpringBoard", 6000 + sample * 30);
+        a540DisplayGate (6000 + sample * 30);
         // The kernel emits non-SpringBoard frame chains only for sample % 30 == 0.
         native_sb_pc_sample ("lsd", 7020 + sample * 30);
         // Follow both per-user and system services; ordinal is not a fixed UID.
@@ -868,6 +893,9 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
       }
       IOLog ("NATIVE_SBPC: call name=%s sample=%u\n", a540SbNames[index], sample);
       native_sb_pc_sample (a540SbNames[index], sample);
+      if (strcmp (a540SbNames[index], "SpringBoard") == 0) {
+        a540DisplayGate (sample);
+      }
     }
     // H303: the slow series used to sleep ten seconds with no sync; keep the ring moving.
     for (unsigned gap = 0; gap < 10; ++gap) {
