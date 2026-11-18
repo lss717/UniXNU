@@ -1,0 +1,103 @@
+{
+  "candidate": "H417",
+  "purpose": "AppleKeyStore state gate plus typed read-only CoreAnimation observer",
+  "state": "feature-branch-published-device-tested-no-first-frame",
+  "source": {
+    "core_base": "0db1eded5cac18157170fb35218c32fde076eb58",
+    "core_code_commit": "c222eb258206303b8dfb2c871053459ca792acc3",
+    "core_feature_branch": "h417-aks-observer",
+    "native_metal_base": "1f2c84861bd4265030fefffb1588f9b2236a41fa",
+    "native_metal_code_commit": "75f3f65cb21a40fa7dfa85f7d092b70fb50cf115",
+    "native_metal_feature_branch": "h417-aks-observer",
+    "device_base": "481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91",
+    "device_source_changed": false,
+    "main_pushed": false
+  },
+  "unique_behavior_change": {
+    "kernel_argument_added_vs_H416": "sheng-aks=1",
+    "sheng_aks_publish_preserved": true,
+    "observer_changed": true,
+    "display_behavior_changed": false,
+    "gpu_behavior_changed": false
+  },
+  "artifacts": {
+    "kernel_sha256": "2dd2ffd9f4a0979fedd9ae16213ea8e31e9d9f798d855e434d34d12c3f02f85d",
+    "payload_sha256": "a6df0696032d4a562e6cfb906da1962f3f299df1a860e771c23d0f2e5dffe6cc",
+    "boot_sha256": "a9618be5b19fbd46205070ff140ffc327bef9e2394001c6b46abeb132ab9b619",
+    "plugin_sha256": "acd6c793e0aca8a8a2dafc1f56c8367645570916400f32e6e60bd1dfc533e07d",
+    "plugin_cdhash": "e10c473b2ffb3565b63c9cd472e54e4789ef5755",
+    "gpu_addon_sha256": "ef53a5899fb0b0a9f83ba71c10c5636e227e6a566b348a927a6694533c2dab51",
+    "boot_args_bytes": 995,
+    "boot_args_worst": 1023,
+    "boot_args_limit": 1024
+  },
+  "static_verification": {
+    "passed": true,
+    "classification": "aks-state-typed-coreanimation-observer-package-statically-verified",
+    "aks_observer_checker": true,
+    "data_readiness_checker": true,
+    "display_gate_checker": true,
+    "verify_h417": true
+  },
+  "device": {
+    "tested": true,
+    "serial": "16149951",
+    "product": "cheeseburger",
+    "build": "H417",
+    "kernel_boot_id": "25f21e0c",
+    "cdc_port": "COM8",
+    "cdc_delay_seconds": 256,
+    "capture_seconds": 360,
+    "frames": 5397,
+    "payload_bytes": 817993,
+    "crc_errors": 0,
+    "sequence_gaps": 0,
+    "boot_switches": 0,
+    "observer_rounds": 2,
+    "primary_display_id": "0x1",
+    "primary_point_scale": 3,
+    "context_ids": [
+      "0x195fa2cc",
+      "0x182f8c1f"
+    ],
+    "context_display_id": "0x1",
+    "context_display_mask": "0xffffffff",
+    "layer_nodes": 16,
+    "layer_nodes_with_contents": 0,
+    "accelerator_type_1_granted": true,
+    "accelerator_abi_selector_2": true,
+    "draw_or_commit": false,
+    "selector_3_4_5": "0/0/0",
+    "validate": 0,
+    "transfer": 0,
+    "frames_presented": 0,
+    "uxc1_request": 424418,
+    "uxc1_acked": true,
+    "final_twrp": "3.4.0_9-10-mauronofrio",
+    "device_verification": "diagnostics/H417-device-verification-20261118.json",
+    "device_verification_sha256": "52c7cc8391adb5513c0a38850d00ab55858002d316cb8bfb037d9ef74abe8a9d"
+  },
+  "earliest_observable_break": {
+    "layer": "SpringBoard/CoreAnimation main scene and drawable production",
+    "evidence": [
+      "two display-bound full-size CAContext trees repeated with null contents",
+      "accelerator type-1 client and ABI selector 2 were present",
+      "no intercepted draw or commit was recorded",
+      "IOMFB selector 3/4/5 remained 0/0/0",
+      "surface validation, transfer and scanout remained zero"
+    ],
+    "not_concluded": [
+      "contexts are fully unbound to the display",
+      "display metadata is invalid",
+      "AKS newUserClient failed",
+      "contents=nil proves every private layer is non-drawable",
+      "IOSurface or MSM8998 scanout is the first-frame cause"
+    ]
+  },
+  "known_open": [
+    "AKS newUserClient return values and key selector results are not directly logged.",
+    "SpringBoard main-scene completion and definesDisplayBounds were not directly correlated.",
+    "The renderer has a provider and client but no captured draw/commit.",
+    "Late UFS OCS timeouts and corpse crashes confound observations after roughly 513 seconds."
+  ]
+}

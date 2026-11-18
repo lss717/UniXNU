@@ -212,3 +212,10 @@ Device evidence:
 ```text
 main-route/display-first-frame/logs/H417/device/20261118-213940/
 ```
+
+Tracked experiment record:
+
+```text
+plans/oneplus5-cheeseburger/H417-manifest-20261118.json
+plans/oneplus5-cheeseburger/diagnostics/H417-device-verification-20261118.json
+```

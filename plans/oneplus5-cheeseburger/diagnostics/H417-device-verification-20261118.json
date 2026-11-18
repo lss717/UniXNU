@@ -1,0 +1,377 @@
+{
+  "candidate": "H417",
+  "host": "local-windows-workstation",
+  "serial": "16149951",
+  "product": "cheeseburger",
+  "model": "ONEPLUS A5000",
+  "twrp_before": "3.4.0_9-10-mauronofrio",
+  "twrp_after": "3.4.0_9-10-mauronofrio",
+  "boot_sha256": "a9618be5b19fbd46205070ff140ffc327bef9e2394001c6b46abeb132ab9b619",
+  "build_marker": "H417",
+  "kernel_boot": "25f21e0c",
+  "boot_sent": true,
+  "boot_count": 1,
+  "fastboot_accepted": "2026-11-18T21:39:36.5616154+08:00",
+  "cdc_ready": "2026-11-18T21:43:52.1540441+08:00",
+  "cdc_delay_seconds": 256,
+  "capture_started": "2026-11-18T21:43:52.1540441+08:00",
+  "capture_finished": "2026-11-18T21:49:54.8002002+08:00",
+  "capture_seconds": 360,
+  "transport": {
+    "frames": 5397,
+    "payload_bytes": 817993,
+    "last_sequence": 5396,
+    "crc_errors": 0,
+    "sequence_gaps": 0,
+    "truncated_frames": 0,
+    "boot_switches": 0
+  },
+  "single_targeted_behavior_change": {
+    "payload_argument_delta_vs_H416": [
+      "sheng-aks=1"
+    ],
+    "existing_publish_gate": "sheng-aks-publish=1",
+    "boot_args_bytes": 995,
+    "current_with_zap_base": 1015,
+    "worst_with_zap_base": 1023,
+    "limit": 1024
+  },
+  "early_event_chain": [
+    {
+      "timestamp": 33.159178,
+      "event": "NATIVE_BUILD H417"
+    },
+    {
+      "timestamp": 73.890991,
+      "event": "AppleKeyStore publish gate=1"
+    },
+    {
+      "timestamp": 73.891228,
+      "event": "AppleKeyStore published late"
+    },
+    {
+      "timestamp": 132.392601,
+      "event": "keybagd exec pid=11"
+    },
+    {
+      "timestamp": 142.602218,
+      "event": "SpringBoard exec pid=27"
+    },
+    {
+      "timestamp": 166.601078,
+      "event": "keybagd matched AppleKeyStore"
+    },
+    {
+      "timestamp": 166.601169,
+      "event": "keybagd called AppleKeyStore open"
+    },
+    {
+      "timestamp": 202.407710,
+      "event": "backboardd exec pid=56"
+    },
+    {
+      "timestamp": 218.338030,
+      "event": "chronod exec pid=89"
+    },
+    {
+      "timestamp": 224.494809,
+      "event": "backboardd opened NativeLegacyDisplay"
+    },
+    {
+      "timestamp": 233.636017,
+      "event": "backboardd opened AGXAccelerator type=0"
+    },
+    {
+      "timestamp": 236.297705,
+      "event": "backboardd opened IOSurfaceRoot"
+    },
+    {
+      "timestamp": 261.503326,
+      "event": "IOMFB_FDR_Loader opened NativeLegacyDisplay"
+    },
+    {
+      "timestamp": 271.922954,
+      "event": "liveactivitiesd exec pid=95"
+    },
+    {
+      "timestamp": 276.230628,
+      "event": "display gate sample=6000"
+    },
+    {
+      "timestamp": 300.871255,
+      "event": "liveactivitiesd called AppleKeyStore open"
+    },
+    {
+      "timestamp": 326.150325,
+      "event": "first H417 CoreAnimation observer probe"
+    },
+    {
+      "timestamp": 334.929386,
+      "event": "backboardd opened AGXAccelerator type=1"
+    },
+    {
+      "timestamp": 334.936168,
+      "event": "backboardd AGX accelerator ABI selector=2"
+    },
+    {
+      "timestamp": 347.705676,
+      "event": "SpringBoard called AppleKeyStore open"
+    },
+    {
+      "timestamp": 368.982341,
+      "event": "second H417 CoreAnimation observer probe"
+    },
+    {
+      "timestamp": 392.028403,
+      "event": "later H417 builder marker without a captured observer probe"
+    },
+    {
+      "timestamp": 577.852738,
+      "event": "display gate sample=6060"
+    }
+  ],
+  "apple_key_store": {
+    "publish_observed": true,
+    "state_gate_packaged": true,
+    "user_client_open_return_directly_observed": false,
+    "open_trace_semantics": "NATIVE_IOKIT op=open logs ok=0 before is_io_service_open_extended reaches the provider, so ok=0 is an entry sentinel rather than the user-client result",
+    "userspace_progress": {
+      "keybagd_open_count": 1,
+      "liveactivitiesd_open_count": 1,
+      "SpringBoard_open_count": 1,
+      "chronod_exec_observed": true,
+      "liveactivitiesd_exec_observed": true,
+      "captured_crash_for_chronod_or_liveactivitiesd": false
+    },
+    "interpretation": "The AKS publication and later userspace service path completed far enough for chronod and liveactivitiesd to run. The absence of a provider return-value record prevents claiming a directly observed successful user-client open."
+  },
+  "kernel_display_gate": [
+    {
+      "timestamp": 276.230628,
+      "sample": 6000,
+      "build": "H417",
+      "boot": "25f21e0c",
+      "accelerator": "2/0/199/0",
+      "display": "2/11/0/0/0",
+      "selectors_3_4_5": "0/0/0",
+      "validate": 0,
+      "transfer": 0,
+      "frames": 0
+    },
+    {
+      "timestamp": 577.852738,
+      "sample": 6060,
+      "build": "H417",
+      "boot": "25f21e0c",
+      "accelerator": "5/0/484/0",
+      "display": "3/18/0/1/0",
+      "selectors_3_4_5": "0/0/0",
+      "validate": 0,
+      "transfer": 0,
+      "frames": 0
+    }
+  ],
+  "observer": {
+    "marker_count": 2,
+    "round_count": 2,
+    "rounds": [
+      {
+        "probe_timestamp": 326.150325,
+        "server_state_timestamp": 347.938589,
+        "context_timestamp": 363.349159,
+        "display_count": 6,
+        "server_display_count": 6,
+        "display_0": {
+          "display_id": "0x1",
+          "bounds": "1080x1920",
+          "context_getter": "UNSUPPORTED",
+          "context_id_getter": "UNSUPPORTED",
+          "layer_getter": "UNSUPPORTED",
+          "renderer_flags": 3
+        },
+        "contexts": [
+          {
+            "context_id": "0x195fa2cc",
+            "display_id": "0x1",
+            "display_mask": "0xffffffff",
+            "root_class": "CALayer",
+            "root_bounds": "1080x1920",
+            "root_contents": null,
+            "root_sublayers": 2,
+            "render_context": null,
+            "tree_nodes": 4
+          },
+          {
+            "context_id": "0x182f8c1f",
+            "display_id": "0x1",
+            "display_mask": "0xffffffff",
+            "root_class": "CALayer",
+            "root_bounds": "1080x1920",
+            "root_contents": null,
+            "root_sublayers": 2,
+            "render_context": null,
+            "tree_nodes": 4
+          }
+        ]
+      },
+      {
+        "probe_timestamp": 368.982341,
+        "server_state_timestamp": 371.415143,
+        "context_timestamp": 376.024691,
+        "display_count": 6,
+        "server_display_count": 6,
+        "display_0": {
+          "display_id": "0x1",
+          "bounds": "1080x1920",
+          "context_getter": "UNSUPPORTED",
+          "context_id_getter": "UNSUPPORTED",
+          "layer_getter": "UNSUPPORTED",
+          "renderer_flags": 3
+        },
+        "contexts": [
+          {
+            "context_id": "0x195fa2cc",
+            "display_id": "0x1",
+            "display_mask": "0xffffffff",
+            "root_class": "CALayer",
+            "root_bounds": "1080x1920",
+            "root_contents": null,
+            "root_sublayers": 2,
+            "render_context": null,
+            "tree_nodes": 4
+          },
+          {
+            "context_id": "0x182f8c1f",
+            "display_id": "0x1",
+            "display_mask": "0xffffffff",
+            "root_class": "CALayer",
+            "root_bounds": "1080x1920",
+            "root_contents": null,
+            "root_sublayers": 2,
+            "render_context": null,
+            "tree_nodes": 4
+          }
+        ]
+      }
+    ],
+    "later_builder_without_probe": {
+      "timestamp": 392.028403,
+      "process_label": "mediaserverd",
+      "interpretation": "schedule reset or process replacement occurred; absence of later rounds is not evidence of zero CA state after 392 seconds"
+    },
+    "display_list": [
+      {
+        "display_id": "0x1",
+        "name": "LCD",
+        "device": "primary",
+        "bounds": "1080x1920",
+        "point_scale": 3
+      },
+      {
+        "display_id": "0x2",
+        "name": "Wireless",
+        "device": "wireless0",
+        "bounds": "0x0",
+        "point_scale": 1
+      },
+      {
+        "display_id": "0x3",
+        "name": "Wireless-1",
+        "device": "wireless1",
+        "bounds": "0x0",
+        "point_scale": 1
+      },
+      {
+        "display_id": "0x4",
+        "name": "Wireless-2",
+        "device": "wireless2",
+        "bounds": "0x0",
+        "point_scale": 1
+      },
+      {
+        "display_id": "0x5",
+        "name": "Wireless-3",
+        "device": "wireless3",
+        "bounds": "0x0",
+        "point_scale": 1
+      },
+      {
+        "display_id": "0x6",
+        "name": "Wireless-4",
+        "device": "wireless4",
+        "bounds": "0x0",
+        "point_scale": 1
+      }
+    ],
+    "cadisplay_mode": {
+      "width": 1080,
+      "height": 1920,
+      "refresh_rate": 60.0,
+      "preferred_scale": 3,
+      "point_scale": 3,
+      "point_scale_type_encoding": "Q16@0:8",
+      "pixel_width": "UNSUPPORTED",
+      "pixel_height": "UNSUPPORTED"
+    },
+    "observer_write_markers": 0,
+    "observer_bind": "skipped-observer-only",
+    "observer_present": false
+  },
+  "render_and_display_downstream": {
+    "agx_accelerator_service": true,
+    "backboardd_user_client_type_1_granted": true,
+    "backboardd_accelerator_abi_selector_2": true,
+    "render_pipeline_creations_observed": 8,
+    "resource_deallocation_records_with_zero_use": 10,
+    "intercepted_commit_calls": 0,
+    "intercepted_next_drawable_calls": 0,
+    "native_legacy_display_clients_observed": true,
+    "iomfb_selector_6": 1,
+    "iomfb_notification_registrations": 0,
+    "iomfb_selector_3_4_5": "0/0/0",
+    "iosurface_root_service_available": true,
+    "iosurface_submission_or_validation": false,
+    "scanout_transfer": false,
+    "scanout_frames": 0
+  },
+  "known_confounders": {
+    "ufs_ocs_timeouts": 13,
+    "ufs_retries": 13,
+    "ufs_stall_nopanic": 15,
+    "too_many_corpses": 27,
+    "process_crashes": 27,
+    "panic": false,
+    "undefined_kernel_instruction": false,
+    "timing_note": "Both CoreAnimation observer rounds completed by 376 seconds, before the first captured UFS OCS timeout near 513 seconds. The sample-6060 display gate at 577.853 seconds lies inside the known UFS/corpse storm and is supporting rather than primary evidence."
+  },
+  "recovery": {
+    "uxc1_request": 424418,
+    "uxc1_acked": true,
+    "ack_timestamp": 695.292499,
+    "cdc_disappeared": true,
+    "android_adb_returned": true,
+    "android_boot_completed": true,
+    "adb_reboot_recovery": true,
+    "final_twrp": true,
+    "final_twrp_verified_at": "2026-11-18T21:52:34.4584067+08:00"
+  },
+  "evidence": {
+    "live_log": "H417-live.log",
+    "live_log_sha256": "d125d82babab5d5a55e6c19cb10ad83ba67b9fe6f364afebe44046e7288e6f94",
+    "frames": "H417-live.frames.bin",
+    "frames_sha256": "c87c815f4caaa583a0a9be2b62d5d3ac92bc8469be3fdb3490ceaf30940d2beb",
+    "ring_window": "H417-ring.bin",
+    "ring_window_sha256": "d2849c272877c03708a8fb482779bea06a82c612b34a7083f232b969c8c3b513",
+    "ring_merged": "H417-ring-merged.txt",
+    "ring_merged_sha256": "bede4aca6a5a70852acf25363ff056f442d2a7967c51dee47b82232167c02f0c",
+    "ring_header": {
+      "slot_boot": "25f21e0c",
+      "slot_build": "H417",
+      "slots_written": 241,
+      "slot_count": 247,
+      "write_errors": 61
+    }
+  },
+  "interpretation": "H417 confirms that the CA server, primary display, two display-bound full-screen contexts and a bounded layer tree exist while no draw/commit or IOMFB submit occurs. The H417 ABI correction removes the H416 pointScale-zero and pixelWidth-zero artifacts: pointScale is 3 and unsupported selectors are explicitly distinguished. The context display mask also weakens the earlier missing display-binding hypothesis. The earliest remaining observable break is scene content/drawable production before IOMFB selector 4.",
+  "classification": "aks-gate-and-typed-ca-device-smoke-no-first-frame"
+}

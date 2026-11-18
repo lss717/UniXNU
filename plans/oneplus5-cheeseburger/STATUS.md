@@ -15648,4 +15648,6 @@ selector 4 仍为零时修改 IOSurface、IOMFB copy 或 MSM8998 scanout。
 
 证据：`display-first-frame/logs/H417/device/20261118-213940/`、
 `display-first-frame/builds/H417/`、本 diagnostic 与
-`FIRST-FRAME-ANALYSIS.md` 第 17 节。
+`FIRST-FRAME-ANALYSIS.md` 第 17 节。仓库内可追踪记录为
+`H417-manifest-20261118.json` 和
+`diagnostics/H417-device-verification-20261118.json`。
