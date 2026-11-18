@@ -15312,3 +15312,19 @@ ArmDTPlatform `origin/main@417ff95d`，新提交
 **设备状态**：未上机。后续必须使用 H410 USB 实时 CDC capture；磁盘 sink 会被 USB 健康状态暂停，不能用“没有新磁盘 slot”判为卡死。设备测试待协调新 slot。
 
 **证据**：`display-first-frame/builds/H411/`、`display-first-frame/manifests/H411-*`。
+
+#### H411 真机结果与 H412 去留（2026-11-18）
+
+**发布状态**：H411 core 分支已推送到独立远端 `origin/h411-display-gate@c6fb6d5`；`origin/main` 仍为 `947a88b3cc5a264b5e9ba6b67ad228eb107b281f`。device 功能分支随后只增加有界恢复闭环工具，不改变 main。21 个子模块 pin 已逐个验证可按 SHA fetch。
+
+**真机边界**：唯一设备 `16149951` 从 TWRP 进入 fastboot，`product=msm8998`、`variant=MSM UFS`、`unlocked=yes`。唯一一次 `fastboot -s 16149951 boot H411-boot.img` 成功；目标机 boot SHA 为 `f94a22d39cdf837d89d5f608e6ef2e76d4b6c0ba8aeb11fbc2b083c86f6ed800`。
+
+**采集**：COM3 在 720 秒有界窗口内交付 210 帧、29,547 payload bytes；transport boot `63B3B54C`、build `H410`。CRC、sequence gap、boot switch 和 truncated frame 均为 0。
+
+**同 boot 观察**：`NATIVE_SBCHAIN` 与 `NATIVE_DISPLAY_GATE` 都在 sample 6000。SpringBoard 只有 3 个线程，request port peer 为 `pid 1/launchd`、`q=1`、`sr=0`、`so=5`，launchd reply counter 为 0。gate 为 `build=H411 boot=5200ce14 accel=0/0/0/0 dpy=3/11/0/0/0 s345=0/0/0 val=0 xf=0 fr=0`。因此仍无首帧；断点位于 IOMFB selector 3/4/5、surface validation、copy 和 scanout 之前。
+
+**尾部状态**：日志最后一条在 uptime `326.514178`，之后在剩余采集窗口内没有新 UXL1。无 ADB、无 Fastboot，COM3 PnP 节点后来为 `CM_PROB_FAILED_START`，`CreateFile` 返回 Win32 error 2。为避免重复或盲目重启，UXC1 没有发送；自动 Android→TWRP 闭环停在 `STOP_CDC_UNUSABLE_NO_RETRY`，可能需要用户手动恢复设备。
+
+**证据**：`display-first-frame/logs/H411/`，其中包括原始流、解码 stream、decoded log、preflight、fastboot boot、POST capture state 和综合 JSON。
+
+**H412 去留**：H412 分支 `h412-first-frame@b6e26de` 与 H411 探针提交 `46e5408` 比，仅 `NativeUfsProbe.cpp` 和检查脚本中的 H411→H412 标识/注释共 2 文件、6 行不同；proc-state patch 的 Git blob 完全相同。这不是修复。H412 在全新依赖抓取时以 Mu Basecore `curl 18` 自然失败，未进入内核构建，未选中上机。下一候选必须先给出单一行为修复，不能只换编号。
