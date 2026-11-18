@@ -44,6 +44,9 @@ def main():
             "bounded queue-head inspection missing")
     require("NATIVE_IPC_EVENT_RING 1024" in event, "fixed event ring missing")
     require("osfmk/ipc/ipc_mqueue.c" in event, "IPC mqueue hunk missing")
+    require("task_pid(get_threadtask(receiver))" in event and
+            "task_pid(get_threadtask(thread))" in event,
+            "thread-to-task helper mismatch")
 
     forbidden = ("0x5b9173", "0x2407", "16149951", "com.apple.backboard")
     for token in forbidden:

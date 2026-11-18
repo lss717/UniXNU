@@ -347,7 +347,7 @@
  			receiver->ith_kmsg = kmsg;
  			receiver->ith_seqno = mqueue->imq_seqno++;
 +			native_ipc_event_note('D', kmsg, port, -2,
-+			    task_pid(receiver->task), thread_tid(receiver), receiver->ith_state);
++			    task_pid(get_threadtask(receiver)), thread_tid(receiver), receiver->ith_state);
  #if MACH_FLIPC
  			mach_node_t node = kmsg->ikm_node;
  #endif
@@ -359,7 +359,7 @@
 +				extern void native_ipc_event_note(unsigned, ipc_kmsg_t, ipc_port_t,
 +				    int, int, uint64_t, unsigned);
 +				native_ipc_event_note('R', thread->ith_kmsg, port, -1,
-+				    task_pid(thread->task), thread_tid(thread), thread->ith_state);
++				    task_pid(get_threadtask(thread)), thread_tid(thread), thread->ith_state);
 +			}
  		}
  		ip_mq_unlock(port);
