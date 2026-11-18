@@ -247,4 +247,16 @@ ro.twrp.version=3.4.0_9-10-mauronofrio
 uptime=766.95
 ```
 
+The H421 run exposed one recovery-helper race: the first TWRP `getprop`
+immediately after the ADB state changed returned `device not found`, while the
+same recovery target was ready moments later. The helper is therefore retained
+in this branch as `scripts/reboot-uxc1-poll-recovery.ps1` and now:
+
+- polls for Android and requires `sys.boot_completed=1` before one
+  `adb reboot recovery`;
+- polls for the recovery state rather than accepting a single transition;
+- retries `ro.product.device` and `ro.twrp.version` for a bounded 20 seconds
+  before declaring failure;
+- records the number of property attempts in the recovery state file.
+
 No flash, erase, format, dd, GPT or partition write was performed.

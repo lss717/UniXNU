@@ -255,7 +255,12 @@
     "final_product_name": "omni_cheeseburger",
     "final_twrp_version": "3.4.0_9-10-mauronofrio",
     "final_uptime_s": 766.95,
-    "final_state_checked_at": "2026-11-19T02:28:12.5195225+08:00"
+    "final_state_checked_at": "2026-11-19T02:28:12.5195225+08:00",
+    "polling_tool": "scripts/reboot-uxc1-poll-recovery.ps1",
+    "hardened_after_run": {
+      "reason": "The first TWRP getprop call after the ADB transition returned an empty/error result even though the same target was ready moments later.",
+      "change": "Poll Android until sys.boot_completed=1, issue adb reboot recovery once, detect recovery, then retry TWRP product and version properties for a bounded interval before declaring failure."
+    }
   },
   "conclusion": {
     "earliest_confirmed_boundary": "After the BKS reply, SpringBoard synchronously waits for LaunchServices while lsd is in installation-progress journal recovery and inactive-install restoration; the first tested open-only counter has not yet observed vn_open_modflags.",

@@ -15925,3 +15925,10 @@ UXC1 `424422` 一次发送并在 uptime `793.640943 s` ACK；Android
 serial `16149951`、product `cheeseburger`、TWRP
 `3.4.0_9-10-mauronofrio`，uptime `766.95 s`。未执行 flash、erase、format、
 dd、GPT 或分区写入。
+
+H421 还暴露了恢复脚本在 ADB 状态切换后的首个 `getprop` 瞬态。脚本现作为
+`scripts/reboot-uxc1-poll-recovery.ps1` 保留在分支中：先轮询 Android 并等待
+`sys.boot_completed=1`，只发送一次 `adb reboot recovery`，再轮询 recovery
+状态；识别 TWRP 后，对 `ro.product.device` 和 `ro.twrp.version` 做最多 20 秒的
+短重试，并在 state 文件记录尝试次数。该改动只影响恢复验证，不改变 boot、
+LaunchServices、renderer、IOMFB、IOSurface 或 scanout。
