@@ -1,0 +1,39 @@
+{
+  "candidate": "H420",
+  "purpose": "repair H419 context-table indexing, restrict BKS focus to SpringBoard samples, and timestamp exact BKS events",
+  "state": "source-prepared",
+  "source": {
+    "core_base": "3fc4159",
+    "core_feature_branch": "h420-main-scene",
+    "native_metal_base": "4c03c9ddb83b606b985fc879a54ac840c970b2d5",
+    "native_metal_commit": "24d011979a4f8538cfdf43962945e9b3edc2d157",
+    "native_metal_feature_branch": "h420-main-scene",
+    "keystore_commit": "2305bad9a525abd467ca3caae046d272fcb27655",
+    "device_commit": "481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91",
+    "main_moved": false
+  },
+  "changes": {
+    "observer_index": "free slot selected by table length",
+    "bks_focus": "0x5b9173 only; msg=0 retains previous ports",
+    "bks_output": "match request, response, reply port, or responder",
+    "bks_event_time": "mach_absolute_time recorded and printed as nanoseconds",
+    "behavioral_changes": false
+  },
+  "known_h419_result": {
+    "bks_request": "0x5b9173 SpringBoard 27 -> launchd 1",
+    "bks_responder": "backboardd 56",
+    "bks_response": "0x5b91d7 backboardd 56 -> SpringBoard thread 293",
+    "contexts": [
+      "0x5d9ae0de",
+      "0xc6aa2b12"
+    ],
+    "context_nodes_with_contents": 0,
+    "first_frame": false
+  },
+  "decision_gates": [
+    "No scene mutation or synthetic drawable",
+    "No IOSurface or scanout work before IOMFB selector 4",
+    "No AKS probe growth",
+    "UFS timeout window remains a confounder"
+  ]
+}

@@ -1,0 +1,142 @@
+diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
+index 2fa89f7..6a1fd26 100644
+--- a/osfmk/kern/task.c
++++ b/osfmk/kern/task.c
+@@ -11291,6 +11291,7 @@ struct native_bks_event {
+ 	uint64_t remote_port;
+ 	uint64_t local_port;
+ 	uint64_t receiver_tid;
++	uint64_t event_time;
+ 	int from;
+ 	int to;
+ 	unsigned id;
+@@ -11308,6 +11309,8 @@ static unsigned native_bks_events_emitted;
+ static uint64_t native_bks_request_port;
+ static uint64_t native_bks_reply_port;
+ static unsigned native_bks_msg_id;
++static int native_bks_responder_pid;
++static unsigned native_bks_reply_id;
+ 
+ static int
+ native_bks_peer(int from_pid, int to_pid)
+@@ -11365,11 +11368,31 @@ native_bks_event_note(unsigned kind, ipc_kmsg_t kmsg, ipc_port_t port,
+ {
+ 	mach_msg_header_t *hdr = kmsg ? ikm_header(kmsg) : NULL;
+ 	struct native_bks_event *event;
++	unsigned id = hdr ? (unsigned)hdr->msgh_id : 0;
++	int springboard = __atomic_load_n(&native_xpc_pids[0], __ATOMIC_RELAXED);
+ 	unsigned written;
+ 
+ 	if (!native_bks_event_wanted(hdr, port, from_pid, to_pid)) {
+ 		return;
+ 	}
++	if (kind == 'R' && id == NATIVE_BKS_MSG_ID &&
++	    to_pid > 1 && to_pid != springboard) {
++		__atomic_store_n(&native_bks_responder_pid, to_pid,
++		    __ATOMIC_RELAXED);
++	}
++	if (springboard > 0 &&
++	    from_pid == __atomic_load_n(&native_bks_responder_pid,
++	    __ATOMIC_RELAXED) &&
++	    to_pid == springboard && id != NATIVE_BKS_MSG_ID) {
++		uint64_t focus_reply =
++		    __atomic_load_n(&native_bks_reply_port, __ATOMIC_RELAXED);
++		uint64_t remote =
++		    hdr ? (uint64_t)(uintptr_t)hdr->msgh_remote_port : 0;
++		uint64_t queue = (uint64_t)(uintptr_t)port;
++		if (id && (remote == focus_reply || queue == focus_reply)) {
++			__atomic_store_n(&native_bks_reply_id, id, __ATOMIC_RELAXED);
++		}
++	}
+ 	written = __atomic_fetch_add(&native_bks_events_written, 1,
+ 	    __ATOMIC_RELAXED);
+ 	if (written >= NATIVE_BKS_EVENT_RING) {
+@@ -11383,9 +11406,10 @@ native_bks_event_note(unsigned kind, ipc_kmsg_t kmsg, ipc_port_t port,
+ 	event->local_port =
+ 	    hdr ? (uint64_t)(uintptr_t)hdr->msgh_local_port : 0;
+ 	event->receiver_tid = receiver_tid;
++	event->event_time = mach_absolute_time();
+ 	event->from = from_pid;
+ 	event->to = to_pid;
+-	event->id = hdr ? (unsigned)hdr->msgh_id : 0;
++	event->id = id;
+ 	event->size = hdr ? (unsigned)hdr->msgh_size : 0;
+ 	event->bits = hdr ? (unsigned)hdr->msgh_bits : 0;
+ 	event->kind = kind;
+@@ -11396,9 +11420,19 @@ static void
+ native_bks_focus_set(uint64_t request_port, uint64_t reply_port,
+     unsigned msg_id)
+ {
++	/*
++	 * native_ipc_focus_emit() also runs for lsd and containermanager
++	 * samples.  Only a SpringBoard sample that still holds the BKS message
++	 * may replace the focus; later SpringBoard samples with msg=0 retain it.
++	 */
++	if (msg_id != NATIVE_BKS_MSG_ID) {
++		return;
++	}
+ 	__atomic_store_n(&native_bks_request_port, request_port, __ATOMIC_RELAXED);
+ 	__atomic_store_n(&native_bks_reply_port, reply_port, __ATOMIC_RELAXED);
+ 	__atomic_store_n(&native_bks_msg_id, msg_id, __ATOMIC_RELAXED);
++	__atomic_store_n(&native_bks_responder_pid, 0, __ATOMIC_RELAXED);
++	__atomic_store_n(&native_bks_reply_id, 0, __ATOMIC_RELAXED);
+ }
+ 
+ static void
+@@ -11408,32 +11442,50 @@ native_bks_focus_emit(unsigned sample)
+ 	    __atomic_load_n(&native_bks_events_written, __ATOMIC_RELAXED);
+ 	unsigned emitted =
+ 	    __atomic_load_n(&native_bks_events_emitted, __ATOMIC_RELAXED);
++	unsigned focus_id =
++	    __atomic_load_n(&native_bks_msg_id, __ATOMIC_RELAXED);
++	int springboard =
++	    __atomic_load_n(&native_xpc_pids[0], __ATOMIC_RELAXED);
++	int responder =
++	    __atomic_load_n(&native_bks_responder_pid, __ATOMIC_RELAXED);
+ 	unsigned shown = 0;
+ 
+ 	if (written - emitted > NATIVE_BKS_EVENT_RING) {
+ 		emitted = written - NATIVE_BKS_EVENT_RING;
+ 	}
+ 	printf("NATIVE_BKS_FOCUS: sample=%u id=0x%x req=0x%llx reply=0x%llx "
+-	    "written=%u lost=%u emitted=%u\n", sample,
+-	    __atomic_load_n(&native_bks_msg_id, __ATOMIC_RELAXED),
++	    "written=%u lost=%u emitted=%u responder=%d response=0x%x\n", sample,
++	    focus_id,
+ 	    (unsigned long long)__atomic_load_n(&native_bks_request_port,
+ 	    __ATOMIC_RELAXED),
+ 	    (unsigned long long)__atomic_load_n(&native_bks_reply_port,
+ 	    __ATOMIC_RELAXED), written,
+-	    __atomic_load_n(&native_bks_events_lost, __ATOMIC_RELAXED), emitted);
++	    __atomic_load_n(&native_bks_events_lost, __ATOMIC_RELAXED), emitted,
++	    responder, __atomic_load_n(&native_bks_reply_id, __ATOMIC_RELAXED));
+ 	while (emitted < written && shown < 64) {
+ 		struct native_bks_event *event =
+ 		    &native_bks_events[emitted % NATIVE_BKS_EVENT_RING];
++		uint64_t event_ns = 0;
++		int matches = event->id == NATIVE_BKS_MSG_ID ||
++		    (focus_id && event->id == focus_id) ||
++		    (springboard > 0 && responder > 0 &&
++		    event->from == responder && event->to == springboard);
++		emitted++;
++		if (!matches) {
++			continue;
++		}
++		absolutetime_to_nanoseconds(event->event_time, &event_ns);
+ 		printf("NATIVE_BKS_EVT: sample=%u serial=%llu kind=%c id=0x%x "
+ 		    "bits=0x%x size=%u from=%d to=%d queue=0x%llx "
+-		    "remote=0x%llx local=0x%llx tid=%llu result=0x%x\n",
++		    "remote=0x%llx local=0x%llx tid=%llu result=0x%x "
++		    "time_ns=%llu\n",
+ 		    sample, (unsigned long long)event->serial, (int)event->kind,
+ 		    event->id, event->bits, event->size, event->from, event->to,
+ 		    (unsigned long long)event->queue_port,
+ 		    (unsigned long long)event->remote_port,
+ 		    (unsigned long long)event->local_port,
+-		    (unsigned long long)event->receiver_tid, event->result);
+-		emitted++;
++		    (unsigned long long)event->receiver_tid, event->result,
++		    (unsigned long long)event_ns);
+ 		shown++;
+ 	}
+ 	__atomic_store_n(&native_bks_events_emitted, emitted, __ATOMIC_RELAXED);

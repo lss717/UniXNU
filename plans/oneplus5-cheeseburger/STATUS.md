@@ -15808,3 +15808,20 @@ kernel panic 或 undefined instruction。UXC1 `424420` 一次 ACK（uptime
 证据：`display-first-frame/logs/H419/device/20261118-235005/`、
 `diagnostics/H419-device-verification-20261119.json` 与
 `FIRST-FRAME-ANALYSIS.md` 第 19 节。
+
+#### H420：BKS time + observer repair（2026-11-19）
+
+H420 从 `h419-main-scene@3fc4159` 派生，只修复 H419 的两个观测 bug：
+
+1. CA context 表在正确选择 `free_index` 后，用表长度判断是否采用该槽，修复
+   所有首轮都落入 `ctxfull` 的索引错误；
+2. BKS focus 只允许 `msg_id=0x5b9173` 的采样更新，`msg=0` 的后续 SpringBoard
+   sample 保留原 request/reply port，lsd/containermanager 不再覆盖焦点。
+
+BKS event slot 新增 `mach_absolute_time()`，输出 `time_ns`；ring emitter 只打印
+request id、response id、已知 responder 或匹配 reply port 的事件，并跳过无关项
+而不消耗 64 行预算。IPC 热路径仍不打印、不分配、不加锁。
+
+静态门为 `check-h420-main-scene.py`、display gate 和
+`drivers/NativeMetal/tools/check-h420-main-scene.py`。构建和一次本地真机验证
+完成后追加结果。
