@@ -1,7 +1,7 @@
 {
   "candidate": "H411",
   "purpose": "display-gate",
-  "state": "device-tested-first-frame-fail-usb-control-lost",
+  "state": "device-tested-usb-transport-lost-system-survived-recovered-twrp",
   "source": {
     "core_base": "947a88b3cc5a264b5e9ba6b67ad228eb107b281f",
     "core_commit": "46e5408bcfc2f491476f767f0faf711fa04d159b",
@@ -88,7 +88,7 @@
     "h410_usb_build_id": "549D06A5",
     "h410_usb_source_manifest": "UniXNU-h411-display-gate/plans/oneplus5-cheeseburger/H410-manifest-20261118.json"
   },
-  "device_gate": "tested; no first frame; USB control lost before UXC1",
+  "device_gate": "tested; no first frame; USB transport stopped at ~326.66s while system survived beyond 470s; manually recovered to TWRP",
   "created_at": "2026-11-18T10:11:26+08:00",
   "artifact_hashes": "manifests/H411-artifacts.sha256",
   "log_hashes": "manifests/H411-logs.sha256",
@@ -130,7 +130,24 @@
     "usb_terminal_state": "No UXL1 after uptime 326.514178; COM3 later CM_PROB_FAILED_START",
     "uxc1_reboot_sent": false,
     "recovery_status": "STOP_CDC_UNUSABLE_NO_RETRY",
-    "evidence": "display-first-frame/logs/H411/H411-device-verification.json"
+    "evidence": "display-first-frame/logs/H411/H411-device-verification.json",
+    "ring": {
+      "pulled_at": "2026-11-18T12:12:17+08:00",
+      "partition": "/dev/block/by-name/userdata_ios",
+      "partition_bytes": 52840607744,
+      "window_first_lba": 29755387,
+      "window_blocks": 8192,
+      "merged_slots": 256,
+      "bin_sha256": "2fe9f5463914803c252b54a5b3333926f0dd04e304a1204b57a15b13e0c7df27",
+      "txt_sha256": "fbac7aaf82de65ba1fc24d98b7a6a7290093161336ab4ea63776121426e8c3ba",
+      "retained_through_s": 470.217681,
+      "disk_sink_resumed_at_s": 329.751411,
+      "system_alive_after_usb_loss": true,
+      "panic_or_trap": false,
+      "evidence": "display-first-frame/logs/H411/ring/"
+    },
+    "sample_6030_gate": "build=H411 boot=5200ce14 sample=6030 accel=0/0/0/0 dpy=3/11/0/0/0 s345=0/0/0 val=0 xf=0 fr=0",
+    "recovery_final": "user manual reboot; TWRP 3.4.0_9-10-mauronofrio, serial 16149951 product cheeseburger, verified 2026-11-18T12:05:57+08:00"
   },
   "h412_disposition": {
     "branch": "h412-first-frame",

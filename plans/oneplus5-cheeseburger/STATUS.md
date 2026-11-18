@@ -15328,3 +15328,15 @@ ArmDTPlatform `origin/main@417ff95d`，新提交
 **证据**：`display-first-frame/logs/H411/`，其中包括原始流、解码 stream、decoded log、preflight、fastboot boot、POST capture state 和综合 JSON。
 
 **H412 去留**：H412 分支 `h412-first-frame@b6e26de` 与 H411 探针提交 `46e5408` 比，仅 `NativeUfsProbe.cpp` 和检查脚本中的 H411→H412 标识/注释共 2 文件、6 行不同；proc-state patch 的 Git blob 完全相同。这不是修复。H412 在全新依赖抓取时以 Mu Basecore `curl 18` 自然失败，未进入内核构建，未选中上机。下一候选必须先给出单一行为修复，不能只换编号。
+
+#### H411 尾环：USB 断流与显示失败分离（2026-11-18）
+
+**恢复确认**：用户手动重启后，唯一 ADB 设备已重新进入 TWRP；`16149951`、`recovery`、`cheeseburger`、`ONEPLUS A5000`、TWRP `3.4.0_9-10-mauronofrio` 于 `12:05:57` 复核通过。H411 的 UXC1 在本轮没有发送。
+
+**只读归档**：使用 `scripts/h103-log-pull.py --slots 256` 读取 `userdata_ios` 末尾 32 MiB。分区 `52,840,607,744` 字节，first_lba `29,755,387`，8192 块；ring SHA-256 `2fe9f5463914803c252b54a5b3333926f0dd04e304a1204b57a15b13e0c7df27`，decoded log SHA-256 `fbac7aaf82de65ba1fc24d98b7a6a7290093161336ab4ea63776121426e8c3ba`。没有清零、写回或修改日志窗口。
+
+**分离结论**：USB 约在 `326.66 s` 最后一次 Bulk-IN 后断流；`329.751 s` 的 `NATIVE_USB_DISK: paused=0 reason=3 connected=0` 表明磁盘 sink 已恢复。系统继续运行到至少 `470.218 s`，期间有新进程 exec 和持续 UFS heartbeat，没有 panic、NATIVE_TRAP 退出、corpse failure 或 OCS timeout。因此不存在“系统在 326 秒死亡”，精确问题是 USB transport 断流。
+
+**显示独立失败**：sample 6030 在 USB 断流后的 `378.895 s` 仍为 `accel=0/0/0/0 dpy=3/11/0/0/0 s345=0/0/0 val=0 xf=0 fr=0`。SpringBoard 仍为 `launchd q=1 sr=0 so=5 ld_reply=0`。`q=1/reply=0` 跨 63.5 秒不变，说明该等待链没有自行推进，但同轮其他服务仍活跃，不能单独宣判永久死锁。`NATIVE_UFS_LOG_FAIL` 是 H103 snapshot 写锁竞争，不应误写成 UFS 存储整体失效。
+
+**证据**：`display-first-frame/logs/H411/ring/H411-ring.bin`、`H411-ring.txt`、`H411-ring-analysis.json`。
