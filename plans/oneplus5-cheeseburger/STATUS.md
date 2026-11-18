@@ -15383,12 +15383,98 @@ staged apps 顺序。
 - `scripts/check-h415-data-ready.py`：有界等待/错误/单文件范围检查；
 - 本 STATUS 与 H415 diagnostic 文档。
 
-**预构建门禁**：H415 checker 与 display gate checker 通过；`git diff --check`
-通过；H414 IPC 名称不得重新进入 patch 树。实际构建必须在 Mac 从本提交和
-device `481fcfe7` 独立 checkout，完成 stub -> prelink -> real PMGR ->
-final prelink 两遍，并记录 lock、feed link、submodule、archive、kernel、
-payload 和 boot SHA。final kernel 不得仍是 `final_pmgr_required=true`。
+**提交与独立构建**：H415 core 已提交并推送为
+`h415-data-ready@95588b3dd005a42398e19935dc143df14c675899`
+（tree `f1250d6bcac52b7a288952c5eedfaa3227d301cf`）；device 保持已验证 main
+`481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91`，没有设备源码差异。Mac 使用对应
+clean worktree、21 个精确 gitlink 和真实的独立 `out/feeds` 目录，没有指向
+H413/H414 worktree。device `unixnu.lock` SHA-256 为
+`0bbf113d5be71b4c7141f67a82ffeee03ce03e578d03802d5fcca5ecfe0da1a9`，
+其中 xnu `d8b80295118ef25ac3a784134bcf95cd8e88109f`、
+AvailabilityVersions `933f9360f1b70dfbda5548386a3d65e0358b4f7d`、
+IOStorageFamily `e45fbe30a7879e0b16e26dddb78538f1b00e0bff`、
+corecrypto-2023 `11fba65b12d8830630e248dfa8344caf8b065f26`、
+edk2 `cfb93724a06ff86ff5ba971413368a7809ee42a5`、
+libdispatch `30fe6a7d945340ce69cef121132f049e810089a5`、
+libplatform `a00a4cc36da2110578bcf3b8eeeeb93dcc7f4e11`、
+libpthread `c0e60fb5ecfc54cf379c261d3f9572cc22ded891`。
 
-**未完成项**：源码提交后的 Mac 独立 fetch/checkout、完整构建、静态
-provenance gate、设备 boot、CDC/userland 与重启恢复。未完成前不得描述为
-已修复或 merge-ready。
+构建顺序为 clean stub kernel、stub prelink、real PMGR kernel、real prelink、
+payload、boot。H415-01 首次 bootstrap 因独立 worktree 尚无
+`out/ipsw/21H461/kernelcache.decompressed` 退出，H415-02 在置入正式 IPSW
+解出的 KernelCache 后成功；H415-04 real 构建最初因 driver archive 尚未生成
+出现一次 link failure，随后脚本重建 archive 并再次 link 成功。最终产物在
+archive 之后生成，逐层 SHA 一致，不是旧 kernel/历史 payload 混入。产物
+SHA-256：
+
+- source kernel `3e1ffa3d2a3db3b43c42576932534834efdf1d20d9db0db9b97241a4c2901dc8`
+- stub prelink `4a6d9ef1498ddfee32a5154e3557f7f336efc85ea73c0201871a5b1d269b120d`
+- real PMGR archive `58a2f001e93ba192b31d45da20080a5aef5a5d73311ad29aec4ced86f8b2d13c`
+- final kernel `11e3f82e41f83bd310255c25f3aef72b6a8c4fafca120dac1373322edc6c4ac8`
+- payload `e5085448a19401ccaf8d09234c4cfb5f2425e59f07e5c2e8cfbb5c24290bb563`
+- boot `75c8a5043ff2a017d3d9d870c3ff7cf928da531ca336eb401f402a95deb46d39`
+- ADT `c8776f4d573c36f743e8da138ecf9726880f59c7edc726459d0a7e692a3b08fa`
+- trustcache `7416ca4f8377146626bb284e2133c76bee6cb4e3ee0af5d648b186235a7323a7`
+- Data sidecar `fed3a0e6bb39974da339bf7f9155b282dfb0438c454c00f0df7a94b5995c03a4`
+- UEFI blob `9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6`
+- UEFI FD `e9135e17397165425d0794e8e64c0a4ae63575ce222b06b80305fcde6b16f1b3`
+
+**静态门禁**：`verify_h415.py` PASS，证明 source kernel -> final kernel ->
+payload -> boot 逐层一致；payload 内 kernel/ADT/trustcache/Data、boot 内
+payload/UEFI 与输入一致；kernel 含 `H415`、`NATIVE_H82_DATA_PATH_WAIT`、
+`NATIVE_H82_DATA_PATH`，不含 H414 的
+`NATIVE_IPC_PORT_RING`、`NATIVE_IPC_DELEGATE_RING` 或 `native_xpc_tasks`。
+boot args 为 992 B，最坏 1020/1024。H415 source checker、display gate
+checker、ADT、kernel-base、H408 CDC/UXC1 与 H410 status/producer 检查均 PASS。
+其中 `check-h410-usb-status.py` 的默认 `DEVICE`/`USB` 仍指向旧的
+`display-first-frame/UniXNU-cheeseburger` worktree；对 H415 的 PASS 必须显式把
+`USB` 指向 `UniXNU-cheeseburger-h415-data-ready@481fcfe7` 后运行。这是检查器
+路径选择限制，不是 H415 的 USB producer 回归；本次没有修改该检查器源码。
+最终分类为
+`single-variable-data-readiness-package-statically-verified`，静态报告
+SHA-256 为 `bc4f893849a3a157254151b550b13693ae71e251d20298988fa7ce80212f39ac`。
+
+**真机结果**：设备位置修正后，在本地唯一 TWRP `16149951`
+（`cheeseburger`、`ONEPLUS A5000`、TWRP 3.4.0_9-10-mauronofrio）上完成一次
+bounded `fastboot boot`，boot
+`75c8a5043ff2a017d3d9d870c3ff7cf928da531ca336eb401f402a95deb46d39`。
+Fastboot 于 `2026-11-18T19:09:52+08:00` 接受，CDC 于
+`19:14:09` 以 COM8 枚举。360 秒捕获得到 9,977 帧 / 1,258,491 payload
+bytes，sequence `0..9976`；CRC、gap、truncation、boot switch 均为 0。
+
+完整持久环保留了 H415 的关键早期记录：
+
+```text
+31.041506 NATIVE_BUILD: H415 boot=23861096
+33.457015 NATIVE_DATA_STORE: mode=1 open=1 first=1be27f2
+          blocks=262153 reason=read-only
+33.487381 NATIVE_H82_DATA_PATH: status=0 seed=0 mount=0 root=1
+34.257516 NATIVE_H82_DATA: status=0 stage=4 ro=0
+          dev=16777240 size=1073741824
+```
+
+本轮 mountpoint 在首次 lookup 时已经可解析（`mount=0`），因此没有触发
+H415 的 600 次重试分支；它证明补丁未造成启动回归而且 Data stage 4 成功，
+但没有主动复现 H414 C 的 delay/`ENOENT` 场景。userland 随后继续执行；
+`NATIVE_SBCHAIN` 和 `NATIVE_DISPLAY_GATE` 在 sample 6000 同 boot 取得：
+
+```text
+NATIVE_SBCHAIN: sb=27 n=3 msg=0x5b9173 rcv=SpringBoard
+  req=launchd q=1 sr=0 so=3 ld_reply=0
+
+NATIVE_DISPLAY_GATE: build=H415 boot=23861096 sample=6000
+  accel=0/0/0/0 dpy=3/11/0/0/0 s345=0/0/0 val=0 xf=0 fr=0
+```
+
+同一捕获窗口 194 次 `backboardd -> IOAcceleratorES` match 全部为 `ok=0`，
+没有一次 `ok=1`；IOMFB probe 仍正常找到 `NativeLegacyDisplay`。USB 健康后
+磁盘 sink 于 uptime 277.210 进入 pause。捕获中没有 panic、corpse 或 OCS
+timeout。UXC1 request `424416` 只发送一次，收到 ACK 后 CDC 消失；Android
+`sys.boot_completed=1`，随后已回到 TWRP。
+
+**当前处置**：H415 已从
+`single-variable-data-readiness-package-statically-verified` 更新为本机一次
+有界 smoke PASS，具体分类为
+`data-readiness-device-smoke-pass-no-first-frame`。首帧仍为零；H415 不改变
+“显示提交最早可证断点位于 selector 3/4/5 之前，service/scene/renderer 因果
+仍未分离”的结论。工作树中本 STATUS 和诊断文档的更新尚未提交。
