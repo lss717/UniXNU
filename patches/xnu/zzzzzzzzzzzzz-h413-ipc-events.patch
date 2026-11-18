@@ -26,10 +26,10 @@
  	uint64_t x6;
  	uint64_t x7;
  	uint64_t x16;
-+	uint32_t ith_state;
-+	uint32_t ith_kmsg;
-+	uint32_t ith_receiver_name;
-+	uint32_t ith_seqno;
++	uint32_t recv_state;
++	uint32_t recv_kmsg;
++	uint32_t recv_name;
++	uint32_t recv_seqno;
  };
  static struct native_sb_row native_sb_rows[16];
  static unsigned native_sb_count;
@@ -101,10 +101,10 @@
  			native_sb_rows[native_sb_count].x6 = (uint64_t)get_saved_state_reg(state, 6);
  			native_sb_rows[native_sb_count].x7 = (uint64_t)get_saved_state_reg(state, 7);
  			native_sb_rows[native_sb_count].x16 = (uint64_t)get_saved_state_reg(state, 16);
-+			native_sb_rows[native_sb_count].ith_state = th->ith_state;
-+			native_sb_rows[native_sb_count].ith_kmsg = th->ith_kmsg != IKM_NULL;
-+			native_sb_rows[native_sb_count].ith_receiver_name = th->ith_receiver_name;
-+			native_sb_rows[native_sb_count].ith_seqno = th->ith_seqno;
++			native_sb_rows[native_sb_count].recv_state = th->ith_state;
++			native_sb_rows[native_sb_count].recv_kmsg = th->ith_kmsg != IKM_NULL;
++			native_sb_rows[native_sb_count].recv_name = th->ith_receiver_name;
++			native_sb_rows[native_sb_count].recv_seqno = th->ith_seqno;
  			native_sb_count++;
  		}
  	}
@@ -201,9 +201,9 @@
 +		if (native_sb_count) {
 +			printf("NATIVE_SBWAIT: sample=%u tid=%llu th_state=0x%x ith_state=0x%x ith_kmsg=%u ith_rname=0x%x ith_seq=%u\n",
 +			    sample, (unsigned long long)native_sb_rows[0].tid,
-+			    native_sb_rows[0].state, native_sb_rows[0].ith_state,
-+			    native_sb_rows[0].ith_kmsg, native_sb_rows[0].ith_receiver_name,
-+			    native_sb_rows[0].ith_seqno);
++			    native_sb_rows[0].state, native_sb_rows[0].recv_state,
++			    native_sb_rows[0].recv_kmsg, native_sb_rows[0].recv_name,
++			    native_sb_rows[0].recv_seqno);
 +		}
 +		native_ipc_focus_emit(sample, native_sb_hdr[5], native_sb_req.port, native_sb_local.port);
  		native_xpc_register(native_sb_rcv.port, native_sb_pid, name, 'r');
