@@ -1,9 +1,10 @@
 {
   "candidate": "H419",
   "purpose": "observe the exact BKS main-screen request/reply path and display-bound CA context changes without changing display behavior",
-  "state": "source-prepared-not-built-not-device-tested",
+  "state": "statically-verified-device-host-unreachable",
   "source": {
     "core_base": "c970fe90e9567b1e504f07397fc38e348fe3ebbc",
+    "core_code_commit": "366b990c06645d8e488fa4a528773b718d4f2cc1",
     "core_feature_branch": "h419-main-scene",
     "native_metal_base": "75f3f65cb21a40fa7dfa85f7d092b70fb50cf115",
     "native_metal_commit": "4c03c9ddb83b606b985fc879a54ac840c970b2d5",
@@ -11,6 +12,24 @@
     "keystore_commit": "2305bad9a525abd467ca3caae046d272fcb27655",
     "device_commit": "481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91",
     "main_moved": false
+  },
+  "artifacts": {
+    "source_kernel_stub_sha256": "58ee35386dfbdfa6eb5428a65c4cfb93d2303fc733dcc05634c80cf35f3cadd5",
+    "stub_prelink_sha256": "817b5e530731f266e7709fdbce6eb68a9875a8737439d610a0ec64bedb3222f9",
+    "source_kernel_real_sha256": "103d671b7f674fe7453aaeeb0f729fd5e7d91f4c594346da402b2d53c5245146",
+    "real_pmgr_sha256": "ec89112a4f34cc4f61e5bc5a16198871533c4872325a5331e4e4197cb81a8b1c",
+    "kernel_sha256": "7c6e43cf2eb7cc7e0d98a7f280723baae9440847869c9c058803f96eff6b9070",
+    "payload_sha256": "6ea9e8c44d8c3eb79a5b094e8c7cfe12962cce8a2663db0ad6516f27b0f18304",
+    "boot_sha256": "78e8a088a036cf1179cfd022dc148050d2e3e1e18114ee693a155fd59b2e0025",
+    "adt_sha256": "bf582893594a3963af9cf75bc0dc1ed242788e39cf67e185adf2c922a58ec489",
+    "owner_trust_sha256": "c31b1b92e488df5846d1dd95a05a0d5516e5034dcc98b7206bb5fb397071ee3c",
+    "gpu_addon_sha256": "dbb40f59355a2a0b670018d7b7fe2a1c94cc3c677a88addef97ab7cfecd8f728",
+    "plugin_executable_sha256": "4263123e43d266800e05b504d7cf2d8344cde9116ecbe7b07bcd67389da047c6",
+    "plugin_cdhash": "152a092cc76761dc00df39558376dcff781c1855",
+    "data_ramdisk_sha256": "fed3a0e6bb39974da339bf7f9155b282dfb0438c454c00f0df7a94b5995c03a4",
+    "boot_args_bytes": 995,
+    "boot_args_worst": 1023,
+    "boot_args_limit": 1024
   },
   "changes": {
     "kernel": {
@@ -64,5 +83,12 @@
     "no scene mutation from the observer",
     "no target-specific retry or synthesized reply",
     "UFS timeout/corpse window is a confounder rather than a root-cause signal"
-  ]
+  ],
+  "device_preflight": {
+    "boot_sent": false,
+    "candidate_copied": false,
+    "state": "blocked",
+    "reason": "ssh y9000x repeatedly resolved to 192.168.8.58:22 and timed out",
+    "alternate_connection_used": false
+  }
 }

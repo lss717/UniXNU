@@ -15753,3 +15753,24 @@ contents 节点数，只在新增或变化时输出 `NATIVE_MTL srv ctxchange`�
 静态门为 `check-h419-main-scene.py`、兼容的 display gate 和
 `drivers/NativeMetal/tools/check-h419-main-scene.py`。设备结果在构建和一次
 有界真机验证完成后追加。
+
+**静态构建完成（2026-11-18）**：core `366b990c06645d8e488fa4a528773b718d4f2cc1`、
+NativeMetal `4c03c9ddb83b606b985fc879a54ac840c970b2d5` 已推送为
+`h419-main-scene`。独立 feed 完成 stub PMGR -> prelink -> real PMGR -> final
+prelink。最终 kernel `7c6e43cf2eb7cc7e0d98a7f280723baae9440847869c9c058803f96eff6b9070`、
+payload `6ea9e8c44d8c3eb79a5b094e8c7cfe12962cce8a2663db0ad6516f27b0f18304`、
+boot `78e8a088a036cf1179cfd022dc148050d2e3e1e18114ee693a155fd59b2e0025`。
+新 A540Trace/CDHash 为 `4263123e...` / `152a092cc76761dc00df39558376dcff781c1855`；
+addon 与 owner trust 分别为 `dbb40f59...`、`c31b1b92...`。kernel 同时包含
+`NATIVE_BKS_FOCUS:`、`NATIVE_BKS_EVT:` 与 H419 build marker。
+
+`verify_h419.py` 对 kernel/payload/boot、FAT/ADT、addon 解包与签名、owner
+trust、Data seed、UEFI/FD/DTB 和安全 bootargs 全部 PASS（995 B，最坏
+1023/1024）。因此构建环境本身没有造成自动回 Android：这是一条哈希闭合、
+可启动格式正确的候选，运行时 reset 仍必须由设备日志单独归因。
+
+设备门未执行：2026-11-18 本轮 `ssh y9000x` 连续解析为
+`192.168.8.58:22` 并超时。按 alias-only 规则没有使用 IP、`user@host`、
+备用 SSH 配置或本机设备回退；候选未复制到设备主机，未运行 ADB、
+`fastboot boot`、flash、erase 或任何分区写入。H419 因此分类为
+`statically-verified-device-host-unreachable`，设备证据仍是唯一未完成项。
