@@ -15849,3 +15849,26 @@ source-statically-verified-unbuilt；
 `git diff --check`、Python compile、JSON parse 均为 PASS；H421 patch 也在
 H420 已应用的 Mac XNU worktree 上通过普通 `git apply --check`。当前尚未构建、
 未上机、未提交或推送。
+
+**构建结果（2026-11-19）**：H421 patch 顺序先经两次干净树门禁修正，最终构建
+source 为 `37ae68ee11eef749051f3de05ad4ff78e7d06255`。第一遍使用
+`build-sheng-pmgr-stub.py`，第二次 prelink 后才以 real PMGR
+`b8f4b8bf3bed783278696c0bc06c48ac27881f8cb03f923b0f1ec0635ea1a82c`
+重建并再次 prelink。
+
+```text
+source stub   a9a42afdf6c8dd41588bb4399a80aeab6676393f7da5d917fe3358e32559d4ee
+stub kernel   b4a4bf8d79b08c6075e9f1eb25a83b1fc3782a39c5233c754d39672def06efd4
+source real   4c46d873c74386fd84cab1b36c4b262409d34f239f55c1d431b7b0c725c19f8d
+kernel        06415c05fc3c2b839232c07a5b6eb4638b88ea6b4a40d7b522e28a0749727d74
+payload       337858312cd53e815e1c3187cc3e57e45f0e39897373abdc6ab2587b1db4df34
+boot          2282441f210430cd9e3fa77de2be24b91b425d5bdd53b71209e129bcf45e9947
+ADT           b8eb10f81c8e1c80cd37cacc4715b8291f89639c802a7c4024f4a0dd4be5b8d1
+```
+
+payload 保持 Data `fed3a0e6…`、A540 addon `8e090c37…`、owner trust
+`924654c2…` 和 995 B command line。`verify_h421.py` 对
+boot→payload→kernel/ADT/UEFI/FDT/trust/addon 反向提取及
+`1023/1024` worst-case bootargs 全部 PASS；最终 kernel 同时包含 H421 和
+`NATIVE_LS_GATE` 标记。分类为
+`launchservices-progress-gate-package-statically-verified`，尚未上机。

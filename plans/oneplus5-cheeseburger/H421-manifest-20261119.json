@@ -1,9 +1,10 @@
 {
   "candidate": "H421",
   "purpose": "observe LaunchServices progress while SpringBoard waits after the BKS reply",
-  "state": "source-statically-verified-unbuilt",
+  "state": "package-statically-verified-unbuilt",
   "source": {
     "core_base": "0bfaaa3746fbf539fae1906642b6c8b3c84456e2",
+    "core_build_commit": "37ae68ee11eef749051f3de05ad4ff78e7d06255",
     "core_feature_branch": "h421-launchservices-gate",
     "native_metal_commit": "24d011979a4f8538cfdf43962945e9b3edc2d157",
     "device_commit": "481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91",
@@ -26,6 +27,24 @@
     "hot_path": "fixed atomics and bounded path copy only; no allocation, sleep, or new lock",
     "behavior_changes": []
   },
+  "artifacts": {
+    "source_kernel_stub_sha256": "a9a42afdf6c8dd41588bb4399a80aeab6676393f7da5d917fe3358e32559d4ee",
+    "stub_prelink_sha256": "b4a4bf8d79b08c6075e9f1eb25a83b1fc3782a39c5233c754d39672def06efd4",
+    "source_kernel_real_sha256": "4c46d873c74386fd84cab1b36c4b262409d34f239f55c1d431b7b0c725c19f8d",
+    "stub_pmgr_sha256": "b8dbb622bdefebc094cb645cf5a5304cf6f5c8395108c5dbfd98feb3f3b4b2ad",
+    "real_pmgr_sha256": "b8f4b8bf3bed783278696c0bc06c48ac27881f8cb03f923b0f1ec0635ea1a82c",
+    "kernel_sha256": "06415c05fc3c2b839232c07a5b6eb4638b88ea6b4a40d7b522e28a0749727d74",
+    "payload_sha256": "337858312cd53e815e1c3187cc3e57e45f0e39897373abdc6ab2587b1db4df34",
+    "boot_sha256": "2282441f210430cd9e3fa77de2be24b91b425d5bdd53b71209e129bcf45e9947",
+    "adt_sha256": "b8eb10f81c8e1c80cd37cacc4715b8291f89639c802a7c4024f4a0dd4be5b8d1",
+    "owner_trust_sha256": "924654c295a313ee6a26c2b37a9db3d7c0038d23c0eb08666c0d6cd2b1c234fb",
+    "gpu_addon_sha256": "8e090c37f907b4d010f2725976ada6768e0f846dc3a907490147dc32071d67f4",
+    "data_ramdisk_sha256": "fed3a0e6bb39974da339bf7f9155b282dfb0438c454c00f0df7a94b5995c03a4",
+    "boot_args_bytes": 995,
+    "boot_args_current_with_zap_base": 1015,
+    "boot_args_worst": 1023,
+    "boot_args_limit": 1024
+  },
   "decision_gates": [
     "No LaunchServices result modification",
     "No SpringBoard user-space hook",
@@ -41,8 +60,12 @@
     "git_diff_check": "PASS",
     "python_compile": "PASS",
     "json_parse": "PASS",
-    "built": false,
+    "built": true,
+    "build_classification": "launchservices-progress-gate-package-statically-verified",
+    "two_pass_pmgr": true,
+    "kernel_changed_from_h420": true,
+    "payload_boot_args_match_h420": true,
     "device_tested": false
   },
-  "next_action": "Commit and push to the feature branch only after user authorization, pull that exact revision on mac, build the two-pass PMGR chain, and run the existing static gates before one bounded device boot."
+  "next_action": "Perform one bounded local fastboot boot of H421, capture through the pre-OCS window, and classify whether lsd open/active/slow counters advance while SpringBoard waits."
 }
