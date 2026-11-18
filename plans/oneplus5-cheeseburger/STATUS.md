@@ -15340,3 +15340,23 @@ ArmDTPlatform `origin/main@417ff95d`，新提交
 **显示独立失败**：sample 6030 在 USB 断流后的 `378.895 s` 仍为 `accel=0/0/0/0 dpy=3/11/0/0/0 s345=0/0/0 val=0 xf=0 fr=0`。SpringBoard 仍为 `launchd q=1 sr=0 so=5 ld_reply=0`。`q=1/reply=0` 跨 63.5 秒不变，说明该等待链没有自行推进，但同轮其他服务仍活跃，不能单独宣判永久死锁。`NATIVE_UFS_LOG_FAIL` 是 H103 snapshot 写锁竞争，不应误写成 UFS 存储整体失效。
 
 **证据**：`display-first-frame/logs/H411/ring/H411-ring.bin`、`H411-ring.txt`、`H411-ring-analysis.json`。
+
+#### H413：launchd 队列同 boot 关联（2026-11-18）
+
+**分类**：只读诊断，非显示修复；已构建、静态验证并完成一次真机测试。首帧仍为 0。
+
+**源码与产物**：H413 从 core `947a88b3cc5a264b5e9ba6b67ad228eb107b281f` / device `481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91` 出发，诊断代码提交 `942fc7420591d36750cc6d4d9c6790e140735b95`。boot `e55082d1762d9e38d590fe00cf3386a2969e84af0fa3d4925fa1886b5a6fd04e`，kernel `da87cb526067cc15e72f6b5fc9679fff482f889b218e96dfaf066e6643800b05`，payload `f44c7ddbd06f57896c85c3f99d759393ecabea094e7ce45ba464bcdd0bdaf0b1`。设备源码没有变化，只有 core 的 XNU/采样器/检查脚本修改。
+
+**静态门禁**：payload kernel/ADT/trustcache/Data sidecar、UEFI modules、boot layout、kernel bases、boot args `1020/1024`、H408 CDC/UXC1 contract、H410 第五状态方块、磁盘 pause/producer separation 全 PASS；`check-h413-ipc-correlation.py` 与 display gate checker PASS。
+
+**真机采集**：唯一序列号 `16149951` 上执行一次有界 `fastboot boot`。8 秒 live CDC 为 204 帧 / 26,320 payload bytes，sequence `0..203`，CRC/gap/boot-switch/truncation 全 0；kernel gate boot 为 `2f288db0`。sample 6000 中 SpringBoard 发送 `0x5b9173`，request port `0x3903` 由 launchd 持有且 `cnt=2 qlim=6`，SpringBoard 阻塞在 reply port `0xa03` 且 `ith_kmsg=0`，launchd `ld_reply=0`。focused IPC 记录可见 `S` 和 `Q`，未见 `D/R`；同一 sample 的 gate 为 `accel=0/0/0/0 dpy=3/11/0/0/0 s345=0/0/0 val=0 xf=0 fr=0`。
+
+**解释边界**：事件环 `written=6009 lost=4985`，所以“未见 D/R”不能扩大为整个 boot 未 delivery/dequeue；8 秒窗口也只证明该瞬态请求仍未回复。可以确认的断点是：BKS display 主屏请求已投递到 launchd 队列，而 SpringBoard 在 reply port 等待时显示提交为零。launchd handler/delegate、renderer 和 accelerator 的先行关系仍未证明。
+
+**UXC1 与恢复**：UXC1 request `424413` 只发送一次，设备 ACK、打印 `MACH Reboot`；Android ADB 以 `16149951` 返回且 boot_completed=1，随后授权转换到 TWRP。最终确认 product `cheeseburger`、TWRP `3.4.0_9-10-mauronofrio`。reboot capture 为 5 帧 / 2,491 bytes，sequence `211..215`，错误计数全 0。
+
+**尾环限制**：TWRP 中只读导出 32 MiB ring，`slot_boot=2f288db0`、`slot_build=H413`、bin SHA-256 `9c60672cf33155f2d12e88c8d6a93ca20425c4b977ec266b53dee65565831b73`、text SHA-256 `47d43a6660a2ec2e50d9349ec69547dadef052f38ff02b3afe076816502c2df1`。该窗口止于约 `279.409 s`，不含 sample 6000；健康 USB 在线时 disk sink 依设计暂停，故 IPC 证据来自 live CDC，尾环不能扩展。
+
+**去留**：H411/H413 的只读程序与已验证文档进入主线；H412 仍是 duplicate-only、未构建、未上机实验，保留独立分支。设备仓 `h411-display-gate@0ceec28` 的 recovery wrapper 未端到端跑通，H413 包装器也在抓取后因找不到 checker 源路径停止，随后才手工发送一次 UXC1；两者不作为已验证工具合入。H411 的约 `326.66 s` USB transport 断流和 H408 UFS OCS timeout 仍为 known-open，H413 的单次成功重启不构成 USB 根因修复。
+
+**证据**：`display-first-frame/logs/H413/` 与 `plans/oneplus5-cheeseburger/H413-manifest-20261118.json`；专项审计见 `plans/oneplus5-cheeseburger/diagnostics/H413-first-frame-correlation-2026-11-18.md`。

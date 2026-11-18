@@ -1,0 +1,159 @@
+{
+  "candidate": "H413",
+  "purpose": "format1-first-frame-read-only-ipc-correlation",
+  "state": "statically-verified-and-device-tested-no-first-frame",
+  "source": {
+    "core_base": "947a88b3cc5a264b5e9ba6b67ad228eb107b281f",
+    "h411_probe_commit": "46e5408bcfc2f491476f767f0faf711fa04d159b",
+    "h413_code_commit": "942fc7420591d36750cc6d4d9c6790e140735b95",
+    "h413_code_tree": "adeaf95d60d4908baaaf24fde344fd1b9164ad1f",
+    "feature_branch": "h413-ipc-correlation",
+    "code_patch_sha256": "5511e721d960f01236f23cf8b8b1741f129634e9f081c7a43da5389ebbe5cd9",
+    "code_patch_bytes": 25823,
+    "device_base": "481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91",
+    "device_source_changed": false,
+    "h412_disposition": "excluded: duplicate-only and unbuilt"
+  },
+  "submodules": {
+    "ArmDTPlatform": "58e633c64b607011dd8beff551edd6e811223f3d",
+    "DarwinBoot": "075245d68337b858c5b80597e438eee541cae10c",
+    "NativeMobileDisplay": "d5b95247b42a1af913178eebb06c263c49457130",
+    "NativeAdreno": "d7572a16306b6b1b2ac715390d04065238e9c55e",
+    "NativeUfs": "95f3a0c7b3c48c5eb2837c79834c27d581614491",
+    "NativePrelink": "2b6ffb50117eee820b98aca9bd51b5c7dfb2970e"
+  },
+  "artifacts": {
+    "kernel_sha256": "da87cb526067cc15e72f6b5fc9679fff482f889b218e96dfaf066e6643800b05",
+    "payload_sha256": "f44c7ddbd06f57896c85c3f99d759393ecabea094e7ce45ba464bcdd0bdaf0b1",
+    "adt_sha256": "e502af30fdf1e8d361e6797fad9a3d8fa1843292a671d1a2355b51858fdce8be",
+    "boot_sha256": "e55082d1762d9e38d590fe00cf3386a2969e84af0fa3d4925fa1886b5a6fd04e",
+    "boot_json_sha256": "04e48265e9fb058cad5253c90d970a2624eead476b2c0996c9428dc02f09cf1e",
+    "data_sidecar_sha256": "fed3a0e6bb39974da339bf7f9155b282dfb0438c454c00f0df7a94b5995c03a4",
+    "trustcache_sha256": "7416ca4f8377146626bb284e2133c76bee6cb4e3ee0af5d648b186235a7323a7",
+    "boot_bytes": 81217536,
+    "boot_args_worst": 1020,
+    "boot_args_limit": 1024
+  },
+  "static_verification": {
+    "passed": true,
+    "report_sha256": "f663f12c3eb5c3422141392b2ba551be0781ea9bc35f401442cf6bfadfc89345",
+    "adt": true,
+    "uefi_modules": true,
+    "boot_layout": true,
+    "kernel_bases": true,
+    "cdc_uxc_contract": true,
+    "h410_status_cell": true,
+    "display_gate_checker": true,
+    "ipc_correlation_checker": true,
+    "ufs_timeout_class": "known-open: not a display fix"
+  },
+  "device": {
+    "tested": true,
+    "host": "y9000x",
+    "serial": "16149951",
+    "boot_command": "fastboot -s 16149951 boot H413-boot.img",
+    "boot_accepted": true,
+    "transport_boot_id": "40273852",
+    "transport_build": "H410",
+    "kernel_boot_id": "2f288db0",
+    "capture_port": "COM3",
+    "live_capture_seconds": 8,
+    "live_stream": {
+      "frames": 204,
+      "payload_bytes": 26320,
+      "first_sequence": 0,
+      "last_sequence": 203,
+      "crc_errors": 0,
+      "sequence_gaps": 0,
+      "boot_switches": 0,
+      "truncated_frames": 0,
+      "log_sha256": "654b6d8bd7c1a1b15b55fea41e83cbc635ca62b281e2cb09ecd34cbd621308c4",
+      "frames_sha256": "34f463d996f531fd6ad96ce468544a5b1562e52984e1278245d9d0a788418262"
+    },
+    "ipc": {
+      "sample": 6000,
+      "request_id": "0x5b9173",
+      "sender_pid": 89,
+      "sender": "SpringBoard",
+      "receiver_pid": 1,
+      "receiver": "launchd",
+      "request_port": "0xfffffff81592e2a0",
+      "reply_port": "0xfffffff8159134c0",
+      "request_queue_count": 2,
+      "request_queue_limit": 6,
+      "first_queue_head": "0x5b9173/537989649/32",
+      "second_queue_head": "0x5b9173/537989649/32",
+      "springboard_thread_tid": 292,
+      "blocked_state": "0x10004001",
+      "blocked_kmsg": 0,
+      "launchd_reply_count": 0,
+      "event_written": 6009,
+      "event_lost": 4985,
+      "observed_kinds": "S,Q",
+      "absent_from_focus": "D,R",
+      "focus_window_lost_events": true,
+      "interpretation": "request is queued at launchd while SpringBoard waits on its reply port; no D/R in the focused records, but ring-loss prevents exhaustive global ordering"
+    },
+    "display": {
+      "gate": "build=H413 boot=2f288db0 sample=6000 accel=0/0/0/0 dpy=3/11/0/0/0 s345=0/0/0 val=0 xf=0 fr=0",
+      "first_frame": false,
+      "boundary": "before IOMFB selector 3/4/5, NativeLegacyDisplay validation, transfer and MSM8998 scanout submission"
+    },
+    "reboot": {
+      "request_id": 424413,
+      "command_sent_once": true,
+      "ack_line": "NATIVE_USB_CMD: ack req=424413 op=reboot",
+      "reboot_armed": true,
+      "mach_reboot_observed": true,
+      "reboot_frames": 5,
+      "reboot_payload_bytes": 2491,
+      "switch_boot_id": false,
+      "last_reboot_sequence": 215,
+      "log_sha256": "8de9f43583fdd810d6d0d4c753f81b477f744c0fdaa633a3de7b3f3e6db23914",
+      "frames_sha256": "76ef37a4089ca15ee7839cb609c6cdb5bfd81f25a63584b4a934bb85bdf52a89"
+    },
+    "recovery": {
+      "android_boot_completed": 1,
+      "transitioned_to_twrp": true,
+      "twrp_product": "cheeseburger",
+      "twrp_version": "3.4.0_9-10-mauronofrio",
+      "transition_log_sha256": "5fa931e49e23d114c1fe6d3756de8fc21bb2b36c219768dd2aaa97a2c7e60e70"
+    },
+    "ring": {
+      "pulled_at": "2026-11-18T14:37:32+08:00",
+      "binary_size": 33554432,
+      "bin_sha256": "9c60672cf33155f2d12e88c8d6a93ca20425c4b977ec266b53dee65565831b73",
+      "text_sha256": "47d43a6660a2ec2e50d9349ec69547dadef052f38ff02b3afe076816502c2df1",
+      "decoded_lines": 1876,
+      "slot_boot": "2f288db0",
+      "slot_build": "H413",
+      "slots_written": 191,
+      "retained_until_s": 279.408898,
+      "contains_ipc_probe": false,
+      "contains_display_gate": false,
+      "interpretation": "disk sink paused for healthy USB before sample 6000; this ring cannot extend the live IPC evidence",
+      "retained_first_observed_s": 274.634548,
+      "ring_write_errors": 68
+    }
+  },
+  "excluded": {
+    "h412": "duplicate-only, unbuilt, untested",
+    "h411_recovery_script": "retained on h411-display-gate; not integrated because it was not run end-to-end",
+    "h413_wrapper_bug": "initial wrapper stopped on a missing checker source path after capture; one manually sent UXC1 recovered the device; wrapper is not integrated as verified tooling"
+  },
+  "known_open": [
+    "No first frame was produced.",
+    "The launchd queue-to-reply transition remains unobserved; renderer initialization and service check-in may form a feedback loop.",
+    "The IOGPU/IOAcceleratorES gate is disabled in this image, but accelerator absence is not yet proven to precede the service wait.",
+    "USB transport did not reproduce the H411 ~326 s loss before the manual UXC1 reboot; no general fix is claimed.",
+    "The known UFS OCS timeout class remains."
+  ],
+  "compatibility": {
+    "format1_only": true,
+    "format2_touched": false,
+    "h408_cdc_self_test": true,
+    "h410_fifth_cell_check": true,
+    "disk_sink_pause_preserved": true,
+    "first_frame": false
+  }
+}
