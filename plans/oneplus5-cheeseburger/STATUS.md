@@ -15651,3 +15651,26 @@ selector 4 仍为零时修改 IOSurface、IOMFB copy 或 MSM8998 scanout。
 `FIRST-FRAME-ANALYSIS.md` 第 17 节。仓库内可追踪记录为
 `H417-manifest-20261118.json` 和
 `diagnostics/H417-device-verification-20261118.json`。
+
+#### H418：AppleKeyStore return-value probe（2026-11-18）
+
+**目标/唯一变量**：保持 H417 的 `sheng-aks=1`、accelerator/addon、typed CA
+observer、Data、UEFI 和 IOMFB 路径不变，只补 `NativeKeyStoreEvents` 的真实
+`newUserClient` 返回值和 selector 调用结果。现有 `NATIVE_IOKIT op=open ok=0`
+是 provider 调用前占位，不能用来判断 AKS 成功或失败。
+
+探针使用从 core clean main 带入的 H415/H417 已审计诊断，固定数组按 selector
+累计 calls/errors，并在首次调用或结果变化时低频打印 caller、selector、
+`IOReturn`、calls 和 errors。每个 selector 最多 8 条，open 总日志最多 32 条。
+不改变任何返回值、状态响应、service registration 或 selector payload。
+
+**竞争假说**：
+
+1. H417 后 AKS 已成功，剩余瓶颈在 SpringBoard/CoreAnimation main-scene。
+2. AKS 的 open 或关键 selector 仍返回具体错误，scene 链尚未真正越过该门。
+
+**当前状态**：Windows offline source implementation；待提交、Mac 同步构建、
+两遍 PMGR 和一次有界真机测试。
+
+**证据**：`diagnostics/H418-aks-return-probe-2026-11-18.md`、
+`scripts/check-h418-aks-return.py`。

@@ -19,7 +19,7 @@ def main():
     driver = DRIVER.read_text()
     patch = PATCH.read_text()
 
-    require('#define H103_BUILD "H417"' in driver, "H417 build tag missing")
+    require('#define H103_BUILD "H418"' in driver, "H418 build tag missing")
     require("NATIVE_DISPLAY_GATE:" in driver, "display gate record missing")
     require("native_legacy_client_stats (" in driver, "display client counters not consumed")
     require("val=%u xf=%u fr=%u" in driver, "validation/transfer/frame fields missing")
@@ -40,10 +40,10 @@ def main():
             "launchd request/reply counters missing")
 
     # The probe must remain observation-only: these files are the behavioral
-    # boundary and are deliberately untouched in H417.
+    # boundary and are deliberately untouched in H418.
     display = ROOT / "drivers/NativeMobileDisplay"
     require(display.is_dir(), "display submodule missing")
-    print("H417 display first-frame gate: PASS")
+    print("H418 display first-frame gate: PASS")
 
 
 if __name__ == "__main__":
