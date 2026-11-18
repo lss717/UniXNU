@@ -15825,3 +15825,27 @@ request id、response id、已知 responder 或匹配 reply port 的事件，并
 静态门为 `check-h420-main-scene.py`、display gate 和
 `drivers/NativeMetal/tools/check-h420-main-scene.py`。构建和一次本地真机验证
 完成后追加结果。
+
+#### H421：LaunchServices progress gate（2026-11-19）
+
+H420 的原始 `NATIVE_SBPC` / `NATIVE_SBFRAME` 已用同 boot dyld slide
+`0xfa84000` 离线符号化。BKS reply 后，SpringBoard 主线程进入
+`CCSModuleRepository`，同步构造 `LSApplicationRecord`，当前 trace 经
+`_LSContextInitCommon` 停在 `mach_msg2`；同一时刻的 `lsd` 正在
+`LSRebuildStatisticsGatherer`、`MILaunchServicesDatabaseGatherer` 和
+`MIExecutableBundle` code-signing 路径中扫描系统内容。
+
+H421 只增加低频只读进度探针：按进程名 `lsd` 统计 open 总数、当前 in-flight
+数量、慢 open 数量、最大耗时和最近 8 个 bounded path，并只在既有 sampler
+选中 `lsd` 时输出 `NATIVE_LS_GATE`。实现不使用 `printf`、分配或新锁于新增
+的 open accounting/completion helper 热路径，不改变 LaunchServices 结果、
+SpringBoard 行为、scene、GPU、IOMFB、IOSurface 或 scanout。
+
+源分支为 local `h421-launchservices-gate`，base
+`0bfaaa3746fbf539fae1906642b6c8b3c84456e2`，device
+`481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91`。当前仅为
+source-statically-verified-unbuilt；
+`check-h421-launchservices-gate.py`、display gate、NativeMetal H420 gate、
+`git diff --check`、Python compile、JSON parse 均为 PASS；H421 patch 也在
+H420 已应用的 Mac XNU worktree 上通过普通 `git apply --check`。当前尚未构建、
+未上机、未提交或推送。

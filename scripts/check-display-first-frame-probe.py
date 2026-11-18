@@ -2,6 +2,7 @@
 """Validate the read-only first-frame gate instrumentation."""
 
 from pathlib import Path
+import re
 import sys
 
 
@@ -19,7 +20,9 @@ def main():
     driver = DRIVER.read_text()
     patch = PATCH.read_text()
 
-    require('#define H103_BUILD "H420"' in driver, "H420 build tag missing")
+    build = re.search(r'#define H103_BUILD "(H[0-9]+)"', driver)
+    require(build and int(build.group(1)[1:]) >= 420,
+            "expected a post-H420 build tag")
     require("NATIVE_DISPLAY_GATE:" in driver, "display gate record missing")
     require("native_legacy_client_stats (" in driver, "display client counters not consumed")
     require("val=%u xf=%u fr=%u" in driver, "validation/transfer/frame fields missing")
@@ -40,10 +43,10 @@ def main():
             "launchd request/reply counters missing")
 
     # The probe must remain observation-only: these files are the behavioral
-    # boundary and are deliberately untouched in H420.
+    # boundary and are deliberately untouched from H420 onward.
     display = ROOT / "drivers/NativeMobileDisplay"
     require(display.is_dir(), "display submodule missing")
-    print("H420 display first-frame gate: PASS")
+    print(f"{build.group(1)} display first-frame gate: PASS")
 
 
 if __name__ == "__main__":

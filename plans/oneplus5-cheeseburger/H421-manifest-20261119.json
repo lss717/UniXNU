@@ -1,0 +1,48 @@
+{
+  "candidate": "H421",
+  "purpose": "observe LaunchServices progress while SpringBoard waits after the BKS reply",
+  "state": "source-statically-verified-unbuilt",
+  "source": {
+    "core_base": "0bfaaa3746fbf539fae1906642b6c8b3c84456e2",
+    "core_feature_branch": "h421-launchservices-gate",
+    "native_metal_commit": "24d011979a4f8538cfdf43962945e9b3edc2d157",
+    "device_commit": "481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91",
+    "main_moved": false
+  },
+  "evidence_basis": {
+    "boot_id": "2dadde66",
+    "dyld_slide": "0xfa84000",
+    "springboard_consumer": "CCSModuleRepository -> LSApplicationRecord -> LSContextInitCommon -> mach_msg2",
+    "springboard_peer": "lsd pid 91",
+    "lsd_activity": "LSRebuildStatisticsGatherer -> MILaunchServicesDatabaseGatherer -> MIExecutableBundle code signing"
+  },
+  "changes": {
+    "kernel_tag": "H421",
+    "new_record": "NATIVE_LS_GATE",
+    "slot_record": "NATIVE_LS_GATE_SLOT",
+    "tracked_slots": 8,
+    "slow_open_threshold_ms": 50,
+    "sampler_call": "only when the existing sampler selects lsd",
+    "hot_path": "fixed atomics and bounded path copy only; no allocation, sleep, or new lock",
+    "behavior_changes": []
+  },
+  "decision_gates": [
+    "No LaunchServices result modification",
+    "No SpringBoard user-space hook",
+    "No scene or drawable mutation",
+    "No accelerator, IOMFB, IOSurface, or scanout change",
+    "No probe interpretation before the first OCS timeout is accounted for"
+  ],
+  "static_preflight": {
+    "h421_probe_gate": "PASS",
+    "display_first_frame_gate": "PASS",
+    "native_metal_h420_gate": "PASS",
+    "git_apply_check": "PASS on H420-applied XNU worktree",
+    "git_diff_check": "PASS",
+    "python_compile": "PASS",
+    "json_parse": "PASS",
+    "built": false,
+    "device_tested": false
+  },
+  "next_action": "Commit and push to the feature branch only after user authorization, pull that exact revision on mac, build the two-pass PMGR chain, and run the existing static gates before one bounded device boot."
+}
