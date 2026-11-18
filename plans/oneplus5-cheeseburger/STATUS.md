@@ -15266,3 +15266,10 @@ UFS 长时 OCS timeout/corpse 保持已知未关闭。提交状态：core 与 de
 `4d057d020124012e545853f6f75a2a6c202d3171` 子模块提交均已创建，但未推送、
 未合并 `main`；core/device 的精确分支 head 记录在外部
 `H410-manifest.json`，等待主线程授权后收尾。
+
+**合并/推送（2026-11-18）**：core `main` 与 device `main` 均已普通
+fast-forward 并推送为 `309501aedb751b3f1aabf6de4035b48dfd918c6c` /
+`481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91`；子模块 refs
+`GopFramebuffer/h410-usb-status@cc31bd33e2209e0f261720babb7b4a9dc6b1b0c2`、
+`ArmDTPlatform/h410-usb-status@4d057d020124012e545853f6f75a2a6c202d3171`
+已推送且可按 SHA fetch。未使用 force，workflow 保持手动。
