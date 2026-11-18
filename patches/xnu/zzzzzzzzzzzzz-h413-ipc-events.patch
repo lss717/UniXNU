@@ -1,0 +1,366 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -954,6 +954,8 @@
+ 				h96_a1 = h96_a0 + h96_n + 1;
+ 			}
+ 		}
++		extern void native_xpc_track_exec(int, const char *);
++		native_xpc_track_exec(proc_getpid(p), p->p_comm);
+ 		printf("NATIVE_EXEC: pid=%d ppid=%d comm=%s argv0=%s argv1=%s\n",
+ 		    proc_getpid(p), p->p_ppid, p->p_comm, h96_a0 ? h96_a0 : "", h96_a1 ? h96_a1 : "");
+ 	}
+--- a/osfmk/kern/task.c
++++ b/osfmk/kern/task.c
+@@ -10497,8 +10497,8 @@
+ extern struct arm_saved_state *get_user_regs(thread_t);
+ 
+ #include <ipc/ipc_port.h>
+-
+-#include <ipc/ipc_port.h>
++#include <ipc/ipc_kmsg.h>
++#include <ipc/ipc_mqueue.h>
+ 
+ #include <ipc/ipc_port.h>
+ 
+@@ -10524,6 +10524,10 @@
+ 	uint64_t x6;
+ 	uint64_t x7;
+ 	uint64_t x16;
++	uint32_t ith_state;
++	uint32_t ith_kmsg;
++	uint32_t ith_receiver_name;
++	uint32_t ith_seqno;
+ };
+ static struct native_sb_row native_sb_rows[16];
+ static unsigned native_sb_count;
+@@ -10565,9 +10569,21 @@
+ 	unsigned sorights;      /* H354: send-once rights, i.e. unconsumed replies */
+ 	int pid;
+ 	uint64_t port;          /* H242: port object, compared only */
++	uint16_t msgcount;
++	uint16_t qlimit;
++	uint32_t seqno;
++	uint32_t head_count;
++	struct {
++		uint32_t bits;
++		uint32_t size;
++		uint32_t id;
++		uint64_t port;
++	} head[2];
+ };
+ static struct native_sb_probe native_sb_rcv;
+ static struct native_sb_probe native_sb_req;
++static struct native_sb_probe native_sb_local;
++static unsigned native_sb_local_name;
+ static uint64_t native_sb_buf;
+ static unsigned native_sb_rcv_name;
+ static int native_sb_hdr_ok;
+@@ -10615,17 +10631,30 @@
+ 		    entry->ie_object != IP_NULL) {
+ 			port = (ipc_port_t)entry->ie_object;
+ 			out->port = (uint64_t)(uintptr_t)port;
+-			out->srights = port->ip_srights;
+-			out->mscount = port->ip_mscount;
+-			/* Takes the port queue lock itself and reports the pid of the
+-			 * task that holds the receive right (safe, no hand locking). */
+-			out->pid = ipc_port_get_receiver_task(port, NULL);
+-			/* H351: is the request still sitting in the receiver's queue?
+-			 * Read without the port lock (diagnostic only): the pointer is
+-			 * either NULL or a valid kmsg, and we only test it. */
+-			out->queued = circle_queue_empty(&port->ip_messages.imq_messages) ? 0 : 1;
+-			out->rname = port->ip_messages.imq_receiver_name;
+-			out->sorights = port->ip_sorights;
++			if (ip_active(port)) {
++				ipc_kmsg_t kmsg;
++				ip_mq_lock(port);
++				out->srights = port->ip_srights;
++				out->mscount = port->ip_mscount;
++				out->pid = ipc_port_get_receiver_task_locked(port, NULL);
++				out->msgcount = port->ip_messages.imq_msgcount;
++				out->qlimit = port->ip_messages.imq_qlimit;
++				out->seqno = port->ip_messages.imq_seqno;
++				out->queued = out->msgcount != 0;
++				out->rname = port->ip_messages.imq_receiver_name;
++				out->sorights = port->ip_sorights;
++				kmsg = ipc_kmsg_queue_first(&port->ip_messages.imq_messages);
++				while (kmsg != IKM_NULL && out->head_count < 2) {
++					mach_msg_header_t *mh = ikm_header(kmsg);
++					unsigned h = out->head_count++;
++					out->head[h].bits = (uint32_t)mh->msgh_bits;
++					out->head[h].size = (uint32_t)mh->msgh_size;
++					out->head[h].id = (uint32_t)mh->msgh_id;
++					out->head[h].port = (uint64_t)(uintptr_t)kmsg;
++					kmsg = ipc_kmsg_queue_next(&port->ip_messages.imq_messages, kmsg);
++				}
++				ip_mq_unlock(port);
++			}
+ 		}
+ 	}
+ 	is_write_unlock(space);
+@@ -10708,6 +10737,10 @@
+ 			native_sb_rows[native_sb_count].x6 = (uint64_t)get_saved_state_reg(state, 6);
+ 			native_sb_rows[native_sb_count].x7 = (uint64_t)get_saved_state_reg(state, 7);
+ 			native_sb_rows[native_sb_count].x16 = (uint64_t)get_saved_state_reg(state, 16);
++			native_sb_rows[native_sb_count].ith_state = th->ith_state;
++			native_sb_rows[native_sb_count].ith_kmsg = th->ith_kmsg != IKM_NULL;
++			native_sb_rows[native_sb_count].ith_receiver_name = th->ith_receiver_name;
++			native_sb_rows[native_sb_count].ith_seqno = th->ith_seqno;
+ 			native_sb_count++;
+ 		}
+ 	}
+@@ -10724,7 +10757,12 @@
+ static void native_xpc_register(uint64_t port, int pid, const char *owner, char role);
+ static void native_xpc_dump(unsigned sample);
+ static void native_xpc_emit(unsigned sample, unsigned budget);
+-static int native_xpc_pids[3];
++static void native_ipc_focus_emit(unsigned sample, unsigned msg_id,
++    uint64_t remote_port, uint64_t local_port);
++void native_xpc_track_exec(int pid, const char *comm);
++void native_ipc_event_note(unsigned kind, ipc_kmsg_t kmsg, ipc_port_t port,
++    int from_pid, int to_pid, uint64_t receiver_tid, unsigned result);
++static int native_xpc_pids[4];
+ static char native_xpc_names[16][48];
+ static unsigned native_xpc_names_n;
+ static unsigned native_xpc_names_printed;
+@@ -10734,6 +10772,7 @@
+ {
+ 	char native_sb_qname1[17];
+ 	char native_sb_qname2[17];
++	char native_sb_qname3[17];
+ 	char native_sb_service[80];
+ 
+ 	native_sb_count = 0;
+@@ -10746,9 +10785,11 @@
+ 	native_sb_hdr_ok = 0;
+ 	native_sb_buf = 0;
+ 	native_sb_rcv_name = 0;
++	native_sb_local_name = 0;
+ 	native_sb_service[0] = '-'; native_sb_service[1] = 0;
+-	memset(&native_sb_rcv, 0, sizeof native_sb_rcv);
+-	memset(&native_sb_req, 0, sizeof native_sb_req);
++		memset(&native_sb_rcv, 0, sizeof native_sb_rcv);
++		memset(&native_sb_req, 0, sizeof native_sb_req);
++		memset(&native_sb_local, 0, sizeof native_sb_local);
+ 	memset(native_sb_hdr, 0, sizeof native_sb_hdr);
+ 	native_sb_alln = 0;
+ 	proc_iterate(1U | 4U, native_sb_collect, NULL, NULL, NULL);
+@@ -10792,6 +10833,8 @@
+ 			native_xpc_pids[1] = native_sb_pid;
+ 		} else if (strncmp(name, "containermanager", 16) == 0) {
+ 			native_xpc_pids[2] = native_sb_pid;
++		} else if (strncmp(name, "backboardd", 10) == 0) {
++			native_xpc_pids[3] = native_sb_pid;
+ 		}
+ 	}
+ 	native_xpc_emit(sample, 25);
+@@ -10993,12 +11036,19 @@
+ 		}
+ 		if (native_sb_hdr_ok) {
+ 			native_sb_probe_name(native_sb_task->itk_space, native_sb_hdr[2], &native_sb_req);
++			native_sb_local_name = native_sb_hdr[3];
++			native_sb_probe_name(native_sb_task->itk_space, native_sb_local_name, &native_sb_local);
+ 			native_sb_qname2[0] = '-'; native_sb_qname2[1] = 0;
+ 			if (native_sb_req.pid > 0) {
+ 				proc_name(native_sb_req.pid, native_sb_qname2, sizeof native_sb_qname2);
+ 			}
++			native_sb_qname3[0] = '-'; native_sb_qname3[1] = 0;
++			if (native_sb_local.pid > 0) {
++				proc_name(native_sb_local.pid, native_sb_qname3, sizeof native_sb_qname3);
++			}
+ 		} else {
+ 			native_sb_qname2[0] = '-'; native_sb_qname2[1] = 0;
++			native_sb_qname3[0] = '-'; native_sb_qname3[1] = 0;
+ 		}
+ 		printf("NATIVE_SBPORT: sample=%u comm=%s buf=0x%llx hdr=%d bits=0x%x size=%u rport=0x%x lport=0x%x vport=0x%x id=0x%x\n",
+ 		    sample, name, (unsigned long long)native_sb_buf, native_sb_hdr_ok,
+@@ -11009,11 +11059,33 @@
+ 		    (unsigned long long)native_sb_rcv.ie_bits,
+ 		    native_sb_rcv.srights, native_sb_rcv.mscount, native_sb_rcv.sorights,
+ 		    native_sb_rcv.queued, native_sb_rcv.pid, native_sb_qname1);
+-		printf("NATIVE_SBPORT: sample=%u req name=0x%x seen=%d set=%d ie=0x%llx sr=%u ms=%u so=%u q=%d rn=0x%x peer=%d/%s\n",
++		printf("NATIVE_SBPORT: sample=%u req name=0x%x seen=%d set=%d ie=0x%llx sr=%u ms=%u so=%u q=%d cnt=%u qlim=%u seq=%u rn=0x%x peer=%d/%s\n",
+ 		    sample, native_sb_hdr[2], native_sb_req.seen, native_sb_req.is_set,
+ 		    (unsigned long long)native_sb_req.ie_bits,
+ 		    native_sb_req.srights, native_sb_req.mscount, native_sb_req.sorights,
+-		    native_sb_req.queued, native_sb_req.rname, native_sb_req.pid, native_sb_qname2);
++		    native_sb_req.queued, native_sb_req.msgcount, native_sb_req.qlimit,
++		    native_sb_req.seqno, native_sb_req.rname, native_sb_req.pid, native_sb_qname2);
++		printf("NATIVE_SBPORT: sample=%u local name=0x%x seen=%d set=%d ie=0x%llx sr=%u ms=%u so=%u q=%d cnt=%u qlim=%u seq=%u rn=0x%x peer=%d/%s\n",
++		    sample, native_sb_local_name, native_sb_local.seen, native_sb_local.is_set,
++		    (unsigned long long)native_sb_local.ie_bits,
++		    native_sb_local.srights, native_sb_local.mscount, native_sb_local.sorights,
++		    native_sb_local.queued, native_sb_local.msgcount, native_sb_local.qlimit,
++		    native_sb_local.seqno, native_sb_local.rname, native_sb_local.pid, native_sb_qname3);
++		printf("NATIVE_SBQ: sample=%u req_cnt=%u req_head0=0x%x/%u/%u req_head1=0x%x/%u/%u local_cnt=%u local_head0=0x%x/%u/%u local_head1=0x%x/%u/%u\n",
++		    sample, native_sb_req.msgcount,
++		    native_sb_req.head[0].id, native_sb_req.head[0].bits, native_sb_req.head[0].size,
++		    native_sb_req.head[1].id, native_sb_req.head[1].bits, native_sb_req.head[1].size,
++		    native_sb_local.msgcount,
++		    native_sb_local.head[0].id, native_sb_local.head[0].bits, native_sb_local.head[0].size,
++		    native_sb_local.head[1].id, native_sb_local.head[1].bits, native_sb_local.head[1].size);
++		if (native_sb_count) {
++			printf("NATIVE_SBWAIT: sample=%u tid=%llu th_state=0x%x ith_state=0x%x ith_kmsg=%u ith_rname=0x%x ith_seq=%u\n",
++			    sample, (unsigned long long)native_sb_rows[0].tid,
++			    native_sb_rows[0].state, native_sb_rows[0].ith_state,
++			    native_sb_rows[0].ith_kmsg, native_sb_rows[0].ith_receiver_name,
++			    native_sb_rows[0].ith_seqno);
++		}
++		native_ipc_focus_emit(sample, native_sb_hdr[5], native_sb_req.port, native_sb_local.port);
+ 		native_xpc_register(native_sb_rcv.port, native_sb_pid, name, 'r');
+ 		native_xpc_register(native_sb_req.port, native_sb_pid, name, 'q');
+ 		native_xpc_dump(sample);
+@@ -11161,15 +11233,102 @@
+ static int
+ native_xpc_tracked(int pid)
+ {
++	if (pid == 1) {
++		return 1;
++	}
+ 	if (pid <= 0) {
+ 		return 0;
+ 	}
+-	for (int i = 0; i < 3; i++) {
++	for (int i = 0; i < 4; i++) {
+ 		if (native_xpc_pids[i] == pid) {
+ 			return 1;
+ 		}
+ 	}
+ 	return 0;
++}
++
++void
++native_xpc_track_exec(int pid, const char *comm)
++{
++	if (strcmp(comm, "SpringBoard") == 0) {
++		native_xpc_pids[0] = pid;
++	} else if (strcmp(comm, "lsd") == 0) {
++		native_xpc_pids[1] = pid;
++	} else if (strcmp(comm, "containermanager") == 0) {
++		native_xpc_pids[2] = pid;
++	} else if (strcmp(comm, "backboardd") == 0) {
++		native_xpc_pids[3] = pid;
++	}
++}
++
++struct native_ipc_event {
++	uint64_t serial;
++	uint64_t port;
++	uint64_t receiver_tid;
++	int from;
++	int to;
++	unsigned id;
++	unsigned size;
++	unsigned bits;
++	unsigned kind;
++	unsigned result;
++};
++#define NATIVE_IPC_EVENT_RING 1024
++static struct native_ipc_event native_ipc_events[NATIVE_IPC_EVENT_RING];
++static unsigned native_ipc_events_written;
++static unsigned native_ipc_events_lost;
++
++void
++native_ipc_event_note(unsigned kind, ipc_kmsg_t kmsg, ipc_port_t port,
++    int from_pid, int to_pid, uint64_t receiver_tid, unsigned result)
++{
++	mach_msg_header_t *hdr = kmsg ? ikm_header(kmsg) : NULL;
++	unsigned w;
++	struct native_ipc_event *e;
++	if (from_pid == -2) {
++		from_pid = proc_getpid(current_proc());
++	}
++	if (!native_xpc_tracked(from_pid) && !native_xpc_tracked(to_pid)) {
++		return;
++	}
++	w = __atomic_fetch_add(&native_ipc_events_written, 1, __ATOMIC_RELAXED);
++	if (w >= NATIVE_IPC_EVENT_RING) {
++		__atomic_fetch_add(&native_ipc_events_lost, 1, __ATOMIC_RELAXED);
++	}
++	e = &native_ipc_events[w % NATIVE_IPC_EVENT_RING];
++	e->serial = w + 1;
++	e->port = (uint64_t)(uintptr_t)port;
++	e->receiver_tid = receiver_tid;
++	e->from = from_pid;
++	e->to = to_pid;
++	e->id = hdr ? (unsigned)hdr->msgh_id : 0;
++	e->size = hdr ? (unsigned)hdr->msgh_size : 0;
++	e->bits = hdr ? (unsigned)hdr->msgh_bits : 0;
++	e->kind = kind;
++	e->result = result;
++}
++
++static void
++native_ipc_focus_emit(unsigned sample, unsigned msg_id, uint64_t remote_port,
++    uint64_t local_port)
++{
++	unsigned written = __atomic_load_n(&native_ipc_events_written, __ATOMIC_RELAXED);
++	unsigned start = written > NATIVE_IPC_EVENT_RING ? written - NATIVE_IPC_EVENT_RING : 0;
++	unsigned shown = 0;
++	printf("NATIVE_IPC_FOCUS: sample=%u id=0x%x remote=0x%llx local=0x%llx written=%u lost=%u\n",
++	    sample, msg_id, (unsigned long long)remote_port, (unsigned long long)local_port,
++	    written, __atomic_load_n(&native_ipc_events_lost, __ATOMIC_RELAXED));
++	for (unsigned q = start; q < written && shown < 32; q++) {
++		struct native_ipc_event *e = &native_ipc_events[q % NATIVE_IPC_EVENT_RING];
++		if (e->port != remote_port && e->port != local_port && e->id != msg_id) {
++			continue;
++		}
++		printf("NATIVE_IPC_EVT: sample=%u serial=%llu kind=%c id=0x%x bits=0x%x size=%u from=%d to=%d port=0x%llx tid=%llu result=0x%x\n",
++		    sample, (unsigned long long)e->serial, (int)e->kind, e->id, e->bits,
++		    e->size, e->from, e->to, (unsigned long long)e->port,
++		    (unsigned long long)e->receiver_tid, e->result);
++		shown++;
++	}
+ }
+ 
+ void
+@@ -11181,6 +11340,7 @@
+ 	unsigned w;
+ 	struct native_xpc_note *e;
+ 
++	native_ipc_event_note('S', kmsg, port, from, to, 0, 0);
+ 	/* H380: record every send with its sender pid.  struct proc is opaque in this file, so
+ 	 * no name test here; the sampler prints the ring next to the pid it sampled, and the
+ 	 * exec lines in the same log give each daemon's pid for that boot. */
+--- a/osfmk/ipc/ipc_mqueue.c
++++ b/osfmk/ipc/ipc_mqueue.c
+@@ -695,6 +695,8 @@
+ 		    IPC_MQUEUE_RECEIVE, THREAD_AWAKENED, WAITQ_KEEP_LOCKED);
+ 		/* waitq still locked, thread not runnable */
+ 
++		extern void native_ipc_event_note(unsigned, ipc_kmsg_t, ipc_port_t,
++		    int, int, uint64_t, unsigned);
+ 		if (receiver == THREAD_NULL) {
+ 			/*
+ 			 * no receivers; queue kmsg if space still reserved
+@@ -733,6 +735,9 @@
+ 				 */
+ 				KNOTE(&port->ip_klist, 0);
+ 			}
++			native_ipc_event_note(destroy_msg ? 'X' : 'Q', kmsg, port,
++			    -2,
++			    ipc_port_get_receiver_task_locked(port, NULL), 0, 0);
+ 			break;
+ 		}
+ 
+@@ -797,6 +802,8 @@
+ 		    !(receiver->ith_option & MACH_RCV_LARGE)) {
+ 			receiver->ith_kmsg = kmsg;
+ 			receiver->ith_seqno = mqueue->imq_seqno++;
++			native_ipc_event_note('D', kmsg, port, -2,
++			    task_pid(receiver->task), thread_tid(receiver), receiver->ith_state);
+ #if MACH_FLIPC
+ 			mach_node_t node = kmsg->ikm_node;
+ #endif
+@@ -1041,6 +1048,12 @@
+ 		{
+ 			ipc_mqueue_select_on_thread_locked(&port->ip_messages,
+ 			    option64, thread);
++			if (thread->ith_kmsg != IKM_NULL) {
++				extern void native_ipc_event_note(unsigned, ipc_kmsg_t, ipc_port_t,
++				    int, int, uint64_t, unsigned);
++				native_ipc_event_note('R', thread->ith_kmsg, port, -1,
++				    task_pid(thread->task), thread_tid(thread), thread->ith_state);
++			}
+ 		}
+ 		ip_mq_unlock(port);
+ 		return THREAD_NOT_WAITING;

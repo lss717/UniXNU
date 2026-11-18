@@ -109,7 +109,7 @@ static uint32_t gH103SlotCursor;
 // boot wrote it.  The header alone is not enough: it is written after the
 // slot, and a late header write failure leaves a stale slots_written behind,
 // which made earlier logs mix slots from several boots.
-#define H103_BUILD "H411"
+#define H103_BUILD "H413"
 static uint64_t gH103BootId;
 static volatile int gH103Quiet;
 static volatile uint64_t gH103LastSlotTicks;
@@ -730,7 +730,7 @@ extern "C" void native_log_flush_hook (void);
 // printf (and its msgbuf mutex) out of proc_exit, which runs with preemption disabled.
 extern "C" void native_sigbus_drain (void);
 
-// H411: one compact, fixed-storage display record next to the existing
+// H413: one compact, fixed-storage display record next to the existing
 // SpringBoard sample. This is observation-only and does not alter USB,
 // display, IPC, CA, surface, copy, scanout or GPU state.
 static void
