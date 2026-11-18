@@ -15478,3 +15478,174 @@ timeout。UXC1 request `424416` 只发送一次，收到 ACK 后 CDC 消失；An
 `data-readiness-device-smoke-pass-no-first-frame`。首帧仍为零；H415 不改变
 “显示提交最早可证断点位于 selector 3/4/5 之前，service/scene/renderer 因果
 仍未分离”的结论。工作树中本 STATUS 和诊断文档的更新尚未提交。
+
+#### H416：CoreAnimation observation-only 判别候选（2026-11-18）
+
+**目标/唯一行为变量**：在同一个 H415 clean 基线上，只把 Metal trace plugin
+改为在 30、120、300 秒读取 CAWindowServer、display、CAContext、context root
+layer、sublayer、contents 与 renderer 状态。插件不得调用 `setContext:`、
+`presentSurface:withOptions:`、`addSublayer:`、`setContents:`、
+`nextDrawable`、创建 Metal device/layer/IOSurface 或执行 GPU self-test。
+
+**假说**：A，backboardd 内没有可用 CA server/display；B，server/display
+存在且可能有 contexts，但 display 0 没有 context/root layer 或可提交 scene。
+只有载入 H416 marker 且 observer 没有自行产生 selector 4/present/surface
+时才解释结果；异常或宿主进程停顿按 observer 污染停止。
+
+**范围**：core base
+`h415-data-ready@0db1eded5cac18157170fb35218c32fde076eb58`；device 保持
+`481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91`。NativeMetal 源码保持在独立的
+`h416-ca-observer` 工作树；本候选不启用 GPU power、firmware、ZAP、寄存器、
+SMMU 或 scanout 控制。
+
+**静态状态**：原生 checker 与 core checker 已加入候选工作树；插件已在 Xcode
+26.3 / iOS 26.2 SDK 下通过 `-Wall -Wextra -Werror` 隔离编译，addon 为
+28,768 bytes，bundle CDHash
+`487f58b8c2f27a0f58be3efc75bc4ef69184ccff`。独立 build tree、21 个固定
+gitlink、独立 `out/feeds` 与与 H415 相同的 device lock
+`0bbf113d5be71b4c7141f67a82ffeee03ce03e578d03802d5fcca5ecfe0da1a9`
+均已核验。
+
+两遍 PMGR/component 链为：
+
+```text
+stub source kernel  89e802e4c3ba7e36d0ce9c089de4b63d7cc4b6bc9077b6bb70c5d1999480d40b
+stub PMGR           969753d2d6528a95ff7004f33f675156310e8857cefe335931040314b47ca74e
+stub prelink        b0dcb3be7adb2fc675e20f1d5a3f1642b9853569c696e9757ccfc263151d3e2a
+real PMGR           7bcc210070100e7a00802334c6f8795bbdc665818c2c5808c99474b626ee1e10
+real source kernel  aab4fc1459885a21b5bebc03e34eb3ed05395020ec4f5a669b630c07c9684eba
+final kernel        b45ad7a2c880ed0e934e3beb1a68e6f0c80ab4648aaa73aca6d72051a929cb63
+payload             4fc89d30ddb8b3ab371362b2cdef92192219ce844e4f2d8456206395d1c5ea9f
+boot                493159ce2dcbb015feffc0c3205cacddb79d42312ef6d5c439d381a3aad7dbb2
+```
+
+`verify_h416.py` PASS，证明 source→final kernel→payload→boot、addon 三文件集、
+owner trust CDHash、固定 Data seed、UEFI gzip/FD/DTB 与
+`0x10000000/0x12000000/0x18000000` 布局一致。kernel 含 H416、H415 Data
+wait 和 display gate，不含 H414 focused-IPC 标记。bootargs 为 983 B
+（当前 1003/1024，最坏 1011/1024），只保留一个 `h103-log-secs=60`；
+`h103-slot=1` 与 `h103-load-iogpu=0` 因等于源码默认值而未写入命令串，不存在
+行为变化。静态分类为
+`coreanimation-observer-package-statically-verified`。
+
+**真机结果/判别**：在唯一 TWRP `16149951` 上完成一次有界
+`fastboot boot`，boot
+`493159ce2dcbb015feffc0c3205cacddb79d42312ef6d5c439d381a3aad7dbb2`。
+CDC COM8 于接受后约 257 秒枚举；360 秒 UXL1 捕获为 6,333 帧 /
+947,590 payload bytes，末 sequence 6332，CRC、gap、truncation、boot switch
+全为 0。三轮 observer 分别起于 314.98、375.18、556.38 秒，结果稳定：
+
+```text
+CADisplay       main=1 list=6
+CAWindowServer displays=6 renderer=3 ctxs=2
+display 0       d0ctx=0 d0layer=-
+CAContext[0]     CALayer subs=2 contents=0 bounds=1080x1920
+CAContext[1]     CALayer subs=2 contents=0 bounds=1080x1920
+observer        bind skipped-observer-only
+```
+
+因此假说 A（没有 CA server/display）被排除；假说 B（server/display/contexts
+存在，但 display 0 不暴露 context/root layer）得到支持。三轮均无 observer
+第 4 selector、present、surface 创建或 context bind。`AGXAccelerator`
+service、3 次 open、3 个 granted user client 与 backboardd ABI selector 2
+均可见，所以“accelerator 永远缺失”不再是首帧最早断点的解释；renderer 完全
+正确仍未证明。`CADisplay pointScale=0`、mode `px=0x0`、
+`NativeLegacyDisplay surface=0` 保留为 scene/display publication 的候选，
+不能提前归因给 IOMFB copy 或 scanout。
+
+窗口记录 6 次 UFS OCS timeout/recovery、34 次 stall、68 次 UFS lock、8 次
+网络进程 trap 和 5 次 `Too many corpses`；强 UFS 失败及 corpse storm 集中在
+590–640 秒，而三轮 H416 观察和 sample 6000/6030/6060 display gate 已在此时
+之前完成。不把它们当作 314–590 秒 CA 状态的最早根因。UXC1 request `424417`
+一次发送并 ACK；Android `boot_completed=1`，随后一次授权
+`adb reboot recovery`，最终 TWRP
+`3.4.0_9-10-mauronofrio`，product `cheeseburger`。
+
+设备分类为
+`coreanimation-display-binding-discriminator-device-pass-no-first-frame`。
+
+**证据**：`diagnostics/H416-ca-observer-2026-11-18.md`；
+`scripts/check-h416-ca-observer.py`、`scripts/check-h416-data-ready.py`、
+`display-first-frame/builds/H416/`、
+`display-first-frame/logs/H416/device/20261118-204150/`。
+
+#### H417：AppleKeyStore state gate + typed CA observer（2026-11-18）
+
+**目标/唯一行为变量**：保持 H416 的 accelerator、addon、phase 4、unit scale 3、
+dot pitch 163、Data、UEFI 与 IOMFB 路径不变，只增加 `sheng-aks=1`，使已发布
+的 AppleKeyStore 接受 state user client。QEMU 21H461 正常路线明确把
+liveactivitiesd → chronod → SpringBoard scene/display 更新链接在
+`MKBEventsRegister` 成功后；H416 中 AppleKeyStore 已发布，但该 gate 为关闭，
+所有 user-client open 会返回 `kIOReturnNotReady`。
+
+**observer 修正**：21H461 `-[CADisplay pointScale]` 与 `displayId` 实际返回
+32-bit integer；H416 把 `pointScale` 当 double 是 ABI 误读。`pixelWidth`/
+`pixelHeight` 在 21H461 没有 selector，H416 的 `px=0x0` 是 unsupported，不是真实
+mode 值。H417 在调用前记录 `method_getTypeEncoding`，区分 unsupported、nil 和
+scalar zero；增加 displayId/contextId/displayMask/renderer flags，并最多读取
+3 层/64 个 layer node 的 class/frame/bounds/hidden/opacity/contents 类型。
+observer 仍禁止 bind、layer/context 写入、present 或 nextDrawable。
+
+**参考**：`FIRST-FRAME-QEMU-ALIGNMENT.md`；
+UniXNU-qemu `97b75b1f...`；H417 diagnostic。
+
+**构建**：从 core `0db1eded5cac18157170fb35218c32fde076eb58`、device
+`481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91`、NativeMetal
+`1f2c84861bd4265030fefffb1588f9b2236a41fa` 派生 H417 隔离工作树。使用独立
+`out/feeds`、真实两遍 PMGR 与主路线 Xcode 工具链完成构建：
+
+```text
+stub source kernel  feb63d9c812a838c518238653b8a66dfc708af26736db8b51c6d9194d95d45ef
+stub PMGR           49e0a0160dcc642e746a15f736281c479b082b9327f2b719fd8db09a2fa3f4b3
+stub prelink        77b07b2355e1114d102602af33ca7132cbee38a95fc8410e9d038a5c3a7e0018
+real PMGR           0032640b91ed6fa7cf05644de202f02d962556d883badb2b607ce80a620b3e35
+real source kernel  44a71fe7ae598245fb7385d5c31e7264d72cdaf6ccfe4d46c1baf949545bf931
+final kernel        2dd2ffd9f4a0979fedd9ae16213ea8e31e9d9f798d855e434d34d12c3f02f85d
+plugin executable   acd6c793e0aca8a8a2dafc1f56c8367645570916400f32e6e60bd1dfc533e07d
+plugin CDHash       e10c473b2ffb3565b63c9cd472e54e4789ef5755
+GPU addon           ef53a5899fb0b0a9f83ba71c10c5636e227e6a566b348a927a6694533c2dab51
+owner trust         1a068ee5bbde4c0073868950fda731a6fa3adbda4b51ab38e05013ede6ae67a5
+payload             a6df0696032d4a562e6cfb906da1962f3f299df1a860e771c23d0f2e5dffe6cc
+boot                a9618be5b19fbd46205070ff140ffc327bef9e2394001c6b46abeb132ab9b619
+```
+
+bootargs 为 995 B；当前 `1015/1024`，最坏 `1023/1024`。`verify_h417.py`、
+Data gate、display gate 和 typed CA observer checker 均 PASS。observer checker
+必须把 `H417_NATIVE_SOURCE` 指向 sibling NativeMetal H417 worktree。静态报告为
+`display-first-frame/builds/H417/H417-static-verification.json`，分类
+`aks-state-typed-coreanimation-observer-package-statically-verified`。
+
+**真机结果**：唯一 serial `16149951`，boot
+`a9618be5...` 仅 `fastboot boot` 一次。boot marker 为
+`NATIVE_BUILD: H417 boot=25f21e0c`；CDC 在 256 秒后出现，360 秒捕获
+5,397 帧/817,993 payload bytes，CRC、序号、截断和 boot-switch 均零。
+
+早期 ring 在 73.891 s 记录 AppleKeyStore 发布；keybagd 于 166.601 s、backboardd
+于 224.495 s 打开 `NativeLegacyDisplay`；chronod 于 218.338 s、liveactivitiesd
+于 271.923 s 真正 exec。sample 6000 于 276.231 s 为
+`accel=2/0/199/0 dpy=2/11/0/0/0 s345=0/0/0 val=0 xf=0 fr=0`。
+
+两轮 CA 观察均发生在 UFS 首个 OCS timeout 之前。主 display 为 `id=0x1
+1080x1920 60Hz scale=3`；`pixelWidth`/`pixelHeight` 为 `UNSUPPORTED`。
+两个 CAContext `0x195fa2cc`、`0x182f8c1f` 均报告
+`displayId=0x1 mask=0xffffffff`，各有 4 个 `CALayer` 节点，所有 contents
+为空且没有 renderContext。display-side context/rootLayer getter
+`UNSUPPORTED` 只能说明 API 不暴露，不能证明内部私有 slot 为空。
+
+backboardd 获得 `AGXAccelerator` type 1 user client 并调用 ABI selector 2；
+仍没有 draw/commit、`nextDrawable`、IOMFB selector 4、surface validation、
+transfer 或 frame。sample 6060 于 577.853 s 为
+`accel=5/0/484/0 dpy=3/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0`，但位于 UFS
+OCS/corpse 窗口内，只作辅助。本捕获记录 13 次 OCS timeout、13 次 retry、
+15 次 stall/nopanic、27 次 process-corpse crash，无 kernel panic 或 undefined
+instruction。
+
+UXC1 `424418` 一次发送并在 uptime `695.292499 s` ACK；Android
+`sys.boot_completed=1` 后授权回到 TWRP `3.4.0_9-10-mauronofrio`。设备分类
+`aks-gate-and-typed-ca-device-smoke-no-first-frame`。earliest observable
+breakpoint 已前移到 SpringBoard/main-scene 内容与 drawable 产生；不得在
+selector 4 仍为零时修改 IOSurface、IOMFB copy 或 MSM8998 scanout。
+
+证据：`display-first-frame/logs/H417/device/20261118-213940/`、
+`display-first-frame/builds/H417/`、本 diagnostic 与
+`FIRST-FRAME-ANALYSIS.md` 第 17 节。

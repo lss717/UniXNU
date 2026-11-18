@@ -88,8 +88,16 @@ def build(ctx, kernel=None):
     if not kernel.is_file():
         raise Error(f'kernel not found: {kernel}; run "unixnu build kernel" or pass --kernel FILE')
     extra = list(getattr(args, 'kernel_arg', None) or [])
+    deleted = set(getattr(args, 'kernel_arg_delete', None) or [])
+    for name in deleted:
+        if not re.fullmatch(r'[A-Za-z0-9_.\-]+', name):
+            raise Error(f'unsupported deleted kernel argument: {name}')
     # An extra NAME=VALUE replaces the board's argument of the same name.
     names = {item.split('=', 1)[0] for item in extra}
+    overlap = names & deleted
+    if overlap:
+        raise Error('kernel arguments cannot be both replaced and deleted: ' + ', '.join(sorted(overlap)))
+    names.update(deleted)
     arguments = [item for item in spec.get('kernel_args', []) if item.split('=', 1)[0] not in names] + extra
     line = check_args(arguments)
     check_native_root(kernel, arguments)
@@ -134,11 +142,14 @@ def build(ctx, kernel=None):
         shutil.copyfile(data, payloads / 'scratch-data.img')
     command = ['python3', ctx.tree / adt['tool'], '--output', payloads / 'kernel.macho.adt', '--dram-size', str(spec['dram_size'])]
     for key, flag in (('owned_memory_size', '--owned-memory-size'), ('root_match_volume_uuid', '--root-match-volume-uuid'),
-                      ('chip_id', '--chip-id'), ('cpu_regs', '--cpu-regs'), ('psci_method', '--psci-method')):
+                      ('cpu_regs', '--cpu-regs'), ('psci_method', '--psci-method')):
         if adt.get(key) is not None:
             command += [flag, str(adt[key])]
     if seed:
         command += ['--unique-chip-id', seed]
+    chip_id = getattr(args, 'chip_id', None) or adt.get('chip_id')
+    if chip_id:
+        command += ['--chip-id', str(chip_id)]
     if data:
         command.append('--packed-data-ramdisk' if adt.get('packed_data_ramdisk') else '--data-ramdisk')
     if trust:
