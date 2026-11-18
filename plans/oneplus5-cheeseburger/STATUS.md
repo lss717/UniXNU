@@ -15360,3 +15360,35 @@ ArmDTPlatform `origin/main@417ff95d`，新提交
 **去留**：H411/H413 的只读程序与已验证文档进入主线；H412 仍是 duplicate-only、未构建、未上机实验，保留独立分支。设备仓 `h411-display-gate@0ceec28` 的 recovery wrapper 未端到端跑通，H413 包装器也在抓取后因找不到 checker 源路径停止，随后才手工发送一次 UXC1；两者不作为已验证工具合入。H411 的约 `326.66 s` USB transport 断流和 H408 UFS OCS timeout 仍为 known-open，H413 的单次成功重启不构成 USB 根因修复。
 
 **证据**：`display-first-frame/logs/H413/` 与 `plans/oneplus5-cheeseburger/H413-manifest-20261118.json`；专项审计见 `plans/oneplus5-cheeseburger/diagnostics/H413-first-frame-correlation-2026-11-18.md`。
+
+#### H415：Data mountpoint readiness 单变量候选（2026-11-18）
+
+**目标/唯一行为变量**：在 `native_owner_data_prepare()` 的 Data provider
+就绪之后、原 APFS mount 之前，有界等待 root 卷上的 `/private/var`
+mountpoint 可解析。仅 `ENOENT` 重试；provider 与 mountpoint 共用
+600 x 100 ms 预算；其他错误立即返回，超时返回 `ETIMEDOUT`。不等待
+Preboot/SystemOS，保持原 mount payload、post-mount lookup、GPU addon 和
+staged apps 顺序。
+
+**来源**：core base
+`158e74312c78c0a20d0ab244d122f7d2793fc6ed`；device base
+`481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91`。候选不包含 H414 focused IPC
+固定环/exec-task cache。H413 只读显示/IPC 探针保持原样。
+
+**源码范围**：
+
+- `drivers/NativeUfsProbe/NativeUfsProbe.cpp`：build tag H415；
+- `patches/xnu/zzzz...h415-data-ready.patch`：仅 `bsd/kern/kern_exec.c`；
+- `scripts/check-display-first-frame-probe.py`：期望 H415 build tag；
+- `scripts/check-h415-data-ready.py`：有界等待/错误/单文件范围检查；
+- 本 STATUS 与 H415 diagnostic 文档。
+
+**预构建门禁**：H415 checker 与 display gate checker 通过；`git diff --check`
+通过；H414 IPC 名称不得重新进入 patch 树。实际构建必须在 Mac 从本提交和
+device `481fcfe7` 独立 checkout，完成 stub -> prelink -> real PMGR ->
+final prelink 两遍，并记录 lock、feed link、submodule、archive、kernel、
+payload 和 boot SHA。final kernel 不得仍是 `final_pmgr_required=true`。
+
+**未完成项**：源码提交后的 Mac 独立 fetch/checkout、完整构建、静态
+provenance gate、设备 boot、CDC/userland 与重启恢复。未完成前不得描述为
+已修复或 merge-ready。

@@ -1,0 +1,106 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7308,16 +7308,18 @@
+ extern int native_ram_block_volume_seed(const char *, dev_t *, char *, size_t, uint64_t *, uint64_t *, uint8_t *);
+ extern volatile uint32_t native_ram_block_ready;
+ extern volatile uint64_t native_ram_block_bytes;
+ #endif
+ extern dev_t mdevlookup(int);
+ extern int mdevgetrange(int, uint64_t *, uint64_t *);
+ volatile int native_owner_data_status = -1;
+ volatile int native_owner_data_stage = 0;
++volatile unsigned native_owner_data_mountpoint_wait = 0;
++volatile int native_owner_data_mountpoint_status = -1;
+ volatile int native_owner_data_readonly = -1;
+ volatile dev_t native_owner_data_device = NODEV;
+ uint64_t native_owner_data_seed_base, native_owner_data_seed_size;
+ uint8_t native_owner_data_seed_sha256[32];
+ char native_owner_data_device_path[64];
+ 
+ /* Boot-time read-only union views of owner-provided GPU addon content over sealed system directories, mounted after the Data mount and
+  * before launchd starts: the Adreno Metal plugin bundle over /System/Library/Extensions (the original Metal discovery loads
+@@ -8191,38 +8193,80 @@
+ 	vnode_t data_root = NULLVP;
+ 	char device_path[64] = "/dev/md0";
+ #if defined(XNU_NATIVE_RAM_BLOCK) && XNU_NATIVE_RAM_BLOCK
+ 	/* The typed provider supplies logical seed identity for both dense and
+ 	 * sparse media. A sparse disk has no contiguous logical-byte address. */
+ 	/* H236ck: the scratch RAM disk and its APFS volume publish around 28-37 s
+ 	 * while load_init_program can run at ~20 s. Wait for the volume instead of
+ 	 * panicking on that boot-order race (600 x 100 ms). */
+-	for (unsigned wait = 0; ; wait++) {
++	unsigned seed_wait = 0;
++	for (;;) {
+ 		if (native_ram_block_volume_seed(XNU_OWNER_DATA_VOLUME_UUID, &device, device_path,
+ 		    sizeof(device_path), &base, &size, native_owner_data_seed_sha256)) break;
+-		if (wait >= 600) { error = ENOENT; goto done; }
+-		if ((wait % 50) == 0) printf("NATIVE_H82_DATA_WAIT: %u ready=%u bytes=%llu\n",
+-		    wait, native_ram_block_ready, (unsigned long long)native_ram_block_bytes);
++		if (seed_wait >= 600) { error = ETIMEDOUT; goto done; }
++		if ((seed_wait % 50) == 0) printf("NATIVE_H82_DATA_WAIT: %u ready=%u bytes=%llu\n",
++		    seed_wait, native_ram_block_ready, (unsigned long long)native_ram_block_bytes);
++		seed_wait++;
+ 		IOSleep(100);
+ 	}
+ 	/* The typed provider's disk may be far larger than 2 GiB (a persistent Data disk keeps only its seed's nonzero pages). */
+ 	if (!size || size > UINT64_C(0x10000000000) || (size & 4095)) goto done;
+ #else
+ 	device = mdevlookup(0);
+ 	if (device == NODEV || mdevgetrange(0, &base, &size) || base < VM_MIN_KERNEL_ADDRESS ||
+ 	    !size || size > UINT64_C(0x80000000) || (base & 4095) || (size & 4095)) goto done;
+ 	SHA256_CTX context;
+ 	SHA256_Init(&context);
+ 	SHA256_Update(&context, (const void *)base, size);
+ 	SHA256_Final(native_owner_data_seed_sha256, &context);
+ #endif
+ 	native_owner_data_seed_base = base;
+ 	native_owner_data_seed_size = size;
+ 	native_owner_data_stage = 1;
++	/* H415: Data provider publication does not imply that the concurrent root
++	 * APFS mount has made /private/var resolvable. Poll only that existing
++	 * mountpoint under the same 60-second budget, with no vnode lock held. */
++	unsigned mountpoint_wait = 0;
++	for (;;) {
++		vnode_t mountpoint = NULLVP;
++		error = ENOENT;
++		if (rootvnode != NULLVP) {
++			error = vnode_lookup("/private/var", 0, &mountpoint,
++			    vfs_context_current());
++		}
++		if (!error) {
++			vnode_put(mountpoint);
++			break;
++		}
++		if (mountpoint) vnode_put(mountpoint);
++		if (error != ENOENT) {
++			native_owner_data_mountpoint_status = error;
++			printf("NATIVE_H82_DATA_PATH: status=%d seed=%u mount=%u root=%u err=%d\n",
++			    error, seed_wait, mountpoint_wait, rootvnode != NULLVP, error);
++			goto done;
++		}
++		if (seed_wait + mountpoint_wait >= 600) {
++			error = ETIMEDOUT;
++			native_owner_data_mountpoint_status = error;
++			printf("NATIVE_H82_DATA_PATH: status=%d seed=%u mount=%u root=%u err=%d\n",
++			    error, seed_wait, mountpoint_wait, rootvnode != NULLVP, ENOENT);
++			goto done;
++		}
++		if ((mountpoint_wait % 50) == 0) {
++			printf("NATIVE_H82_DATA_PATH_WAIT: %u seed=%u root=%u err=%d\n",
++			    mountpoint_wait, seed_wait, rootvnode != NULLVP, error);
++		}
++		mountpoint_wait++;
++		IOSleep(100);
++	}
++	native_owner_data_mountpoint_wait = mountpoint_wait;
++	native_owner_data_mountpoint_status = 0;
++	printf("NATIVE_H82_DATA_PATH: status=0 seed=%u mount=%u root=%u\n",
++	    seed_wait, mountpoint_wait, rootvnode != NULLVP);
+ 	strlcpy(native_owner_data_device_path, device_path, sizeof(native_owner_data_device_path));
+ 	uint8_t payload[0x150] = {0};
+ 	user64_addr_t spec = scratch + 0x160;
+ 	uint16_t mode = 1;
+ 	uint32_t anonymous_owner = 99;
+ 	memcpy(payload, &spec, sizeof(spec));
+ 	memcpy(payload + 16, &mode, sizeof(mode));
+ 	memcpy(payload + 0x144, &anonymous_owner, sizeof(anonymous_owner));
