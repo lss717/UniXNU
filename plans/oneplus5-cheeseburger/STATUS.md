@@ -15769,8 +15769,42 @@ trust、Data seed、UEFI/FD/DTB 和安全 bootargs 全部 PASS（995 B，最坏
 1023/1024）。因此构建环境本身没有造成自动回 Android：这是一条哈希闭合、
 可启动格式正确的候选，运行时 reset 仍必须由设备日志单独归因。
 
-设备门未执行：2026-11-18 本轮 `ssh y9000x` 连续解析为
-`192.168.8.58:22` 并超时。按 alias-only 规则没有使用 IP、`user@host`、
-备用 SSH 配置或本机设备回退；候选未复制到设备主机，未运行 ADB、
-`fastboot boot`、flash、erase 或任何分区写入。H419 因此分类为
-`statically-verified-device-host-unreachable`，设备证据仍是唯一未完成项。
+**真机结果（用户更正设备在本机后）**：唯一 serial `16149951`，TWRP
+`3.4.0_9-10-mauronofrio` 预检通过，`fastboot boot` 仅执行一次并成功。
+retained marker 为 `H419 boot=34574d8c`。CDC COM8 首次出现时被其它句柄
+占用，首次 capture 以 Win32 error 5 停止且未读字节；第二次打开成功，
+采集 360 秒、9,825 帧/1,664,439 bytes，CRC/gap/boot-switch/truncation
+均为 0。
+
+独立 BKS ring 在 sample 6000 为 `written=92 lost=0`。捕获到 SpringBoard
+sid27 发往 launchd 的 `S/Q id=0x5b9173`；随后 backboardd pid56 thread618
+接收该消息，并向 SpringBoard 原 reply port 返回 size 68 的
+`id=0x5b91d7`，再由 SpringBoard thread293 直接接收。response id 与 request
+id 不同，解释了 H418 按同 id 搜索时的遗漏；BKS main-screen reply 已不再是
+首帧缺失候选。
+
+CA 侧在 419.416 s 为一个 context、423.676 s 为两个 display-bound context
+`0x5d9ae0de`、`0xc6aa2b12`；两轮共 8 个已读 layer 节点全部 contents=nil。
+type-1 accelerator client 与 ABI selector 2 存在，但 nextDrawable、draw、
+command buffer、presentSurface、legacy validation/transfer/frame 均为零。
+retained sample 6000 gate 仍为
+`accel=2/0/223/0 dpy=3/11/0/0/0 s345=0/0/0 val=0 xf=0 fr=0`。
+
+新增 context-change 状态机出现实现 bug：两轮均输出 `ctxfull`，原因是
+`index == free_index` 锁住了初始哨兵，未用表长度判断。因此 H419 未取得
+owner/client port 与 context add/change 记录；现有 server/context/tree 输出
+仍有效。H419 分类
+`bks-reply-complete-main-scene-content-empty-context-change-observer-bug`，
+下一次仅修复该索引 bug、在非 SpringBoard sample 不覆盖 BKS focus，并给
+事件增加时间戳。
+
+`0x5b9173` 与两个 context 的观察均早于首个 UFS OCS timeout
+688.368009 s。全轮为 2 次 OCS、2 次 retry/recovery，无 Too many corpses、
+kernel panic 或 undefined instruction。UXC1 `424420` 一次 ACK（uptime
+744.690403）；脚本在 Android 等待中被停下，自动化没有发送
+`adb reboot recovery`。用户手动进入 TWRP，最终唯一 serial
+`16149951` 的 TWRP `3.4.0_9-10-mauronofrio` 再次验证。
+
+证据：`display-first-frame/logs/H419/device/20261118-235005/`、
+`diagnostics/H419-device-verification-20261119.json` 与
+`FIRST-FRAME-ANALYSIS.md` 第 19 节。

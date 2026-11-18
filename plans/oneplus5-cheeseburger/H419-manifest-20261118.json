@@ -1,7 +1,7 @@
 {
   "candidate": "H419",
   "purpose": "observe the exact BKS main-screen request/reply path and display-bound CA context changes without changing display behavior",
-  "state": "statically-verified-device-host-unreachable",
+  "state": "device-tested-no-first-frame-bks-reply-complete-context-observer-bug",
   "source": {
     "core_base": "c970fe90e9567b1e504f07397fc38e348fe3ebbc",
     "core_code_commit": "366b990c06645d8e488fa4a528773b718d4f2cc1",
@@ -85,10 +85,59 @@
     "UFS timeout/corpse window is a confounder rather than a root-cause signal"
   ],
   "device_preflight": {
-    "boot_sent": false,
-    "candidate_copied": false,
-    "state": "blocked",
-    "reason": "ssh y9000x repeatedly resolved to 192.168.8.58:22 and timed out",
-    "alternate_connection_used": false
+    "host": "local-windows-workstation",
+    "serial": "16149951",
+    "product": "cheeseburger",
+    "twrp_before": "3.4.0_9-10-mauronofrio",
+    "boot_sent": true,
+    "boot_count": 1,
+    "fastboot_accepted": "2026-11-18T23:44:45.3920611+08:00",
+    "fastboot_result": "Sending OKAY; Booting OKAY",
+    "twrp_after": "3.4.0_9-10-mauronofrio",
+    "user_reported_manual_twrp": true
+  },
+  "device_result": {
+    "build_marker": "H419",
+    "kernel_boot_id": "34574d8c",
+    "cdc_port": "COM8",
+    "capture_attempts": 2,
+    "first_attempt": "CreateFile COM8 returned Win32 error 5",
+    "capture_seconds": 360,
+    "frames": 9825,
+    "payload_bytes": 1664439,
+    "crc_errors": 0,
+    "sequence_gaps": 0,
+    "boot_switches": 0,
+    "bks_request": "0x5b9173",
+    "bks_response": "0x5b91d7",
+    "bks_participants": "SpringBoard(27) -> launchd(1) -> backboardd(56) -> SpringBoard thread 293",
+    "bks_classification": "request-delivered-and-replied",
+    "contexts": [
+      "0x5d9ae0de",
+      "0xc6aa2b12"
+    ],
+    "context_nodes_observed": 8,
+    "context_nodes_with_contents": 0,
+    "context_change_record": "invalid-H419-index-bug",
+    "renderer": {
+      "type_1_client": true,
+      "selector_2": true,
+      "next_drawable": 0,
+      "draw": 0,
+      "command_buffers": 0,
+      "present_surface": 0
+    },
+    "retained_display_gate": "sample 6000 accel=2/0/223/0 dpy=3/11/0/0/0 s345=0/0/0 val=0 xf=0 fr=0",
+    "first_frame": false,
+    "ufs_ocs_timeouts": 2,
+    "ufs_retries": 2,
+    "ufs_recoveries": 2,
+    "too_many_corpses": 0,
+    "kernel_panic": false,
+    "uxc1_request": 424420,
+    "uxc1_acked": true,
+    "ack_uptime": 744.690403,
+    "manual_twrp_after_ack": true,
+    "classification": "bks-reply-complete-main-scene-content-empty-context-change-observer-bug"
   }
 }

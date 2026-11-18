@@ -1,0 +1,238 @@
+{
+  "candidate": "H419",
+  "host": "local-windows-workstation",
+  "serial": "16149951",
+  "product": "cheeseburger",
+  "model": "ONEPLUS_A5000",
+  "twrp_before": "3.4.0_9-10-mauronofrio",
+  "twrp_after": "3.4.0_9-10-mauronofrio",
+  "boot_sha256": "78e8a088a036cf1179cfd022dc148050d2e3e1e18114ee693a155fd59b2e0025",
+  "kernel_sha256": "7c6e43cf2eb7cc7e0d98a7f280723baae9440847869c9c058803f96eff6b9070",
+  "payload_sha256": "6ea9e8c44d8c3eb79a5b094e8c7cfe12962cce8a2663db0ad6516f27b0f18304",
+  "build_marker": "H419",
+  "kernel_boot": "34574d8c",
+  "observer_build_marker": "H419",
+  "boot_sent": true,
+  "boot_count": 1,
+  "fastboot_accepted": "2026-11-18T23:44:45.3920611+08:00",
+  "fastboot_result": "Sending OKAY; Booting OKAY",
+  "capture_attempts": 2,
+  "transport": {
+    "first_cdc_ready": "2026-11-18T23:49:13.0337332+08:00",
+    "first_cdc_delay_seconds": 268,
+    "first_attempt": "failed immediately: CreateFile COM8 returned Win32 error 5",
+    "successful_retry_started": "2026-11-18T23:50:05.4539193+08:00",
+    "capture_finished": "2026-11-18T23:56:06.5077286+08:00",
+    "capture_seconds": 360,
+    "frames": 9825,
+    "payload_bytes": 1664439,
+    "last_sequence": 9824,
+    "crc_errors": 0,
+    "sequence_gaps": 0,
+    "boot_switches": 0,
+    "truncated_frames": 0
+  },
+  "bks_main_screen": {
+    "request_id": "0x5b9173",
+    "response_id": "0x5b91d7",
+    "participants": {
+      "launchd": 1,
+      "SpringBoard": 27,
+      "backboardd": 56,
+      "chronod": 89
+    },
+    "sample_6000": {
+      "timestamp": 321.294771,
+      "springboard_pid": 27,
+      "springboard_thread": 293,
+      "pc": "0x1e4dccb58",
+      "message_id": "0x5b9173",
+      "request_queue": "launchd q=1 sr=0 so=5",
+      "launchd_reply_count": 0,
+      "dedicated_events_written": 92,
+      "dedicated_events_lost": 0
+    },
+    "request_event": {
+      "serial": 85,
+      "kind": "S",
+      "id": "0x5b9173",
+      "bits": "0x111211",
+      "size": 32,
+      "from_pid": 27,
+      "to_pid": 1,
+      "queue_port": "0xfffffff5813d0200",
+      "local_reply_port": "0xfffffff5813cb380",
+      "emitted_retrospectively_at": 678.419969
+    },
+    "queue_event": {
+      "serial": 86,
+      "kind": "Q",
+      "id": "0x5b9173",
+      "bits": "0x20111211",
+      "size": 32,
+      "from_pid": 27,
+      "to_pid": 1
+    },
+    "receive_event": {
+      "serial": 109,
+      "kind": "R",
+      "id": "0x5b9173",
+      "thread": 618,
+      "receiver_pid": 56,
+      "queue_port": "0xfffffff5813d0200",
+      "local_reply_port": "0xfffffff5813cb380"
+    },
+    "response_send": {
+      "serial": 110,
+      "kind": "S",
+      "id": "0x5b91d7",
+      "bits": "0x12",
+      "size": 68,
+      "from_pid": 56,
+      "to_pid": 27,
+      "destination_port": "0xfffffff5813cb380"
+    },
+    "response_delivery": {
+      "serial": 111,
+      "kind": "D",
+      "id": "0x5b91d7",
+      "size": 68,
+      "from_pid": 56,
+      "to_pid": 27,
+      "receiver_thread": 293
+    },
+    "second_request": {
+      "sender_pid": 89,
+      "sender_comm": "chronod",
+      "serials": [91, 92, 112],
+      "classification": "same request id observed from a second client; not needed to establish the SpringBoard reply"
+    },
+    "event_time_limit": "The H419 event slot records order and ports but not an event timestamp. The live timestamps above are when the buffered records were emitted at sample 8010, not when the messages occurred. The serial order and reply-port match prove the reply existed; precise event time requires the H420 fix.",
+    "classification": "request-delivered-and-replied"
+  },
+  "display_gate": [
+    {
+      "timestamp": 321.470433,
+      "sample": 6000,
+      "build": "H419",
+      "boot": "34574d8c",
+      "accelerator": "2/0/223/0",
+      "display": "3/11/0/0/0",
+      "selectors_3_4_5": "0/0/0",
+      "validate": 0,
+      "transfer": 0,
+      "frames": 0
+    }
+  ],
+  "observer": {
+    "rounds": [
+      {
+        "state_timestamp": 419.416374,
+        "context_timestamp": 420.753526,
+        "context_count": 1,
+        "contexts": [
+          {
+            "id": "0x5d9ae0de",
+            "display_id": "0x1",
+            "display_mask": "0xffffffff",
+            "root_class": "CALayer",
+            "root_bounds": "1080x1920",
+            "root_contents": null,
+            "root_sublayers": 2,
+            "tree_nodes": 4
+          }
+        ]
+      },
+      {
+        "state_timestamp": 423.676728,
+        "context_timestamp": 423.677813,
+        "context_count": 2,
+        "contexts": [
+          {
+            "id": "0x5d9ae0de",
+            "display_id": "0x1",
+            "display_mask": "0xffffffff",
+            "root_class": "CALayer",
+            "root_bounds": "1080x1920",
+            "root_contents": null,
+            "root_sublayers": 2,
+            "tree_nodes": 4
+          },
+          {
+            "id": "0xc6aa2b12",
+            "display_id": "0x1",
+            "display_mask": "0xffffffff",
+            "root_class": "CALayer",
+            "root_bounds": "1080x1920",
+            "root_contents": null,
+            "root_sublayers": 2,
+            "tree_nodes": 4
+          }
+        ]
+      }
+    ],
+    "context_nodes_observed": 8,
+    "context_nodes_with_contents": 0,
+    "change_record": "invalid-H419-index-bug",
+    "failure_marker": "NATIVE_MTL srv ctxfull observer",
+    "cause": "free_index was selected but the code compared index against the reassigned free_index instead of the table length, so every first lookup fell through to ctxfull",
+    "impact": "client/task ports and new/changed context records were not emitted; the existing bounded layer dumps and server-state records remain valid",
+    "accelerator_type_1_client": true,
+    "accelerator_selector_2": true,
+    "next_drawable": 0,
+    "draw_calls": 0,
+    "command_buffers": 0,
+    "present_surface_calls": 0
+  },
+  "first_frame": {
+    "observed": false,
+    "selector_3_4_5_in_retained_gate": "0/0/0",
+    "surface_validation": 0,
+    "copy_or_transfer": 0,
+    "frame_counter_in_retained_gate": 0,
+    "classification": "main-scene-content-remains-before-renderer-submit"
+  },
+  "known_confounders": {
+    "mediaserverd_exit_signal_6": [
+      362.160708,
+      456.757304
+    ],
+    "first_ufs_ocs_timeout": 688.368009,
+    "ufs_ocs_timeouts": 2,
+    "ufs_retries": 2,
+    "ufs_recoveries": 2,
+    "too_many_corpses": 0,
+    "kernel_panic": false,
+    "undefined_kernel_instruction": false,
+    "timing_note": "Both context rounds and the BKS reply event were recorded before the first UFS OCS timeout. Late UFS failures do not explain the empty scene state."
+  },
+  "recovery": {
+    "uxc1_request": 424420,
+    "uxc1_acked": true,
+    "ack_uptime": 744.690403,
+    "cdc_disappeared": true,
+    "android_wait_was_interrupted": true,
+    "automation_adb_reboot_recovery_sent": false,
+    "user_reported_manual_twrp": true,
+    "final_twrp": true,
+    "final_twrp_verified_at": "2026-11-19T00:04:08.8842916+08:00"
+  },
+  "evidence": {
+    "live_log": "H419-live.log",
+    "live_log_sha256": "b1875a62b31b1feb6b8b3d8dc9e9e7b060a7bc60b48dd02a72b8fb5d7f4b150a",
+    "capture_stdout": "H419-live.capture.stdout.txt",
+    "capture_stdout_sha256": "1fd262716d0d387ae3c302cda6ee620f526a78357ed91ce29b48d90de57c1f79",
+    "frames": "H419-live.frames.bin",
+    "frames_sha256": "5ffe2ed0795d0ba64eb37ad3614e5636dca9f6086417bce21ec50ae4a9283b8d",
+    "ring_window": "H419-ring.bin",
+    "ring_window_sha256": "38eaef02bf584426512f1a002f2742b03688f78cf64225db744707da2971550b",
+    "ring_merged": "H419-ring-merged.txt",
+    "ring_merged_sha256": "a016857f3911ac4de595435f446ca4bd66e439d222b802e706abffe74ff79402",
+    "fastboot_record": "H419-fastboot-boot.txt",
+    "fastboot_record_sha256": "edbfd32d7562972d5795fabbf3d7fe9bc3730ad1f51e57bc3a111b719a8ab148",
+    "reboot_state": "H419-reboot-recovery-state.txt",
+    "reboot_state_sha256": "b772ed402ff3f05a13a38ac2a5f998332b6f2a697f068cdd3dacdd6e3bc98ea5"
+  },
+  "classification": "bks-reply-complete-main-scene-content-empty-context-change-observer-bug",
+  "interpretation": "H419 establishes that the BKS request is delivered and receives a different-id response through the original reply port. It does not establish a permanent main-screen IPC failure. In the same healthy pre-UFS window, two display-bound contexts exist and all eight bounded layer nodes lack contents. The H419 context-change state machine was defective and therefore H420 must rerun the context comparison with the index fix."
+}
