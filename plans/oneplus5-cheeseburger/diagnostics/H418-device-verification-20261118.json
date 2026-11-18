@@ -1,0 +1,278 @@
+{
+  "candidate": "H418",
+  "host": "local-windows-workstation",
+  "serial": "16149951",
+  "product": "cheeseburger",
+  "model": "ONEPLUS A5000",
+  "twrp_before": "3.4.0_9-10-mauronofrio",
+  "twrp_after": "3.4.0_9-10-mauronofrio",
+  "boot_sha256": "670fd5b95cd391897a7741650d67a3ba3d969bd5674ebdf125548bc39f712a4f",
+  "kernel_sha256": "4b3f4bd4e3c09732635050685e9eab9f74810d00c0db50de9fac4bb853413e07",
+  "payload_sha256": "69cfde5fd3dc5a38fb52f3bd1d5f65372b9a7aa6d07c013f48ecbce1ced084b8",
+  "build_marker": "H418",
+  "kernel_boot": "26c3386d",
+  "observer_build_marker": "H417",
+  "boot_sent": true,
+  "boot_count": 1,
+  "fastboot_accepted": "2026-11-18T22:42:26.5476178+08:00",
+  "cdc_ready": "2026-11-18T22:46:43.0886687+08:00",
+  "cdc_delay_seconds": 257,
+  "capture_started": "2026-11-18T22:46:43.0886687+08:00",
+  "capture_finished": "2026-11-18T22:52:44.0450481+08:00",
+  "capture_seconds": 360,
+  "transport": {
+    "frames": 4694,
+    "payload_bytes": 737949,
+    "last_sequence": 4693,
+    "crc_errors": 0,
+    "sequence_gaps": 0,
+    "truncated_frames": 0,
+    "boot_switches": 0
+  },
+  "source_chain": {
+    "core_base": "158e74312c78c0a20d0ab244d122f7d2793fc6ed",
+    "core_code_commit": "4a141e827e86b3320e9700464a28f11c7a5a2fea",
+    "device_commit": "481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91",
+    "keystore_commit": "2305bad9a525abd467ca3caae046d272fcb27655",
+    "native_metal_commit": "75f3f65cb21a40fa7dfa85f7d092b70fb50cf115"
+  },
+  "aks_probe": {
+    "observed_open_results": [
+      {
+        "timestamp": 287.613086,
+        "comm": "powerd",
+        "type": 0,
+        "result": "0x00000000",
+        "calls": 4
+      },
+      {
+        "timestamp": 291.607063,
+        "comm": "nfcd",
+        "type": 0,
+        "result": "0x00000000",
+        "calls": 5
+      },
+      {
+        "timestamp": 312.112476,
+        "comm": "liveactivitiesd",
+        "type": 0,
+        "result": "0x00000000",
+        "calls": 6
+      },
+      {
+        "timestamp": 345.105532,
+        "comm": "lsd",
+        "type": 0,
+        "result": "0x00000000",
+        "calls": 12
+      },
+      {
+        "timestamp": 382.440967,
+        "comm": "SpringBoard",
+        "type": 0,
+        "result": "0x00000000",
+        "calls": 16
+      }
+    ],
+    "observed_selector_results": [
+      {
+        "timestamp": 382.441184,
+        "comm": "SpringBoard",
+        "selector": 35,
+        "result": "0x00000000",
+        "calls": 1,
+        "errors": 0
+      },
+      {
+        "timestamp": 391.759105,
+        "comm": "securityd",
+        "selector": 14,
+        "result": "0x00000000",
+        "calls": 1,
+        "errors": 0
+      }
+    ],
+    "open_errors": 0,
+    "selector_errors": 0,
+    "interpretation": "All 13 captured open attempts from calls 4 through 16 returned kIOReturnSuccess, including liveactivitiesd and SpringBoard. SpringBoard selector 35 and securityd selector 14 also returned success."
+  },
+  "bks_main_screen_chain": {
+    "message_id": "0x5b9173",
+    "sample_6000": {
+      "timestamp": 277.634501,
+      "springboard_pid": 26,
+      "request_queue_count": 1,
+      "request_peer": "launchd",
+      "launchd_reply_count": 0
+    },
+    "sample_6030": {
+      "timestamp": 376.213824,
+      "message_id": "0x0",
+      "request_queue_count": 0,
+      "interpretation": "the original 0x5b9173 request was no longer queued; this snapshot does not prove whether reply delivery was observed, but it rules out a permanent queue at this time"
+    },
+    "symbolicated_stack_at_341_175": [
+      "mach_msg2_trap +0x8",
+      "mach_msg_overwrite +0x1ec",
+      "mach_msg +0x14",
+      "_BKSDisplayGetMainScreenInfo +0xa4",
+      "_BKSDisplayServicesGetMainScreenInfo +0x78",
+      "_BKSDisplayServicesStart +0x50",
+      "-[BKSSystemShellService _activateServerConnectionWithIdleSleepInterval:] +0x1e8",
+      "-[BKSSystemShellService initWithConfigurator:] +0x11c",
+      "-[FBSystemShell _initWithOptions:] +0x300",
+      "+[FBSystemShell _createSingletonWithOptions:] +0x10c",
+      "_FBSystemShellInitialize +0x154",
+      "_SBSystemAppMain +0x13e0"
+    ],
+    "shared_cache_slide": "0xabc8000",
+    "interpretation": "The 0x5b9173 wait is the BKS main-screen information/start path. H418 observed it queued at sample 6000 and gone by sample 6030; it is not a permanent deadlock."
+  },
+  "kernel_display_gate": [
+    {
+      "timestamp": 277.688241,
+      "sample": 6000,
+      "build": "H418",
+      "boot": "26c3386d",
+      "accelerator": "1/0/176/0",
+      "display": "3/11/0/0/0",
+      "selectors_3_4_5": "0/0/0",
+      "validate": 0,
+      "transfer": 0,
+      "frames": 0
+    },
+    {
+      "timestamp": 376.354760,
+      "sample": 6030,
+      "build": "H418",
+      "boot": "26c3386d",
+      "accelerator": "4/1/369/0",
+      "display": "3/18/0/1/0",
+      "selectors_3_4_5": "0/0/0",
+      "validate": 0,
+      "transfer": 0,
+      "frames": 0
+    },
+    {
+      "timestamp": 542.877414,
+      "sample": 6060,
+      "build": "H418",
+      "boot": "26c3386d",
+      "accelerator": "5/0/495/0",
+      "display": "3/18/0/1/0",
+      "selectors_3_4_5": "0/0/0",
+      "validate": 0,
+      "transfer": 0,
+      "frames": 0
+    },
+    {
+      "timestamp": 608.148612,
+      "sample": 6090,
+      "build": "H418",
+      "boot": "26c3386d",
+      "accelerator": "5/0/495/0",
+      "display": "3/18/0/1/0",
+      "selectors_3_4_5": "0/0/0",
+      "validate": 0,
+      "transfer": 0,
+      "frames": 0
+    }
+  ],
+  "observer": {
+    "round_count": 2,
+    "rounds": [
+      {
+        "probe_timestamp": 345.280088,
+        "state_timestamp": 356.464339,
+        "context_timestamp": 358.537974,
+        "context_count": 1,
+        "contexts": [
+          {
+            "context_id": "0x59dbd835",
+            "display_id": "0x1",
+            "display_mask": "0xffffffff",
+            "root_class": "CALayer",
+            "root_bounds": "1080x1920",
+            "root_contents": null,
+            "root_sublayers": 2,
+            "tree_nodes": 4
+          }
+        ]
+      },
+      {
+        "probe_timestamp": 405.708100,
+        "state_timestamp": 424.468231,
+        "context_timestamp": 480.021436,
+        "context_count": 2,
+        "contexts": [
+          {
+            "context_id": "0x59dbd835",
+            "display_id": "0x1",
+            "display_mask": "0xffffffff",
+            "root_class": "CALayer",
+            "root_bounds": "1080x1920",
+            "root_contents": null,
+            "root_sublayers": 2,
+            "tree_nodes": 4
+          },
+          {
+            "context_id": "0x1535709d",
+            "display_id": "0x1",
+            "display_mask": "0xffffffff",
+            "root_class": "CALayer",
+            "root_bounds": "1080x1920",
+            "root_contents": null,
+            "root_sublayers": 2,
+            "tree_nodes": 4
+          }
+        ]
+      }
+    ],
+    "observer_write_markers": 0,
+    "observer_bind": "skipped-observer-only",
+    "observer_present": false,
+    "interpretation": "A second display-bound context appeared after the first sample. Both bounded trees remain contentless. The observer is supporting evidence; it does not prove that all private scene layers are non-drawable."
+  },
+  "downstream": {
+    "iomfb_selector_6": 1,
+    "iomfb_notification_registrations": 0,
+    "iomfb_selector_3_4_5": "0/0/0",
+    "surface_validation": 0,
+    "transfer": 0,
+    "frames": 0,
+    "native_legacy_kick_zero": true
+  },
+  "known_confounders": {
+    "first_ufs_ocs_timeout": 474.934826,
+    "ufs_ocs_timeouts": 17,
+    "ufs_retries": 18,
+    "ufs_stall_nopanic": 19,
+    "too_many_corpses": 21,
+    "panic": false,
+    "undefined_kernel_instruction": false,
+    "timing_note": "sample 6030 and both context-count states completed before the first captured OCS timeout at 474.934 s. The second context-tree dump at 480.021 s follows that timeout and is supporting evidence only. SpringBoard crashed at 606.219 s."
+  },
+  "recovery": {
+    "uxc1_request": 424419,
+    "uxc1_acked": true,
+    "ack_timestamp": 663.1005900,
+    "cdc_disappeared": true,
+    "android_adb_returned": true,
+    "android_boot_completed": true,
+    "adb_reboot_recovery": true,
+    "final_twrp": true,
+    "final_twrp_verified_at": "2026-11-18T22:58:52.7023580+08:00"
+  },
+  "evidence": {
+    "live_log": "H418-live.log",
+    "live_log_sha256": "ec529f0943087cc779db77866f159aa2efa1b782f01fa88851b272b22d6bbe9c",
+    "frames": "H418-live.frames.bin",
+    "frames_sha256": "52e85d702f44cc273d72f6abe69014c693edd15839f0a1c9ba821436eebd725f",
+    "ring_window": "H418-ring.bin",
+    "ring_window_sha256": "a1fa67bc0466411d33c3cb4733e4d0303d066a0a96c39e97087f40d85b0072d0",
+    "ring_merged": "H418-ring-merged.txt",
+    "ring_merged_sha256": "56ba8f11a0e9284457d546e132394631cb909469cc245284aadae58466f1f8dd"
+  },
+  "interpretation": "H418 directly closes the AKS branch: captured AppleKeyStore opens and the SpringBoard selector returned success. The same boot still produced zero IOMFB selector 3/4/5, validation, transfer and frame. The BKS main-screen request was not permanently queued and disappeared by sample 6030. The next unresolved boundary is SpringBoard main-scene completion/definesDisplayBounds and content production before the renderer submits a drawable.",
+  "classification": "aks-success-main-scene-remains-before-display-submit"
+}

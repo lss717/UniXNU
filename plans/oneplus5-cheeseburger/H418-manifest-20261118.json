@@ -1,0 +1,100 @@
+{
+  "candidate": "H418",
+  "purpose": "bounded AppleKeyStore newUserClient and selector return-value observation",
+  "state": "feature-branch-published-device-tested-aks-success-no-first-frame",
+  "source": {
+    "core_base": "158e74312c78c0a20d0ab244d122f7d2793fc6ed",
+    "core_code_commit": "4a141e827e86b3320e9700464a28f11c7a5a2fea",
+    "core_feature_branch": "h418-mainscene",
+    "keystore_commit": "2305bad9a525abd467ca3caae046d272fcb27655",
+    "keystore_feature_branch": "h418-aks-return",
+    "native_metal_commit": "75f3f65cb21a40fa7dfa85f7d092b70fb50cf115",
+    "native_metal_feature_branch": "h417-aks-observer",
+    "device_commit": "481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91",
+    "main_pushed": false
+  },
+  "artifacts": {
+    "source_kernel_stub_sha256": "6d6d255e2184cdb1a9553651bea3a3e4bb2891710a2e7c2a90b22df4380ad5e6",
+    "stub_prelink_sha256": "fa38805f5d713789cf7d197c2a439471a0730c2794ede26979290de8e9c693fe",
+    "source_kernel_real_sha256": "eff75d5baa1c1d4259b41c23634299b1d1a920d62f7e94fc19dd94c0ca43141d",
+    "real_pmgr_sha256": "8541b24c3c876e06f286420f84a71f8dc232e2760a08a27e081ebcd2e59a4725",
+    "kernel_sha256": "4b3f4bd4e3c09732635050685e9eab9f74810d00c0db50de9fac4bb853413e07",
+    "payload_sha256": "69cfde5fd3dc5a38fb52f3bd1d5f65372b9a7aa6d07c013f48ecbce1ced084b8",
+    "boot_sha256": "670fd5b95cd391897a7741650d67a3ba3d969bd5674ebdf125548bc39f712a4f",
+    "adt_sha256": "a75a0bc36273618a938d0a81d309ecfcfbe2e9e05aaebf3820e22eb2e6aff1ce",
+    "owner_trust_sha256": "1a068ee5bbde4c0073868950fda731a6fa3adbda4b51ab38e05013ede6ae67a5",
+    "gpu_addon_sha256": "ef53a5899fb0b0a9f83ba71c10c5636e227e6a566b348a927a6694533c2dab51",
+    "data_ramdisk_sha256": "fed3a0e6bb39974da339bf7f9155b282dfb0438c454c00f0df7a94b5995c03a4",
+    "boot_args_bytes": 995,
+    "boot_args_worst": 1023,
+    "boot_args_limit": 1024
+  },
+  "device": {
+    "tested": true,
+    "serial": "16149951",
+    "product": "cheeseburger",
+    "build": "H418",
+    "kernel_boot_id": "26c3386d",
+    "cdc_port": "COM8",
+    "capture_seconds": 360,
+    "frames": 4694,
+    "payload_bytes": 737949,
+    "crc_errors": 0,
+    "sequence_gaps": 0,
+    "boot_switches": 0,
+    "aks": {
+      "captured_open_calls": 13,
+      "open_errors": 0,
+      "springboard_open": {
+        "timestamp": 382.440967,
+        "result": "0x0"
+      },
+      "springboard_selector_35": {
+        "timestamp": 382.441184,
+        "result": "0x0"
+      },
+      "securityd_selector_14": {
+        "timestamp": 391.759105,
+        "result": "0x0"
+      },
+      "classification": "success"
+    },
+    "bks": {
+      "request_id": "0x5b9173",
+      "queued_at_sample_6000": true,
+      "absent_at_sample_6030": true,
+      "stack": [
+        "mach_msg2_trap",
+        "mach_msg_overwrite",
+        "mach_msg",
+        "BKSDisplayGetMainScreenInfo",
+        "BKSDisplayServicesGetMainScreenInfo",
+        "BKSDisplayServicesStart",
+        "BKSSystemShellService _activateServerConnectionWithIdleSleepInterval:",
+        "BKSSystemShellService initWithConfigurator:",
+        "FBSystemShell _initWithOptions:",
+        "FBSystemShell _createSingletonWithOptions:",
+        "FBSystemShellInitialize",
+        "SBSystemAppMain"
+      ],
+      "classification": "not-a-permanent-deadlock"
+    },
+    "context_ids": [
+      "0x59dbd835",
+      "0x1535709d"
+    ],
+    "selector_3_4_5": "0/0/0",
+    "frames_presented": 0,
+    "uxc1_request": 424419,
+    "uxc1_acked": true,
+    "final_twrp": "3.4.0_9-10-mauronofrio",
+    "device_verification": "diagnostics/H418-device-verification-20261118.json"
+  },
+  "next_action": "Stop adding AKS probes. Observe SpringBoard main-scene completion, definesDisplayBounds, and a dedicated focused 0x5b9173 reply record in H419; do not enter IOSurface or scanout work until IOMFB selector 4 appears.",
+  "known_open": [
+    "The exact delivery/reply event for the BKS request was not retained by the generic IPC ring.",
+    "Two display-bound CoreAnimation contexts exist, but their ownership and drawable/content state are not resolved.",
+    "The renderer has provider and clients but remains at zero draw/commit.",
+    "Late UFS OCS timeouts and corpse crashes confound observations after 474.935 seconds."
+  ]
+}

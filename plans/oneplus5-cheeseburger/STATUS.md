@@ -15669,8 +15669,54 @@ observer、Data、UEFI 和 IOMFB 路径不变，只补 `NativeKeyStoreEvents` �
 1. H417 后 AKS 已成功，剩余瓶颈在 SpringBoard/CoreAnimation main-scene。
 2. AKS 的 open 或关键 selector 仍返回具体错误，scene 链尚未真正越过该门。
 
-**当前状态**：Windows offline source implementation；待提交、Mac 同步构建、
-两遍 PMGR 和一次有界真机测试。
+**构建**：core `4a141e827e86b3320e9700464a28f11c7a5a2fea`、
+AppleKeyStoreState `2305bad9a525abd467ca3caae046d272fcb27655`、
+NativeMetal `75f3f65cb21a40fa7dfa85f7d092b70fb50cf115`、device
+`481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91`。独立 `out/feeds` 和 21H461
+kernelcache 完成两遍 PMGR 构建：
+
+```text
+stub source kernel  6d6d255e2184cdb1a9553651bea3a3e4bb2891710a2e7c2a90b22df4380ad5e6
+stub prelink        fa38805f5d713789cf7d197c2a439471a0730c2794ede26979290de8e9c693fe
+real source kernel  eff75d5baa1c1d4259b41c23634299b1d1a920d62f7e94fc19dd94c0ca43141d
+real PMGR           8541b24c3c876e06f286420f84a71f8dc232e2760a08a27e081ebcd2e59a4725
+final kernel        4b3f4bd4e3c09732635050685e9eab9f74810d00c0db50de9fac4bb853413e07
+payload             69cfde5fd3dc5a38fb52f3bd1d5f65372b9a7aa6d07c013f48ecbce1ced084b8
+boot                670fd5b95cd391897a7741650d67a3ba3d969bd5674ebdf125548bc39f712a4f
+```
+
+`verify_h418.py`、AKS checker、display gate、Data、ADT、UEFI、payload
+round-trip、两遍 PMGR 日志和 bootargs `995 B / worst 1023 of 1024` 均 PASS。
+
+**真机结果**：唯一 serial `16149951`，H418 boot 仅 `fastboot boot` 一次。
+boot/build marker 为 `H418 boot=26c3386d`；CDC 在 257 秒出现，360 秒捕获
+4,694 帧/737,949 payload bytes，连续性门禁全零。
+
+AKS 被直接闭合：13 个已捕获 open 全部 `rc=0x0`，累计 `errors=0`；
+liveactivitiesd 与 SpringBoard 均成功。SpringBoard 在 382.441184 s 调用
+selector 35 并得到 `rc=0x0`；securityd 在 391.759105 s 调用 selector 14
+并得到 `rc=0x0`。H418 因此停止继续增加 AKS 探针。
+
+H418 还把 `0x5b9173` 栈按 slide `0xabc8000` 符号化为
+`mach_msg2_trap -> BKSDisplayGetMainScreenInfo ->
+BKSDisplayServicesGetMainScreenInfo -> BKSDisplayServicesStart ->
+BKSSystemShellService -> FBSystemShell -> SBSystemAppMain`。该请求在 sample
+6000 入 launchd 队列，到 sample 6030 已消失，SpringBoard 转入普通 receive；
+没有再出现永久队首。reply 的精确投递事件仍是 H419 的观测目标。
+
+四个 display gate（sample 6000/6030/6060/6090）都保持
+`s345=0/0/0 val=0 xf=0 fr=0`。typed observer 从单 context
+`0x59dbd835` 变为两个 display-bound context，第二个为 `0x1535709d`；两棵树在
+已读范围内仍无 contents。首 OCS timeout 在 474.934826 s，sample 6030 与
+第二 context 的 state 在其之前，第二 context tree dump 在 480.022 s，仅作
+辅助。捕获期间 17 次 OCS timeout、18 次 retry、19 次 stall/nopanic、21 次
+process-corpse crash，无 kernel panic 或 undefined instruction。
+
+UXC1 `424419` 一次 ACK（uptime `663.100590 s`）；Android 恢复略晚于脚本
+240 秒等待，于 `sys.boot_completed=1` 后授权回到 TWRP
+`3.4.0_9-10-mauronofrio`。分类
+`aks-success-main-scene-remains-before-display-submit`。
 
 **证据**：`diagnostics/H418-aks-return-probe-2026-11-18.md`、
-`scripts/check-h418-aks-return.py`。
+`scripts/check-h418-aks-return.py`、`display-first-frame/builds/H418/`、
+`display-first-frame/logs/H418/device/20261118-224229/`。
