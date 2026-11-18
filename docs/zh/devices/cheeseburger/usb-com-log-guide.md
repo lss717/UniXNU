@@ -21,7 +21,7 @@
 | 核心源码 | UniXNU `h410-usb-status`，基于 `5e204e7d984aac66af3c57c9961926a8d4080062` |
 | 设备源码 | UniXNU-cheeseburger `h410-usb-status`，基于 `001e694cc5211c79d283151a2c2204e443d72277` |
 | 显示子模块 | GopFramebuffer `cc31bd33e2209e0f261720babb7b4a9dc6b1b0c2` |
-| 平台子模块 | ArmDTPlatform `4d057d020124012e545853f6f75a2a6c202d3171` |
+| 平台子模块 | ArmDTPlatform `58e633c64b607011dd8beff551edd6e811223f3d` |
 | Boot 镜像 | `a4201dbc7825166b3724b47f2be8b94c64b41a094f91392e19841201876a4fbe` |
 | 内核 | `9c7640f149018af39e70f7b8eeff4231d7347c45cd1d349125596987edf01873` |
 | Payload | `20587408e4315a840feea6e4a9890d27e2978c12c26a855b2d9583bbc1612383` |

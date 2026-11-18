@@ -15212,7 +15212,7 @@ timeout/process-crash 问题影响，不得描述为全系统无错误启动。
   修改 `drivers/CheeseburgerUsb/CheeseburgerUsb.cpp`、`README.md`、`tools/README.md`、
   `tools/check-h408-cdc.py`，新增 `tools/h410-cdc-console.ps1`；
 - 子模块：GopFramebuffer `cc31bd33e2209e0f261720babb7b4a9dc6b1b0c2`（第五块与青色
-  暂停态）；ArmDTPlatform `4d057d020124012e545853f6f75a2a6c202d3171`（重启路由）；
+  暂停态）；ArmDTPlatform `58e633c64b607011dd8beff551edd6e811223f3d`（重启路由）；
 - XNU/kernel/prelink/payload：`PATH=/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`；
   Python `3.12.16`；Xcode `26.3` build `17C529`；XcodeDefault clang/ld；
 - package/bootimg：`PATH=/Users/lss/.local/lld-20/bin:/opt/local/libexec/llvm-20/bin:...`；
@@ -15263,7 +15263,7 @@ timeout/process-crash 问题影响，不得描述为全系统无错误启动。
 **分类**：第五状态块、USB 健康后磁盘 sink 暂停/恢复、普通重启命令均已真机验证；
 UFS 长时 OCS timeout/corpse 保持已知未关闭。提交状态：core 与 device 的 `h410-usb-status` 分支、GopFramebuffer
 `cc31bd33e2209e0f261720babb7b4a9dc6b1b0c2` 和 ArmDTPlatform
-`4d057d020124012e545853f6f75a2a6c202d3171` 子模块提交均已创建，但未推送、
+`58e633c64b607011dd8beff551edd6e811223f3d` 子模块提交均已创建，但未推送、
 未合并 `main`；core/device 的精确分支 head 记录在外部
 `H410-manifest.json`，等待主线程授权后收尾。
 
@@ -15271,5 +15271,14 @@ UFS 长时 OCS timeout/corpse 保持已知未关闭。提交状态：core 与 de
 fast-forward 并推送；精确远程 SHA 见外部 `H410-manifest.json` 与 `git ls-remote`。device 为 `481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91`，
 `481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91`；子模块 refs
 `GopFramebuffer/h410-usb-status@cc31bd33e2209e0f261720babb7b4a9dc6b1b0c2`、
-`ArmDTPlatform/h410-usb-status@4d057d020124012e545853f6f75a2a6c202d3171`
+`ArmDTPlatform/h410-usb-status@58e633c64b607011dd8beff551edd6e811223f3d`
 已推送且可按 SHA fetch。未使用 force，workflow 保持手动。
+
+**ArmDTPlatform main 同步（2026-11-18）**：`4d057d0` 已 rebase 到
+ArmDTPlatform `origin/main@417ff95d`，新提交
+`58e633c64b607011dd8beff551edd6e811223f3d` 已推送 `main`；
+`ArmDTPlatform.cpp` 文件 SHA 在同步前后均为
+`51c9a3d2e88f94f915a8cb9ae2ce3b8a6251f7d20e0262ce94f9c032c5c64e84`。
+同步后的重建 kernel `489deb4c...`、payload `8ee820da...`、boot
+`f25c686e...`；与设备已验证的 boot `a4201dbc...` 代码相同，差异来自构建
+非确定性；未再次操作手机。
