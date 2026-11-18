@@ -20,7 +20,7 @@ send the one supported command (normal reboot) over the same COM handle.
 | USB ID | `USB\VID_1209&PID_0001` (CDC ACM; PnP string remains `OP5CDCH408`) |
 | Core source | UniXNU `h410-usb-status`, based on `5e204e7d984aac66af3c57c9961926a8d4080062` |
 | Device source | UniXNU-cheeseburger `h410-usb-status`, based on `001e694cc5211c79d283151a2c2204e443d72277` |
-| Display submodule | GopFramebuffer `cc31bd33e2209e0f261720babb7b4a9dc6b1b0c2` |
+| Display submodule | GopFramebuffer `d5b95247b42a1af913178eebb06c263c49457130` |
 | Platform submodule | ArmDTPlatform `58e633c64b607011dd8beff551edd6e811223f3d` |
 | Boot image | `a4201dbc7825166b3724b47f2be8b94c64b41a094f91392e19841201876a4fbe` |
 | Kernel | `9c7640f149018af39e70f7b8eeff4231d7347c45cd1d349125596987edf01873` |

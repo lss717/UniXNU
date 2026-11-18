@@ -9,7 +9,7 @@
     "device_branch": "h410-usb-status",
     "device_base": "001e694cc5211c79d283151a2c2204e443d72277",
     "submodules": {
-      "drivers/NativeMobileDisplay": "cc31bd33e2209e0f261720babb7b4a9dc6b1b0c2",
+      "drivers/NativeMobileDisplay": "d5b95247b42a1af913178eebb06c263c49457130",
       "drivers/ArmDTPlatform": "58e633c64b607011dd8beff551edd6e811223f3d"
     }
   },

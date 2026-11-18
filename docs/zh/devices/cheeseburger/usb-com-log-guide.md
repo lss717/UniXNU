@@ -20,7 +20,7 @@
 | USB 设备 ID | `USB\VID_1209&PID_0001`（CDC ACM，PnP 串仍为 OP5CDCH408） |
 | 核心源码 | UniXNU `h410-usb-status`，基于 `5e204e7d984aac66af3c57c9961926a8d4080062` |
 | 设备源码 | UniXNU-cheeseburger `h410-usb-status`，基于 `001e694cc5211c79d283151a2c2204e443d72277` |
-| 显示子模块 | GopFramebuffer `cc31bd33e2209e0f261720babb7b4a9dc6b1b0c2` |
+| 显示子模块 | GopFramebuffer `d5b95247b42a1af913178eebb06c263c49457130` |
 | 平台子模块 | ArmDTPlatform `58e633c64b607011dd8beff551edd6e811223f3d` |
 | Boot 镜像 | `a4201dbc7825166b3724b47f2be8b94c64b41a094f91392e19841201876a4fbe` |
 | 内核 | `9c7640f149018af39e70f7b8eeff4231d7347c45cd1d349125596987edf01873` |
