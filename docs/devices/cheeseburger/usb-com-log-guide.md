@@ -27,7 +27,7 @@ send the one supported command (normal reboot) over the same COM handle.
 | Payload | `20587408e4315a840feea6e4a9890d27e2978c12c26a855b2d9583bbc1612383` |
 | UEFI FD | `e9135e17397165425d0794e8e64c0a4ae63575ce222b06b80305fcde6b16f1b3` |
 | Measured boot ID / build | `549D06A5` / `H410` |
-| Remote main | UniXNU `309501aedb751b3f1aabf6de4035b48dfd918c6c` / UniXNU-cheeseburger `481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91` (fast-forward) |
+| Remote main | UniXNU `cb87ab41006fb08b21738a2f795c9f9f9f2af57c` / UniXNU-cheeseburger `481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91` (fast-forward) |
 
 These values come from the actual H410 build and device regression. The full manifest is
 `main-route/artifacts/H410/H410-manifest.json` and `STATUS.md`.
