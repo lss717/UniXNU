@@ -15290,3 +15290,25 @@ ArmDTPlatform `origin/main@417ff95d`，新提交
 更新为 `d5b9524`。合并后的重建 kernel `2a98608a...`、payload
 `69f931bf...`、boot `dfcb3077...`，静态验证 PASS；源码与设备已验证的
 `a4201dbc` boot 相同，未再次操作手机。
+
+#### H411：最新 main 上的同 boot 第一帧显示门（2026-11-18）
+
+**目标/唯一变量**：从 fixed latest main `UniXNU 947a88b3cc5a264b5e9ba6b67ad228eb107b281f`、device `481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91` 起，只重放显示线程的 `NATIVE_SBCHAIN` / `NATIVE_DISPLAY_GATE` 只读观测。保留 H410 USB 第五状态方块、USB 健康后暂停磁盘 sink、CDC 和 UXC1 ordinary reboot。
+
+**源码**：显示分支 `h411-display-gate`，core commit `46e5408bcfc2f491476f767f0faf711fa04d159b`；device 保持 `481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91`。源 patch `66ba7aab83537fb8fbb60aeb8c012b0d55f6d4489b3b25d30aa40c956ec963ac`。21 个 submodule pin 记录于 `display-first-frame/manifests/H411-submodules.txt`，实际使用 `ArmDTPlatform@58e633c`、`DarwinBoot@075245d`、`GopFramebuffer/NativeMobileDisplay@d5b9524`。
+
+**外部输入**：device `unixnu.lock` Git blob `9a0d3190a3e195eff523f7b898d6466e5ac0185a`，LF SHA-256 `0bbf113d5be71b4c7141f67a82ffeee03ce03e578d03802d5fcca5ecfe0da1a9`；config SHA-256 `6ede2216e4ad5cf613397355388fda549f26a2dc922d34e47c37f7acae1c968a`。
+
+**工具链/构建**：`/opt/local/bin/python3.12` 3.12.16，Xcode 26.3 (17C529)，XcodeDefault clang/ld。stub kernel、stub prelink、real PMGR 第二遍 kernel、final prelink、payload、boot 全部完成。PMGR stub `bb1d63d0299781aa477f511362517cb20fc64a4130d1ae33588663ff71dc3cd3`，real `4706fb3b41b17b7acbf88fa5eb9186080c8d7f060c2bb0ace721c751ee39a468`。
+
+**UEFI**：最新 main 的 ArmDTPlatform/DarwinBoot 已验证产物为 FD `e9135e17397165425d0794e8e64c0a4ae63575ce222b06b80305fcde6b16f1b3`、blob `9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6`，H411 复用同一已验证输入，无需重编。
+
+**产物**：kernel `b644f933ff84bfc3fbddfe269d3808c2113084295f1180cb653dc2d089a7e0d8`；payload `05f74d38c8c7edfd831b180a3eed7fb93af00ee99d047b9a9872162df9178edb`；ADT `aded753d3867ee48b4bd051e770a858fb9eebf91ce4bb3efc6785c6a610385b7`；Data sidecar `894fbd2fe23e7088b400c38ac20ff1ba999220e4a810c9484de08196760a6a62`；trustcache `7416ca4f8377146626bb284e2133c76bee6cb4e3ee0af5d648b186235a7323a7`；boot `f94a22d39cdf837d89d5f608e6ef2e76d4b6c0ba8aeb11fbc2b083c86f6ed800`。
+
+**静态门禁**：payload kernel/ADT/trustcache/Data sidecar 与输入一致；UEFI 解压一致；boot header/load/trailing bytes 通过；boot args 992 B，worst case 1020/1024；probe strings `NATIVE_SBCHAIN`、`NATIVE_DISPLAY_GATE`、`H411` 存在；XNU architecture/deployment/TCR、ADT、kernel bases、USB 第五方块颜色/边界、磁盘 pause/producer 分离和 CDC/UXC1 self-test 均 PASS。
+
+**编号澄清**：正式 H410 属于 USB 第五状态方块与普通重启功能；早期显示 H410 保留为 `H410-display-gate-legacy` alias，boot `e7d8c46fb64dfa411a302994ff090bc776c0486971820cc1564404fd4b91b52e`。H411 才是最新 main 的显示候选。
+
+**设备状态**：未上机。后续必须使用 H410 USB 实时 CDC capture；磁盘 sink 会被 USB 健康状态暂停，不能用“没有新磁盘 slot”判为卡死。设备测试待协调新 slot。
+
+**证据**：`display-first-frame/builds/H411/`、`display-first-frame/manifests/H411-*`。
