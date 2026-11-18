@@ -15872,3 +15872,56 @@ boot→payload→kernel/ADT/UEFI/FDT/trust/addon 反向提取及
 `1023/1024` worst-case bootargs 全部 PASS；最终 kernel 同时包含 H421 和
 `NATIVE_LS_GATE` 标记。分类为
 `launchservices-progress-gate-package-statically-verified`，尚未上机。
+
+**H421 真机结果（2026-11-19）**：唯一 serial `16149951` 只执行一次
+`fastboot boot`，boot `2282441f…` 成功接受；runtime marker 为
+`H421 boot=37270052`。CDC COM8 捕获 480 秒、4,203 帧/588,716 bytes，
+CRC、序号、boot-switch 和截断均为零，解码 uptime 为
+`291.677341–771.819909 s`。
+
+BKS response `0x5b91d7` 已在 `time_ns=377795729895` 直接投递到
+SpringBoard tid 293；sample 6030 已不再等待 BKS launchd request。随后
+sample 6060/6090/6120/6150 均显示 SpringBoard 主线程等待 pid 91/lsd，
+`reply=0`。
+
+六次 `NATIVE_LS_GATE` 全为 `opens=0 active=0 slow=0 max_ms=0`，且没有
+`NATIVE_LS_GATE_SLOT`。同 boot dyld slide `0x1e758000` 的离线符号化表明
+探针不是失效：lsd tid 522 位于
+`__LSServerMain -> +[_LSInstallProgressService beginListening] ->
+-[_LSInstallProgressService performJournalRecovery]`，并在
+`__dispatch_sync_f_slow -> __DISPATCH_WAIT_FOR_QUEUE__` 等待；
+tid 913 位于 `-restoreInactiveInstalls -> dispatch_group_wait_slow`。
+其他 lsd 线程仍在 InstalledContentLibrary、MIMCMContainer 和
+`MILaunchServicesDatabaseGatherer` 中扫描 system content。当前 open-only
+门尚未进入 `vn_open_modflags`，因此不能把零点解释为扫描完成。
+
+两个 display-bound CA context `0x54c4bf7c`、`0x4e0f5b30` 于 426 秒出现，
+各读取 4 个节点且 `contents=0`。六次 display gate 全部
+`s345=0/0/0 val=0 xf=0 fr=0`；draw、commit、`nextDrawable`、
+presentSurface、legacy validation/transfer 和 frame 均为零。
+
+本窗口没有 UFS OCS timeout、`NATIVE_TRAP:`、kernel panic 或 undefined
+instruction；667.564499 秒的 mediaserverd `Too many corpses` 是等待之后的
+独立晚段事件。由此 UFS OCS 不能作为共同必要条件。最早可确认的因果断点更新为：
+
+```text
+BKS reply complete
+  -> SpringBoard CCSModuleRepository synchronous LaunchServices lookup
+  -> lsd performJournalRecovery / restoreInactiveInstalls
+  -> SpringBoard main queue remains occupied
+  -> main-scene content/drawable absent
+  -> renderer draw/commit absent
+  -> IOMFB selector 4/5, IOSurface and scanout absent
+```
+
+H421 分类为
+`launchservices-journal-recovery-device-pass-no-first-frame`。下一最小探针只在
+sampler 中增加 lsd 的 `vn_read`、`vn_write`、`vn_fsync`、`getxattr` 固定计数、
+慢项和 bounded path/result/tid slot；热路径不打印、不分配、不加新锁，也不改变
+LaunchServices、scene、renderer、IOMFB 或 scanout。
+
+UXC1 `424422` 一次发送并在 uptime `793.640943 s` ACK；Android
+`sys.boot_completed=1` 后一次授权 `adb reboot recovery`。最终只读复核为
+serial `16149951`、product `cheeseburger`、TWRP
+`3.4.0_9-10-mauronofrio`，uptime `766.95 s`。未执行 flash、erase、format、
+dd、GPT 或分区写入。

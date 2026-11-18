@@ -1,0 +1,298 @@
+{
+  "candidate": "H421",
+  "classification": "launchservices-journal-recovery-device-pass-no-first-frame",
+  "boot_accepted_at": "2026-11-19T02:00:59.4674451+08:00",
+  "source": {
+    "core_build_commit": "37ae68ee11eef749051f3de05ad4ff78e7d06255",
+    "feature_branch": "h421-launchservices-gate",
+    "device_commit": "481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91",
+    "native_metal_commit": "24d011979a4f8538cfdf43962945e9b3edc2d157",
+    "main_moved": false,
+    "h408_worktree_modified": false
+  },
+  "artifacts": {
+    "kernel_sha256": "06415c05fc3c2b839232c07a5b6eb4638b88ea6b4a40d7b522e28a0749727d74",
+    "payload_sha256": "337858312cd53e815e1c3187cc3e57e45f0e39897373abdc6ab2587b1db4df34",
+    "boot_sha256": "2282441f210430cd9e3fa77de2be24b91b425d5bdd53b71209e129bcf45e9947",
+    "adt_sha256": "b8eb10f81c8e1c80cd37cacc4715b8291f89639c802a7c4024f4a0dd4be5b8d1",
+    "owner_trust_sha256": "924654c295a313ee6a26c2b37a9db3d7c0038d23c0eb08666c0d6cd2b1c234fb",
+    "gpu_addon_sha256": "8e090c37f907b4d010f2725976ada6768e0f846dc3a907490147dc32071d67f4",
+    "data_ramdisk_sha256": "fed3a0e6bb39974da339bf7f9155b282dfb0438c454c00f0df7a94b5995c03a4",
+    "boot_args_bytes": 995,
+    "boot_args_worst": 1023,
+    "boot_args_limit": 1024
+  },
+  "device": {
+    "serial": "16149951",
+    "product_device": "cheeseburger",
+    "product_name": "omni_cheeseburger",
+    "boot_method": "fastboot boot",
+    "fastboot_attempts": 1,
+    "flash_erase_format_or_partition_write": false,
+    "runtime_boot_id": "37270052"
+  },
+  "capture": {
+    "root": "main-route/display-first-frame/logs/H421/device/20261119-020059",
+    "cdc_port": "COM8",
+    "capture_seconds": 480,
+    "uptime_window_seconds": {
+      "first_decoded": 291.677341,
+      "live_tail": 771.819909
+    },
+    "stream_frames": 4203,
+    "payload_bytes": 588716,
+    "crc_errors": 0,
+    "sequence_gaps": 0,
+    "boot_switches": 0,
+    "last_sequence": 4202
+  },
+  "evidence_sha256": {
+    "H421-live.log": "ecb8cb94be95f2194b64f396adc4408171a5e90b9fc546d3b9c429f3467a4ceb",
+    "H421-live.frames.bin": "fbe5c3990882ab264decf62a4151320d420e303b0b5505e035a989f59748740f",
+    "H421-live.capture.stdout.txt": "255170896f09a29f3fd75d2a02cc1428ae7e823ac77b31bce77158a00189dda9",
+    "H421-reboot.log": "36c6d48069cc4949bb48d6f7ef35f0b298f5ce66652ffe060911a0920c408ae4",
+    "H421-reboot-recovery-state.txt": "dbd630fd32f0b8ba4603c8b1f5536320ecaf0197d6a210d2b1510b3d70d0c5de",
+    "H421-final-device-state.txt": "687bfa474abcb2a39ecfd5394b5c9464d92062483e7690c91ee05e7ca72fcaf1"
+  },
+  "event_chain": [
+    {
+      "evidence": "NATIVE_BKS_EVT",
+      "event": "SpringBoard sent BKS display request to launchd",
+      "time_ns": 243267604687,
+      "id": "0x5b9173"
+    },
+    {
+      "evidence": "NATIVE_BKS_EVT",
+      "event": "backboardd response directly delivered to SpringBoard thread 293",
+      "time_ns": 377795729895,
+      "response_id": "0x5b91d7"
+    },
+    {
+      "evidence": "NATIVE_SBCHAIN sample 6030 at 441.217545 s",
+      "event": "SpringBoard no longer waits on the BKS launchd request"
+    },
+    {
+      "evidence": "NATIVE_SBCHAIN samples 6060, 6090, 6120 and 6150",
+      "event": "SpringBoard main thread waits on lsd pid 91 for a LaunchServices request",
+      "request_peer": "91/lsd",
+      "reply_count": 0
+    },
+    {
+      "evidence": "offline symbolication with dyld slide 0x1e758000",
+      "event": "the SpringBoard waiter is CCSModuleRepository -> LSApplicationRecord -> LaunchServices Database Context",
+      "inner_to_outer": [
+        "_LSContextInitCommon",
+        "LaunchServices::Database::Context::_get",
+        "-[LSApplicationRecord _initWithNode:bundleIdentifier:placeholderBehavior:systemPlaceholder:itemID:forceInBundleContainer:context:error:]",
+        "-[LSApplicationRecord initWithBundleIdentifier:fetchingPlaceholder:error:]",
+        "-[CCSModuleRepository _queue_filterModuleMetadataByAssociatedBundleAvailability:]",
+        "-[CCSModuleRepository _initWithDirectoryURLs:allowedModuleIdentifiers:]"
+      ]
+    },
+    {
+      "evidence": "NATIVE_MTL 426.223058 and 426.536658 s",
+      "event": "two display-bound CA contexts exist with four inspected nodes each and contents=0"
+    },
+    {
+      "evidence": "all six NATIVE_DISPLAY_GATE samples",
+      "event": "no drawable, draw, commit, IOMFB selector 4/5, legacy validation, transfer or frame"
+    }
+  ],
+  "launchservices_gate": {
+    "samples": [
+      {
+        "uptime_s": 292.805059,
+        "sampler": 7020,
+        "opens": 0,
+        "active": 0,
+        "slow": 0,
+        "max_ms": 0
+      },
+      {
+        "uptime_s": 445.048404,
+        "sampler": 7050,
+        "opens": 0,
+        "active": 0,
+        "slow": 0,
+        "max_ms": 0
+      },
+      {
+        "uptime_s": 527.941850,
+        "sampler": 7080,
+        "opens": 0,
+        "active": 0,
+        "slow": 0,
+        "max_ms": 0
+      },
+      {
+        "uptime_s": 605.713525,
+        "sampler": 7110,
+        "opens": 0,
+        "active": 0,
+        "slow": 0,
+        "max_ms": 0
+      },
+      {
+        "uptime_s": 676.662458,
+        "sampler": 7140,
+        "opens": 0,
+        "active": 0,
+        "slow": 0,
+        "max_ms": 0
+      },
+      {
+        "uptime_s": 748.006484,
+        "sampler": 7170,
+        "opens": 0,
+        "active": 0,
+        "slow": 0,
+        "max_ms": 0
+      }
+    ],
+    "slot_records": 0,
+    "interpretation": "The open-specific probe worked but lsd had not entered vn_open_modflags in any sampled lsd thread. The process was earlier in LaunchServices installation/database recovery and system-content enumeration."
+  },
+  "lsd_symbolication": {
+    "dyld_slide": "0x1e758000",
+    "journal_recovery_thread": {
+      "tid": 522,
+      "first_gate_sample": 7050,
+      "last_gate_sample": 7170,
+      "inner_to_outer": [
+        "_kevent_id+0x8",
+        "__dispatch_event_loop_wait_for_ownership$VARIANT$mp",
+        "__DISPATCH_WAIT_FOR_QUEUE__",
+        "__dispatch_sync_f_slow",
+        "-[_LSInstallProgressService performJournalRecovery]",
+        "___43+[_LSInstallProgressService beginListening]_block_invoke",
+        "_LSServerMain"
+      ]
+    },
+    "restore_inactive_thread": {
+      "tid": 913,
+      "first_gate_sample": 7050,
+      "last_gate_sample": 7170,
+      "inner_to_outer": [
+        "__ulock_wait+0x8",
+        "__dispatch_group_wait_slow",
+        "-[_LSInstallProgressService restoreInactiveInstalls]",
+        "__dispatch_call_block_and_release",
+        "__dispatch_client_callout"
+      ]
+    },
+    "system_content_thread": {
+      "tids": [
+        580,
+        939,
+        1430
+      ],
+      "observed_inner_to_outer": [
+        "libsystem_containermanager container_get_class",
+        "-[MIMCMContainer _doInitWithContainer:error:]",
+        "+[MIMCMContainer _containerForIdentifier:contentClass:forPersona:transient:create:error:]",
+        "+[MIContainer containerWithIdentifier:forPersona:ofContentClass:createIfNeeded:created:error:]",
+        "+[MIDataContainer dataContainerForExecutableBundle:forPersona:createIfNeeded:temporary:created:error:]",
+        "-[MIExecutableBundle _dataContainerCreatingIfNeeded:forPersona:makeLive:checkIfNeeded:created:error:]",
+        "-[MILaunchServicesDatabaseGatherer scanExecutableBundle:inContainer:forPersona:withError:]",
+        "-[MIFileManager enumerateURLsForItemsInDirectoryAtURL:ignoreSymlinks:withBlock:]",
+        "-[MIFilesystemScanner _scanAppsDirectory:withError:]",
+        "-[MILaunchServicesDatabaseGatherer performGatherWithError:]",
+        "-[ICLWorkspace enumerateBuiltInSystemContentWithBlock:error:]"
+      ]
+    }
+  },
+  "display_state": {
+    "gate_samples": 6,
+    "selector_3": 0,
+    "selector_4": 0,
+    "selector_5": 0,
+    "notification_registration": 0,
+    "legacy_validation": 0,
+    "legacy_transfer": 0,
+    "frames": 0,
+    "draw_primitives": 0,
+    "dispatches": 0,
+    "commits": 0,
+    "next_drawable": 0,
+    "present_surface": 0,
+    "ca_contexts": [
+      {
+        "context": "0x54c4bf7c",
+        "display_id": "0x1",
+        "display_mask": "0xffffffff",
+        "nodes_inspected": 4,
+        "contents_nodes": 0
+      },
+      {
+        "context": "0x4e0f5b30",
+        "display_id": "0x1",
+        "display_mask": "0xffffffff",
+        "nodes_inspected": 4,
+        "contents_nodes": 0
+      }
+    ]
+  },
+  "faults": {
+    "ufs_ocs_timeouts_observed": 0,
+    "native_trap_records": 0,
+    "kernel_panic": false,
+    "undefined_instruction": false,
+    "too_many_corpses": [
+      {
+        "uptime_s": 667.564499,
+        "process": "mediaserverd",
+        "interpretation": "late and independent of the pre-existing LaunchServices wait"
+      }
+    ]
+  },
+  "recovery": {
+    "uxc1_request_id": 424422,
+    "uxc1_ack_uptime_s": 793.640943,
+    "android_boot_completed": true,
+    "adb_reboot_recovery_invocations": 1,
+    "final_serial": "16149951",
+    "final_product_device": "cheeseburger",
+    "final_product_name": "omni_cheeseburger",
+    "final_twrp_version": "3.4.0_9-10-mauronofrio",
+    "final_uptime_s": 766.95,
+    "final_state_checked_at": "2026-11-19T02:28:12.5195225+08:00"
+  },
+  "conclusion": {
+    "earliest_confirmed_boundary": "After the BKS reply, SpringBoard synchronously waits for LaunchServices while lsd is in installation-progress journal recovery and inactive-install restoration; the first tested open-only counter has not yet observed vn_open_modflags.",
+    "confirmed_links": [
+      "BKS request and reply complete",
+      "CCSModuleRepository synchronously requests an LSApplicationRecord from lsd",
+      "lsd is alive and performing journal recovery, inactive-install restoration and system-content enumeration",
+      "scene contents remain empty and no renderer submission reaches IOMFB or scanout"
+    ],
+    "not_root_cause_in_this_boot": [
+      "BKS/launchd reply",
+      "AppleKeyStore",
+      "display service publication",
+      "accelerator provider availability",
+      "observed UFS OCS failure"
+    ],
+    "downstream_not_reached": [
+      "drawable-bearing main-scene content",
+      "renderer draw and commit",
+      "IOMFB selector 4/5",
+      "IOSurface validation, copy and transfer",
+      "MSM8998 scanout"
+    ]
+  },
+  "next_probe": {
+    "behavior_change": false,
+    "goal": "Distinguish bounded LaunchServices filesystem latency from a blocked synchronization edge in performJournalRecovery and restoreInactiveInstalls.",
+    "records": [
+      "lsd vn_read, vn_write, vn_fsync and getxattr totals, in-flight count, slow count and max latency",
+      "fixed bounded recent operation, path, result and thread id slots",
+      "sampler output only, with no hot-path print, allocation or new lock",
+      "same-boot correlation of lsd thread state with JournalRecovery, restoreInactiveInstalls and system-content scan"
+    ],
+    "excluded": [
+      "renderer behavior changes",
+      "IOMFB, IOSurface or scanout changes",
+      "forced database mutation"
+    ]
+  }
+}

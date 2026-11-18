@@ -1,7 +1,7 @@
 {
   "candidate": "H421",
   "purpose": "observe LaunchServices progress while SpringBoard waits after the BKS reply",
-  "state": "package-statically-verified-unbuilt",
+  "state": "device-verified-no-first-frame",
   "source": {
     "core_base": "0bfaaa3746fbf539fae1906642b6c8b3c84456e2",
     "core_build_commit": "37ae68ee11eef749051f3de05ad4ff78e7d06255",
@@ -65,7 +65,40 @@
     "two_pass_pmgr": true,
     "kernel_changed_from_h420": true,
     "payload_boot_args_match_h420": true,
-    "device_tested": false
+    "device_tested": true,
+    "device_classification": "launchservices-journal-recovery-device-pass-no-first-frame"
   },
-  "next_action": "Perform one bounded local fastboot boot of H421, capture through the pre-OCS window, and classify whether lsd open/active/slow counters advance while SpringBoard waits."
+  "device_result": {
+    "serial": "16149951",
+    "runtime_boot_id": "37270052",
+    "boot_accepted_at": "2026-11-19T02:00:59.4674451+08:00",
+    "uptime_window_seconds": [
+      291.677341,
+      771.819909
+    ],
+    "transport_frames": 4203,
+    "payload_bytes": 588716,
+    "crc_errors": 0,
+    "sequence_gaps": 0,
+    "boot_switches": 0,
+    "lsd_gate_samples": 6,
+    "lsd_opens": 0,
+    "lsd_slot_records": 0,
+    "display_gate_samples": 6,
+    "ca_contexts": 2,
+    "ca_context_nodes": 4,
+    "ca_contents_nodes": 0,
+    "selector_4": 0,
+    "selector_5": 0,
+    "legacy_validation": 0,
+    "legacy_transfer": 0,
+    "frames": 0,
+    "ufs_ocs_timeouts_observed": 0,
+    "native_trap_records": 0,
+    "kernel_panic": false,
+    "dyld_slide": "0x1e758000",
+    "verification_file": "plans/oneplus5-cheeseburger/diagnostics/H421-device-verification-20261119.json",
+    "earliest_confirmed_boundary": "BKS reply complete -> SpringBoard synchronously waits on lsd -> lsd performs installation journal recovery and inactive-install restoration -> main-scene content and drawable not created"
+  },
+  "next_action": "Keep renderer, IOMFB, IOSurface and scanout unchanged. Add one sampler-only filesystem-operation gate for lsd covering read, write, fsync and getxattr so the journal-recovery and inactive-install synchronization edges can be located without forcing database changes."
 }
