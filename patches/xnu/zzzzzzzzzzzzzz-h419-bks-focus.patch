@@ -1,0 +1,193 @@
+--- a/osfmk/kern/task.c
++++ b/osfmk/kern/task.c
+@@ -11268,6 +11268,167 @@
+ static struct native_ipc_event native_ipc_events[NATIVE_IPC_EVENT_RING];
+ static unsigned native_ipc_events_written;
+ static unsigned native_ipc_events_lost;
++
++/*
++ * H419: keep the SpringBoard <-> launchd transaction in a separate fixed
++ * ring.  The generic H413 ring is useful for discovering ports, but unrelated
++ * tracked traffic can evict the exact BKS request/reply we need.  This ring is
++ * deliberately independent and records only candidate peer traffic or events
++ * that match the dynamically discovered request/reply ports and message id.
++ */
++struct native_bks_event {
++	uint64_t serial;
++	uint64_t queue_port;
++	uint64_t remote_port;
++	uint64_t local_port;
++	uint64_t receiver_tid;
++	int from;
++	int to;
++	unsigned id;
++	unsigned size;
++	unsigned bits;
++	unsigned kind;
++	unsigned result;
++};
++#define NATIVE_BKS_EVENT_RING 512
++#define NATIVE_BKS_MSG_ID 0x5b9173u
++static struct native_bks_event native_bks_events[NATIVE_BKS_EVENT_RING];
++static unsigned native_bks_events_written;
++static unsigned native_bks_events_lost;
++static unsigned native_bks_events_emitted;
++static uint64_t native_bks_request_port;
++static uint64_t native_bks_reply_port;
++static unsigned native_bks_msg_id;
++
++static int
++native_bks_peer(int from_pid, int to_pid)
++{
++	int springboard = __atomic_load_n(&native_xpc_pids[0], __ATOMIC_RELAXED);
++
++	if (springboard > 0 && to_pid == 1 && from_pid == springboard) {
++		return 1;
++	}
++	if (springboard > 0 && from_pid == 1 && to_pid == springboard) {
++		return 1;
++	}
++	return 0;
++}
++
++static int
++native_bks_event_wanted(mach_msg_header_t *hdr, ipc_port_t port,
++    int from_pid, int to_pid)
++{
++	uint64_t remote = hdr ? (uint64_t)(uintptr_t)hdr->msgh_remote_port : 0;
++	uint64_t local = hdr ? (uint64_t)(uintptr_t)hdr->msgh_local_port : 0;
++	uint64_t queue = (uint64_t)(uintptr_t)port;
++	unsigned id = hdr ? (unsigned)hdr->msgh_id : 0;
++	uint64_t focus_request =
++	    __atomic_load_n(&native_bks_request_port, __ATOMIC_RELAXED);
++	uint64_t focus_reply =
++	    __atomic_load_n(&native_bks_reply_port, __ATOMIC_RELAXED);
++	unsigned focus_id = __atomic_load_n(&native_bks_msg_id, __ATOMIC_RELAXED);
++
++	if (native_bks_peer(from_pid, to_pid)) {
++		return 1;
++	}
++	if (focus_id && id == focus_id) {
++		return 1;
++	}
++	if (id == NATIVE_BKS_MSG_ID) {
++		return 1;
++	}
++	if (focus_request &&
++	    (queue == focus_request || remote == focus_request ||
++	    local == focus_request)) {
++		return 1;
++	}
++	if (focus_reply &&
++	    (queue == focus_reply || remote == focus_reply ||
++	    local == focus_reply)) {
++		return 1;
++	}
++	return 0;
++}
++
++static void
++native_bks_event_note(unsigned kind, ipc_kmsg_t kmsg, ipc_port_t port,
++    int from_pid, int to_pid, uint64_t receiver_tid, unsigned result)
++{
++	mach_msg_header_t *hdr = kmsg ? ikm_header(kmsg) : NULL;
++	struct native_bks_event *event;
++	unsigned written;
++
++	if (!native_bks_event_wanted(hdr, port, from_pid, to_pid)) {
++		return;
++	}
++	written = __atomic_fetch_add(&native_bks_events_written, 1,
++	    __ATOMIC_RELAXED);
++	if (written >= NATIVE_BKS_EVENT_RING) {
++		__atomic_fetch_add(&native_bks_events_lost, 1, __ATOMIC_RELAXED);
++	}
++	event = &native_bks_events[written % NATIVE_BKS_EVENT_RING];
++	event->serial = written + 1;
++	event->queue_port = (uint64_t)(uintptr_t)port;
++	event->remote_port =
++	    hdr ? (uint64_t)(uintptr_t)hdr->msgh_remote_port : 0;
++	event->local_port =
++	    hdr ? (uint64_t)(uintptr_t)hdr->msgh_local_port : 0;
++	event->receiver_tid = receiver_tid;
++	event->from = from_pid;
++	event->to = to_pid;
++	event->id = hdr ? (unsigned)hdr->msgh_id : 0;
++	event->size = hdr ? (unsigned)hdr->msgh_size : 0;
++	event->bits = hdr ? (unsigned)hdr->msgh_bits : 0;
++	event->kind = kind;
++	event->result = result;
++}
++
++static void
++native_bks_focus_set(uint64_t request_port, uint64_t reply_port,
++    unsigned msg_id)
++{
++	__atomic_store_n(&native_bks_request_port, request_port, __ATOMIC_RELAXED);
++	__atomic_store_n(&native_bks_reply_port, reply_port, __ATOMIC_RELAXED);
++	__atomic_store_n(&native_bks_msg_id, msg_id, __ATOMIC_RELAXED);
++}
++
++static void
++native_bks_focus_emit(unsigned sample)
++{
++	unsigned written =
++	    __atomic_load_n(&native_bks_events_written, __ATOMIC_RELAXED);
++	unsigned emitted =
++	    __atomic_load_n(&native_bks_events_emitted, __ATOMIC_RELAXED);
++	unsigned shown = 0;
++
++	if (written - emitted > NATIVE_BKS_EVENT_RING) {
++		emitted = written - NATIVE_BKS_EVENT_RING;
++	}
++	printf("NATIVE_BKS_FOCUS: sample=%u id=0x%x req=0x%llx reply=0x%llx "
++	    "written=%u lost=%u emitted=%u\n", sample,
++	    __atomic_load_n(&native_bks_msg_id, __ATOMIC_RELAXED),
++	    (unsigned long long)__atomic_load_n(&native_bks_request_port,
++	    __ATOMIC_RELAXED),
++	    (unsigned long long)__atomic_load_n(&native_bks_reply_port,
++	    __ATOMIC_RELAXED), written,
++	    __atomic_load_n(&native_bks_events_lost, __ATOMIC_RELAXED), emitted);
++	while (emitted < written && shown < 64) {
++		struct native_bks_event *event =
++		    &native_bks_events[emitted % NATIVE_BKS_EVENT_RING];
++		printf("NATIVE_BKS_EVT: sample=%u serial=%llu kind=%c id=0x%x "
++		    "bits=0x%x size=%u from=%d to=%d queue=0x%llx "
++		    "remote=0x%llx local=0x%llx tid=%llu result=0x%x\n",
++		    sample, (unsigned long long)event->serial, (int)event->kind,
++		    event->id, event->bits, event->size, event->from, event->to,
++		    (unsigned long long)event->queue_port,
++		    (unsigned long long)event->remote_port,
++		    (unsigned long long)event->local_port,
++		    (unsigned long long)event->receiver_tid, event->result);
++		emitted++;
++		shown++;
++	}
++	__atomic_store_n(&native_bks_events_emitted, emitted, __ATOMIC_RELAXED);
++}
+ 
+ void
+ native_ipc_event_note(unsigned kind, ipc_kmsg_t kmsg, ipc_port_t port,
+@@ -11277,6 +11390,7 @@
+ 	if (from_pid == -2) {
+ 		from_pid = proc_getpid(current_proc());
+ 	}
++	native_bks_event_note(kind, kmsg, port, from_pid, to_pid, receiver_tid, result);
+ 	if (!native_xpc_tracked(from_pid) && !native_xpc_tracked(to_pid)) {
+ 		return;
+ 	}
+@@ -11299,6 +11413,7 @@
+ 	printf("NATIVE_IPC_FOCUS: sample=%u id=0x%x remote=0x%llx local=0x%llx written=%u lost=%u\n",
+ 	    sample, msg_id, (unsigned long long)remote_port, (unsigned long long)local_port,
+ 	    written, __atomic_load_n(&native_ipc_events_lost, __ATOMIC_RELAXED));
++	native_bks_focus_set(remote_port, local_port, msg_id);
+ 	for (unsigned q = start; q < written && shown < 32; q++) {
+ 		struct native_ipc_event *e = &native_ipc_events[q % NATIVE_IPC_EVENT_RING];
+ 		if (e->port != remote_port && e->port != local_port && e->id != msg_id) {
+@@ -11311,5 +11426,6 @@
+ 		shown++;
+ 	}
++	native_bks_focus_emit(sample);
+ }
+ 
+ void

@@ -15720,3 +15720,36 @@ UXC1 `424419` 一次 ACK（uptime `663.100590 s`）；Android 恢复略晚于脚
 **证据**：`diagnostics/H418-aks-return-probe-2026-11-18.md`、
 `scripts/check-h418-aks-return.py`、`display-first-frame/builds/H418/`、
 `display-first-frame/logs/H418/device/20261118-224229/`。
+
+#### H419：BKS reply + main-scene boundary（2026-11-18）
+
+**目标/唯一变量**：保持 H418 的 AKS、Data、accelerator、IOMFB 和 scanout
+路径不变，只补 BKS `0x5b9173` 的精确 IPC 事件与 CA context 变化观测。
+H419 不新增 AKS 探针，不调用 bind、setLayer、setContents、present 或
+nextDrawable。
+
+H413 通用 IPC ring 会被无关 lsd、containermanager、backboardd 流量挤出。
+H419 增加独立的 512 项固定 ring，只记录 SpringBoard 与 launchd 的对向消息、
+已观察到的 `0x5b9173`，以及从 SpringBoard 等待栈动态学到的 request/reply
+port。事件字段包括 `S/Q/D/R`、id、bits、size、from/to pid、queue/remote/local
+port、receiver tid 和 hook state。IPC 热路径不打印、不分配、不睡眠、不加锁。
+
+NativeMetal observer build marker 改为 H419，并在既有 utility-queue 固定
+采样中保留最多 8 个 context state。每个 context 首次出现时记录
+`contextIdHostingContextId:`、`clientPortOfContextId:` 和
+`taskNamePortOfContextId:`；后续采样比较 root、根 sublayer 数、已读节点数和
+contents 节点数，只在新增或变化时输出 `NATIVE_MTL srv ctxchange`。
+
+判定顺序：
+
+1. request 是否出现 `S -> Q -> D/R`；
+2. launchd 是否向对应 reply port 发送 reply；
+3. SpringBoard 是否 reselect/完成 BKS main-screen 初始化；
+4. context set/root/content 是否在 reply 后变化；
+5. 是否出现 drawable、draw、commit；
+6. 只有 selector 4 出现后才调查 IOSurface validation/copy/transfer；
+7. 最后才调查 MSM8998 scanout。
+
+静态门为 `check-h419-main-scene.py`、兼容的 display gate 和
+`drivers/NativeMetal/tools/check-h419-main-scene.py`。设备结果在构建和一次
+有界真机验证完成后追加。
