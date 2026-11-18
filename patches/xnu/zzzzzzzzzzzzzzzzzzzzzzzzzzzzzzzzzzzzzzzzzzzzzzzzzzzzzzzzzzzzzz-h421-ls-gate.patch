@@ -1,7 +1,7 @@
 diff --git a/bsd/vfs/vfs_vnops.c b/bsd/vfs/vfs_vnops.c
 --- a/bsd/vfs/vfs_vnops.c
 +++ b/bsd/vfs/vfs_vnops.c
-@@ -78,3 +78,55 @@
+@@ -78,3 +78,57 @@
  #include <sys/file_internal.h>
  #include <mach/mach_time.h>
 +#define NATIVE_LSD_TRACK_SLOTS 8
@@ -17,6 +17,8 @@ diff --git a/bsd/vfs/vfs_vnops.c b/bsd/vfs/vfs_vnops.c
 +static uint32_t gNativeLsdOpens;
 +static uint32_t gNativeLsdSlow;
 +static uint64_t gNativeLsdMaxNs;
++
++void native_lsd_gate(uint32_t sample);
 +
 +static void
 +native_lsd_account(uint64_t ns)

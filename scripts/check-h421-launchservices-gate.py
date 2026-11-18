@@ -33,6 +33,7 @@ def main():
 
     for marker in (
         "#define NATIVE_LSD_TRACK_SLOTS 8",
+        "void native_lsd_gate(uint32_t sample);",
         "native_lsd_account(uint64_t ns)",
         "native_lsd_end(uint32_t slot)",
         "native_lsd_gate(uint32_t sample)",
