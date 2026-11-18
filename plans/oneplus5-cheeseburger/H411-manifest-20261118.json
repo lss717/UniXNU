@@ -1,0 +1,107 @@
+{
+  "candidate": "H411",
+  "purpose": "display-gate",
+  "state": "built-static-verified-device-untested",
+  "source": {
+    "core_base": "947a88b3cc5a264b5e9ba6b67ad228eb107b281f",
+    "core_commit": "46e5408bcfc2f491476f767f0faf711fa04d159b",
+    "device_base": "481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91",
+    "source_patch": "manifests/H411-source.patch",
+    "source_patch_sha256": "66ba7aab83537fb8fbb60aeb8c012b0d55f6d4489b3b25d30aa40c956ec963ac",
+    "submodules": "manifests/H411-submodules.txt",
+    "submodule_count": 21,
+    "unixnu_lock_git_blob": "9a0d3190a3e195eff523f7b898d6466e5ac0185a",
+    "unixnu_lock_sha256_lf": "0bbf113d5be71b4c7141f67a82ffeee03ce03e578d03802d5fcca5ecfe0da1a9",
+    "probe_commit": "46e5408bcfc2f491476f767f0faf711fa04d159b",
+    "docs_commit": "76f79ed9cf11c56d461b6e7aef8f0dc909e9fab7",
+    "branch_tip": "76f79ed9cf11c56d461b6e7aef8f0dc909e9fab7",
+    "usb_thread_id": "01a1ea5a-ad97-7731-a910-b284dc4ddf76",
+    "usb_thread_status": "idle-completed-and-main-pushed",
+    "remote_core_main": "947a88b3cc5a264b5e9ba6b67ad228eb107b281f",
+    "remote_device_main": "481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91"
+  },
+  "toolchain": {
+    "python": "/opt/local/bin/python3.12 3.12.16",
+    "xcode": "26.3 (17C529)",
+    "clang": "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang",
+    "ld": "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/ld",
+    "config_sha256": "6ede2216e4ad5cf613397355388fda549f26a2dc922d34e47c37f7acae1c968a"
+  },
+  "inputs": {
+    "uefi_blob_sha256": "9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6",
+    "uefi_fd_sha256": "e9135e17397165425d0794e8e64c0a4ae63575ce222b06b80305fcde6b16f1b3",
+    "trustcache_sha256": "7416ca4f8377146626bb284e2133c76bee6cb4e3ee0af5d648b186235a7323a7",
+    "data_seed_sha256": "0ffea0e7ef0bd10198e0d19009105af00ee3ba959d0bfdd94d1b2d442f56aa64",
+    "kernelcache_sha256": "f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7",
+    "fvmap_sha256": "5e6139651d6bbae97e8d621d28d427c298689ea2608c53f1341bbd609da5459e"
+  },
+  "pmgr": {
+    "stub_archive_sha256": "bb1d63d0299781aa477f511362517cb20fc64a4130d1ae33588663ff71dc3cd3",
+    "real_archive_sha256": "4706fb3b41b17b7acbf88fa5eb9186080c8d7f060c2bb0ace721c751ee39a468",
+    "two_pass": true
+  },
+  "artifacts": {
+    "kernel_sha256": "b644f933ff84bfc3fbddfe269d3808c2113084295f1180cb653dc2d089a7e0d8",
+    "payload_sha256": "05f74d38c8c7edfd831b180a3eed7fb93af00ee99d047b9a9872162df9178edb",
+    "adt_sha256": "aded753d3867ee48b4bd051e770a858fb9eebf91ce4bb3efc6785c6a610385b7",
+    "data_sidecar_sha256": "894fbd2fe23e7088b400c38ac20ff1ba999220e4a810c9484de08196760a6a62",
+    "boot_sha256": "f94a22d39cdf837d89d5f608e6ef2e76d4b6c0ba8aeb11fbc2b083c86f6ed800",
+    "boot_bytes": 81217536,
+    "boot_args_worst": 1020,
+    "boot_args_limit": 1024,
+    "boot_json_sha256": "b104260dafdfb975368fca222e922d5516ef2e5fe8465f92cfe2b2674c1b74dd"
+  },
+  "static_verification": {
+    "passed": true,
+    "report": "builds/H411/H411-static-verification.json",
+    "report_sha256": "1ad0337351cbeb95a458036e5108c536ae03766c5d95179aaca0d4511d99d238",
+    "probe_strings": [
+      "NATIVE_SBCHAIN",
+      "NATIVE_DISPLAY_GATE",
+      "H411"
+    ],
+    "checks": [
+      "payload kernel equal",
+      "ADT round-trip",
+      "trustcache round-trip",
+      "Data sidecar round-trip",
+      "UEFI decompression",
+      "boot layout",
+      "boot args 1020/1024",
+      "XNU architecture/deployment/TCR",
+      "FAT/boot/load layout",
+      "USB fifth-cell state mapping",
+      "disk-sink separated from USB producer",
+      "CDC/UXC1 contract self-test"
+    ]
+  },
+  "compatibility": {
+    "h410_usb_preserved": true,
+    "h410_display_alias": "manifests/H410-display-alias.json",
+    "uefi_rebuilt": false,
+    "uefi_reuse_reason": "H410 USB current main was built from the same latest ArmDTPlatform/DarwinBoot pins and records the same verified FD/blob",
+    "h410_usb_boot_sha256": "a4201dbc7825166b3724b47f2be8b94c64b41a094f91392e19841201876a4fbe",
+    "h410_usb_build_id": "549D06A5",
+    "h410_usb_source_manifest": "UniXNU-h411-display-gate/plans/oneplus5-cheeseburger/H410-manifest-20261118.json"
+  },
+  "device": {
+    "tested": false,
+    "required_capture_path": "USB CDC realtime",
+    "disk_sink_note": "H410 pauses disk logging after USB becomes healthy; no-disk-slot is not a hang signal",
+    "gate": "pending next coordinated slot"
+  },
+  "device_gate": "static only; no phone operation",
+  "created_at": "2026-11-18T10:11:26+08:00",
+  "artifact_hashes": "manifests/H411-artifacts.sha256",
+  "log_hashes": "manifests/H411-logs.sha256",
+  "build_logs": {
+    "archive": "builds/H411/H411-build-logs.tgz",
+    "sha256": "a819368fdb87e24cd4f04fe361476c3f69d954432652772d99630c4f2a92d15e",
+    "toolchain": "builds/H411/H411-00-toolchain.txt",
+    "audit_xnu": "builds/H411/H411-08-audit-xnu-kernel.log",
+    "static_suite": "builds/H411/H411-09-local-static-checks.log",
+    "uefi_modules": "builds/H411/H411-10-uefi-module-check.log",
+    "source_integration": "builds/H411/H411-11-source-integration.log",
+    "source_integration_sha256": "5651c444f8b1ebe9ff38c9c363b132b753e18cb112c5f0b0d69158b46220cb85"
+  }
+}
