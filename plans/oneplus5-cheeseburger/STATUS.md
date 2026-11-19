@@ -16349,3 +16349,82 @@ IOMFB selector 4/5 与 scanout。下一步必须把只读 scene observer 送入 
 或取得等价的 kernel/cross-process 视图；继续只从 backboardd 采样 CAWindowServer
 无法回答 SpringBoard 的 scene 问题。harness 汇总见
 `H426-H430-exception-regression-20261119.json`。
+
+#### H431：SpringBoard scene observer 未获 launchd 投递（2026-11-19）
+
+H431 保持 H424 kernel、H425 Data seed、H430 ADT、995-byte bootargs 与全部显示
+行为不变。payload 相对 H430 只替换 `kernel.macho.gpuaddon` 和
+`kernel.macho.trustcache`。新增内容只有只读 FBSWorkspace/FBScene/UIKit observer、
+一次性 `scenebootstrap`，以及 SpringBoard 的
+`DYLD_INSERT_LIBRARIES=/private/var/ngpu/lib/SpringBoardSceneObserver.dylib`
+环境项。源码分支 `h431-springboard-scene`，构建提交
+`296c3c24466853db2ac02e08993025ed2f7636fe`，NativeMetal 提交
+`7e980ba271ea71044be3b022c197339e535e8530`。
+
+```text
+kernel         c6de727f25604217d668793392aad279af284e34f9477b136294685a76cf585b
+payload        56a1af1922b6f27749f5f05ce3a43bab509c23e1942fd7ebb972b0f6486f0eeb
+boot           853ab7d9bce4ae30d4a96b624f924f50136f34838cee1cbf787862d1b599cea5
+ADT            9e4b51b777cb653ebe9412b964849aa24730f1f8fe2a4217816f9d024f2de655
+owner trust    714848af13a574ea90f8fb34bd380b41b050c071d113c737ba89669f3515983f
+GPU addon      e43bf2e8d56d8c01254e73544598128ca8403ae027010dc7e06ad6b5ddbbb027
+```
+
+静态验证确认 addon 含 SpringBoard/bluetoothd/scenebootstrap plist、wrapper、
+observer，三个 CDHash 均进入 owner trust。启动前只在 TWRP 清零
+`userdata_ios` 最后 32 MiB；回读 SHA-256 仍为
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。本机
+`16149951` 只执行一次 `fastboot boot`，COM8 在 capture 启动 276 秒后出现。
+480 秒窗口得到 13,233 frames / 2,037,335 bytes，CRC、sequence 和
+boot-switch 错误均为 0，uptime 覆盖 `281.1010186-761.278433 s`。
+
+持久 ring boot id 为 `5371096851`。SpringBoard 在 `145.399284 s` 自然启动；
+`A540Trace` H431 marker 在 `254.913920 s` 加载进 `mediaserverd`。但 ring 与
+live 合并后：
+
+```text
+scenebootstrap exec              0
+observer path open               0
+H431_SBBOOT                      0
+H431_SBSCENE                     0
+scene#                           0
+```
+
+因此 H431 的最早断点是 launchd 投递层，不是 SpringBoard scene 阴性。单独的
+`com.unixnu.scenebootstrap` 未被并发插入，作为触发点的 bluetoothd alias 本 boot
+也未出现 exec；SpringBoard plist 的环境项同样没有让 observer constructor
+运行。现有日志不能区分“launchd cache 未重读 overlay”和“alias job 根本未
+scheduled”，但足以排除 observer 已运行。
+
+显示与 renderer 边界继续有效：`IOMobileFramebuffer` legacy provider 在
+`284.838100 s` 可匹配，`IOSurfaceRoot` 在 `299.809060 s` 可打开。CAWindowServer
+初看 root 为 0，随后出现两个 1080x1920 context（`0xd7986487`、`0x73e39bfe`），
+但 layer tree 全部 `contents=-`。`453.986651 s` 创建两个 render encoder，
+都以 `draws=0 dispatch=0` 结束。
+
+整个窗口 `drawPrimitives`、`dispatchThreads`、commit、present、nextDrawable、
+NativeMobileDisplay selector 4/5、validation、IOSurface transfer 与 frame 仍
+全为 0。最后一个 display gate 在 `759.656093 s`：
+
+```text
+accel=3/1/552/0 dpy=3/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0
+```
+
+本 boot 在 `455.423058 s` 记录 `mediaserverd` SIGBUS，并在
+`500.940935 s` 后进入 UFS lock storm；窗口共见 104 次 lock timeout 与 37 次
+trap。SpringBoard 在 `668.067010 s` SIGBUS 后退出。风暴发生在 H431 投递失败
+之后，是后续强混淆项，不是 observer 未运行的早期解释。
+
+分类为 `springboard-observer-job-not-delivered-ufs-confounded-no-first-frame`。
+H432 不应直接修改 scene、IOMFB 或 scanout；下一最小探针是把覆盖后的
+SpringBoard launch job 本身改成 signed wrapper：wrapper 先写 `H432_SBWRAP`，
+设置 `DYLD_INSERT_LIBRARIES`，再 `execv` 原 SpringBoard。必须依次取得
+wrapper、observer load、第一个 scene sample 三个独立证据后，才可判断
+FBSWorkspace/scene/root layer/contents 的真实状态。
+
+UXC1 `424433` 一次发送并在 `786.010785 s` ACK；CDC 消失、Android
+`boot_completed=1` 后轮询 helper 只发送一次 `adb reboot recovery`，确认 TWRP
+`3.4.0_9-10-mauronofrio`。没有 flash、erase、format、GPT 或额外分区写入。
+详细事件链见
+`diagnostics/H431-springboard-scene-delivery-2026-11-19.md`，设备汇总见
+`diagnostics/H431-device-verification-20261119.json`。

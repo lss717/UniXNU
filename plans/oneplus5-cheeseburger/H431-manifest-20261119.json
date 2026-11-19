@@ -1,0 +1,90 @@
+{
+  "candidate": "H431",
+  "state": "device-tested-observer-not-delivered",
+  "classification": "springboard-observer-job-not-delivered-ufs-confounded-no-first-frame",
+  "purpose": "deliver a bounded read-only FBSWorkspace and UIKit scene observer into SpringBoard without changing the renderer, IOMFB, IOSurface or scanout behavior",
+  "source": {
+    "core_build_commit": "296c3c24466853db2ac02e08993025ed2f7636fe",
+    "core_feature_branch": "h431-springboard-scene",
+    "kernel_commit": "06fef61",
+    "native_metal_commit": "7e980ba271ea71044be3b022c197339e535e8530",
+    "device_commit": "481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91",
+    "main_moved": false,
+    "h408_worktree_modified": false
+  },
+  "changes": {
+    "behavior_changes": [
+      "SpringBoard environment entry for a read-only scene observer",
+      "one-shot scenebootstrap launch aliases"
+    ],
+    "observer": "read-only FBSWorkspace, FBScene, CADisplay and UIApplication samples at 5/30/90/180/300/480 seconds",
+    "kernel": "byte-identical H424 kernel reused",
+    "payload": "H430 payload with only gpuaddon and trustcache replaced",
+    "display_iosurface_iomfb_scanout": "unchanged"
+  },
+  "artifacts": {
+    "kernel_sha256": "c6de727f25604217d668793392aad279af284e34f9477b136294685a76cf585b",
+    "payload_sha256": "56a1af1922b6f27749f5f05ce3a43bab509c23e1942fd7ebb972b0f6486f0eeb",
+    "boot_sha256": "853ab7d9bce4ae30d4a96b624f924f50136f34838cee1cbf787862d1b599cea5",
+    "adt_sha256": "9e4b51b777cb653ebe9412b964849aa24730f1f8fe2a4217816f9d024f2de655",
+    "owner_trust_sha256": "714848af13a574ea90f8fb34bd380b41b050c071d113c737ba89669f3515983f",
+    "gpu_addon_sha256": "e43bf2e8d56d8c01254e73544598128ca8403ae027010dc7e06ad6b5ddbbb027",
+    "plugin_sha256": "c7557e790aa1c5133e945f3c53f2c2d0941b46c46ce466e56f65c8f7b6927692",
+    "observer_sha256": "e9d3840712196cf9207564d3c392f4bc671306b39e482acf3b79d10f3eb14a3e",
+    "bootstrap_sha256": "d75bba22cd8854230f24320e2ee4e51e1c08d9b2980e6b109341f9459ba8b021",
+    "plugin_cdhash": "047337564d4fb8f78f186d4392bd5ab8445fbb49",
+    "observer_cdhash": "3d7e3c0c8e2a192bdeb80b9a84193f960b01fc12",
+    "bootstrap_cdhash": "26e1f897dacc030a0a0258bfaafc90c7bb8fa7fb",
+    "data_seed_sha256": "fed3a0e6bb39974da339bf7f9155b282dfb0438c454c00f0df7a94b5995c03a4"
+  },
+  "static_preflight": {
+    "h431_scene_addon_gate": "PASS",
+    "package_verification": "PASS",
+    "payload_delta": "only kernel.macho.gpuaddon and kernel.macho.trustcache",
+    "boot_args": "995 bytes; current with zap-base 1015; worst 1023/1024",
+    "device_tested": true
+  },
+  "device_result": {
+    "host": "local",
+    "serial": "16149951",
+    "persistent_ring_boot_id": 5371096851,
+    "plugin_marker": "H431",
+    "frames": 13233,
+    "payload_bytes": 2037335,
+    "crc_errors": 0,
+    "sequence_gaps": 0,
+    "boot_switches": 0,
+    "cdc_ready_seconds": 276,
+    "decoded_uptime_start_s": 281.1010186,
+    "decoded_uptime_end_s": 761.278433,
+    "springboard_exec_s": 145.399284,
+    "scenebootstrap_exec_count": 0,
+    "scene_observer_load_count": 0,
+    "scene_samples": 0,
+    "ca_contexts": 2,
+    "draw_primitives": 0,
+    "dispatch_threads": 0,
+    "command_buffer_commits": 0,
+    "presents": 0,
+    "native_mobile_display_selectors_3_4_5": [0, 0, 0],
+    "validation_count": 0,
+    "surface_transfer_count": 0,
+    "frame_count": 0,
+    "first_observed_ufs_lock_timeout_s": 500.940935,
+    "springboard_sigbus_s": 668.06701,
+    "kernel_panic": false,
+    "recovered_to_twrp": true,
+    "uxc1_request_id": 424433,
+    "uxc1_ack_s": 786.010785
+  },
+  "evidence": {
+    "device_verification": "plans/oneplus5-cheeseburger/diagnostics/H431-device-verification-20261119.json",
+    "diagnostic": "plans/oneplus5-cheeseburger/diagnostics/H431-springboard-scene-delivery-2026-11-19.md",
+    "live_log_sha256": "0f71d03e8b71775780ddb95357560da6aaf1a665eee35ce7e7469c71ef485f5e",
+    "frames_sha256": "31682e00eaebd10a7ac244846a43f8ba60dd08bb89db99265a8bcfdcf1398dbf",
+    "ring_window_sha256": "5e629b315c407c57b82ce6b1611682acf587f9bc75c43886158ecbaa89c6e072",
+    "persistent_log_sha256": "309589727ebda088bcb8225b2dde52e400fed23140ddbdafda6cdc9347394b33",
+    "reboot_log_sha256": "50e0a87023f07fea4132a561ef752f52ff60037121bc84f79eb1101cab5038ac"
+  },
+  "next_action": "H432 should replace the separate bootstrap alias with a direct SpringBoard launch wrapper that logs before exec, sets DYLD_INSERT_LIBRARIES, and then execs the original SpringBoard binary."
+}
