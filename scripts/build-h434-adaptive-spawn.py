@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Build H433's cached-launchd SpringBoard wrapper addon.
+"""Build H434's adaptive cached-launchd SpringBoard wrapper addon.
 
 Usage:
-  build-h433-launchd-cache.py LAUNCHD-CACHE.plist OUTPUT
+  build-h434-adaptive-spawn.py LAUNCHD-CACHE.plist OUTPUT
 
 The input is /System/Library/xpc/launchd.plist, the binary job cache consumed by
 launchd_cache_loader. The build changes only the cached SpringBoard job's
-ProgramArguments and observer environment. No LaunchDaemons source plist is
-mounted or modified.
+ProgramArguments, observer environment and POSIXSpawnType. H433 proved that the
+App spawn type sends the owner wrapper through xpcproxy's System Policy exec
+denial; Adaptive uses launchd's ordinary daemon spawn path.
 """
 
 import copy
@@ -24,7 +25,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "build/h433-launchd-cache"
+OUT = ROOT / "build/h434-adaptive-spawn"
 BUNDLE = OUT / "A540Trace.bundle"
 OBSERVER = OUT / "SpringBoardSceneObserver.dylib"
 BOOTSTRAP = OUT / "scenebootstrap"
@@ -133,7 +134,7 @@ def main() -> int:
         "com.apple.private.security.no-container": True,
     }))
     bootstrap_cdhash = compact_signed_bundle(
-        BOOTSTRAP, "org.blu-sharky.H433SpringBoardWrapper", entitlements
+        BOOTSTRAP, "org.blu-sharky.H434SpringBoardWrapper", entitlements
     )
 
     original = cache_source.read_bytes()
@@ -145,6 +146,7 @@ def main() -> int:
         raise SystemExit("launchd cache has no SpringBoard job")
     before = copy.deepcopy(daemons[SPRINGBOARD_JOB])
     job = daemons[SPRINGBOARD_JOB]
+    job["POSIXSpawnType"] = "Adaptive"
     job["ProgramArguments"] = [
         "/private/var/ngpu/bin/scenebootstrap",
         "--launch-springboard",
@@ -169,7 +171,7 @@ def main() -> int:
         mode = 0o755 if path.name == "A540Trace" else 0o644
         files.append(("addons/A540Trace.bundle/" + path.relative_to(BUNDLE).as_posix(),
                       mode, path.read_bytes()))
-    files.append(("addons/A540Trace.scene-observer", 0o644, b"H433\n"))
+    files.append(("addons/A540Trace.scene-observer", 0o644, b"H434\n"))
     files.append(("lib/SpringBoardSceneObserver.dylib", 0o755, OBSERVER.read_bytes()))
     files.append(("bin/scenebootstrap", 0o755, BOOTSTRAP.read_bytes()))
     files.append(("xpc/launchd.plist", 0o644, modified))
@@ -198,6 +200,8 @@ def main() -> int:
         "launchd_cache_sha256_source": hashlib.sha256(original).hexdigest(),
         "launchd_cache_sha256_modified": hashlib.sha256(modified).hexdigest(),
         "springboard_job_before_program_arguments": before["ProgramArguments"],
+        "springboard_job_before_posix_spawn_type": before.get("POSIXSpawnType"),
+        "springboard_job_posix_spawn_type": job["POSIXSpawnType"],
         "springboard_environment": {
             "DYLD_INSERT_LIBRARIES": environment["DYLD_INSERT_LIBRARIES"],
             "DYLD_FORCE_FLAT_NAMESPACE": environment["DYLD_FORCE_FLAT_NAMESPACE"],
