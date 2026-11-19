@@ -1,0 +1,64 @@
+{
+  "candidate": "H422",
+  "purpose": "distinguish LaunchServices filesystem latency from a blocked synchronization edge while SpringBoard waits on lsd",
+  "state": "package-statically-verified-unbuilt",
+  "classification": "launchservices-filesystem-progress-gate-package-statically-verified",
+  "source": {
+    "core_base": "9d200549e29dad98bb26491a862068a9f629806e",
+    "core_build_commit": "656f999e61b8b16fbb9ce9ecb9bf43be6e0fec66",
+    "core_feature_branch": "h422-ls-fs-probe",
+    "device_commit": "481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91",
+    "keystore_commit": "2305bad9a525abd467ca3caae046d272fcb27655",
+    "native_metal_commit": "24d011979a4f8538cfdf43962945e9b3edc2d157",
+    "main_moved": false,
+    "h408_worktree_modified": false
+  },
+  "changes": {
+    "behavior_changes": [],
+    "kernel_tag": "H422",
+    "record": "NATIVE_LS_GATE",
+    "slot_record": "NATIVE_LS_GATE_SLOT",
+    "operations": [
+      "open",
+      "read",
+      "write",
+      "fsync",
+      "getxattr"
+    ],
+    "tracked_slots": 8,
+    "slow_thresholds_ms": [
+      50,
+      500,
+      5000
+    ],
+    "hot_path": "fixed atomics and bounded path/attribute copies only; no allocation, print, sleep, or new lock",
+    "sampler_call": "only when the existing sampler selects lsd"
+  },
+  "artifacts": {
+    "source_kernel_sha256": "ac6761abaed9d1078325cbf01cffccc12064c2628e0fe45e1954e402c0cccac0",
+    "real_pmgr_sha256": "c3cdee0bebc6fafaa3655ac5d024ff104ef229bd5ecf35fc0435a246b6fad4ea",
+    "kernel_sha256": "ef78c085e4372f230aacdfd3b140839cfda4785dd711eb057feb2b5d94b0b4df",
+    "payload_sha256": "ddf2983f74201630d41dad9fc43152235dd52102a1772d77808864ba98030b34",
+    "boot_sha256": "ee5eaa701418265b70c3e7e11c24965c21365d389dcf1a90146978d9d42d7395",
+    "adt_sha256": "714235693c10edd1d23ea6813ae04821313af939830a229814b07fb4cad06c2d",
+    "owner_trust_sha256": "924654c295a313ee6a26c2b37a9db3d7c0038d23c0eb08666c0d6cd2b1c234fb",
+    "gpu_addon_sha256": "8e090c37f907b4d010f2725976ada6768e0f846dc3a907490147dc32071d67f4",
+    "data_ramdisk_sha256": "fed3a0e6bb39974da339bf7f9155b282dfb0438c454c00f0df7a94b5995c03a4",
+    "boot_args_bytes": 995,
+    "boot_args_worst": 1023,
+    "boot_args_limit": 1024
+  },
+  "static_preflight": {
+    "h422_probe_gate": "PASS",
+    "h421_progress_gate": "PASS",
+    "display_first_frame_gate": "PASS",
+    "native_metal_h420_gate": "PASS",
+    "plain_git_apply": "PASS after H421/H415 prerequisites",
+    "git_diff_check": "PASS",
+    "python_compile": "PASS",
+    "json_parse": "PASS",
+    "built": true,
+    "device_tested": false
+  },
+  "next_action": "One bounded local or y9000x fastboot boot, capture through samples 7020-7170, and classify vn_read/vn_write/vn_fsync/getxattr progress against the performJournalRecovery and dispatch-group waits."
+}

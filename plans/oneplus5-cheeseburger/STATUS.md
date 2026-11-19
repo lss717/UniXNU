@@ -15932,3 +15932,49 @@ H421 还暴露了恢复脚本在 ADB 状态切换后的首个 `getprop` 瞬态�
 状态；识别 TWRP 后，对 `ro.product.device` 和 `ro.twrp.version` 做最多 20 秒的
 短重试，并在 state 文件记录尝试次数。该改动只影响恢复验证，不改变 boot、
 LaunchServices、renderer、IOMFB、IOSurface 或 scanout。
+
+#### H422：LaunchServices filesystem progress gate（2026-11-19）
+
+H422 从 `h421-launchservices-gate@9d20054` 派生。唯一观测变量是把已有的 lsd
+sampler gate 从 open-only 扩展为：
+
+```text
+open / read / write / fsync / getxattr
+```
+
+`NATIVE_LS_GATE` 输出各操作计数、in-flight、50/500/5000 ms 慢项、最大延迟和
+错误数；最多 8 个 `NATIVE_LS_GATE_SLOT` 固定槽记录 op、tid、vnode、
+offset/requested/residual、duration、result、bounded attribute name 和 open path。
+read/write 不解析完整路径，只记录 vnode 与参数以便和先前 open 关联。
+新增 completion helper 不打印、不分配、不睡眠、不加新锁，也不改变 IOReturn。
+
+首个 patch 文件名排序错误地落在 H421 之前，干净构建在 `vfs_vnops.c` 上下文处
+被正确拒绝；没有候选或镜像被误用。修正后的 patch 排在 H421/H415 之后，并在
+完整干净序列上通过普通 `git apply --check`。另一次构建选错了旧设备仓
+`UniXNU-cheeseburger@c4f84bb`，因缺少 `native_usb_status_*` 在链接前停止；
+最终构建使用固定设备仓 `UniXNU-cheeseburger-h418-mainscene@481fcfe`。
+
+最终源码提交为 `656f999e61b8b16fbb9ce9ecb9bf43be6e0fec66`。构建链：
+
+```text
+previous kernel       06415c05fc3c2b839232c07a5b6eb4638b88ea6b4a40d7b522e28a0749727d74
+source kernel pass 1  bc8cd8b377f84210324a1b58ead0287b24ac2dfd18b60da4aaef00d9730450e9
+prelink pass 1        01a343a91994d28beec74fd5244a5b41e6287b289785b15cd22628a60771c9cb
+PMGR pass 1           948be899e7c52127278e15fd2b4f4115400d9e59d10bcfc0efe8d683283a3a27f2
+source kernel final   ac6761abaed9d1078325cbf01cffccc12064c2628e0fe45e1954e402c0cccac0
+PMGR final            c3cdee0bebc6fafaa3655ac5d024ff104ef229bd5ecf35fc0435a246b6fad4ea
+final kernel          ef78c085e4372f230aacdfd3b140839cfda4785dd711eb057feb2b5d94b0b4df
+payload               ddf2983f74201630d41dad9fc43152235dd52102a1772d77808864ba98030b34
+boot                  ee5eaa701418265b70c3e7e11c24965c21365d389dcf1a90146978d9d42d7395
+ADT                   714235693c10edd1d23ea6813ae04821313af939830a229814b07fb4cad06c2d
+```
+
+payload 继续使用 H421 owner trust、A540Trace addon 和 Data seed；995 B
+kernel argument 字符串与 H421 完全相同。`verify_h422.py` 对
+boot→payload→kernel、UEFI/FDT、FAT sidecars、ADT identity、trust/addon、
+Data seed 和反提取全部 PASS。分类为
+`launchservices-filesystem-progress-gate-package-statically-verified`。
+
+本阶段未执行真机 boot；手机已转由 `y9000x` 管理。镜像已准备好做一次有界
+H422 运行并关联 sampler 7020–7170 与
+`performJournalRecovery`/`dispatch_group_wait_slow`。
