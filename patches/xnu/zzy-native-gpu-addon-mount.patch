@@ -2,7 +2,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 index a5ff474..4704203 100644
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -7193,6 +7193,321 @@ uint64_t native_owner_data_seed_base, native_owner_data_seed_size;
+@@ -7193,6 +7193,326 @@ uint64_t native_owner_data_seed_base, native_owner_data_seed_size;
  uint8_t native_owner_data_seed_sha256[32];
  char native_owner_data_device_path[64];
  
@@ -178,7 +178,7 @@ index a5ff474..4704203 100644
 +	return error ? error : close_error;
 +}
 +/* Creates the missing parent directories of an addon path with the mkdir syscall. The scratch is one 4 KiB page; the mount arguments
-+ * end below 0xa00. */
++ * end below 0xc00. */
 +static int
 +native_gpu_addon_parents(proc_t p, user_addr_t scratch, const char *path)
 +{
@@ -319,6 +319,11 @@ index a5ff474..4704203 100644
 +	    "7570.iPadOS_17_Flat_Background-1024w-1366h@2x~ipad.ca/assets/J120.HEIC",
 +	    "/Library/Wallpaper/Collections/iPadOS_17~ipad.wallpaperCollection/Wallpapers/7570.iPadOS_17_Flat-1024w-1366h@2x~ipad.wallpaper/"
 +	    "7570.iPadOS_17_Flat_Background-1024w-1366h@2x~ipad.ca/J120.png", &native_gpu_addon3_stage, &native_gpu_addon3_status);
++	static const char springboard_source[] = "/private/var/ngpu/springboard",
++	    springboard_point[] = "/System/Library/CoreServices/SpringBoard.app";
++	native_gpu_addon_mount(p, scratch, 0xa00, springboard_source, sizeof(springboard_source), springboard_point, sizeof(springboard_point),
++	    "/System/Library/CoreServices/SpringBoard.app/Info.plist",
++	    "/System/Library/CoreServices/SpringBoard.app/SpringBoard", &native_gpu_addon3_stage, &native_gpu_addon3_status);
 +}
 +
  static int

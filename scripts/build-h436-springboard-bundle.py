@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Build H435's shell-trampoline cached-launchd SpringBoard wrapper addon.
+"""Build H436's SpringBoard app-bundle wrapper addon.
 
 Usage:
-  build-h435-shell-trampoline.py LAUNCHD-CACHE.plist OUTPUT
+  build-h436-springboard-bundle.py LAUNCHD-CACHE.plist SPRINGBOARD OUTPUT
 
 The input is /System/Library/xpc/launchd.plist, the binary job cache consumed by
-launchd_cache_loader. The build changes only the cached SpringBoard job's
-ProgramArguments and observer environment. H433/H434 proved that xpcproxy denies
-a direct private-path wrapper. H435 first execs /bin/sh, then asks that process
-to exec the signed wrapper.
+launchd_cache_loader. The cached job keeps its original standard executable
+path; a separate bindfs view overlays that path with the signed wrapper and
+places the original signed SpringBoard beside it as SpringBoard.real.
 """
 
 import copy
 import hashlib
 import json
+import os
 import plistlib
 import re
 import shutil
@@ -25,11 +25,12 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "build/h435-shell-trampoline"
+OUT = ROOT / "build/h436-springboard-bundle"
 BUNDLE = OUT / "A540Trace.bundle"
 OBSERVER = OUT / "SpringBoardSceneObserver.dylib"
 BOOTSTRAP = OUT / "scenebootstrap"
 XPC = OUT / "xpc"
+SPRINGBOARD_DIR = OUT / "springboard"
 SPRINGBOARD_JOB = (
     "/System/Library/LaunchDaemons/com.apple.SpringBoard.plist"
 )
@@ -66,10 +67,11 @@ def compact_signed_bundle(path: Path, identifier: str,
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
+    if len(sys.argv) != 4:
         raise SystemExit(__doc__)
     cache_source = Path(sys.argv[1]).resolve()
-    output = Path(sys.argv[2]).resolve()
+    springboard_source = Path(sys.argv[2]).resolve()
+    output = Path(sys.argv[3]).resolve()
     if output.exists():
         raise SystemExit("Refuse to overwrite " + str(output))
 
@@ -78,6 +80,7 @@ def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     BUNDLE.mkdir(parents=True, exist_ok=True)
     XPC.mkdir(parents=True, exist_ok=True)
+    SPRINGBOARD_DIR.mkdir(parents=True, exist_ok=True)
     sdk = subprocess.check_output(
         ["xcrun", "--sdk", "iphoneos", "--show-sdk-path"], text=True
     ).strip()
@@ -146,11 +149,10 @@ def main() -> int:
         raise SystemExit("launchd cache has no SpringBoard job")
     before = copy.deepcopy(daemons[SPRINGBOARD_JOB])
     job = daemons[SPRINGBOARD_JOB]
-    job["ProgramArguments"] = [
-        "/bin/sh",
-        "-c",
-        "exec /private/var/ngpu/bin/scenebootstrap --launch-springboard",
-    ]
+    if job.get("ProgramArguments") != [
+        "/System/Library/CoreServices/SpringBoard.app/SpringBoard"
+    ]:
+        raise SystemExit("cached SpringBoard job has an unexpected executable")
     environment = dict(job.get("EnvironmentVariables", {}))
     environment["DYLD_INSERT_LIBRARIES"] = (
         "/private/var/ngpu/lib/SpringBoardSceneObserver.dylib"
@@ -165,16 +167,29 @@ def main() -> int:
     if modified_cache["LaunchDaemons"][SPRINGBOARD_JOB] != job:
         raise SystemExit("launchd cache SpringBoard job did not round-trip")
     (XPC / "launchd.plist").write_bytes(modified)
+    if not springboard_source.is_file():
+        raise SystemExit("SpringBoard input is missing")
+    (SPRINGBOARD_DIR / "SpringBoard.real").write_bytes(
+        springboard_source.read_bytes()
+    )
+    os.chmod(SPRINGBOARD_DIR / "SpringBoard.real", 0o755)
+    os.chmod(BOOTSTRAP, 0o755)
+    shutil.copyfile(BOOTSTRAP, SPRINGBOARD_DIR / "SpringBoard")
+    os.chmod(SPRINGBOARD_DIR / "SpringBoard", 0o755)
 
     files = []
     for path in sorted(p for p in BUNDLE.rglob("*") if p.is_file()):
         mode = 0o755 if path.name == "A540Trace" else 0o644
         files.append(("addons/A540Trace.bundle/" + path.relative_to(BUNDLE).as_posix(),
                       mode, path.read_bytes()))
-    files.append(("addons/A540Trace.scene-observer", 0o644, b"H435\n"))
+    files.append(("addons/A540Trace.scene-observer", 0o644, b"H436\n"))
     files.append(("lib/SpringBoardSceneObserver.dylib", 0o755, OBSERVER.read_bytes()))
     files.append(("bin/scenebootstrap", 0o755, BOOTSTRAP.read_bytes()))
     files.append(("xpc/launchd.plist", 0o644, modified))
+    files.append(("springboard/SpringBoard", 0o755,
+                  (SPRINGBOARD_DIR / "SpringBoard").read_bytes()))
+    files.append(("springboard/SpringBoard.real", 0o755,
+                  (SPRINGBOARD_DIR / "SpringBoard.real").read_bytes()))
 
     body = b""
     for name, mode, data in files:
@@ -201,6 +216,9 @@ def main() -> int:
         "launchd_cache_sha256_modified": hashlib.sha256(modified).hexdigest(),
         "springboard_job_before_program_arguments": before["ProgramArguments"],
         "springboard_job_posix_spawn_type": job.get("POSIXSpawnType"),
+        "springboard_binary_sha256": hashlib.sha256(
+            springboard_source.read_bytes()
+        ).hexdigest(),
         "springboard_environment": {
             "DYLD_INSERT_LIBRARIES": environment["DYLD_INSERT_LIBRARIES"],
             "DYLD_FORCE_FLAT_NAMESPACE": environment["DYLD_FORCE_FLAT_NAMESPACE"],
