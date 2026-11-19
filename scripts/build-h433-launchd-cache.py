@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Build H432's SpringBoard launch-wrapper addon.
+"""Build H433's cached-launchd SpringBoard wrapper addon.
 
 Usage:
-  build-h432-springboard-wrapper.py SPRINGBOARD.plist OUTPUT
+  build-h433-launchd-cache.py LAUNCHD-CACHE.plist OUTPUT
 
-The build preserves the original SpringBoard launchd job metadata, installs the
-wrapper as its ProgramArguments, and keeps the observer environment as defense
-in depth. The wrapper logs before exec, sets the same environment in its own
-process and then execs the original SpringBoard binary.
+The input is /System/Library/xpc/launchd.plist, the binary job cache consumed by
+launchd_cache_loader. The build changes only the cached SpringBoard job's
+ProgramArguments and observer environment. No LaunchDaemons source plist is
+mounted or modified.
 """
 
+import copy
+import hashlib
 import json
 import plistlib
 import re
@@ -22,11 +24,14 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "build/h432-springboard-wrapper"
+OUT = ROOT / "build/h433-launchd-cache"
 BUNDLE = OUT / "A540Trace.bundle"
 OBSERVER = OUT / "SpringBoardSceneObserver.dylib"
 BOOTSTRAP = OUT / "scenebootstrap"
-DAEMONS = OUT / "daemons"
+XPC = OUT / "xpc"
+SPRINGBOARD_JOB = (
+    "/System/Library/LaunchDaemons/com.apple.SpringBoard.plist"
+)
 
 
 def pad(data: bytes) -> bytes:
@@ -62,7 +67,7 @@ def compact_signed_bundle(path: Path, identifier: str,
 def main() -> int:
     if len(sys.argv) != 3:
         raise SystemExit(__doc__)
-    springboard_source = Path(sys.argv[1]).resolve()
+    cache_source = Path(sys.argv[1]).resolve()
     output = Path(sys.argv[2]).resolve()
     if output.exists():
         raise SystemExit("Refuse to overwrite " + str(output))
@@ -71,7 +76,7 @@ def main() -> int:
         shutil.rmtree(OUT)
     OUT.mkdir(parents=True, exist_ok=True)
     BUNDLE.mkdir(parents=True, exist_ok=True)
-    DAEMONS.mkdir(parents=True, exist_ok=True)
+    XPC.mkdir(parents=True, exist_ok=True)
     sdk = subprocess.check_output(
         ["xcrun", "--sdk", "iphoneos", "--show-sdk-path"], text=True
     ).strip()
@@ -128,11 +133,18 @@ def main() -> int:
         "com.apple.private.security.no-container": True,
     }))
     bootstrap_cdhash = compact_signed_bundle(
-        BOOTSTRAP, "org.blu-sharky.H432SpringBoardWrapper", entitlements
+        BOOTSTRAP, "org.blu-sharky.H433SpringBoardWrapper", entitlements
     )
 
-    original = springboard_source.read_bytes()
-    job = plistlib.loads(original)
+    original = cache_source.read_bytes()
+    cache = plistlib.loads(original)
+    daemons = cache.get("LaunchDaemons")
+    if not isinstance(daemons, dict) or not isinstance(
+        daemons.get(SPRINGBOARD_JOB), dict
+    ):
+        raise SystemExit("launchd cache has no SpringBoard job")
+    before = copy.deepcopy(daemons[SPRINGBOARD_JOB])
+    job = daemons[SPRINGBOARD_JOB]
     job["ProgramArguments"] = [
         "/private/var/ngpu/bin/scenebootstrap",
         "--launch-springboard",
@@ -143,30 +155,24 @@ def main() -> int:
     )
     environment["DYLD_FORCE_FLAT_NAMESPACE"] = "1"
     job["EnvironmentVariables"] = environment
-    plist_format = plistlib.FMT_BINARY if original.startswith(b"bplist") else plistlib.FMT_XML
-    (DAEMONS / "com.apple.SpringBoard.plist").write_bytes(
-        plistlib.dumps(job, fmt=plist_format, sort_keys=False)
-    )
-
-    (DAEMONS / "org.blu-sharky.adrenoprobed.plist").write_bytes(
-        plistlib.dumps({
-            "Label": "org.blu-sharky.adrenoprobed",
-            "ProgramArguments": ["/usr/bin/true"],
-            "RunAtLoad": False,
-            "KeepAlive": False,
-        }, fmt=plistlib.FMT_XML)
-    )
+    modified = plistlib.dumps(cache, fmt=plistlib.FMT_BINARY, sort_keys=False)
+    modified_cache = plistlib.loads(modified)
+    for key, value in daemons.items():
+        if key != SPRINGBOARD_JOB and modified_cache["LaunchDaemons"].get(key) != value:
+            raise SystemExit("launchd cache changed unrelated job " + key)
+    if modified_cache["LaunchDaemons"][SPRINGBOARD_JOB] != job:
+        raise SystemExit("launchd cache SpringBoard job did not round-trip")
+    (XPC / "launchd.plist").write_bytes(modified)
 
     files = []
     for path in sorted(p for p in BUNDLE.rglob("*") if p.is_file()):
         mode = 0o755 if path.name == "A540Trace" else 0o644
         files.append(("addons/A540Trace.bundle/" + path.relative_to(BUNDLE).as_posix(),
                       mode, path.read_bytes()))
-    files.append(("addons/A540Trace.scene-observer", 0o644, b"H432\n"))
+    files.append(("addons/A540Trace.scene-observer", 0o644, b"H433\n"))
     files.append(("lib/SpringBoardSceneObserver.dylib", 0o755, OBSERVER.read_bytes()))
     files.append(("bin/scenebootstrap", 0o755, BOOTSTRAP.read_bytes()))
-    for path in sorted(p for p in DAEMONS.iterdir() if p.is_file()):
-        files.append(("daemons/" + path.name, 0o644, path.read_bytes()))
+    files.append(("xpc/launchd.plist", 0o644, modified))
 
     body = b""
     for name, mode, data in files:
@@ -189,7 +195,9 @@ def main() -> int:
         "trace_cdhash": trace_cdhash,
         "observer_cdhash": observer_cdhash,
         "bootstrap_cdhash": bootstrap_cdhash,
-        "springboard_plist_sha256_source": springboard_source.name,
+        "launchd_cache_sha256_source": hashlib.sha256(original).hexdigest(),
+        "launchd_cache_sha256_modified": hashlib.sha256(modified).hexdigest(),
+        "springboard_job_before_program_arguments": before["ProgramArguments"],
         "springboard_environment": {
             "DYLD_INSERT_LIBRARIES": environment["DYLD_INSERT_LIBRARIES"],
             "DYLD_FORCE_FLAT_NAMESPACE": environment["DYLD_FORCE_FLAT_NAMESPACE"],
