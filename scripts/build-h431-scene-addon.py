@@ -13,6 +13,7 @@ once after the owner addon becomes visible.
 import json
 import plistlib
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -79,6 +80,8 @@ def main() -> int:
     if output.exists():
         raise SystemExit("Refuse to overwrite " + str(output))
 
+    if OUT.exists():
+        shutil.rmtree(OUT)
     OUT.mkdir(parents=True, exist_ok=True)
     BUNDLE.mkdir(parents=True, exist_ok=True)
     DAEMONS.mkdir(parents=True, exist_ok=True)
