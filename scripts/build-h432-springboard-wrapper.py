@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Build H431's SpringBoard scene observer addon.
+"""Build H432's SpringBoard launch-wrapper addon.
 
 Usage:
-  build-h431-scene-addon.py SPRINGBOARD.plist OUTPUT
+  build-h432-springboard-wrapper.py SPRINGBOARD.plist OUTPUT
 
-The build preserves the original SpringBoard launchd job and adds only the
-observer injection environment. It also stages a one-shot bootstrap under two
-non-essential launchd aliases so the already-running SpringBoard is restarted
-once after the owner addon becomes visible.
+The build preserves the original SpringBoard launchd job metadata, installs the
+wrapper as its ProgramArguments, and keeps the observer environment as defense
+in depth. The wrapper logs before exec, sets the same environment in its own
+process and then execs the original SpringBoard binary.
 """
 
 import json
@@ -22,7 +22,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "build/h431-scene-observer"
+OUT = ROOT / "build/h432-springboard-wrapper"
 BUNDLE = OUT / "A540Trace.bundle"
 OBSERVER = OUT / "SpringBoardSceneObserver.dylib"
 BOOTSTRAP = OUT / "scenebootstrap"
@@ -57,19 +57,6 @@ def compact_signed_bundle(path: Path, identifier: str,
     if not match:
         raise SystemExit("No CDHash in codesign output for " + str(path))
     return match.group(1)
-
-
-def launch_job(program: str, label: str, keep_alive: bool = False) -> dict:
-    return {
-        "Label": label,
-        "ProgramArguments": [program],
-        "RunAtLoad": True,
-        "KeepAlive": keep_alive,
-        "ThrottleInterval": 5,
-        "UserName": "root",
-        "StandardOutPath": "/dev/null",
-        "StandardErrorPath": "/dev/null",
-    }
 
 
 def main() -> int:
@@ -141,11 +128,15 @@ def main() -> int:
         "com.apple.private.security.no-container": True,
     }))
     bootstrap_cdhash = compact_signed_bundle(
-        BOOTSTRAP, "org.blu-sharky.H431SceneBootstrap", entitlements
+        BOOTSTRAP, "org.blu-sharky.H432SpringBoardWrapper", entitlements
     )
 
     original = springboard_source.read_bytes()
     job = plistlib.loads(original)
+    job["ProgramArguments"] = [
+        "/private/var/ngpu/bin/scenebootstrap",
+        "--launch-springboard",
+    ]
     environment = dict(job.get("EnvironmentVariables", {}))
     environment["DYLD_INSERT_LIBRARIES"] = (
         "/private/var/ngpu/lib/SpringBoardSceneObserver.dylib"
@@ -157,14 +148,6 @@ def main() -> int:
         plistlib.dumps(job, fmt=plist_format, sort_keys=False)
     )
 
-    bootstrap_path = "/private/var/ngpu/bin/scenebootstrap"
-    for name, label in (
-        ("com.unixnu.scenebootstrap.plist", "com.unixnu.scenebootstrap"),
-        ("com.apple.bluetoothd.plist", "com.apple.bluetoothd"),
-    ):
-        (DAEMONS / name).write_bytes(
-            plistlib.dumps(launch_job(bootstrap_path, label), fmt=plistlib.FMT_XML)
-        )
     (DAEMONS / "org.blu-sharky.adrenoprobed.plist").write_bytes(
         plistlib.dumps({
             "Label": "org.blu-sharky.adrenoprobed",
@@ -179,7 +162,7 @@ def main() -> int:
         mode = 0o755 if path.name == "A540Trace" else 0o644
         files.append(("addons/A540Trace.bundle/" + path.relative_to(BUNDLE).as_posix(),
                       mode, path.read_bytes()))
-    files.append(("addons/A540Trace.scene-observer", 0o644, b"H431\n"))
+    files.append(("addons/A540Trace.scene-observer", 0o644, b"H432\n"))
     files.append(("lib/SpringBoardSceneObserver.dylib", 0o755, OBSERVER.read_bytes()))
     files.append(("bin/scenebootstrap", 0o755, BOOTSTRAP.read_bytes()))
     for path in sorted(p for p in DAEMONS.iterdir() if p.is_file()):
@@ -211,6 +194,7 @@ def main() -> int:
             "DYLD_INSERT_LIBRARIES": environment["DYLD_INSERT_LIBRARIES"],
             "DYLD_FORCE_FLAT_NAMESPACE": environment["DYLD_FORCE_FLAT_NAMESPACE"],
         },
+        "springboard_program_arguments": job["ProgramArguments"],
         "files": [name for name, _, _ in files],
     }
     (OUT / "trust.json").write_text(json.dumps(report, indent=2) + "\n")
