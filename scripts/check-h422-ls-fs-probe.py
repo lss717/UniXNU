@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = ROOT / "drivers/NativeUfsProbe/NativeUfsProbe.cpp"
 H422_PATCH = next((ROOT / "patches/xnu").glob("*-h422-ls-fs-probe.patch"))
+H421_PATCH = next((ROOT / "patches/xnu").glob("*-h421-ls-gate.patch"))
 H421_CHECKER = ROOT / "scripts/check-h421-launchservices-gate.py"
 DISPLAY_CHECKER = ROOT / "scripts/check-display-first-frame-probe.py"
 
@@ -22,6 +23,8 @@ def main():
     driver = DRIVER.read_text(encoding="utf-8")
     patch = H422_PATCH.read_text(encoding="utf-8")
 
+    require(H422_PATCH.name > H421_PATCH.name,
+            "H422 patch must sort after H421 in the apply series")
     require('#define H103_BUILD "H422"' in driver,
             "H422 kernel build tag missing")
 
@@ -74,7 +77,7 @@ def main():
         "native_lsd_fs_end(enum native_lsd_fs_op op, uint32_t slot_index",
         begin_start,
     )
-    gate_start = patch.index("native_lsd_gate(uint32_t sample)\n+{", end_start)
+    gate_start = patch.index("native_lsd_gate(uint32_t sample)", end_start)
     begin_body = patch[begin_start:end_start]
     end_body = patch[end_start:gate_start]
     gate_body = patch[gate_start:]
