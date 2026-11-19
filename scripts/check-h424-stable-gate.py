@@ -65,11 +65,11 @@ def main():
 
     for marker in (
         "report_signal_image(const char *tag",
-        "dladdr((const void *)(uintptr_t) pc, &info)",
-        "dli_fname",
-        "dli_fbase",
+        "_dyld_image_count()",
+        "_dyld_get_image_header(index)",
+        "_dyld_get_image_vmaddr_slide(index)",
+        "LC_SEGMENT_64",
         "slide=0x%llx base=0x%llx off=0x%llx",
-        "symbol=%s symoff=0x%llx",
         "report_signal_image(\"pc\", pc);",
         "report_signal_image(\"lr\", lr);",
         "report_signal_image(tag, ret);",
