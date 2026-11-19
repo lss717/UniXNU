@@ -26,7 +26,9 @@ def main():
     h420_patch = H420_PATCH.read_text(encoding="utf-8")
     patch = H421_PATCH.read_text(encoding="utf-8")
 
-    require('#define H103_BUILD "H421"' in driver, "H421 kernel build tag missing")
+    require('#define H103_BUILD "H421"' in driver or
+            '#define H103_BUILD "H422"' in driver,
+            "H421-or-later kernel build tag missing")
     require("NATIVE_DISPLAY_GATE:" in driver, "display gate missing")
     require("event->event_time = mach_absolute_time();" in h420_patch,
             "H420 BKS timestamp repair missing")

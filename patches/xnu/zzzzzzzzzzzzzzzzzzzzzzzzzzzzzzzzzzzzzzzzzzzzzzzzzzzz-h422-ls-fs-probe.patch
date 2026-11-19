@@ -1,0 +1,365 @@
+diff --git a/bsd/sys/vnode_internal.h b/bsd/sys/vnode_internal.h
+index e9aedab..da0743d 100644
+--- a/bsd/sys/vnode_internal.h
++++ b/bsd/sys/vnode_internal.h
+@@ -516,6 +516,17 @@ int     vn_mkdir(vnode_t dvp, vnode_t *vpp, struct nameidata *ndp, struct vnode_
+ int     vn_rmdir(vnode_t dvp, vnode_t *vpp, struct nameidata *ndp, struct vnode_attr *vap, vfs_context_t ctx);
+ 
+ int     vn_getxattr(vnode_t, const char *, uio_t, size_t *, int, vfs_context_t);
++enum native_lsd_fs_op {
++	NATIVE_LSD_FS_OPEN = 1,
++	NATIVE_LSD_FS_READ,
++	NATIVE_LSD_FS_WRITE,
++	NATIVE_LSD_FS_FSYNC,
++	NATIVE_LSD_FS_GETXATTR,
++	NATIVE_LSD_FS_OP_COUNT
++};
++uint64_t native_lsd_fs_begin(enum native_lsd_fs_op, vnode_t, const char *,
++    const char *, int64_t, uint64_t, uint32_t *);
++void native_lsd_fs_end(enum native_lsd_fs_op, uint32_t, uint64_t, int, uint64_t);
+ int     vn_setxattr(vnode_t, const char *, uio_t, int, vfs_context_t);
+ int     vn_removexattr(vnode_t, const char *, int, vfs_context_t);
+ int     vn_listxattr(vnode_t, uio_t, size_t *, int, vfs_context_t);
+diff --git a/bsd/vfs/vfs_syscalls.c b/bsd/vfs/vfs_syscalls.c
+index 8ae0141..23bbdc2 100644
+--- a/bsd/vfs/vfs_syscalls.c
++++ b/bsd/vfs/vfs_syscalls.c
+@@ -8477,6 +8477,8 @@ fsync_common(proc_t p, struct fsync_args *uap, int flags)
+ 	struct fileproc *fp;
+ 	vfs_context_t ctx = vfs_context_current();
+ 	int error;
++	uint64_t native_lsd_start = 0;
++	uint32_t native_lsd_slot = UINT32_MAX;
+ 
+ 	AUDIT_ARG(fd, uap->fd);
+ 
+@@ -8490,7 +8492,11 @@ fsync_common(proc_t p, struct fsync_args *uap, int flags)
+ 
+ 	AUDIT_ARG(vnpath, vp, ARG_VNODE1);
+ 
++	native_lsd_start = native_lsd_fs_begin(NATIVE_LSD_FS_FSYNC, vp, NULL,
++	    NULL, 0, 0, &native_lsd_slot);
+ 	error = VNOP_FSYNC(vp, flags, ctx);
++	native_lsd_fs_end(NATIVE_LSD_FS_FSYNC, native_lsd_slot,
++	    native_lsd_start, error, 0);
+ 
+ #if NAMEDRSRCFORK
+ 	/* Sync resource fork shadow file if necessary. */
+diff --git a/bsd/vfs/vfs_vnops.c b/bsd/vfs/vfs_vnops.c
+index 9ef19b8..aab4717 100644
+--- a/bsd/vfs/vfs_vnops.c
++++ b/bsd/vfs/vfs_vnops.c
+@@ -79,6 +79,177 @@
+ #include <sys/kernel.h>
+ #include <sys/file_internal.h>
+ #include <mach/mach_time.h>
++#include <sys/proc_internal.h>
++#include <sys/vnode_internal.h>
++#include <kern/thread.h>
++
++#define NATIVE_LSD_TRACK_SLOTS 8
++#define NATIVE_LSD_PATH_MAX 160
++#define NATIVE_LSD_ATTR_MAX 64
++
++struct native_lsd_track_slot {
++	uint32_t active;
++	enum native_lsd_fs_op op;
++	uint64_t tid;
++	uint64_t vnode;
++	int64_t offset;
++	uint64_t requested;
++	uint64_t residual;
++	uint64_t start_abs;
++	uint64_t duration_ns;
++	int32_t result;
++	char path[NATIVE_LSD_PATH_MAX];
++	char name[NATIVE_LSD_ATTR_MAX];
++};
++
++static struct native_lsd_track_slot gNativeLsdSlots[NATIVE_LSD_TRACK_SLOTS];
++static uint32_t gNativeLsdNextSlot;
++static uint64_t gNativeLsdActive;
++static uint64_t gNativeLsdTotals[NATIVE_LSD_FS_OP_COUNT];
++static uint64_t gNativeLsdErrors;
++static uint64_t gNativeLsdSlow50;
++static uint64_t gNativeLsdSlow500;
++static uint64_t gNativeLsdSlow5000;
++static uint64_t gNativeLsdMaxNs;
++
++void native_lsd_gate(uint32_t sample);
++
++static boolean_t
++native_lsd_current_process(void)
++{
++	proc_t p = current_proc();
++
++	return p != PROC_NULL && strncmp(p->p_comm, "lsd", MAXCOMLEN) == 0;
++}
++
++static void
++native_lsd_account(enum native_lsd_fs_op op, uint64_t ns, int error)
++{
++	uint64_t max_ns;
++
++	__atomic_add_fetch(&gNativeLsdTotals[op], 1, __ATOMIC_RELAXED);
++	if (error != 0) {
++		__atomic_add_fetch(&gNativeLsdErrors, 1, __ATOMIC_RELAXED);
++	}
++	if (ns >= 50000000ULL) {
++		__atomic_add_fetch(&gNativeLsdSlow50, 1, __ATOMIC_RELAXED);
++	}
++	if (ns >= 500000000ULL) {
++		__atomic_add_fetch(&gNativeLsdSlow500, 1, __ATOMIC_RELAXED);
++	}
++	if (ns >= 5000000000ULL) {
++		__atomic_add_fetch(&gNativeLsdSlow5000, 1, __ATOMIC_RELAXED);
++	}
++	max_ns = __atomic_load_n(&gNativeLsdMaxNs, __ATOMIC_RELAXED);
++	while (ns > max_ns &&
++	    !__atomic_compare_exchange_n(&gNativeLsdMaxNs, &max_ns, ns, 0,
++	    __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
++	}
++}
++
++uint64_t
++native_lsd_fs_begin(enum native_lsd_fs_op op, vnode_t vp, const char *path,
++    const char *name, int64_t offset, uint64_t requested, uint32_t *slot_index)
++{
++	struct native_lsd_track_slot *slot;
++	uint64_t start;
++
++	if (slot_index != NULL) {
++		*slot_index = UINT32_MAX;
++	}
++	if (!native_lsd_current_process() || op < NATIVE_LSD_FS_OPEN ||
++	    op >= NATIVE_LSD_FS_OP_COUNT) {
++		return 0;
++	}
++	*slot_index = __atomic_add_fetch(&gNativeLsdNextSlot, 1,
++	    __ATOMIC_RELAXED) & (NATIVE_LSD_TRACK_SLOTS - 1);
++	slot = &gNativeLsdSlots[*slot_index];
++	__atomic_store_n(&slot->active, 0, __ATOMIC_RELEASE);
++	slot->op = op;
++	slot->tid = thread_tid(current_thread());
++	slot->vnode = (uint64_t)(uintptr_t)vp;
++	slot->offset = offset;
++	slot->requested = requested;
++	slot->residual = 0;
++	slot->duration_ns = 0;
++	slot->result = 0;
++	if (path != NULL) {
++		strlcpy(slot->path, path, sizeof slot->path);
++	} else {
++		slot->path[0] = '\0';
++	}
++	if (name != NULL) {
++		strlcpy(slot->name, name, sizeof slot->name);
++	} else {
++		slot->name[0] = '\0';
++	}
++	start = mach_absolute_time();
++	slot->start_abs = start;
++	__atomic_store_n(&slot->active, 1, __ATOMIC_RELEASE);
++	__atomic_add_fetch(&gNativeLsdActive, 1, __ATOMIC_RELAXED);
++	return start;
++}
++
++void
++native_lsd_fs_end(enum native_lsd_fs_op op, uint32_t slot_index, uint64_t start,
++    int error, uint64_t residual)
++{
++	struct native_lsd_track_slot *slot;
++	uint64_t ns = 0;
++
++	if (start == 0) {
++		return;
++	}
++	absolutetime_to_nanoseconds(mach_absolute_time() - start, &ns);
++	native_lsd_account(op, ns, error);
++	if (slot_index < NATIVE_LSD_TRACK_SLOTS) {
++		slot = &gNativeLsdSlots[slot_index];
++		if (__atomic_load_n(&slot->start_abs, __ATOMIC_RELAXED) == start) {
++			slot->duration_ns = ns;
++			slot->result = error;
++			slot->residual = residual;
++			__atomic_store_n(&slot->active, 0, __ATOMIC_RELEASE);
++		}
++	}
++	__atomic_sub_fetch(&gNativeLsdActive, 1, __ATOMIC_RELAXED);
++}
++
++void
++native_lsd_gate(uint32_t sample)
++{
++	printf("NATIVE_LS_GATE: sample=%u opens=%llu reads=%llu writes=%llu "
++	    "fsyncs=%llu xattrs=%llu active=%llu slow50=%llu slow500=%llu "
++	    "slow5000=%llu max_ms=%llu errors=%llu\n",
++	    sample,
++	    __atomic_load_n(&gNativeLsdTotals[NATIVE_LSD_FS_OPEN], __ATOMIC_RELAXED),
++	    __atomic_load_n(&gNativeLsdTotals[NATIVE_LSD_FS_READ], __ATOMIC_RELAXED),
++	    __atomic_load_n(&gNativeLsdTotals[NATIVE_LSD_FS_WRITE], __ATOMIC_RELAXED),
++	    __atomic_load_n(&gNativeLsdTotals[NATIVE_LSD_FS_FSYNC], __ATOMIC_RELAXED),
++	    __atomic_load_n(&gNativeLsdTotals[NATIVE_LSD_FS_GETXATTR], __ATOMIC_RELAXED),
++	    __atomic_load_n(&gNativeLsdActive, __ATOMIC_RELAXED),
++	    __atomic_load_n(&gNativeLsdSlow50, __ATOMIC_RELAXED),
++	    __atomic_load_n(&gNativeLsdSlow500, __ATOMIC_RELAXED),
++	    __atomic_load_n(&gNativeLsdSlow5000, __ATOMIC_RELAXED),
++	    __atomic_load_n(&gNativeLsdMaxNs, __ATOMIC_RELAXED) / 1000000ULL,
++	    __atomic_load_n(&gNativeLsdErrors, __ATOMIC_RELAXED));
++	for (uint32_t i = 0; i < NATIVE_LSD_TRACK_SLOTS; i++) {
++		struct native_lsd_track_slot *slot = &gNativeLsdSlots[i];
++		uint32_t active = __atomic_load_n(&slot->active, __ATOMIC_ACQUIRE);
++		uint64_t ns = slot->duration_ns;
++		if (active && slot->start_abs != 0) {
++			absolutetime_to_nanoseconds(mach_absolute_time() -
++			    slot->start_abs, &ns);
++		}
++		if (slot->op != 0) {
++			printf("NATIVE_LS_GATE_SLOT: sample=%u slot=%u op=%u tid=%llu "
++			    "vnode=0x%llx active=%u offset=%lld requested=%llu "
++			    "residual=%llu ms=%llu result=%d name=%s path=%s\n",
++			    sample, i, slot->op, slot->tid, slot->vnode, active,
++			    (long long)slot->offset, slot->requested, slot->residual,
++			    ns / 1000000ULL, slot->result, slot->name, slot->path);
++		}
++	}
++}
+ #include <sys/stat.h>
+ #include <sys/proc_internal.h>
+ #include <sys/kauth.h>
+@@ -191,15 +362,16 @@ vn_open_modflags(struct nameidata *ndp, int *fmodep, int cmode)
+ 	boolean_t native_lsd = current_proc() != PROC_NULL &&
+ 	    strncmp(current_proc()->p_comm, "lsd", MAXCOMLEN) == 0;
+ 	uint64_t native_lsd_start = 0;
+-	char native_lsd_path[160];
++	char native_lsd_path[NATIVE_LSD_PATH_MAX] = "";
++	uint32_t native_lsd_slot_index = UINT32_MAX;
+ 	if (native_lsd) {
+ 		size_t native_lsd_len = 0;
+-		native_lsd_start = mach_absolute_time();
+-		native_lsd_path[0] = '\0';
+ 		if (copyinstr(ndp->ni_dirp, native_lsd_path,
+ 		    sizeof native_lsd_path, &native_lsd_len) != 0) {
+ 			strlcpy(native_lsd_path, "<copy-failed>", sizeof native_lsd_path);
+ 		}
++		native_lsd_start = native_lsd_fs_begin(NATIVE_LSD_FS_OPEN, NULLVP,
++		    native_lsd_path, NULL, 0, 0, &native_lsd_slot_index);
+ 	}
+ 	int error;
+ 	struct vnode_attr *vap;
+@@ -214,25 +386,8 @@ vn_open_modflags(struct nameidata *ndp, int *fmodep, int cmode)
+ 	kfree_type(struct vnode_attr, vap);
+ 
+ 	if (native_lsd) {
+-		static uint32_t native_lsd_opens;
+-		static uint32_t native_lsd_slow;
+-		static uint32_t native_lsd_rows;
+-		static uint64_t native_lsd_max_ns;
+-		uint64_t native_lsd_ns = 0;
+-		uint32_t native_lsd_n = __atomic_add_fetch(&native_lsd_opens, 1, __ATOMIC_RELAXED);
+-		absolutetime_to_nanoseconds(mach_absolute_time() - native_lsd_start, &native_lsd_ns);
+-		if (native_lsd_ns > __atomic_load_n(&native_lsd_max_ns, __ATOMIC_RELAXED)) {
+-			__atomic_store_n(&native_lsd_max_ns, native_lsd_ns, __ATOMIC_RELAXED);
+-		}
+-		if (native_lsd_ns >= 50000000ULL) {
+-			uint32_t slow = __atomic_add_fetch(&native_lsd_slow, 1, __ATOMIC_RELAXED);
+-			uint32_t row = __atomic_add_fetch(&native_lsd_rows, 1, __ATOMIC_RELAXED);
+-			if (row <= 96) printf("NATIVE_LSD_OPEN: n=%u slow=%u ms=%llu err=%d path=%s\n",
+-			    native_lsd_n, slow, native_lsd_ns / 1000000ULL, error, native_lsd_path);
+-		}
+-		if ((native_lsd_n & 255) == 0) printf("NATIVE_LSD_OPEN_STAT: n=%u slow=%u max_ms=%llu\n",
+-		    native_lsd_n, __atomic_load_n(&native_lsd_slow, __ATOMIC_RELAXED),
+-		    __atomic_load_n(&native_lsd_max_ns, __ATOMIC_RELAXED) / 1000000ULL);
++		native_lsd_fs_end(NATIVE_LSD_FS_OPEN, native_lsd_slot_index,
++		    native_lsd_start, error, 0);
+ 	}
+ 	return error;
+ }
+@@ -1117,6 +1272,8 @@ vn_read_common(vnode_t vp, struct uio *uio, int fflag, vfs_context_t ctx)
+ 	user_ssize_t  read_len;
+ 	user_ssize_t  adjusted_read_len;
+ 	user_ssize_t  clippedsize;
++	uint64_t native_lsd_start = 0;
++	uint32_t native_lsd_slot = UINT32_MAX;
+ 
+ 	/* Caller has already validated read_len. */
+ 	read_len = uio_resid(uio);
+@@ -1186,6 +1343,9 @@ vn_read_common(vnode_t vp, struct uio *uio, int fflag, vfs_context_t ctx)
+ 		clippedsize = read_len - adjusted_read_len;
+ 	}
+ 
++	native_lsd_start = native_lsd_fs_begin(NATIVE_LSD_FS_READ, vp, NULL,
++	    NULL, read_offset, read_len, &native_lsd_slot);
++
+ 	if (vnode_isswap(vp) && !(IO_SKIP_ENCRYPTION & ioflag)) {
+ 		/* special case for swap files */
+ 		error = vn_read_swapfile(vp, uio);
+@@ -1197,6 +1357,8 @@ vn_read_common(vnode_t vp, struct uio *uio, int fflag, vfs_context_t ctx)
+ 		uio_setresid(uio, (uio_resid(uio) + clippedsize));
+ 	}
+ 
++	native_lsd_fs_end(NATIVE_LSD_FS_READ, native_lsd_slot, native_lsd_start,
++	    error, uio_resid(uio));
+ error_out:
+ 	return error;
+ }
+@@ -1271,6 +1433,8 @@ vn_write(struct fileproc *fp, struct uio *uio, int flags, vfs_context_t ctx)
+ 	bool offset_locked;
+ 	proc_t p = vfs_context_proc(ctx);
+ 	rlim_t rlim_cur_fsize = p ? proc_limitgetcur(p, RLIMIT_FSIZE) : 0;
++	uint64_t native_lsd_start = 0;
++	uint32_t native_lsd_slot = UINT32_MAX;
+ 
+ 	write_len = uio_resid(uio);
+ 	if (write_len < 0 || write_len > INT_MAX) {
+@@ -1436,6 +1600,8 @@ vn_write(struct fileproc *fp, struct uio *uio, int flags, vfs_context_t ctx)
+ 		clippedsize = write_len - adjusted_write_len;
+ 	}
+ 
++	native_lsd_start = native_lsd_fs_begin(NATIVE_LSD_FS_WRITE, vp, NULL,
++	    NULL, write_offset, write_len, &native_lsd_slot);
+ 	error = VNOP_WRITE(vp, uio, ioflag, ctx);
+ 
+ 	/*
+@@ -1448,6 +1614,9 @@ vn_write(struct fileproc *fp, struct uio *uio, int flags, vfs_context_t ctx)
+ 		uio_setresid(uio, (uio_resid(uio) + clippedsize));
+ 	}
+ 
++	native_lsd_fs_end(NATIVE_LSD_FS_WRITE, native_lsd_slot, native_lsd_start,
++	    error, uio_resid(uio));
++
+ 	if ((flags & FOF_OFFSET) == 0) {
+ 		if (ioflag & IO_APPEND) {
+ 			fp->fp_glob->fg_offset = uio_offset(uio);
+diff --git a/bsd/vfs/vfs_xattr.c b/bsd/vfs/vfs_xattr.c
+index 7264301..f7dbaaf 100644
+--- a/bsd/vfs/vfs_xattr.c
++++ b/bsd/vfs/vfs_xattr.c
+@@ -118,6 +118,8 @@ vn_getxattr(vnode_t vp, const char *name, uio_t uio, size_t *size,
+     int options, vfs_context_t context)
+ {
+ 	int error;
++	uint64_t native_lsd_start = 0;
++	uint32_t native_lsd_slot = UINT32_MAX;
+ 
+ 	if (!XATTR_VNODE_SUPPORTED(vp)) {
+ 		return EPERM;
+@@ -156,6 +158,9 @@ vn_getxattr(vnode_t vp, const char *name, uio_t uio, size_t *size,
+ 		goto out;
+ 	}
+ 
++	native_lsd_start = native_lsd_fs_begin(NATIVE_LSD_FS_GETXATTR, vp, NULL,
++	    name, uio != NULL ? uio_offset(uio) : 0,
++	    uio != NULL ? uio_resid(uio) : 0, &native_lsd_slot);
+ 	error = VNOP_GETXATTR(vp, name, uio, size, options, context);
+ 	if (error == ENOTSUP && !(options & XATTR_NODEFAULT)) {
+ 		/*
+@@ -163,6 +168,8 @@ vn_getxattr(vnode_t vp, const char *name, uio_t uio, size_t *size,
+ 		 */
+ 		error = default_getxattr(vp, name, uio, size, options, context);
+ 	}
++	native_lsd_fs_end(NATIVE_LSD_FS_GETXATTR, native_lsd_slot,
++	    native_lsd_start, error, uio != NULL ? uio_resid(uio) : 0);
+ out:
+ 	return error;
+ }
