@@ -131,7 +131,7 @@ def main() -> int:
     subprocess.run(
         [*common, "-std=c++17", "-fobjc-arc",
          "-framework", "Foundation", "-framework", "IOKit",
-         str(ROOT / "drivers/NativeMetal/SceneBootstrap.cpp"),
+         str(ROOT / "drivers/NativeMetal/SceneBootstrap.mm"),
          "-o", str(BOOTSTRAP)],
         check=True,
     )
