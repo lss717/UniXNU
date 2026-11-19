@@ -16428,3 +16428,87 @@ UXC1 `424433` 一次发送并在 `786.010785 s` ACK；CDC 消失、Android
 详细事件链见
 `diagnostics/H431-springboard-scene-delivery-2026-11-19.md`，设备汇总见
 `diagnostics/H431-device-verification-20261119.json`。
+
+#### H432：launchd cache 绕过覆盖后的 SpringBoard job（2026-11-19）
+
+H432 只验证一个更窄的问题：launchd 是否消费 union overlay 中修改后的
+`com.apple.SpringBoard.plist`。候选把 SpringBoard `ProgramArguments` 指向 signed
+wrapper，wrapper 本应在 exec 前输出 `H432_SBWRAP`、设置 observer 环境并执行原
+SpringBoard；H431 的两个额外 launch alias 已删除。kernel、ADT、Data seed、
+995-byte bootargs 与显示路径不变。
+
+```text
+core/H432       f1de7b9a19b119c5c9737414e696f9773f34c3dc
+NativeMetal     22deaca80f72c074c2bb9d8b4044da8770cbb1d9
+kernel          c6de727f25604217d668793392aad279af284e34f9477b136294685a76cf585b
+payload         13f0547fefddbec6a1923f3cc7aa525b664c5441804e4d56ffe0d0868a7371ee
+boot            e41b77fda30a4cedc97620d8d32c78f61dda7963f27d56abab16bf75383d886f
+ADT             9e4b51b777cb653ebe9412b964849aa24730f1f8fe2a4217816f9d024f2de655
+owner trust     fd14ed73cd7ef8076ea42286de8d6803681e57f4faac10a141e1b2a5eff9c84b
+GPU addon       faed608474d04abe9582091810eca97ab2c745569e44d5161459889b9d88f8cb
+```
+
+静态 verifier 反向解析 boot/payload，确认相对 H430 只改变
+`kernel.macho.gpuaddon` 与 `kernel.macho.trustcache`；ADT identity、Data seed、
+UEFI、995-byte args、8 个 addon 文件和三个新 CDHash 均通过。构建按文档要求在
+`~/UniXNU` 使用 `/opt/local/bin/python3.12`、`/usr/bin/xcrun`、
+Xcode 26.3 build 17C529 和
+`PATH=/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin` 对应的固定主 PATH 完成。
+
+启动前再次只清零 `userdata_ios` 最后 32 MiB，回读全零 SHA-256 为
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。本机
+serial `16149951` 只执行一次 `fastboot boot`，返回 `Sending OKAY`、
+`Booting OKAY`。持久 ring boot id 为 `5127883077` (`0x131a54945`)，COM8 在
+helper 启动 288 秒后出现。480 秒窗口捕获 3,218 frames / 502,608 bytes，
+CRC、sequence、boot-switch 错误均为 0，uptime 为
+`279.237526-721.736308 s`。
+
+持久 ring 给出了决定性顺序：
+
+```text
+142.084173 s  NATIVE_EXEC launchd_cache_loader
+145.358106 s  NATIVE_EXEC SpringBoard
+              argv0=/System/Library/CoreServices/SpringBoard.app/SpringBoard
+```
+
+同时以下计数全部为零：
+
+```text
+scenebootstrap exec       0
+H432_SBWRAP               0
+H432_SBSCENE              0
+observer path open        0
+scene#                    0
+```
+
+即使已把 SpringBoard job 的 `ProgramArguments` 改成 wrapper，launchd 仍直接执行原
+SpringBoard。H431 的“单独 bootstrap alias 没运行”因此升级为更强结论：
+`launchd_cache_loader` 使用原始 cached job set，覆盖后的 LaunchDaemon plist 不参与
+本次选择。dyld/AMFI/observer 和 FBScene 本身都尚未得到测试。
+
+H432 plugin 在 `292.101037 s` 首次加载进 `mediaserverd`，之后又在
+`519.558828`、`571.724952 s` 两次重启。持久 ring 有 159 条
+`NATIVE_MTL`，多个 render encoder 都显示 `draws=0 dispatch=0`。live/latest
+窗口内 draw、dispatch、commit、present、nextDrawable、selector 4/5、validation、
+surface transfer 与 scanout frame 仍全为 0。display gate 共 6 次，最后
+`677.025744 s` 为：
+
+```text
+accel=5/0/839/0 dpy=3/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0
+```
+
+本 boot 观察到 44 次 UFS lock timeout、4 次 trap 和 3 次 `mediaserverd` SIGBUS
+退出（`478.986046`、`531.074230`、`596.193100 s`）。这些是后期混淆；launchd
+在 145 秒已直接绕过 wrapper。
+
+分类为 `launchd-cache-bypasses-overlaid-springboard-job-no-first-frame`。
+H433 应停止修改 LaunchDaemon plist，先定位 `launchd_cache_loader` 实际使用的 cache
+文件并做 read-only sentinel/open trace；若可安全覆盖，只替换 SpringBoard job 为同一
+signed wrapper并保留全部其他 job。必须依次取得 wrapper、observer load、scene
+sample 三个证据后，才可继续判断 drawable 和显示下游。
+
+UXC1 `424434` 一次发送并在 `764.251987 s` ACK；poll helper 在 Android
+`boot_completed=1` 后只发送一次 recovery reboot，确认 TWRP
+`3.4.0_9-10-mauronofrio`。没有 flash、erase、format、GPT 或额外分区写入。详见
+`diagnostics/H432-launchd-cache-2026-11-19.md` 和
+`diagnostics/H432-device-verification-20261119.json`。

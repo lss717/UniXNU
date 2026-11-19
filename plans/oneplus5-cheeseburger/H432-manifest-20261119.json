@@ -1,0 +1,97 @@
+{
+  "candidate": "H432",
+  "state": "device-tested-launchd-cache-bypasses-wrapper",
+  "classification": "launchd-cache-bypasses-overlaid-springboard-job-no-first-frame",
+  "purpose": "prove whether launchd consumes an overlaid SpringBoard ProgramArguments wrapper without changing the kernel, renderer, display or scanout behavior",
+  "source": {
+    "core_build_commit": "f1de7b9a19b119c5c9737414e696f9773f34c3dc",
+    "core_feature_branch": "h432-springboard-wrapper",
+    "kernel_commit": "06fef61",
+    "native_metal_commit": "22deaca80f72c074c2bb9d8b4044da8770cbb1d9",
+    "device_commit": "481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91",
+    "main_moved": false,
+    "h408_worktree_modified": false
+  },
+  "changes": {
+    "behavior_changes": [
+      "SpringBoard ProgramArguments now select a signed wrapper",
+      "wrapper sets the observer environment and execs the original binary"
+    ],
+    "removed_from_H431": [
+      "com.apple.bluetoothd launch alias",
+      "com.unixnu.scenebootstrap launch alias"
+    ],
+    "kernel": "byte-identical H424 kernel reused",
+    "payload": "H430 payload with only gpuaddon and trustcache replaced",
+    "display_iosurface_iomfb_scanout": "unchanged"
+  },
+  "artifacts": {
+    "kernel_sha256": "c6de727f25604217d668793392aad279af284e34f9477b136294685a76cf585b",
+    "payload_sha256": "13f0547fefddbec6a1923f3cc7aa525b664c5441804e4d56ffe0d0868a7371ee",
+    "boot_sha256": "e41b77fda30a4cedc97620d8d32c78f61dda7963f27d56abab16bf75383d886f",
+    "adt_sha256": "9e4b51b777cb653ebe9412b964849aa24730f1f8fe2a4217816f9d024f2de655",
+    "owner_trust_sha256": "fd14ed73cd7ef8076ea42286de8d6803681e57f4faac10a141e1b2a5eff9c84b",
+    "gpu_addon_sha256": "faed608474d04abe9582091810eca97ab2c745569e44d5161459889b9d88f8cb",
+    "plugin_sha256": "08e3eaf8245e338780a7508c5d44c85f1fabf1c748aab8f9f96f5b4b1acf742e",
+    "observer_sha256": "fca0ab0b15d429c56e6a884804b2519180fa20a00d5b9a049ce357789e887394",
+    "bootstrap_sha256": "b4e2d19804af85680f7e0318269db35415b1e268a4cdb22a61f71c63e5159a20",
+    "plugin_cdhash": "ea02be0999387484759230967630bddacb8a4d4c",
+    "observer_cdhash": "0203a9b59e6e8bc92e4db3e9c84327dde8cf5a60",
+    "bootstrap_cdhash": "dfc73d5af379519c81b5159eaa7145acaa66833b",
+    "data_seed_sha256": "fed3a0e6bb39974da339bf7f9155b282dfb0438c454c00f0df7a94b5995c03a4"
+  },
+  "static_preflight": {
+    "h432_wrapper_gate": "PASS",
+    "package_verification": "PASS",
+    "payload_delta": "only kernel.macho.gpuaddon and kernel.macho.trustcache",
+    "boot_args": "995 bytes; current with zap-base 1015; worst 1023/1024",
+    "device_tested": true
+  },
+  "device_result": {
+    "host": "local",
+    "serial": "16149951",
+    "persistent_ring_boot_id": 5127883077,
+    "plugin_marker": "H432",
+    "frames": 3218,
+    "payload_bytes": 502608,
+    "crc_errors": 0,
+    "sequence_gaps": 0,
+    "boot_switches": 0,
+    "cdc_ready_seconds": 288,
+    "decoded_uptime_start_s": 279.237526,
+    "decoded_uptime_end_s": 721.736308,
+    "launchd_cache_loader_exec_s": 142.084173,
+    "springboard_exec_s": 145.358106,
+    "springboard_wrapper_exec_count": 0,
+    "scene_observer_load_count": 0,
+    "scene_samples": 0,
+    "draw_primitives": 0,
+    "dispatch_threads": 0,
+    "command_buffer_commits": 0,
+    "presents": 0,
+    "native_mobile_display_selectors_3_4_5": [
+      0,
+      0,
+      0
+    ],
+    "validation_count": 0,
+    "surface_transfer_count": 0,
+    "frame_count": 0,
+    "observed_ufs_lock_timeouts": 44,
+    "observed_native_traps": 4,
+    "kernel_panic": false,
+    "recovered_to_twrp": true,
+    "uxc1_request_id": 424434,
+    "uxc1_ack_s": 764.251987
+  },
+  "evidence": {
+    "device_verification": "plans/oneplus5-cheeseburger/diagnostics/H432-device-verification-20261119.json",
+    "diagnostic": "plans/oneplus5-cheeseburger/diagnostics/H432-launchd-cache-2026-11-19.md",
+    "live_log_sha256": "858f6852c7c9c85958c7c342eeb2a8d1594c09e81ec56d1b442eb9070c0bf0b4",
+    "frames_sha256": "5643e9291f7783398992fa17d2ffda09cf4fc1695dba114b9fe742b24257b402",
+    "ring_window_sha256": "a2993fc331e4dc59f827f55671230a32a4ec0ce9f5f7704fb1b0798a9c754488",
+    "persistent_log_sha256": "6ad324101b6aec378cb7e3e343bd03e6a0c421eb46cbb6aa0ffd1d269cd7b940",
+    "reboot_log_sha256": "0d9ab16116b5b3e9ea510f3c31a6e93fff7e901c328607de845ae5e399cc6fa5"
+  },
+  "next_action": "H433 must locate and overlay or instrument the actual launchd cached job set before launchd_cache_loader. Continue to avoid changes to NativeMobileDisplay, IOMFB, IOSurface and scanout until the observer is demonstrably running."
+}
