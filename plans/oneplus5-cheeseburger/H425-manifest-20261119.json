@@ -1,0 +1,73 @@
+{
+  "candidate": "H425",
+  "state": "device-captured-renderer-exception-no-first-frame",
+  "classification": "renderer-uncaught-terminate-attributed-no-first-frame",
+  "purpose": "fix renderer crash attribution without changing the H424 kernel, display path, filesystem probe, Data seed or bootargs",
+  "source": {
+    "core_build_commit": "992d64e",
+    "core_feature_branch": "h425-crash-attribution",
+    "kernel_commit": "06fef61",
+    "native_metal_commit": "5b4a397c85cc385f9329552bffa6933f01013d19",
+    "device_commit": "481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91",
+    "main_moved": false,
+    "h408_worktree_modified": false
+  },
+  "changes": {
+    "behavior_changes": [],
+    "plugin_build_marker": "H425",
+    "signal_attribution": "manual Darwin NativeDlInfo ABI plus dladdr",
+    "kernel": "byte-identical H424 kernel reused",
+    "payload": "H424 payload with only gpuaddon and trustcache replaced",
+    "display_iosurface_iomfb_scanout": "unchanged"
+  },
+  "artifacts": {
+    "source_kernel_sha256": "92d409bb50e4893421d1bce7c7b9d157dd58ce67ca849e2e9c4925cc083be88c",
+    "pmgr_sha256": "adc2cc41a5bb2b59d3e33e1a7cb0f9e1b6de68c7b4badb86b7b36d0127649cb8",
+    "kernel_sha256": "c6de727f25604217d668793392aad279af284e34f9477b136294685a76cf585b",
+    "payload_sha256": "3e8e18d1a1d33dd22ee7270a461131809dcfcb46be82cd39ffd6e13fcdf70d37",
+    "boot_sha256": "2323c5256a8a9f14a1d8da7583fb815be995753ecdd4fbaeb196ef5e866e98be",
+    "adt_sha256": "9e4b51b777cb653ebe9412b964849aa24730f1f8fe2a4217816f9d024f2de655",
+    "owner_trust_sha256": "4919a06fd98f9f4c9437d5da2b840206026faa92c79d0f8ed52c5ca1a6a9ba23",
+    "gpu_addon_sha256": "1eb5e7fe85cae52228a0a6a332e3d02b2118ac65d6d4a9688a4c19f9510eb7ad",
+    "plugin_sha256": "b424b4a2a92a4b21d5afdecb3a842de83dcb05b3ec85bd005bb2bfc4952f08b1",
+    "gpu_plugin_cdhash": "80de3be678dcf3c5ea440d78d9203baa3b882e8d",
+    "data_seed_sha256": "fed3a0e6bb39974da339bf7f9155b282dfb0438c454c00f0df7a94b5995c03a4"
+  },
+  "static_preflight": {
+    "h425_crash_attribution_gate": "PASS",
+    "h424_gate": "PASS",
+    "h423_gate": "PASS",
+    "package_verification": "PASS",
+    "boot_args": "995 bytes; worst 1023/1024",
+    "device_tested": true
+  },
+  "device_result": {
+    "host": "y9000x",
+    "serial": "16149951",
+    "runtime_boot_id": "2428d188",
+    "plugin_marker": "H425",
+    "frames": 13706,
+    "payload_bytes": 1871163,
+    "crc_errors": 0,
+    "sequence_gaps": 0,
+    "boot_switches": 0,
+    "renderer_terminations": 4,
+    "renderer_stack": "__pthread_kill -> pthread_kill -> abort -> libc++abi -> libobjc.A -> std::terminate",
+    "bks_reply_observed": false,
+    "display_gate": "accel=0/0/0/0 dpy=3/10/0/0/0 s345=0/0/0 val=0 xf=0 fr=0",
+    "last_accel_heartbeat": "6/0/608/0 at 718.580595 s",
+    "last_display": "3/18/0/1/0",
+    "ufs_ocs_timeouts": 0,
+    "kernel_panic": false,
+    "recovered_to_twrp": true,
+    "uxc1_request_id": 424426,
+    "uxc1_ack_captured": false
+  },
+  "evidence": {
+    "device_verification": "plans/oneplus5-cheeseburger/diagnostics/H425-device-verification-20261119.json",
+    "live_log_sha256": "30a7c6afae0ab8a4d5a6b6c37405ef4b1052a6f538f34ac7bf4b3a6a095930a4",
+    "live_frames_sha256": "83143136a2e6252a4028cf602e035b377dfadc9e63395263ab05132f42ebacca",
+    "reboot_state_sha256": "b0b43ca9b6ed2f105649f1b60404565fd91e6aec571bff856927751486b9e8e6"
+  },
+  "next_action": "H426 should capture the uncaught Objective-C/C++ exception reason and first throw site with a read-only exception handler and retain more frame-pointer entries; no display behavior change yet."
+}

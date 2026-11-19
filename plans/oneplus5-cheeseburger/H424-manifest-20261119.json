@@ -1,0 +1,69 @@
+{
+  "candidate": "H424",
+  "state": "device-captured-no-first-frame",
+  "classification": "stable-launchservices-gate-bks-closed-no-first-frame",
+  "purpose": "replace the racy H423 slot print with one stable completed first-32 snapshot, add dyld attribution for the repeated renderer abort, and re-evaluate BKS after it closes",
+  "source": {
+    "core_build_commit": "06fef61",
+    "core_feature_branch": "h424-device-gates",
+    "native_metal_commit": "641c03790cda196298ed8cb59c82b262c17edd4e",
+    "device_commit": "481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91",
+    "main_moved": false,
+    "h408_worktree_modified": false
+  },
+  "changes": {
+    "behavior_changes": [],
+    "ls_gate": "print once only after all first 32 slots have completed, with sequence continuity and stable=1",
+    "ls_gate_invocation": "any late process sampler, so a completed snapshot is not missed when lsd is no longer sampleable",
+    "renderer_probe": "print fault PC/LR/frame dyld ranges and slide",
+    "bootargs": "byte-for-byte H423 set"
+  },
+  "artifacts": {
+    "source_kernel_sha256": "92d409bb50e4893421d1bce7c7b9d157dd58ce67ca849e2e9c4925cc083be88c",
+    "pmgr_sha256": "adc2cc41a5bb2b59d3e33e1a7cb0f9e1b6de68c7b4badb86b7b36d0127649cb8",
+    "kernel_sha256": "c6de727f25604217d668793392aad279af284e34f9477b136294685a76cf585b",
+    "payload_sha256": "37904d03042d5a560943b43d2c4a29d4ad071d258f6fb2f7a34d1db32b52cede",
+    "boot_sha256": "fbd4952ab0a505f6cd08ed9aaeb82dbf2ff2417208d322e976c0ac9c9158c34c",
+    "adt_sha256": "9e4b51b777cb653ebe9412b964849aa24730f1f8fe2a4217816f9d024f2de655",
+    "owner_trust_sha256": "2f6884b6e91aea5c26a3fc5481f5b3619f8a7a3bc0b19525ef8c1ffebcfb75a9",
+    "gpu_addon_sha256": "92d1fcd5abd63cba1b6c959ee38d7ff47b0455a77ba935d3b3575f9cbc762a54",
+    "data_seed_sha256": "fed3a0e6bb39974da339bf7f9155b282dfb0438c454c00f0df7a94b5995c03a4"
+  },
+  "static_preflight": {
+    "h424_stable_gate": "PASS",
+    "h423_gate": "PASS",
+    "display_first_frame_gate": "PASS",
+    "package_verification": "PASS",
+    "boot_args": "995 bytes; worst 1023/1024",
+    "device_tested": true
+  },
+  "device_result": {
+    "host": "y9000x",
+    "serial": "16149951",
+    "runtime_boot_id": "69ccb748",
+    "frames": 8413,
+    "payload_bytes": 1310262,
+    "crc_errors": 0,
+    "sequence_gaps": 0,
+    "boot_switches": 0,
+    "ls_gate": "reads=27 xattrs=106 active=0 max_ms=103 errors=3 first_ops=133 stable=1; all seq 1-32 complete",
+    "bks_reply_uptime_s": 640.647751,
+    "post_reply_display_gates": "705.151566 and 768.070003 remained s345=0/0/0 val=0 xf=0 fr=0",
+    "mediaserverd_sigabrt_count": 4,
+    "first_ufs_ocs_timeout_s": 641.745810,
+    "ufs_ocs_timeouts": 18,
+    "natives_traps": 42,
+    "kernel_panic": false,
+    "recovered_to_twrp": true,
+    "uxc1_request_id": 424425,
+    "uxc1_ack_uptime_s": 1051.231860
+  },
+  "evidence": {
+    "device_verification": "plans/oneplus5-cheeseburger/diagnostics/H424-device-verification-20261119.json",
+    "live_log_sha256": "41e78243dc9eb6cd2778ed084e64ef0dacd4f290662f58096fda77fce42cd8d0",
+    "live_frames_sha256": "d05805537f5083904ff13a1373e047a0b984ee4e4f9eb73356ea8455ec84e8c9",
+    "reboot_log_sha256": "46596892208e3d2f0da87dad74b4dfb6904813486742e42f7112ae770c527ff5",
+    "recovery_state_sha256": "f8d032d4423a2d90569611bda8d2e5efc0b004a624fb5b6486d3883c3daae734"
+  },
+  "next_action": "Keep the stable XNU gate. H425 should fix renderer and lsd dyld attribution and bump the plugin's own build marker before any scene/display behavior change."
+}

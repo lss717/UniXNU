@@ -1,0 +1,142 @@
+{
+  "candidate": "H425",
+  "classification": "renderer-uncaught-terminate-attributed-no-first-frame",
+  "source": {
+    "core_commit": "992d64e",
+    "feature_branch": "h425-crash-attribution",
+    "kernel_commit": "06fef61",
+    "device_commit": "481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91",
+    "native_metal_commit": "5b4a397c85cc385f9329552bffa6933f01013d19",
+    "main_moved": false,
+    "h408_worktree_modified": false
+  },
+  "artifacts": {
+    "kernel_sha256": "c6de727f25604217d668793392aad279af284e34f9477b136294685a76cf585b",
+    "payload_sha256": "3e8e18d1a1d33dd22ee7270a461131809dcfcb46be82cd39ffd6e13fcdf70d37",
+    "boot_sha256": "2323c5256a8a9f14a1d8da7583fb815be995753ecdd4fbaeb196ef5e866e98be",
+    "adt_sha256": "9e4b51b777cb653ebe9412b964849aa24730f1f8fe2a4217816f9d024f2de655",
+    "owner_trust_sha256": "4919a06fd98f9f4c9437d5da2b840206026faa92c79d0f8ed52c5ca1a6a9ba23",
+    "gpu_addon_sha256": "1eb5e7fe85cae52228a0a6a332e3d02b2118ac65d6d4a9688a4c19f9510eb7ad",
+    "plugin_sha256": "b424b4a2a92a4b21d5afdecb3a842de83dcb05b3ec85bd005bb2bfc4952f08b1",
+    "gpu_plugin_cdhash": "80de3be678dcf3c5ea440d78d9203baa3b882e8d",
+    "data_seed_sha256": "fed3a0e6bb39974da339bf7f9155b282dfb0438c454c00f0df7a94b5995c03a4"
+  },
+  "evidence_sha256": {
+    "H425-fastboot-boot.txt": "f9a4e138339bb318b5bf61bc0eece3eb9461f50f448b03bf463e2f2351cbfffe",
+    "H425-y9000x-preflight.txt": "ec379ddee11d0057ca5ef0e3b9a85343f4ff3386dd8489c6671c9135b27804da",
+    "H425-device-state.txt": "201f6266acd054e5573508dceb78f8843859919a49026d7656eff561cdb00d7b",
+    "H425-live.log": "30a7c6afae0ab8a4d5a6b6c37405ef4b1052a6f538f34ac7bf4b3a6a095930a4",
+    "H425-live.frames.bin": "83143136a2e6252a4028cf602e035b377dfadc9e63395263ab05132f42ebacca",
+    "H425-live.capture.stdout.txt": "8dbbecc1dac7cc2f9fb435ca85bd58385a28538f664439ba04334b12c4106146",
+    "H425-live.capture.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "H425-reboot.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "H425-reboot.frames.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "H425-reboot.capture.stdout.txt": "eb5321f74489b1ef21c00051723322f9767a5edfad9ed26a52fb3d49535729f8",
+    "H425-reboot.capture.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "H425-reboot-recovery-state.txt": "b0b43ca9b6ed2f105649f1b60404565fd91e6aec571bff856927751486b9e8e6"
+  },
+  "device": {
+    "host": "y9000x",
+    "serial": "16149951",
+    "product_device": "cheeseburger",
+    "preflight_recovery": "3.4.0_9-10-mauronofrio",
+    "boot_method": "fastboot boot",
+    "fastboot_result": "Sending OKAY; Booting OKAY",
+    "runtime_boot_id": "2428d188",
+    "kernel_marker": "H424",
+    "plugin_marker": "H425",
+    "flash_erase_format_or_partition_write": false
+  },
+  "capture": {
+    "root": "main-route/display-first-frame/logs/H425/device/20261119-154036",
+    "cdc_port": "COM3",
+    "cdc_wait_seconds": 320,
+    "capture_seconds": 480,
+    "first_decoded_uptime_s": 274.641795,
+    "last_decoded_uptime_s": 754.575032,
+    "log_lines": 20012,
+    "frames": 13706,
+    "payload_bytes": 1871163,
+    "crc_errors": 0,
+    "sequence_gaps": 0,
+    "boot_switches": 0,
+    "last_sequence": 13705
+  },
+  "launchservices_gate": {
+    "gate_rows": 0,
+    "pending_rows": 0,
+    "slot_rows": 0,
+    "interpretation": "No completed 32-slot snapshot was emitted in this scheduling window. This boot neither confirms nor contradicts the H424 snapshot and must not be scored as a negative LaunchServices result."
+  },
+  "bks": {
+    "request_id": "0x5b9173",
+    "first_observed_uptime_s": 276.089281,
+    "request_events": ["S/Q from pid 26", "S/Q from pid 89"],
+    "responder": 0,
+    "response": 0,
+    "reply_observed": false
+  },
+  "display": {
+    "gate_count": 1,
+    "gate_uptime_s": 276.496628,
+    "gate": "accel=0/0/0/0 dpy=3/10/0/0/0 s345=0/0/0 val=0 xf=0 fr=0",
+    "last_accel_heartbeat_s": 718.580595,
+    "last_accel": "6/0/608/0",
+    "last_display": "3/18/0/1/0",
+    "selector_3_4_5": "0/0/0",
+    "validation_transfer_frames": "0/0/0",
+    "draw_primitives": 0,
+    "dispatches": 0,
+    "commits": 0,
+    "next_drawable": 0,
+    "present_surface": 0,
+    "iosurface_transfer": 0,
+    "scanout_frames": 0
+  },
+  "mediaserverd_terminate_chain": {
+    "count": 4,
+    "plugin_marker_seen": true,
+    "events": [
+      {"pid": 29, "fault_s": 301.107309, "exit_s": 303.069725, "corpse_allowed_index": 1},
+      {"pid": 100, "fault_s": 338.183022, "exit_s": 338.363709, "corpse_allowed_index": 2},
+      {"pid": 108, "fault_s": 454.439118, "exit_s": 454.603324, "corpse_allowed_index": 3},
+      {"pid": 130, "fault_s": 559.083337, "exit_s": 559.084337, "corpse_allowed_index": 4}
+    ],
+    "stack": [
+      {"frame": "pc", "image": "libsystem_kernel.dylib", "symbol": "__pthread_kill", "offset": "0x8"},
+      {"frame": "lr", "image": "libsystem_pthread.dylib", "symbol": "pthread_kill", "offset": "0xd0"},
+      {"frame": "ret0", "image": "libsystem_c.dylib", "symbol": "abort", "offset": "0x68"},
+      {"frame": "ret1", "image": "libc++abi.dylib", "symbol": "<redacted>", "image_offset": "0x13714"},
+      {"frame": "ret2", "image": "libc++abi.dylib", "symbol": "<redacted>", "image_offset": "0x4e34"},
+      {"frame": "ret3", "image": "libobjc.A.dylib", "symbol": "<redacted>", "image_offset": "0x288d8"},
+      {"frame": "ret4", "image": "libc++abi.dylib", "symbol": "<redacted>", "image_offset": "0x12be4"},
+      {"frame": "ret5", "image": "libc++abi.dylib", "symbol": "_ZSt9terminatev", "offset": "0x34"}
+    ],
+    "interpretation": "The corrected dladdr probe proves the repeated abort exits through pthread_kill/abort and libc++abi std::terminate. The presence of libobjc and libc++abi rethrow frames is consistent with an uncaught Objective-C/C++ exception during Metal/renderer initialization."
+  },
+  "faults": {
+    "ufs_ocs_timeouts": 0,
+    "ufs_retries": 0,
+    "ufs_recoveries": 0,
+    "natives_traps": 0,
+    "corpse_allowed": 4,
+    "kernel_panic": false
+  },
+  "recovery": {
+    "uxc1_request_id": 424426,
+    "uxc1_ack_captured": false,
+    "uxc1_sent_once": true,
+    "cdc_disappeared": true,
+    "android_boot_completed": true,
+    "adb_reboot_recovery_invocations": 1,
+    "final_serial": "16149951",
+    "final_product_device": "cheeseburger",
+    "final_twrp_version": "3.4.0_9-10-mauronofrio"
+  },
+  "conclusion": {
+    "primary_result": "The renderer abort is attributed to an uncaught exception termination path through libobjc/libc++abi/std::terminate.",
+    "recurrence": "The same termination stack recurs four times with no UFS OCS/recovery, so it is independent of the late UFS failure cascade.",
+    "bks_result": "BKS remained pending throughout this 480-second capture.",
+    "next_probe": "Capture the uncaught exception name/reason and the first non-libc frame by installing a read-only Objective-C uncaught exception handler and retaining more frame-pointer entries; also log the last successful Metal selector."
+  }
+}

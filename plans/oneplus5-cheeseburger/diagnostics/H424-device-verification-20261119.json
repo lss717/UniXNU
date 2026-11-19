@@ -1,0 +1,199 @@
+{
+  "candidate": "H424",
+  "classification": "stable-launchservices-gate-bks-closed-no-first-frame",
+  "source": {
+    "core_commit": "06fef61",
+    "feature_branch": "h424-device-gates",
+    "device_commit": "481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91",
+    "native_metal_commit": "641c03790cda196298ed8cb59c82b262c17edd4e",
+    "main_moved": false,
+    "h408_worktree_modified": false
+  },
+  "artifacts": {
+    "source_kernel_sha256": "92d409bb50e4893421d1bce7c7b9d157dd58ce67ca849e2e9c4925cc083be88c",
+    "pmgr_sha256": "adc2cc41a5bb2b59d3e33e1a7cb0f9e1b6de68c7b4badb86b7b36d0127649cb8",
+    "kernel_sha256": "c6de727f25604217d668793392aad279af284e34f9477b136294685a76cf585b",
+    "payload_sha256": "37904d03042d5a560943b43d2c4a29d4ad071d258f6fb2f7a34d1db32b52cede",
+    "boot_sha256": "fbd4952ab0a505f6cd08ed9aaeb82dbf2ff2417208d322e976c0ac9c9158c34c",
+    "adt_sha256": "9e4b51b777cb653ebe9412b964849aa24730f1f8fe2a4217816f9d024f2de655",
+    "owner_trust_sha256": "2f6884b6e91aea5c26a3fc5481f5b3619f8a7a3bc0b19525ef8c1ffebcfb75a9",
+    "gpu_addon_sha256": "92d1fcd5abd63cba1b6c959ee38d7ff47b0455a77ba935d3b3575f9cbc762a54",
+    "data_seed_sha256": "fed3a0e6bb39974da339bf7f9155b282dfb0438c454c00f0df7a94b5995c03a4"
+  },
+  "evidence_sha256": {
+    "H424-fastboot-boot.txt": "45d7ff8cbbb14652d9adc03f0994f7e80ac1b8f233ac09d8d609e3e73bbc2502",
+    "H424-y9000x-preflight.txt": "13fe955f2809638fe237737c3790e6411aa9909218b0790c7a4f46be4d02e7a4",
+    "H424-device-state.txt": "403e316de497f41066a63d1c1865d08a510b127ec78f82452e4b9e48c9b5144f",
+    "H424-live.log": "41e78243dc9eb6cd2778ed084e64ef0dacd4f290662f58096fda77fce42cd8d0",
+    "H424-live.frames.bin": "d05805537f5083904ff13a1373e047a0b984ee4e4f9eb73356ea8455ec84e8c9",
+    "H424-live.capture.stdout.txt": "9753ace33e4cb204a39184e91a299fbc1ae089b0916a04d11f8d8ee337b74bc8",
+    "H424-live.capture.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "H424-reboot.log": "46596892208e3d2f0da87dad74b4dfb6904813486742e42f7112ae770c527ff5",
+    "H424-reboot.frames.bin": "0dd7e2707c9ff576e2d7d68e225445917a7afec75318b1ab05b942f13128b466",
+    "H424-reboot.capture.stdout.txt": "ccd26336eaf39bd968df037718ad74a0106aa7c7a7ce727ab5f761b0108a89e4",
+    "H424-reboot.capture.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "H424-reboot-recovery-state.txt": "f8d032d4423a2d90569611bda8d2e5efc0b004a624fb5b6486d3883c3daae734"
+  },
+  "device": {
+    "host": "y9000x",
+    "serial": "16149951",
+    "product_device": "cheeseburger",
+    "preflight_recovery": "3.4.0_9-10-mauronofrio",
+    "boot_method": "fastboot boot",
+    "fastboot_boot_invocations": 1,
+    "runtime_boot_id": "69ccb748",
+    "fastboot_wrapper_note": "PowerShell treated fastboot progress on stderr as NativeCommandError and stopped retaining output after Sending OKAY; the target left fastboot, CDC enumerated, and runtime H424 boot=69ccb748 proves the boot action completed.",
+    "flash_erase_format_or_partition_write": false
+  },
+  "capture": {
+    "root": "main-route/display-first-frame/logs/H424/device/20261119-150158",
+    "cdc_port": "COM3",
+    "cdc_wait_seconds": 51,
+    "capture_seconds": 480,
+    "first_decoded_uptime_s": 336.525530,
+    "last_decoded_uptime_s": 816.533940,
+    "log_lines": 13785,
+    "frames": 8413,
+    "payload_bytes": 1310262,
+    "crc_errors": 0,
+    "sequence_gaps": 0,
+    "boot_switches": 0,
+    "last_sequence": 8412
+  },
+  "launchservices_stable_gate": {
+    "uptime_s": 369.067456,
+    "sample": 7020,
+    "opens": 0,
+    "reads": 27,
+    "writes": 0,
+    "fsyncs": 0,
+    "xattrs": 106,
+    "active": 0,
+    "slow50": 5,
+    "slow500": 0,
+    "slow5000": 0,
+    "max_ms": 103,
+    "errors": 3,
+    "next_ops": 133,
+    "stable": true,
+    "slot_rows": 32,
+    "sequence_complete": true,
+    "first_sequence": 1,
+    "last_sequence": 32,
+    "pending_record_emitted": false,
+    "operation_summary": [
+      "sequences 1-8: com.apple.system.Security size/value getxattr pairs",
+      "sequence 9: 512-byte read",
+      "sequences 10-14: decmpfs metadata and 806-byte read",
+      "sequence 15: 4096-byte read with residual 1080",
+      "sequence 16: 574-byte read",
+      "sequence 17: FinderInfo ENOATTR",
+      "sequences 18-21: decmpfs metadata plus two 160631-byte reads at 80 and 82 ms",
+      "sequences 22-26: another FinderInfo ENOATTR, decmpfs metadata and two 8192-byte reads",
+      "sequence 27: FinderInfo ENOATTR",
+      "sequences 28-32: decmpfs metadata and final 1276-byte read"
+    ]
+  },
+  "lsd_lifecycle": {
+    "sample_uptime_s": 398.418410,
+    "pid": 92,
+    "threads": 1,
+    "tid": 547,
+    "pc": "0x1d00a08e8",
+    "lr": "0x1e1f42580",
+    "state": "0x1",
+    "exit": {
+      "uptime_s": 675.869295,
+      "signal": 10,
+      "status": "0xa",
+      "context": "after the first UFS OCS timeout at 641.745810 s"
+    },
+    "interpretation": "lsd was alive when the stable filesystem snapshot completed and remained alive for more than 300 seconds afterward. Its later SIGBUS occurred after the UFS fault cascade began."
+  },
+  "bks": {
+    "request_id": "0x5b9173",
+    "first_observed_uptime_s": 350.405720,
+    "request_events": ["serial 85 S from pid 27", "serial 86 Q to launchd", "serial 91 S from pid 89", "serial 92 Q to launchd"],
+    "request_time_ns": [295450998333, 324978697395],
+    "reply_observed_uptime_s": 640.647751,
+    "responder_pid": 56,
+    "response_id": "0x5b91d7",
+    "reply_delivery": "S then D from pid 56 to SpringBoard pid 27 at time_ns 463247395625 and 463247399010",
+    "reply_latency_ticks_between_first_request_and_response_ns": 167796397292,
+    "post_reply_display_gates": [
+      {"uptime_s": 705.151566, "accel": "6/0/628/0", "display": "3/18/0/1/0", "s345": "0/0/0", "val_xf_fr": "0/0/0"},
+      {"uptime_s": 768.070003, "accel": "6/0/628/0", "display": "3/18/0/1/0", "s345": "0/0/0", "val_xf_fr": "0/0/0"}
+    ],
+    "interpretation": "BKS closed successfully in this boot, but the first frame still did not occur. The BKS wait explains the early gate but is not a sufficient root cause."
+  },
+  "display": {
+    "first_gate_uptime_s": 366.998304,
+    "first_gate": "accel=2/0/231/0 dpy=3/11/0/0/0 s345=0/0/0 val=0 xf=0 fr=0",
+    "last_gate_uptime_s": 768.070003,
+    "last_gate": "accel=6/0/628/0 dpy=3/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0",
+    "draw_primitives": 0,
+    "dispatches": 0,
+    "commits": 0,
+    "next_drawable": 0,
+    "present_surface": 0,
+    "iomfb_selector_4": 0,
+    "iomfb_selector_5": 0,
+    "iosurface_transfer": 0,
+    "scanout_frames": 0
+  },
+  "mediaserverd_aborts": {
+    "count": 4,
+    "same_fault_pc": "0x1d00aaf74",
+    "same_lr": "0x1e1f44fa4",
+    "dyld_slide": "0x4920000",
+    "unslid_fault_pc": "0x1cbb8af74",
+    "signal": 6,
+    "events": [
+      {"pid": 29, "fault_s": 354.676274, "exit_s": 354.677073, "corpse_allowed_index": 1},
+      {"pid": 99, "fault_s": 380.542856, "exit_s": 380.756365, "corpse_allowed_index": 2},
+      {"pid": 106, "fault_s": 415.910033, "exit_s": 415.910862, "corpse_allowed_index": 3},
+      {"pid": 115, "fault_s": 506.961731, "exit_s": 506.962477, "corpse_allowed_index": 4}
+    ],
+    "image_attribution": {
+      "valid": false,
+      "reason": "The first dyld range prototype selected implausible images and offsets, such as AudioToolbox for the fault PC. Raw PC, LR, slide and repeated frame addresses remain valid; image names from this probe must not be used."
+    }
+  },
+  "image_probe_defects": {
+    "plugin_build_marker": "builder#2 still reports H420 even though the new image lines prove the new plugin loaded",
+    "lsd_sbpc_base": "NATIVE_SBPC_IMAGE reports the shared-region base rather than the containing dyld image base; its reported lsd offset is invalid",
+    "trap_image_resolver": "NATIVE_TRAP_IMAGE reports no-dyld-info for the sampled lsd pc/lr"
+  },
+  "faults": {
+    "ufs_ocs_timeouts": 18,
+    "ufs_retries": 19,
+    "ufs_recoveries": 18,
+    "first_ufs_ocs_timeout_s": 641.745810,
+    "last_ufs_recovery_s": 816.053713,
+    "natives_traps": 42,
+    "corpse_allowed": 5,
+    "kernel_panic": false
+  },
+  "recovery": {
+    "uxc1_request_id": 424425,
+    "uxc1_ack_uptime_s": 1051.231860,
+    "android_boot_completed": true,
+    "adb_reboot_recovery_invocations": 1,
+    "final_serial": "16149951",
+    "final_product_device": "cheeseburger",
+    "final_twrp_version": "3.4.0_9-10-mauronofrio"
+  },
+  "conclusion": {
+    "earliest_same_boot_evidence": "The BKS request was already pending at the first capture gate and mediaserverd aborted before the first display gate.",
+    "decisive_result": "BKS later closed at 640.65 s, but display selector 3/4/5 and frame counters remained zero at 705.15 and 768.07 s.",
+    "stable_launchservices_result": "The first 32 operations now form a complete stable snapshot. The burst had completed by the gate, max latency was 103 ms, and lsd remained alive until 675.87 s.",
+    "ranked_causes": [
+      "Repeated mediaserverd SIGABRT after Metal command-queue creation is the strongest demonstrated active failure on the renderer path",
+      "SpringBoard/launchd/BKS wait explains the early scene delay, but the later BKS reply proves it is not sufficient by itself",
+      "LaunchServices work delays readiness but is not a live blocked filesystem operation at the stable gate",
+      "UFS OCS/retry storm begins at 641.75 s and drives later process failures but does not explain the 350-369 s gate",
+      "IOMFB, IOSurface and scanout remain downstream because no frame or drawable was submitted"
+    ],
+    "next_probe": "Keep the H424 stable XNU snapshot unchanged. Fix userland crash attribution with a manual Darwin dladdr ABI declaration, bump the plugin build marker, and log the last successful Metal call before each abort."
+  }
+}

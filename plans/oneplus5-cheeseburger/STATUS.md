@@ -16095,3 +16095,133 @@ unslid 为 `0x1d0376f74`，exit status/code 均为 6。CA observer 在 483/486 �
 稳定 slot，补齐 BKS responder/reply，并为 lsd 采样线程及重复的
 `mediaserverd` abort PC 输出 `NATIVE_SBPC_IMAGE`/dyld base。IOMFB、
 IOSurface 与 scanout 继续保持不变。
+
+#### H424：稳定 LaunchServices 快照与 BKS reply 后仍无首帧（2026-11-19）
+
+H424 保留 H423 的计数与操作语义，只改变观测方式：仅当 1-32 槽全部完成、
+`active=0` 且 `end_abs` 非零时打印一次，并允许任意低频率 sampler 触发 gate；
+另在 NativeMetal abort handler 中尝试记录 PC/LR/返回地址的 dyld range。
+显示、IOMFB、IOSurface、GPU、IPC 和文件系统行为均未改变。
+
+源码分支 `h424-device-gates`，构建提交 `06fef61`，NativeMetal 提交
+`641c03790cda196298ed8cb59c82b262c17edd4e`。最终产物：
+
+```text
+source kernel  92d409bb50e4893421d1bce7c7b9d157dd58ce67ca849e2e9c4925cc083be88c
+PMGR           adc2cc41a5bb2b59d3e33e1a7cb0f9e1b6de68c7b4badb86b7b36d0127649cb8
+kernel         c6de727f25604217d668793392aad279af284e34f9477b136294685a76cf585b
+payload        37904d03042d5a560943b43d2c4a29d4ad071d258f6fb2f7a34d1db32b52cede
+boot           fbd4952ab0a505f6cd08ed9aaeb82dbf2ff2417208d322e976c0ac9c9158c34c
+ADT            9e4b51b777cb653ebe9412b964849aa24730f1f8fe2a4217816f9d024f2de655
+owner trust    2f6884b6e91aea5c26a3fc5481f5b3619f8a7a3bc0b19525ef8c1ffebcfb75a9
+GPU addon      92d1fcd5abd63cba1b6c959ee38d7ff47b0455a77ba935d3b3575f9cbc762a54
+Data seed      fed3a0e6bb39974da339bf7f9155b282dfb0438c454c00f0df7a94b5995c03a4
+```
+
+995-byte kernel args 与 H423 逐字相同；`verify_h424.py` 的 boot→payload→kernel、
+UEFI/FDT、FAT sidecars、ADT、trust/addon、Data seed 和参数检查全部 PASS。
+设备只发出一次 `fastboot boot`；PowerShell 把 fastboot stderr 进度当作
+`NativeCommandError`，只保留到 `Sending OKAY`，但设备离开 fastboot、CDC 出现，
+runtime 明确为 `build=H424 boot=69ccb748`，因此不是重复启动或部分镜像。
+
+COM3 的 480 秒窗口产生 8,413 帧 / 1,310,262 bytes，CRC、sequence、
+boot-switch 和 stderr 错误均为零，uptime 为 `336.525530-816.533940 s`。
+稳定 gate 在 `369.067456 s` 一次输出：
+
+```text
+opens=0 reads=27 writes=0 fsyncs=0 xattrs=106 active=0
+slow50=5 slow500=0 slow5000=0 max_ms=103 errors=3
+first_ops=133 stable=1
+```
+
+32 个 slot 行全部出现且 seq 连续为 1-32，H423 的打印竞争已消除。首轮
+metadata/read burst 已完成，最长项仅 103 ms；这再次削弱“decmpfs 慢 I/O
+正在阻塞”的假设。lsd pid92 存活到 675.869295 秒，晚于首个 UFS OCS timeout。
+
+本 boot 首次 BKS 观测在 `350.405720 s` 仍只有 `S/Q 0x5b9173`。到
+`640.647751 s`，reply 最终闭合：responder pid56、response `0x5b91d7`，
+`S/D` 投递至 SpringBoard pid27。请求最初约在 `time_ns=295.451 s`，等待约
+168 秒。可是之后的两个 display gate：
+
+```text
+705.151566 s accel=6/0/628/0 dpy=3/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0
+768.070003 s accel=6/0/628/0 dpy=3/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0
+```
+
+仍然没有任何 selector 4/5、validation、transfer 或 frame。BKS 延迟是真实的
+早期门，但 successful reply 不是首帧的充分条件。
+
+`mediaserverd` 继续在 Metal command queue 后重复 self-SIGABRT（pid
+29/99/106/115，354.676/380.543/415.910/506.962 秒），每次
+PC=`0x1d00aaf74`、LR=`0x1e1f44fa4`、slide=`0x4920000`，unslid PC
+为 `0x1cbb8af74`。新增 image-range 首版错误地把该地址归到 AudioToolbox，
+lsd 的 `NATIVE_SBPC_IMAGE` 也输出 shared-region base 而不是 image base；
+因此该轮 image 名称无效，但原始地址、slide 和相同调用栈仍有效。插件自身
+仍打印 `builder#2 build H420`，下一轮必须同步 bump build marker。
+
+UFS OCS storm 从 `641.745810 s` 开始，紧跟 BKS reply；最终记录 18 次 OCS
+timeout、19 次 retry、18 次 recovery、42 次 NATIVE_TRAP，无 kernel panic。
+它不能解释 366-369 秒的首门，但会放大后续进程失败。分类为
+`stable-launchservices-gate-bks-closed-no-first-frame`。
+
+下一轮保持稳定 XNU gate 不变，改用手工声明 Darwin `dladdr` ABI 修复 plugin
+图像归属，bump build marker，并记录每次 abort 前最后成功的 Metal selector；
+在有 drawable-bearing scene 之前继续不改 IOMFB、IOSurface 和 scanout。
+
+UXC1 `424425` 在 uptime `1051.231860 s` ACK；Android `boot_completed=1` 后
+轮询 helper 只发送一次 `adb reboot recovery`，最终确认 TWRP
+`3.4.0_9-10-mauronofrio`。没有 flash、erase、format、dd、GPT 或分区写入。
+
+#### H425：renderer 未捕获异常路径定位（2026-11-19）
+
+H425 保持 H424 kernel、Data seed、ADT 和 995-byte bootargs 不变，只把
+A540Trace 的错误 dyld-range 扫描替换为手工声明的 Darwin `NativeDlInfo` /
+`dladdr` ABI，并把插件 marker 从 H420 bump 到 H425。payload 只替换
+`kernel.macho.gpuaddon` 与对应 `kernel.macho.trustcache`。
+
+```text
+kernel        c6de727f25604217d668793392aad279af284e34f9477b136294685a76cf585b
+payload       3e8e18d1a1d33dd22ee7270a461131809dcfcb46be82cd39ffd6e13fcdf70d37
+boot          2323c5256a8a9f14a1d8da7583fb815be995753ecdd4fbaeb196ef5e866e98be
+owner trust   4919a06fd98f9f4c9437d5da2b840206026faa92c79d0f8ed52c5ca1a6a9ba23
+GPU addon     1eb5e7fe85cae52228a0a6a332e3d02b2118ac65d6d4a9688a4c19f9510eb7ad
+```
+
+一次 `fastboot boot` 返回 `Sending OKAY` / `Booting OKAY`；runtime boot 为
+`2428d188`，kernel marker 仍为 H424，plugin marker 为 H425。COM3 捕获
+13,706 帧 / 1,871,163 bytes，CRC、sequence 和 boot-switch 错误均为零，uptime
+覆盖 `274.641795-754.575032 s`。
+
+修正后的 abort 调用栈在 4 次 `mediaserverd` 终止中完全相同：
+
+```text
+libsystem_kernel.__pthread_kill+0x8
+ <- libsystem_pthread.pthread_kill+0xd0
+ <- libsystem_c.abort+0x68
+ <- libc++abi.dylib (redacted)
+ <- libobjc.A.dylib+0x288d8
+ <- libc++abi.dylib (redacted)
+ <- libc++abi.dylib._ZSt9terminatev+0x34
+```
+
+四个子进程 pid29/100/108/130 分别在 301.107/338.183/454.439/559.083 秒
+进入同一异常终止路径；其中至少两次紧跟在 `newCommandQueue` 之后。H423/H424
+曾误把故障 PC 归到 AudioToolbox，H425 证明该归属错误。
+
+本 boot 没有 OCS timeout/retry/recovery、NATIVE_TRAP 或 kernel panic，但
+renderer 仍以同一 `std::terminate` 路径退出，说明 UFS 风暴不是该异常的必要条件。
+BKS `0x5b9173` 仍只有 S/Q，本窗口内没有 reply；display gate 只有
+`276.496628 s` 的一次 `accel=0/0/0/0 dpy=3/10/0/0/0 s345=0/0/0 val=0 xf=0 fr=0`，
+后续 accelerator 心跳虽到达 `6/0/608/0`，仍无 draw/dispatch/commit/present
+或 selector 4/5。
+
+本窗口未触发 H424 stable LS gate，不能把“未打印”记成 LaunchServices 阴性；
+H424 已经单独证明该路径。H425 分类为
+`renderer-uncaught-terminate-attributed-no-first-frame`。
+
+下一轮应安装只读的 Objective-C uncaught-exception handler，输出 exception name、
+reason 和首个非 libc 调用点，并把 frame-pointer 深度扩到至少 16；仍不变更
+NativeMobileDisplay、IOMFB、IOSurface 或 scanout。
+
+UXC1 `424426` 一次发送；ACK 行未被保留，但 CDC 消失、Android
+`boot_completed=1`，随后一次 `adb reboot recovery` 成功回到 TWRP。
