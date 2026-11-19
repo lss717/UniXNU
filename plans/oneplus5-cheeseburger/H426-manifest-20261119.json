@@ -1,7 +1,7 @@
 {
   "candidate": "H426",
-  "state": "device-captured-ufs-masked-exception-probe",
-  "classification": "h426-exception-hooks-loaded-queue-contract-mismatch-ufs-masked-target",
+  "state": "renderer-first-throw-confirmed-and-fixed-through-H429",
+  "classification": "renderer-cmmtl-command-queue-priority-unrecognized-selector",
   "purpose": "capture the first renderer exception and command-queue return contract without changing the H424 kernel, display path, Data seed or bootargs",
   "source": {
     "core_build_commit": "174e6cf0693e49ed54f8f621124e6675571be1f4",
@@ -87,5 +87,16 @@
     "reboot_log_sha256": "021a7d1eabd09c6182117a867351de78695b795efa4121fc407980f48f3967c3",
     "ring_decoded_sha256": "6623ac5684a489ed368aa330767cb292d5a7308b6869282cc735e1d8a2a63180"
   },
-  "next_action": "Repeat the identical H426 binary once under a boot without the UFS OCS storm, then capture the exact throw/reason; if no throw occurs, fix the confirmed MTLCommandQueue protocol/type-encoding contract."
+  "next_action": "Use the H427-H429 Metal contract fixes; move to a SpringBoard-side scene observer because H430 was not delivered into SpringBoard.",
+  "clean_rerun": {
+    "runtime_boot_id": "2346f334",
+    "frames": 4233,
+    "payload_bytes": 732089,
+    "first_throw_s": 299.871388,
+    "exception_name": "NSInvalidArgumentException",
+    "exception_reason": "-[CMMTLCommandQueue setBackgroundGPUPriority:]: unrecognized selector",
+    "first_frame": "A540Trace -> objc_exception_throw -> CoreFoundation -> CMImaging +0x3a51c",
+    "cmimaging_symbol": "-[CMMTLCommandQueue forwardInvocation:]",
+    "renderer_terminations": 2
+  }
 }

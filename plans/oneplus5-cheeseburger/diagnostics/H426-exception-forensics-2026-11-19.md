@@ -173,3 +173,71 @@ main-route/display-first-frame/logs/H426/device/20261119-174350/
 H426-device-verification-20261119.json
 H426-ring-decoded.txt
 ```
+
+## Superseding clean rerun and resolution
+
+The device was reconnected to the local host and the identical H426 image was booted a
+second time after clearing the ring again. Runtime boot `2346f334` produced 4,233 frames /
+732,089 bytes with zero CRC, sequence or boot-switch errors. The first throw occurred at
+`299.871388 s`:
+
+```text
+class=NSException
+name=NSInvalidArgumentException
+reason=-[CMMTLCommandQueue setBackgroundGPUPriority:]: unrecognized selector
+```
+
+The first-throw stack was:
+
+```text
+A540Trace throw hooks
+ <- libobjc.A.dylib objc_exception_throw
+ <- CoreFoundation
+ <- CMImaging +0x3a51c
+ <- CoreFoundation _CF_forwarding_prep_0
+ <- CMImaging +0x50bc / +0x4d34
+ <- MetalFilter
+ <- CMCapture +0x221404
+ <- libdispatch
+```
+
+The `CMImaging` frame at `+0x3a51c` resolves exactly to
+`-[CMMTLCommandQueue forwardInvocation:]`. Disassembly confirms that this wrapper asks its
+`_commandQueue` ivar whether it responds to the selector and raises
+`NSInvalidArgumentException` when it does not. The underlying queue was the H426
+`A540TraceQueue`, which did not conform to `MTLCommandQueue` and did not implement the
+private priority methods.
+
+H426 then followed the expected fatal path at `304.166201 s` (`std::terminate`),
+`309.976944 s` (uncaught handler), `311.493760 s` (SIGABRT) and `314.415459 s`
+(`mediaserverd` exit status 6). A second `mediaserverd` process repeated the same chain
+at 353-384 seconds. This removes the first run's UFS ambiguity: the exception is real and
+deterministic.
+
+## H427-H430 regression
+
+H427 adds the missing `get/setGPUPriority:` and
+`get/setBackgroundGPUPriority:` methods to `A540TraceQueue`. Runtime boot `2b71f6cd`
+logged `setBackgroundGPUPriority: priority=2`; that exception disappeared and the next
+exact gap was `newBufferWithBytes:length:options:` on `CMMTLDevice`.
+
+H428 implements that byte-backed buffer factory on the underlying
+`A540TraceDevice`, copying the supplied bytes and returning consistent `_MTLBuffer`
+`contents`/`length`. Runtime boot `29b82032` logged two successful 32-byte buffer calls;
+the renderer advanced about 170 further seconds before `newHeapWithDescriptor:` failed.
+
+H429 implements the heap factory and returns a traced `_MTLHeap`. Runtime boot `29cc7523`
+ran the full 480-second capture with no first throw, no `std::terminate`, no signal 6 and
+no `mediaserverd` exit. The H425 renderer crash chain is fixed. Draw, dispatch, commit,
+nextDrawable and present still remained zero, so the first-frame problem is independent.
+
+H430 adds the existing bounded `FBSWorkspace` scene probe at 30/120/300/480 seconds.
+Runtime boot `29c4a771` remained stable, but A540Trace loaded only in `mediaserverd`, not
+SpringBoard, so no `scene#` records appeared. This is a probe-delivery negative, not
+evidence that SpringBoard has no scene. BKS closed at `589.660840 s`, while the
+`737.372163 s` display gate still had `s345=0/0/0 val=0 xf=0 fr=0`.
+
+The current boundary is therefore explicit: the renderer contract defects are repaired,
+but the first submit still does not exist. The next probe must provide a SpringBoard-side
+or kernel/cross-process scene observation path; continuing to sample only
+CAWindowServer in backboardd cannot answer the scene question.

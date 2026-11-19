@@ -16294,3 +16294,58 @@ UXC1 `424427` 一次发送并在 `886.078841 s` ACK；CDC 消失、Android
 下一步应先用完全相同二进制取得一次无 UFS storm 的重复启动，捕获确切
 exception reason/首抛栈；若 clean run 到达 queue 仍无 throw，再按已确认的
 `MTLCommandQueue` 协议/type-encoding 契约做最小修复。不得先吞异常或盲补 selector。
+
+#### H426 clean rerun 至 H430：Metal 契约崩溃链已修复，首帧转回 SpringBoard scene
+
+设备改接本地主机后，H426 同一二进制再次启动并捕获到确定异常。runtime boot
+`2346f334`，首次 throw 在 `299.871388 s`：
+
+```text
+NSException / NSInvalidArgumentException
+-[CMMTLCommandQueue setBackgroundGPUPriority:]: unrecognized selector
+```
+
+首抛 frame 依次经过 `A540Trace`、`objc_exception_throw`、CoreFoundation、
+`CMImaging +0x3a51c`、MetalFilter 与 CMCapture。`CMImaging +0x3a51c` 用同版
+21H461 image 离线解析为 `-[CMMTLCommandQueue forwardInvocation:]`。反汇编证明
+CMMTL wrapper 会先询问其 `_commandQueue` 是否 responds；H426 的底层
+`A540TraceQueue` 因缺少 private priority selector 而返回 false，wrapper 随即抛出
+该异常。后续在 `304.166201 s` 进入 `std::terminate`、`309.976944 s` uncaught、
+`311.493760 s` SIGABRT，`mediaserverd` 在 `314.415459 s` 以 status 6 退出；第二个
+mediaserverd 在 353-384 秒重复相同链。
+
+H427 为 `A540TraceQueue` 实现 `get/setGPUPriority:` 与
+`get/setBackgroundGPUPriority:`，runtime boot `2b71f6cd` 记录
+`setBackgroundGPUPriority: priority=2`，原异常消失。初始化继续前进约 3 秒后暴露
+`-[CMMTLDevice newBufferWithBytes:length:options:]` 缺失。
+
+H428 在底层 `A540TraceDevice` 实现 byte-backed buffer factory，复制输入 bytes 并
+让 `_MTLBuffer -contents/-length` 一致。runtime boot `29b82032` 成功处理两次
+32-byte buffer；renderer 再前进约 170 秒后暴露
+`-[CMMTLDevice newHeapWithDescriptor:]` 缺失。
+
+H429 实现 heap factory 并返回 traced `_MTLHeap`。runtime boot `29cc7523` 的
+13,949 frames / 2,348,554 bytes 中：
+
+```text
+renderer throw/terminate/signal6 = 0/0/0
+mediaserverd exit = 0
+UFS OCS timeout = 5
+draw/commit/present = 0/0/0
+```
+
+H425/H426/H427/H428 的 renderer abort 链至此确认修复，但 drawable、draw 与提交仍为零。
+因此“崩溃已修”不能等同于“首帧已解决”。
+
+H430 把既有 FBSWorkspace scene 探针加到 30/120/300/480 秒 SpringBoard 采样。
+runtime boot `29c4a771` 继续稳定，但 A540Trace 只加载进 `mediaserverd`，没有加载进
+SpringBoard，所以 `scene#=0` 是探针投递缺失，不是 scene 阴性。BKS 在
+`589.660840 s` 完成 reply，`737.372163 s` display gate 仍为
+`s345=0/0/0 val=0 xf=0 fr=0`。
+
+当前独立缺陷排序变为：SpringBoard scene/root layer 未建立为最前活动门；随后是
+CoreAnimation drawable、renderer draw/commit、NativeMobileDisplay validation/transfer、
+IOMFB selector 4/5 与 scanout。下一步必须把只读 scene observer 送入 SpringBoard，
+或取得等价的 kernel/cross-process 视图；继续只从 backboardd 采样 CAWindowServer
+无法回答 SpringBoard 的 scene 问题。harness 汇总见
+`H426-H430-exception-regression-20261119.json`。
