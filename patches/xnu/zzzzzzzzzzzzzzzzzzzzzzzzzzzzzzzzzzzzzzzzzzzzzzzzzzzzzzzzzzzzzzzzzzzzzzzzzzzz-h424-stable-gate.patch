@@ -1,7 +1,9 @@
 diff --git a/bsd/vfs/vfs_vnops.c b/bsd/vfs/vfs_vnops.c
+index 489afb5..49bcddb 100644
 --- a/bsd/vfs/vfs_vnops.c
 +++ b/bsd/vfs/vfs_vnops.c
-@@ -109,6 +109,8 @@
+@@ -107,6 +107,8 @@ struct native_lsd_track_slot {
+ 
  static struct native_lsd_track_slot gNativeLsdSlots[NATIVE_LSD_TRACK_SLOTS];
  static uint32_t gNativeLsdNextOp;
 +static uint32_t gNativeLsdGateEmitted;
@@ -9,7 +11,7 @@ diff --git a/bsd/vfs/vfs_vnops.c b/bsd/vfs/vfs_vnops.c
  static uint64_t gNativeLsdActive;
  static uint64_t gNativeLsdTotals[NATIVE_LSD_FS_OP_COUNT];
  static uint64_t gNativeLsdErrors;
-@@ -235,47 +237,65 @@ native_lsd_fs_end(enum native_lsd_fs_op op, uint32_t slot_index, uint64_t start,
+@@ -233,9 +235,44 @@ native_lsd_fs_end(enum native_lsd_fs_op op, uint32_t slot_index, uint64_t start,
  void
  native_lsd_gate(uint32_t sample)
  {
@@ -55,7 +57,7 @@ diff --git a/bsd/vfs/vfs_vnops.c b/bsd/vfs/vfs_vnops.c
  	    sample,
  	    __atomic_load_n(&gNativeLsdTotals[NATIVE_LSD_FS_OPEN], __ATOMIC_RELAXED),
  	    __atomic_load_n(&gNativeLsdTotals[NATIVE_LSD_FS_READ], __ATOMIC_RELAXED),
-@@ -291,27 +311,20 @@ native_lsd_gate(uint32_t sample)
+@@ -248,26 +285,19 @@ native_lsd_gate(uint32_t sample)
  	    __atomic_load_n(&gNativeLsdSlow5000, __ATOMIC_RELAXED),
  	    __atomic_load_n(&gNativeLsdMaxNs, __ATOMIC_RELAXED) / 1000000ULL,
  	    __atomic_load_n(&gNativeLsdErrors, __ATOMIC_RELAXED),
@@ -91,10 +93,13 @@ diff --git a/bsd/vfs/vfs_vnops.c b/bsd/vfs/vfs_vnops.c
 +		    slot->path);
  	}
  }
+ #include <sys/stat.h>
 diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
+index 0fdbc6c..a70e5b1 100644
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -10795,10 +10795,10 @@ native_sb_pc_sample_instance(const char *name, unsigned sample, unsigned instance)
+@@ -10793,7 +10793,7 @@ native_sb_pc_sample_instance(const char *name, unsigned sample, unsigned instanc
+ 	memset(native_sb_hdr, 0, sizeof native_sb_hdr);
  	native_sb_alln = 0;
  	proc_iterate(1U | 4U, native_sb_collect, NULL, NULL, NULL);
 -	if (native_sb_pid > 0 && strncmp(name, "lsd", 3) == 0) {
@@ -102,7 +107,7 @@ diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
  		extern void native_lsd_gate(uint32_t);
  		native_lsd_gate(sample);
  	}
-@@ -10835,6 +10835,39 @@ native_sb_pc_sample_instance(const char *name, unsigned sample, unsigned instance)
+@@ -10834,6 +10834,40 @@ native_sb_pc_sample_instance(const char *name, unsigned sample, unsigned instanc
  
  			native_xpc_pids[0] = native_sb_pid;
  		} else if (strncmp(name, "lsd", 3) == 0) {
