@@ -28,7 +28,8 @@ def main():
 
     require('#define H103_BUILD "H421"' in driver or
             '#define H103_BUILD "H422"' in driver or
-            '#define H103_BUILD "H423"' in driver,
+            '#define H103_BUILD "H423"' in driver or
+            '#define H103_BUILD "H424"' in driver,
             "H421-or-later kernel build tag missing")
     require("NATIVE_DISPLAY_GATE:" in driver, "display gate missing")
     require("event->event_time = mach_absolute_time();" in h420_patch,

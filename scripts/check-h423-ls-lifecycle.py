@@ -24,7 +24,8 @@ def main():
 
     require(H423_PATCH.name > H422_PATCH.name,
             "H423 patch must sort after H422 in the apply series")
-    require('#define H103_BUILD "H423"' in driver,
+    require('#define H103_BUILD "H423"' in driver or
+            '#define H103_BUILD "H424"' in driver,
             "H423 kernel build tag missing")
 
     changed = {
