@@ -1,0 +1,98 @@
+{
+  "passed": true,
+  "candidate": "H426",
+  "classification": "h426-exception-hooks-loaded-queue-contract-mismatch-ufs-masked-target",
+  "device_tested": true,
+  "source": {
+    "core_commit": "174e6cf0693e49ed54f8f621124e6675571be1f4",
+    "native_metal_commit": "ce6533205e25a64d5da6c4c67731d0e2f30915bf",
+    "kernel_marker": "H424",
+    "plugin_marker": "H426"
+  },
+  "package": {
+    "payload_sha256": "54e49ee5e34d9dc9e34263e17917ab934c7f671b423534abad37e661a65673b0",
+    "boot_sha256": "a0c3a8063d2d8054c2b5fc1770aa08eba9642a79ffb9348a851e0a9481196151",
+    "addon_sha256": "944df8dc8a54be421f5076538da3364f4289153d67648457c1c6d3f57578cf6e",
+    "owner_trust_sha256": "1f4935b7a8590c911f5a2025fade884e7ee508a671eb3fa6fe3e0647100c8e0f",
+    "plugin_sha256": "9d7e7f161a4bc28dbb16fe5bcc2f16fc04e02dbed7d89984efc196218bfe6b20",
+    "plugin_cdhash": "3c4eabbb315ee4703344bf0d4d92b9fbf4acd825",
+    "data_sha256": "fed3a0e6bb39974da339bf7f9155b282dfb0438c454c00f0df7a94b5995c03a4",
+    "payload_delta": "H425 payload with only gpuaddon and trustcache replaced"
+  },
+  "preboot": {
+    "host": "y9000x",
+    "serial": "16149951",
+    "partition": "/dev/block/sda14",
+    "partition_bytes": 52840607744,
+    "cleared_tail_bytes": 33554432,
+    "cleared_tail_sha256": "83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302",
+    "clear_verified_zero": true
+  },
+  "boot": {
+    "fastboot_boot_count": 1,
+    "fastboot_result": "Sending OKAY; Booting OKAY",
+    "runtime_boot_id": "22617165",
+    "cdc_ready_seconds_after_capture_start": 180
+  },
+  "live_capture": {
+    "frames": 2773,
+    "payload_bytes": 437760,
+    "crc_errors": 0,
+    "sequence_gaps": 0,
+    "boot_switches": 0,
+    "uptime_start_s": 273.380446,
+    "uptime_end_s": 753.663825,
+    "native_mtl_lines": 0,
+    "native_mtl_reason": "COM3 appeared after the 247-260 s plugin burst",
+    "cdc_ready": "COM3"
+  },
+  "persistent_ring": {
+    "clean_window_bytes": 33554432,
+    "clean_window_sha256": "ce3ea0f59362b47d665d454cbaef39f40a1a6ac7e0375dd44ddda6b4b37a07a0",
+    "decoded_lines": 4186,
+    "native_mtl_lines": 183,
+    "plugin_load": "247.185384 s in backboardd",
+    "new_command_queue_observations": 2,
+    "returned_class": "A540TraceQueue",
+    "command_queue_protocol": false,
+    "set_gpu_priority_signature": "v@:@",
+    "throw_events": 0,
+    "uncaught_events": 0,
+    "terminate_events": 0,
+    "signal6_events": 0
+  },
+  "renderer": {
+    "mediaserverd_plugin_load_observed": false,
+    "mediaserverd_exit_count": 1,
+    "mediaserverd_pid": 29,
+    "mediaserverd_signal": 10,
+    "mediaserverd_signal_name": "SIGBUS",
+    "mediaserverd_exit_time_s": 335.693995,
+    "first_ufs_ocs_timeout_s": 280.417479,
+    "ufs_ocs_timeouts": 55,
+    "ufs_retries": 58,
+    "ufs_recovers": 55,
+    "kernel_traps": 33,
+    "kernel_panic": false
+  },
+  "display": {
+    "gate_count": 7,
+    "last_gate_s": 731.204883,
+    "last_display": "accel=1/0/199/0 dpy=2/11/0/0/0 s345=0/0/0 val=0 xf=0 fr=0",
+    "last_accel_s": 741.1004869,
+    "last_accel": "accel=1/0/199/0 abi=199/17/0 rep= gc=-1 dpy=2/11/0/0/0 s345=0/0/0 val=0 xf=0 fr=0"
+  },
+  "recovery": {
+    "uxc1_request_id": 424427,
+    "uxc1_ack": "886.078841 s",
+    "adb_reboot_recovery_count": 1,
+    "twrp_ready": true,
+    "twrp_version": "3.4.0_9-10-mauronofrio"
+  },
+  "interpretation": {
+    "exception_hooks": "The H426 plugin loaded, therefore +load installed the chained ObjC and terminate hooks; no exception event occurred in the observed window.",
+    "queue_contract": "A540TraceQueue does not conform to MTLCommandQueue. This is a concrete diagnostic-stub contract violation, but an exception name or throw site was not captured to prove it caused H425 signal 6.",
+    "target_mask": "mediaserverd did not load A540Trace and exited with SIGBUS during an early UFS OCS storm, so this boot does not test the H425 uncaught-exception path.",
+    "first_frame": "All observed display counters remained zero; IOMFB/IOSurface/IOGPU/scanout are still downstream."
+  }
+}

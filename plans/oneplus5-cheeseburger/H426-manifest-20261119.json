@@ -1,0 +1,91 @@
+{
+  "candidate": "H426",
+  "state": "device-captured-ufs-masked-exception-probe",
+  "classification": "h426-exception-hooks-loaded-queue-contract-mismatch-ufs-masked-target",
+  "purpose": "capture the first renderer exception and command-queue return contract without changing the H424 kernel, display path, Data seed or bootargs",
+  "source": {
+    "core_build_commit": "174e6cf0693e49ed54f8f621124e6675571be1f4",
+    "core_feature_branch": "h426-exception-forensics",
+    "kernel_commit": "06fef61",
+    "native_metal_commit": "ce6533205e25a64d5da6c4c67731d0e2f30915bf",
+    "device_commit": "481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91",
+    "main_moved": false,
+    "h408_worktree_modified": false
+  },
+  "changes": {
+    "behavior_changes": [],
+    "plugin_build_marker": "H426",
+    "exception_hooks": [
+      "objc_setExceptionPreprocessor",
+      "NSSetUncaughtExceptionHandler",
+      "std::set_terminate",
+      "SIGABRT/SIGSEGV/SIGILL"
+    ],
+    "queue_observation": "return class, protocol conformance, method encoding and caller return address",
+    "kernel": "byte-identical H424 kernel reused",
+    "payload": "H425 payload with only gpuaddon and trustcache replaced",
+    "display_iosurface_iomfb_scanout": "unchanged"
+  },
+  "artifacts": {
+    "source_kernel_sha256": "92d409bb50e4893421d1bce7c7b9d157dd58ce67ca849e2e9c4925cc083be88c",
+    "pmgr_sha256": "adc2cc41a5bb2b59d3e33e1a7cb0f9e1b6de68c7b4badb86b7b36d0127649cb8",
+    "kernel_sha256": "c6de727f25604217d668793392aad279af284e34f9477b136294685a76cf585b",
+    "payload_sha256": "54e49ee5e34d9dc9e34263e17917ab934c7f671b423534abad37e661a65673b0",
+    "boot_sha256": "a0c3a8063d2d8054c2b5fc1770aa08eba9642a79ffb9348a851e0a9481196151",
+    "adt_sha256": "9e4b51b777cb653ebe9412b964849aa24730f1f8fe2a4217816f9d024f2de655",
+    "owner_trust_sha256": "1f4935b7a8590c911f5a2025fade884e7ee508a671eb3fa6fe3e0647100c8e0f",
+    "gpu_addon_sha256": "944df8dc8a54be421f5076538da3364f4289153d67648457c1c6d3f57578cf6e",
+    "plugin_sha256": "9d7e7f161a4bc28dbb16fe5bcc2f16fc04e02dbed7d89984efc196218bfe6b20",
+    "gpu_plugin_cdhash": "3c4eabbb315ee4703344bf0d4d92b9fbf4acd825",
+    "data_seed_sha256": "fed3a0e6bb39974da339bf7f9155b282dfb0438c454c00f0df7a94b5995c03a4"
+  },
+  "static_preflight": {
+    "h426_exception_forensics_gate": "PASS",
+    "h420_main_scene_gate": "PASS",
+    "package_verification": "PASS",
+    "payload_delta": "only kernel.macho.gpuaddon and kernel.macho.trustcache",
+    "boot_args": "995 bytes; worst 1023/1024",
+    "device_tested": true
+  },
+  "device_result": {
+    "host": "y9000x",
+    "serial": "16149951",
+    "runtime_boot_id": "22617165",
+    "plugin_marker": "H426",
+    "frames": 2773,
+    "payload_bytes": 437760,
+    "crc_errors": 0,
+    "sequence_gaps": 0,
+    "boot_switches": 0,
+    "cdc_ready_seconds": 180,
+    "decoded_uptime_start_s": 273.380446,
+    "decoded_uptime_end_s": 753.663825,
+    "backboardd_plugin_load_s": 247.185384,
+    "new_command_queue_observations": 2,
+    "command_queue_protocol": false,
+    "set_gpu_priority_signature": "v@:@",
+    "renderer_uncaught_terminate_count": 0,
+    "mediaserverd_plugin_load_observed": false,
+    "mediaserverd_sigbus_count": 1,
+    "mediaserverd_sigbus_time_s": 335.693995,
+    "ufs_ocs_timeouts": 55,
+    "ufs_retries": 58,
+    "ufs_recovers": 55,
+    "kernel_traps": 33,
+    "kernel_panic": false,
+    "display_gate": "accel=1/0/199/0 dpy=2/11/0/0/0 s345=0/0/0 val=0 xf=0 fr=0",
+    "recovered_to_twrp": true,
+    "uxc1_request_id": 424427,
+    "uxc1_ack_s": 886.078841
+  },
+  "evidence": {
+    "device_verification": "plans/oneplus5-cheeseburger/diagnostics/H426-device-verification-20261119.json",
+    "diagnostic": "plans/oneplus5-cheeseburger/diagnostics/H426-exception-forensics-2026-11-19.md",
+    "live_log_sha256": "f54792310a2986fc1744357e5888a601aaaaeac248ec25de36fe7d7480ad390c",
+    "frames_sha256": "020741938f7cc4feccd9db5ac8a7e02d4a5b3f0562c9897541a12357bba52c41",
+    "ring_window_sha256": "ce3ea0f59362b47d665d454cbaef39f40a1a6ac7e0375dd44ddda6b4b37a07a0",
+    "reboot_log_sha256": "021a7d1eabd09c6182117a867351de78695b795efa4121fc407980f48f3967c3",
+    "ring_decoded_sha256": "6623ac5684a489ed368aa330767cb292d5a7308b6869282cc735e1d8a2a63180"
+  },
+  "next_action": "Repeat the identical H426 binary once under a boot without the UFS OCS storm, then capture the exact throw/reason; if no throw occurs, fix the confirmed MTLCommandQueue protocol/type-encoding contract."
+}

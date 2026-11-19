@@ -16225,3 +16225,72 @@ NativeMobileDisplay、IOMFB、IOSurface 或 scanout。
 
 UXC1 `424426` 一次发送；ACK 行未被保留，但 CDC 消失、Android
 `boot_completed=1`，随后一次 `adb reboot recovery` 成功回到 TWRP。
+
+#### H426：异常首抛取证与 command queue 契约（2026-11-19）
+
+H426 保持 H424 kernel、ADT、Data seed、995-byte bootargs 和显示行为不变。payload
+直接以 H425 为基线，只替换 `kernel.macho.gpuaddon` 与
+`kernel.macho.trustcache`；FAT 逐文件比较确认没有第三处差异。
+
+A540Trace 新增三类异常边界：libobjc 的 `objc_setExceptionPreprocessor`、
+Foundation uncaught handler 和 `std::terminate`；三者都保存并调用原处理器。
+信号处理扩到 16 层并恢复原 signal disposition。`newCommandQueue` 返回处记录
+method encoding、对象 class、`MTLCommandQueue` 协议符合性和调用方返回地址；
+未知 queue selector 的伪造类型编码也会落日志。
+
+```text
+kernel                  c6de727f25604217d668793392aad279af284e34f9477b136294685a76cf585b
+payload                 54e49ee5e34d9dc9e34263e17917ab934c7f671b423534abad37e661a65673b0
+boot                    a0c3a8063d2d8054c2b5fc1770aa08eba9642a79ffb9348a851e0a9481196151
+A540Trace addon         944df8dc8a54be421f5076538da3364f4289153d67648457c1c6d3f57578cf6e
+owner trust             1f4935b7a8590c911f5a2025fade884e7ee508a671eb3fa6fe3e0647100c8e0f
+plugin                  9d7e7f161a4bc28dbb16fe5bcc2f16fc04e02dbed7d89984efc196218bfe6b20
+plugin CDHash           3c4eabbb315ee4703344bf0d4d92b9fbf4acd825
+```
+
+启动前在 TWRP 中精确清零 `userdata_ios` 最后 32 MiB：分区为
+`/dev/block/sda14`、总大小 52,840,607,744 bytes，写入起点
+52,807,053,312，`seek=12892347 count=8192 bs=4096`；回读 SHA-256 为
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+没有写其他范围。一次 `fastboot boot` 返回 `Sending OKAY` / `Booting OKAY`。
+
+runtime boot 为 `22617165`。COM3 在采集 helper 启动后 180 秒出现，捕获
+2,773 帧 / 437,760 bytes，CRC、sequence、boot-switch 错误均为 0，uptime
+覆盖 `273.380446-753.663825 s`。COM3 错过了 247-260 秒的首轮 plugin 输出，
+因此另行从持久 ring 拉取并以干净窗口解析，得到 183 条 `NATIVE_MTL`。
+
+ring 在 `247.185384 s` 记录 `backboardd` 的 H426 marker。系统 Metal 调用在
+`249.004352 s` 首次创建 queue：
+
+```text
+return#22 newCommandQueue sel=newCommandQueue types=@16@0:8 result=1 class=A540TraceQueue
+return#23 queue_protocol class=A540TraceQueue commandQueueProtocol=0
+dev#24 newCommandQueue process=backboardd
+```
+
+返回地址解析为 QuartzCore。该请求早于 observer 的第一个 30 秒 scene probe，因此
+是系统 renderer 对注册 principal class 的调用。另一个新建 queue 在
+`252.063336 s` 记录同样结果。首个 forwarded selector 为
+`setGPUPriority:`，伪造 encoding 为 `v@:@`。
+
+这证明 `A540TraceQueue` 非 nil 但不 conform `MTLCommandQueue`，并且未知带参
+selector 一律被合成成 `void` 签名。它是已确认的诊断桩契约缺陷，但本轮没有拿到
+H425 signal 6 的 exception name/reason/首抛位置，尚不能据此认定该缺陷就是首因。
+
+本 boot 的 ring/console 均无 H426 throw、uncaught、terminate 或 signal-6 记录，
+但这不是异常路径的阴性结果。首个 UFS OCS timeout 出现在 `280.417479 s`，随后共有
+55 次 OCS timeout、58 次 retry、55 次 recovery 和 33 次 kernel trap。
+`mediaserverd pid29` 在 `335.693995 s` 于未记录 H426 plugin load 的情况下以
+SIGBUS（10）退出，目标路径被文件系统故障遮蔽。
+
+7 个 display gate 从 `276.378393` 到 `731.204883 s` 始终为
+`accel=1/0/199/0 dpy=2/11/0/0/0 s345=0/0/0 val=0 xf=0 fr=0`；仍无 draw、
+dispatch、commit、present、selector 4/5、IOSurface transfer 或 frame。
+
+UXC1 `424427` 一次发送并在 `886.078841 s` ACK；CDC 消失、Android
+`boot_completed=1` 后只发送一次 `adb reboot recovery`，成功回到 TWRP。
+
+本轮分类为 `h426-exception-hooks-loaded-queue-contract-mismatch-ufs-masked-target`。
+下一步应先用完全相同二进制取得一次无 UFS storm 的重复启动，捕获确切
+exception reason/首抛栈；若 clean run 到达 queue 仍无 throw，再按已确认的
+`MTLCommandQueue` 协议/type-encoding 契约做最小修复。不得先吞异常或盲补 selector。
