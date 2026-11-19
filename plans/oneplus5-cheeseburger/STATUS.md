@@ -16018,3 +16018,80 @@ H422 分类为
 UXC1 `424423` 一次发送并在 uptime `877.249957 s` ACK。Android
 `boot_completed=1` 后一次授权 `adb reboot recovery`，最终恢复 serial
 `16149951`、product `cheeseburger`、TWRP `3.4.0_9-10-mauronofrio`。
+
+#### H423：LaunchServices 最早操作时间线（2026-11-19）
+
+H423 从 `h422-ls-fs-probe@5f89609` 派生。H422 的 8-slot 环只能保留最后操作，
+因此 H423 改为保留全局最早的 32 项，并在每项加入 `sequence`、`pid`、
+`start_abs`、`end_abs`。其余计数、op、vnode、tid、offset/requested/residual、
+result、attribute name 和 open path 保持不变。热路径仍不打印、不分配、不睡眠、
+不加新锁。
+
+最终源码提交 `175eee878ec20de44eb17a04e0087bfc3c25e4ad`。构建链：
+
+```text
+previous kernel       ef78c085e4372f230aacdfd3b140839cfda4785dd711eb057feb2b5d94b0b4df
+source kernel pass 1  be43e71dc6210d9a0211bf4c689d068b67479d68d65bccbb35158bf83683a420
+prelink pass 1        2c102dd4535f153de72dc0ade67fc8a7bc472dbaf0c999a3522b75231592b3b4
+PMGR pass 1           4499f15f4a22c5ba01868d829c86984f64948553c6843dd234f0a85efe1d1b3f
+source kernel final   61437346afcd4a9920fef005a3cca354f97a9dd3c99e353aad624e02c6414782
+PMGR final            6e795897953fffd0651ca3c248e95abe77f80b05b40d5c60f46aea0b4c06cf63
+final kernel          8991916fb58d1dcacaae5d01e46c7019458a90cc5009bee472d97378961bf32f
+payload               34fe891446985c798c7a1172478ac85bcec4b1d09a414e02c8d0d548c3dce104
+boot                  041d0f1a6581ac0e562ec5d6816c7758cee04cbd6a150230b6abd050f3928467
+ADT                   e867a0f058397455578a1af04630fba63e38e7f65ab61192428f001941eb2d2f
+```
+
+payload、参数、trust、A540Trace 与 Data seed 保持 H421/H422 基线；
+`verify_h423.py` 的 boot→payload→kernel、UEFI/FDT、ADT、FAT、trust/addon
+和反提取检查全部 PASS。
+
+H423 第一次 `fastboot boot` 在 `y9000x` serial `16149951` 上被接受，但等待
+CDC 420 秒未枚举 USB，且没有产生部分捕获。人工电源重启回到 TWRP 后，第二次
+启动于 `2026-11-19T12:15:55+08:00` 被接受；runtime boot 为
+`85dee953`，CDC COM3 在 223 秒后出现。480 秒窗口捕获 14,679 帧 /
+2,324,301 bytes，CRC、sequence、boot-switch 均为零，解码 uptime 覆盖
+`360.003056-839.989925 s`。
+
+`369.400451 s` 的唯一有用 lsd gate 为：
+
+```text
+opens=0 reads=8 writes=0 fsyncs=0 xattrs=18 active=0
+slow50=3 slow500=1 slow5000=0 max_ms=1082 errors=2 first_ops=26
+```
+
+可见 slot 表明先访问 `com.apple.system.Security`，随后出现
+`FinderInfo`/`com.apple.decmpfs` 元数据、两次 160,631-byte read（154 ms、
+1,082 ms）和末尾 1,276-byte read。三次 `FinderInfo` 返回 93 是
+`ENOATTR`（requested=32、residual=32），不是内容读失败。到门点时
+`active=0`，且 lsd pid 91 在 426/486/488 秒仍有 AKS、AMFI 和 trust-cache
+活动，因此不能沿用 H422 的“lsd 已退出”结论。
+
+H423 的 slot 打印存在观测竞争：header 先读取 next-op 得 `first_ops=26`，
+打印循环期间操作继续发布，最终只留下 22 个完整 seq（1-8、15-22、27-32）。
+缺失 9-14、23-26 是遍历时的发布时序，不是 32 环覆盖。`start_abs`/`end_abs`
+是原始 `mach_absolute_time` tick，不能标成纳秒；只有 per-op duration 已转换。
+
+`369.142363 s` 的同 boot display gate 为
+`accel=2/0/194/0 dpy=3/11/0/0/0 s345=0/0/0 val=0 xf=0 fr=0`。
+SpringBoard 此时 3 线程，仍停在 launchd request/reply 路径；BKS `0x5b9173`
+只有两组 `S/Q`，`responder=0 response=0 ld_reply=0`。Accelerator 后续增长到
+`6/0/487/0`，到 800 秒仍无 selector 4/5、validation、transfer 或 frame。
+
+`mediaserverd` 在 384/448/541 秒三次建立 command queue，随后分别在
+394.085/448.551/541.242 秒以同一 PC `0x1d0b72f74` self-SIGABRT；
+unslid 为 `0x1d0376f74`，exit status/code 均为 6。CA observer 在 483/486 秒
+看到 `displays=6 renderer=3`，但 display-0 `context=0` 且 bind 被跳过。
+窗口没有 draw/dispatch/commit/nextDrawable/presentSurface。
+
+本捕获没有 OCS timeout/retry/recovery；178 条 `NATIVE_UFS_STALL_NOPANIC`
+从 `661.737881 s` 持续到 `839.920536 s`，晚于首个决定性门点。UXC1
+`424424` 于 `1059.837926 s` ACK，Android `boot_completed=1` 后轮询 helper
+只发送一次 `adb reboot recovery`，最终确认 TWRP
+`3.4.0_9-10-mauronofrio`。分类为
+`launchservices-early-operation-timeline-captured-mediaserverd-abort-no-first-frame`。
+
+下一最小探针只做稳定快照与符号化：等待 lsd next-op 计连续两次不变后再打印
+稳定 slot，补齐 BKS responder/reply，并为 lsd 采样线程及重复的
+`mediaserverd` abort PC 输出 `NATIVE_SBPC_IMAGE`/dyld base。IOMFB、
+IOSurface 与 scanout 继续保持不变。
