@@ -15978,3 +15978,43 @@ Data seed 和反提取全部 PASS。分类为
 本阶段未执行真机 boot；手机已转由 `y9000x` 管理。镜像已准备好做一次有界
 H422 运行并关联 sampler 7020–7170 与
 `performJournalRecovery`/`dispatch_group_wait_slow`。
+
+**H422 真机结果（2026-11-19）**：图像在 `y9000x` 的 serial `16149951` 上
+只执行一次 `fastboot boot`，接受时间
+`2026-11-19T10:40:49.5212803+08:00`，runtime marker 为
+`H422 boot=4aa9732c`。CDC COM3 约 239 秒出现，480 秒窗口捕获 3,161 帧/
+483,517 bytes，CRC、序号、boot-switch 均为零。
+
+前四个 lsd gate 从 309.726 到 506.728 秒完全不变：
+
+```text
+opens=0 reads=3 writes=0 fsyncs=0 xattrs=12 active=0
+slow50=1 slow500=0 slow5000=0 max_ms=143 errors=0
+```
+
+32 个 slot 快照也完全相同。保留操作为 3 次 read、12 次 getxattr；唯一慢项是
+`com.apple.decmpfs` 的一次 143 ms 查询，其余为 0 ms 且成功。首个 UFS OCS
+timeout 在 316.238163 秒，晚于首个有用 gate。因此没有证据把本轮直接断点写成
+“仍在执行的慢 read/write”。
+
+lsd pid92 在 sample 7020 只有 1 个线程 tid553，PC/LR 为
+`__bsdthread_terminate+0x8 <- __pthread_terminate+0x208`；sample 7050/7080/7110
+均为 0 线程。516.453596 秒出现 `NATIVE_TRAP signal=10 code=0xa`，
+516.453708 秒 lsd 以 status/code 0xa 退出，516.453872 秒 corpse，
+517.068023 秒由 xpcproxy 重启为 pid115。
+
+本 boot 的 BKS ring 只有 `S/Q 0x5b9173`，没有 response。八次 display gate
+从 309.693 到 776.228 秒全部 `s345=0/0/0 val=0 xf=0 fr=0`；draw、dispatch、
+commit、nextDrawable、presentSurface、selector 4/5、IOSurface 和 scanout 均为零。
+窗口记录 55 次 UFS OCS timeout、35 次 NATIVE_TRAP、29 次 Too many corpses，
+无 kernel panic 或 undefined instruction。
+
+H422 分类为
+`launchservices-early-exit-after-bounded-file-metadata-device-pass-no-first-frame`。
+当前最具体断点改为 lsd 在少量 decmpfs 元数据访问后提前进入终止；UFS OCS/lock
+风暴是紧随其后的强放大器。下一探针应早于 quiet window，关联 lsd 出生/退出/
+重启与 per-vnode `com.apple.decmpfs` getxattr/read，不改 display 路径。
+
+UXC1 `424423` 一次发送并在 uptime `877.249957 s` ACK。Android
+`boot_completed=1` 后一次授权 `adb reboot recovery`，最终恢复 serial
+`16149951`、product `cheeseburger`、TWRP `3.4.0_9-10-mauronofrio`。

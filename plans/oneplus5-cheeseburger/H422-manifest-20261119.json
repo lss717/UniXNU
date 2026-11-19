@@ -1,8 +1,8 @@
 {
   "candidate": "H422",
   "purpose": "distinguish LaunchServices filesystem latency from a blocked synchronization edge while SpringBoard waits on lsd",
-  "state": "package-statically-verified-unbuilt",
-  "classification": "launchservices-filesystem-progress-gate-package-statically-verified",
+  "state": "device-verified-no-first-frame",
+  "classification": "launchservices-early-exit-after-bounded-file-metadata-device-pass-no-first-frame",
   "source": {
     "core_base": "9d200549e29dad98bb26491a862068a9f629806e",
     "core_build_commit": "656f999e61b8b16fbb9ce9ecb9bf43be6e0fec66",
@@ -58,7 +58,35 @@
     "python_compile": "PASS",
     "json_parse": "PASS",
     "built": true,
-    "device_tested": false
+    "device_tested": true
   },
-  "next_action": "One bounded local or y9000x fastboot boot, capture through samples 7020-7170, and classify vn_read/vn_write/vn_fsync/getxattr progress against the performJournalRecovery and dispatch-group waits."
+  "device_result": {
+    "host": "y9000x",
+    "serial": "16149951",
+    "boot_accepted_at": "2026-11-19T10:40:49.5212803+08:00",
+    "runtime_boot_id": "4aa9732c",
+    "capture_frames": 3161,
+    "payload_bytes": 483517,
+    "crc_errors": 0,
+    "sequence_gaps": 0,
+    "boot_switches": 0,
+    "lsd_gate_samples": 4,
+    "lsd_slot_records": 32,
+    "opens": 0,
+    "reads": 3,
+    "writes": 0,
+    "fsyncs": 0,
+    "xattrs": 12,
+    "active": 0,
+    "slow50": 1,
+    "max_ms": 143,
+    "lsd_exit_uptime_s": 516.453708,
+    "first_ufs_ocs_timeout_s": 316.238163,
+    "display_gate_count": 8,
+    "selector_4": 0,
+    "selector_5": 0,
+    "frames": 0,
+    "recovered_to_twrp": true
+  },
+  "next_action": "Start a process-lifecycle and decmpfs-focused observation earlier than the quiet window. Preserve the current display path. Correlate lsd birth/exit/relaunch with bounded com.apple.decmpfs getxattr and named-stream reads before the first UFS OCS timeout."
 }

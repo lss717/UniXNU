@@ -1,0 +1,275 @@
+{
+  "candidate": "H422",
+  "classification": "launchservices-early-exit-after-bounded-file-metadata-device-pass-no-first-frame",
+  "source": {
+    "core_commit": "656f999e61b8b16fbb9ce9ecb9bf43be6e0fec66",
+    "device_commit": "481fcfe73a1e73ed9c9bb7eef6ceb7ddffe3ce91",
+    "feature_branch": "h422-ls-fs-probe",
+    "main_moved": false,
+    "h408_worktree_modified": false
+  },
+  "artifacts": {
+    "kernel_sha256": "ef78c085e4372f230aacdfd3b140839cfda4785dd711eb057feb2b5d94b0b4df",
+    "payload_sha256": "ddf2983f74201630d41dad9fc43152235dd52102a1772d77808864ba98030b34",
+    "boot_sha256": "ee5eaa701418265b70c3e7e11c24965c21365d389dcf1a90146978d9d42d7395",
+    "adt_sha256": "714235693c10edd1d23ea6813ae04821313af939830a229814b07fb4cad06c2d"
+  },
+  "evidence_sha256": {
+    "H422-fastboot-boot.txt": "43aee6126897a361b870c57385a786e4c3a0b99ce45fd9b8ecee547a5c219c71",
+    "H422-live.log": "2d8ca2d16cd5a6376f22538b9c49fd29b3aee322e9701371b824dc99e597953d",
+    "H422-live.frames.bin": "9665f07d82faa87d1b375ef6eefe3afad8ae3ae872294d8c7464d5c89e86fd8a",
+    "H422-live.capture.stdout.txt": "68a82d27a2ee826c0b8086fa4745b51e0327f704f220d4c97ddc4f54eec4edca",
+    "H422-reboot.log": "3aa9fa0d1c84ca4099570a9d8c2b065129d80e4540e240a9425d6880af9a71f0",
+    "H422-reboot-recovery-state.txt": "43b568608b49827e397e86d0b840f64bd3c8d90218bb96b3dc50fa3b833b49a4",
+    "H422-y9000x-preflight.txt": "d4bf2dea3791f879710d03e17663d48632c4e4d9926ab6768abd3607db1af343"
+  },
+  "device": {
+    "host": "y9000x",
+    "serial": "16149951",
+    "product_device": "cheeseburger",
+    "boot_method": "fastboot boot",
+    "fastboot_attempts": 1,
+    "boot_accepted_at": "2026-11-19T10:40:49.5212803+08:00",
+    "runtime_boot_id": "4aa9732c",
+    "flash_erase_format_or_partition_write": false
+  },
+  "capture": {
+    "root": "main-route/display-first-frame/logs/H422/device/20261119-104120",
+    "cdc_port": "COM3",
+    "cdc_wait_seconds": 239,
+    "capture_seconds": 480,
+    "frames": 3161,
+    "payload_bytes": 483517,
+    "crc_errors": 0,
+    "sequence_gaps": 0,
+    "boot_switches": 0,
+    "last_sequence": 3160
+  },
+  "launchservices_gate": {
+    "samples": [
+      {
+        "uptime_s": 309.726741,
+        "sampler": 7020,
+        "opens": 0,
+        "reads": 3,
+        "writes": 0,
+        "fsyncs": 0,
+        "xattrs": 12,
+        "active": 0,
+        "slow50": 1,
+        "slow500": 0,
+        "slow5000": 0,
+        "max_ms": 143,
+        "errors": 0
+      },
+      {
+        "uptime_s": 376.291184,
+        "sampler": 7050,
+        "opens": 0,
+        "reads": 3,
+        "writes": 0,
+        "fsyncs": 0,
+        "xattrs": 12,
+        "active": 0,
+        "slow50": 1,
+        "slow500": 0,
+        "slow5000": 0,
+        "max_ms": 143,
+        "errors": 0
+      },
+      {
+        "uptime_s": 441.736782,
+        "sampler": 7080,
+        "opens": 0,
+        "reads": 3,
+        "writes": 0,
+        "fsyncs": 0,
+        "xattrs": 12,
+        "active": 0,
+        "slow50": 1,
+        "slow500": 0,
+        "slow5000": 0,
+        "max_ms": 143,
+        "errors": 0
+      },
+      {
+        "uptime_s": 506.728357,
+        "sampler": 7110,
+        "opens": 0,
+        "reads": 3,
+        "writes": 0,
+        "fsyncs": 0,
+        "xattrs": 12,
+        "active": 0,
+        "slow50": 1,
+        "slow500": 0,
+        "slow5000": 0,
+        "max_ms": 143,
+        "errors": 0
+      }
+    ],
+    "slot_records": 32,
+    "all_slot_snapshots_identical_across_samples_7020_7110": true,
+    "last_eight_slots": [
+      {
+        "op": "getxattr",
+        "tid": 547,
+        "name": "com.apple.system.Security",
+        "requested": 68,
+        "residual": 0,
+        "ms": 0,
+        "result": 0
+      },
+      {
+        "op": "read",
+        "tid": 547,
+        "requested": 512,
+        "residual": 0,
+        "ms": 0,
+        "result": 0
+      },
+      {
+        "op": "getxattr",
+        "tid": 547,
+        "name": "com.apple.decmpfs",
+        "requested": 0,
+        "residual": 0,
+        "ms": 143,
+        "result": 0
+      },
+      {
+        "op": "getxattr",
+        "tid": 547,
+        "name": "com.apple.decmpfs",
+        "requested": 823,
+        "residual": 0,
+        "ms": 0,
+        "result": 0
+      },
+      {
+        "op": "read",
+        "tid": 547,
+        "requested": 806,
+        "residual": 0,
+        "ms": 0,
+        "result": 0
+      },
+      {
+        "op": "getxattr",
+        "tid": 547,
+        "name": "com.apple.decmpfs",
+        "requested": 0,
+        "residual": 0,
+        "ms": 0,
+        "result": 0
+      },
+      {
+        "op": "getxattr",
+        "tid": 547,
+        "name": "com.apple.decmpfs",
+        "requested": 823,
+        "residual": 0,
+        "ms": 0,
+        "result": 0
+      },
+      {
+        "op": "read",
+        "tid": 547,
+        "requested": 4096,
+        "residual": 1080,
+        "ms": 0,
+        "result": 0
+      }
+    ],
+    "interpretation": "The lsd process completed a very small read/getxattr set, including one 143 ms com.apple.decmpfs attribute lookup. No writes, fsyncs, opens or in-flight operations followed. The process then disappeared from the sampled thread set."
+  },
+  "lsd_lifecycle": {
+    "first_sample": {
+      "uptime_s": 310.315550,
+      "pid": 92,
+      "threads": 1,
+      "tid": 553,
+      "pc": "__bsdthread_terminate+0x8",
+      "lr": "__pthread_terminate+0x208"
+    },
+    "samples_7050_7110": {
+      "pid": 92,
+      "threads": 0
+    },
+    "trap": {
+      "uptime_s": 516.453596,
+      "signal": 10,
+      "code": "0xa"
+    },
+    "exit": {
+      "uptime_s": 516.453708,
+      "status": "0xa",
+      "namespace": 2,
+      "code": "0xa"
+    },
+    "corpse": {
+      "uptime_s": 516.453872,
+      "message": "Process[92] crashed: lsd. Too many corpses being created."
+    },
+    "relaunch": {
+      "uptime_s": 517.068023,
+      "via": "xpcproxy",
+      "pid": 115,
+      "service": "com.apple.lsd"
+    }
+  },
+  "bks": {
+    "request_seen": true,
+    "request_events": ["S", "Q"],
+    "first_time_ns": 264691145156,
+    "reply_seen_in_capture": false
+  },
+  "display": {
+    "gate_count": 8,
+    "first_gate_s": 309.693325,
+    "last_gate_s": 776.228132,
+    "selector_3": 0,
+    "selector_4": 0,
+    "selector_5": 0,
+    "notification_registration": 0,
+    "legacy_validation": 0,
+    "legacy_transfer": 0,
+    "frames": 0,
+    "draw_primitives": 0,
+    "dispatches": 0,
+    "commits": 0,
+    "next_drawable": 0,
+    "present_surface": 0
+  },
+  "faults": {
+    "first_ufs_ocs_timeout_s": 316.238163,
+    "ufs_ocs_timeouts": 55,
+    "natives_traps": 35,
+    "too_many_corpses": 29,
+    "kernel_panic": false,
+    "undefined_instruction": false
+  },
+  "recovery": {
+    "uxc1_request_id": 424423,
+    "uxc1_ack_uptime_s": 877.249957,
+    "android_boot_completed": true,
+    "adb_reboot_recovery_invocations": 1,
+    "final_serial": "16149951",
+    "final_product_device": "cheeseburger",
+    "final_twrp_version": "3.4.0_9-10-mauronofrio"
+  },
+  "conclusion": {
+    "earliest_confirmed_boundary": "lsd completes three reads and twelve getxattr calls, including one 143 ms com.apple.decmpfs lookup, then has no active filesystem operation and collapses to a terminating thread before the first UFS OCS timeout at 316.238 s.",
+    "ranked_causes": [
+      "lsd process lifecycle failure or premature termination during LaunchServices startup",
+      "com.apple.decmpfs / APFS named-stream metadata handling is the most concrete preceding I/O path",
+      "UFS OCS and lock starvation become a strong downstream amplifier and eventual corpse source",
+      "SpringBoard/LaunchServices readiness remains blocked before scene content and renderer submission"
+    ],
+    "excluded": [
+      "a long in-flight read or write at the sampled gate time",
+      "BKS reply completion in this boot",
+      "renderer draw/commit, IOMFB selector 4/5, IOSurface and scanout"
+    ]
+  }
+}
