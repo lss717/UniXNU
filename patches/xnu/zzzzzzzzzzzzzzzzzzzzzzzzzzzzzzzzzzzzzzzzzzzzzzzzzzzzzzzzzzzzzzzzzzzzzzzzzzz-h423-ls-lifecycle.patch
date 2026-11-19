@@ -1,0 +1,195 @@
+diff --git a/bsd/vfs/vfs_vnops.c b/bsd/vfs/vfs_vnops.c
+index aab4717..489afb5 100644
+--- a/bsd/vfs/vfs_vnops.c
++++ b/bsd/vfs/vfs_vnops.c
+@@ -83,12 +83,14 @@
+ #include <sys/vnode_internal.h>
+ #include <kern/thread.h>
+ 
+-#define NATIVE_LSD_TRACK_SLOTS 8
++#define NATIVE_LSD_TRACK_SLOTS 32
+ #define NATIVE_LSD_PATH_MAX 160
+ #define NATIVE_LSD_ATTR_MAX 64
+ 
+ struct native_lsd_track_slot {
+ 	uint32_t active;
++	uint32_t sequence;
++	uint32_t pid;
+ 	enum native_lsd_fs_op op;
+ 	uint64_t tid;
+ 	uint64_t vnode;
+@@ -96,6 +98,7 @@ struct native_lsd_track_slot {
+ 	uint64_t requested;
+ 	uint64_t residual;
+ 	uint64_t start_abs;
++	uint64_t end_abs;
+ 	uint64_t duration_ns;
+ 	int32_t result;
+ 	char path[NATIVE_LSD_PATH_MAX];
+@@ -103,7 +106,7 @@ struct native_lsd_track_slot {
+ };
+ 
+ static struct native_lsd_track_slot gNativeLsdSlots[NATIVE_LSD_TRACK_SLOTS];
+-static uint32_t gNativeLsdNextSlot;
++static uint32_t gNativeLsdNextOp;
+ static uint64_t gNativeLsdActive;
+ static uint64_t gNativeLsdTotals[NATIVE_LSD_FS_OP_COUNT];
+ static uint64_t gNativeLsdErrors;
+@@ -114,12 +117,13 @@ static uint64_t gNativeLsdMaxNs;
+ 
+ void native_lsd_gate(uint32_t sample);
+ 
+-static boolean_t
++static proc_t
+ native_lsd_current_process(void)
+ {
+ 	proc_t p = current_proc();
+ 
+-	return p != PROC_NULL && strncmp(p->p_comm, "lsd", MAXCOMLEN) == 0;
++	return p != PROC_NULL && strncmp(p->p_comm, "lsd", MAXCOMLEN) == 0 ?
++	    p : PROC_NULL;
+ }
+ 
+ static void
+@@ -151,41 +155,50 @@ uint64_t
+ native_lsd_fs_begin(enum native_lsd_fs_op op, vnode_t vp, const char *path,
+     const char *name, int64_t offset, uint64_t requested, uint32_t *slot_index)
+ {
+-	struct native_lsd_track_slot *slot;
++	proc_t p = native_lsd_current_process();
++	struct native_lsd_track_slot *slot = NULL;
++	uint32_t sequence;
+ 	uint64_t start;
+ 
+ 	if (slot_index != NULL) {
+ 		*slot_index = UINT32_MAX;
+ 	}
+-	if (!native_lsd_current_process() || op < NATIVE_LSD_FS_OPEN ||
++	if (p == PROC_NULL || op < NATIVE_LSD_FS_OPEN ||
+ 	    op >= NATIVE_LSD_FS_OP_COUNT) {
+ 		return 0;
+ 	}
+-	*slot_index = __atomic_add_fetch(&gNativeLsdNextSlot, 1,
+-	    __ATOMIC_RELAXED) & (NATIVE_LSD_TRACK_SLOTS - 1);
+-	slot = &gNativeLsdSlots[*slot_index];
+-	__atomic_store_n(&slot->active, 0, __ATOMIC_RELEASE);
+-	slot->op = op;
+-	slot->tid = thread_tid(current_thread());
+-	slot->vnode = (uint64_t)(uintptr_t)vp;
+-	slot->offset = offset;
+-	slot->requested = requested;
+-	slot->residual = 0;
+-	slot->duration_ns = 0;
+-	slot->result = 0;
+-	if (path != NULL) {
+-		strlcpy(slot->path, path, sizeof slot->path);
+-	} else {
+-		slot->path[0] = '\0';
+-	}
+-	if (name != NULL) {
+-		strlcpy(slot->name, name, sizeof slot->name);
+-	} else {
+-		slot->name[0] = '\0';
++	sequence = __atomic_add_fetch(&gNativeLsdNextOp, 1, __ATOMIC_RELAXED);
++	if (sequence <= NATIVE_LSD_TRACK_SLOTS && slot_index != NULL) {
++		*slot_index = sequence - 1;
++		slot = &gNativeLsdSlots[*slot_index];
++		__atomic_store_n(&slot->active, 0, __ATOMIC_RELEASE);
++		slot->sequence = sequence;
++		slot->pid = (uint32_t)proc_getpid(p);
++		slot->op = op;
++		slot->tid = thread_tid(current_thread());
++		slot->vnode = (uint64_t)(uintptr_t)vp;
++		slot->offset = offset;
++		slot->requested = requested;
++		slot->residual = 0;
++		slot->end_abs = 0;
++		slot->duration_ns = 0;
++		slot->result = 0;
++		if (path != NULL) {
++			strlcpy(slot->path, path, sizeof slot->path);
++		} else {
++			slot->path[0] = '\0';
++		}
++		if (name != NULL) {
++			strlcpy(slot->name, name, sizeof slot->name);
++		} else {
++			slot->name[0] = '\0';
++		}
+ 	}
+ 	start = mach_absolute_time();
+-	slot->start_abs = start;
+-	__atomic_store_n(&slot->active, 1, __ATOMIC_RELEASE);
++	if (slot != NULL) {
++		slot->start_abs = start;
++		__atomic_store_n(&slot->active, 1, __ATOMIC_RELEASE);
++	}
+ 	__atomic_add_fetch(&gNativeLsdActive, 1, __ATOMIC_RELAXED);
+ 	return start;
+ }
+@@ -195,16 +208,19 @@ native_lsd_fs_end(enum native_lsd_fs_op op, uint32_t slot_index, uint64_t start,
+     int error, uint64_t residual)
+ {
+ 	struct native_lsd_track_slot *slot;
++	uint64_t end;
+ 	uint64_t ns = 0;
+ 
+ 	if (start == 0) {
+ 		return;
+ 	}
+-	absolutetime_to_nanoseconds(mach_absolute_time() - start, &ns);
++	end = mach_absolute_time();
++	absolutetime_to_nanoseconds(end - start, &ns);
+ 	native_lsd_account(op, ns, error);
+ 	if (slot_index < NATIVE_LSD_TRACK_SLOTS) {
+ 		slot = &gNativeLsdSlots[slot_index];
+ 		if (__atomic_load_n(&slot->start_abs, __ATOMIC_RELAXED) == start) {
++			slot->end_abs = end;
+ 			slot->duration_ns = ns;
+ 			slot->result = error;
+ 			slot->residual = residual;
+@@ -219,7 +235,7 @@ native_lsd_gate(uint32_t sample)
+ {
+ 	printf("NATIVE_LS_GATE: sample=%u opens=%llu reads=%llu writes=%llu "
+ 	    "fsyncs=%llu xattrs=%llu active=%llu slow50=%llu slow500=%llu "
+-	    "slow5000=%llu max_ms=%llu errors=%llu\n",
++	    "slow5000=%llu max_ms=%llu errors=%llu first_ops=%u\n",
+ 	    sample,
+ 	    __atomic_load_n(&gNativeLsdTotals[NATIVE_LSD_FS_OPEN], __ATOMIC_RELAXED),
+ 	    __atomic_load_n(&gNativeLsdTotals[NATIVE_LSD_FS_READ], __ATOMIC_RELAXED),
+@@ -231,22 +247,26 @@ native_lsd_gate(uint32_t sample)
+ 	    __atomic_load_n(&gNativeLsdSlow500, __ATOMIC_RELAXED),
+ 	    __atomic_load_n(&gNativeLsdSlow5000, __ATOMIC_RELAXED),
+ 	    __atomic_load_n(&gNativeLsdMaxNs, __ATOMIC_RELAXED) / 1000000ULL,
+-	    __atomic_load_n(&gNativeLsdErrors, __ATOMIC_RELAXED));
++	    __atomic_load_n(&gNativeLsdErrors, __ATOMIC_RELAXED),
++	    __atomic_load_n(&gNativeLsdNextOp, __ATOMIC_RELAXED));
+ 	for (uint32_t i = 0; i < NATIVE_LSD_TRACK_SLOTS; i++) {
+ 		struct native_lsd_track_slot *slot = &gNativeLsdSlots[i];
+ 		uint32_t active = __atomic_load_n(&slot->active, __ATOMIC_ACQUIRE);
++		uint64_t end_abs = slot->end_abs;
+ 		uint64_t ns = slot->duration_ns;
+ 		if (active && slot->start_abs != 0) {
+-			absolutetime_to_nanoseconds(mach_absolute_time() -
+-			    slot->start_abs, &ns);
++			end_abs = mach_absolute_time();
++			absolutetime_to_nanoseconds(end_abs - slot->start_abs, &ns);
+ 		}
+ 		if (slot->op != 0) {
+-			printf("NATIVE_LS_GATE_SLOT: sample=%u slot=%u op=%u tid=%llu "
+-			    "vnode=0x%llx active=%u offset=%lld requested=%llu "
+-			    "residual=%llu ms=%llu result=%d name=%s path=%s\n",
+-			    sample, i, slot->op, slot->tid, slot->vnode, active,
+-			    (long long)slot->offset, slot->requested, slot->residual,
+-			    ns / 1000000ULL, slot->result, slot->name, slot->path);
++			printf("NATIVE_LS_GATE_SLOT: sample=%u slot=%u seq=%u pid=%u "
++			    "op=%u tid=%llu vnode=0x%llx active=%u offset=%lld "
++			    "requested=%llu residual=%llu start_abs=%llu end_abs=%llu "
++			    "ms=%llu result=%d name=%s path=%s\n",
++			    sample, i, slot->sequence, slot->pid, slot->op, slot->tid,
++			    slot->vnode, active, (long long)slot->offset, slot->requested,
++			    slot->residual, slot->start_abs, end_abs, ns / 1000000ULL,
++			    slot->result, slot->name, slot->path);
+ 		}
+ 	}
+ }
