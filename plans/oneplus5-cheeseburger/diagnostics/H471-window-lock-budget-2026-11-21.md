@@ -103,6 +103,14 @@ payload      924d162ff2dd33583e2dd13e31969f87ba6b5ce7c65dbd8c782736d310bddb82
 The payload kernel round-trip is byte-identical. The argument string is still
 992 bytes, with worst-case `zap-base` usage 1020/1024.
 
+Boot:
+
+```text
+UEFI    9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6
+payload 924d162ff2dd33583e2dd13e31969f87ba6b5ce7c65dbd8c782736d310bddb82
+boot    827b699f964f88dde03bd29977f2920051a8b2a75b3ddaf301981110ba097d5a
+```
+
 ## Device gate
 
 The candidate is accepted only if:
