@@ -85,3 +85,46 @@ as a separate variable.
 
 Evidence directory:
 `display-first-frame/builds/H472/`.
+
+## Device result
+
+One local `fastboot boot` on serial `16149951` returned
+`Sending 'boot.img' OKAY` and `Booting OKAY`. CDC appeared at about
+244 seconds. Runtime boot ID was `2681b67d`.
+
+The UFS and Data baseline remained live:
+
+```text
+NATIVE_UFS_ALIVE:
+  addon=-1/0/0/0/22/0
+  owner=4/0 ext=4/2 dm=1/2 wp=1/2
+  accel=0/0/0/0
+```
+
+The extension-level union mount reached stage 4/status 2, but
+`native_gpu_addon_install` returned `files=-1` and error 22 (`EINVAL`).
+The daemon and wallpaper mounts remained at stage 1/status 2. The same
+addon SHA (`88251c...5dee`) installed seven files under H465, so the
+artifact itself is unchanged and valid.
+
+Root cause was a source/build-tree mismatch. The current kernel parser
+read a 24-byte per-entry header, while `make-gpu-addon.py` writes the
+version-2 32-byte header containing CRC-32 and the stored/compressed
+flag. Reading the name at `+24` instead of `+32` fails validation with
+`EINVAL` before any file is written.
+
+The earliest failure was complete by the 280.376527-second heartbeat.
+The capture was intentionally stopped after the deterministic addon
+failure rather than spending the full 3600 seconds. It had reached
+about 400 seconds, with no OCS, recovery, window-lock timeout or panic.
+`NATIVE_MTL` remained absent, as expected with
+`offline-accelerator=0`.
+
+```text
+H472-live.log                   dd37b2200c34a997bff93f752538aa81edc19efefd93e589feff581cd1a76362
+H472-clear-readback32.bin       83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302
+```
+
+The 32 MiB clear was verified byte-for-byte as the SHA-256 of all-zero
+32 MiB data. Classification:
+`H472-addon-enabled-parser-v1-rejects-v2`.

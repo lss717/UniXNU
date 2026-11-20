@@ -17351,3 +17351,58 @@ boot    a7e8f5f557524eadb448d2a5f8267a55e4136bc069c138dc253fe7b9063bfa2a
 
 证据目录：
 `display-first-frame/builds/H472/`。
+
+真机只发送一次 H472 boot，CDC 在约 244 秒出现，runtime boot ID
+`2681b67d`。UFS/Data 正常，但 addon 安装确定失败：
+
+```text
+addon=-1/0/0/0/22/0
+owner=4/0 ext=4/2 dm=1/2 wp=1/2
+```
+
+`ext=4/2` 证明 extension union mount 已到阶段 4，但安装器返回
+`files=-1 error=22 (EINVAL)`。H465 使用完全相同的 addon SHA
+`88251c35...5dee` 成功安装 7 个文件，所以 addon 包没有变化。根因是
+H471 重建的 `kern_exec.c` 使用旧版 24-byte entry header，而 addon 工具已写入
+32-byte version-2 header（含 CRC-32 和 stored flag）；解析器从错误偏移读取路径，
+在任何文件写入前返回 EINVAL。
+
+280.376527 秒 heartbeat 已完整暴露失败。采集在约 400 秒有界停止，无 OCS、
+recovery、窗口锁超时或 panic；`offline-accelerator=0` 下 `NATIVE_MTL=0` 属预期。
+分类为 `H472-addon-enabled-parser-v1-rejects-v2`。证据：
+`H472-live.log` SHA
+`dd37b2200c34a997bff93f752538aa81edc19efefd93e589feff581cd1a76362`。
+
+### §115 H473：修复 GPU addon v2 解析器（2026-11-21）
+
+H473 只修复 addon version-2 entry 解析，保留 H472 的
+`sheng-gpu-addon=1` 与 `offline-accelerator=0`。当前 parser 的每项 header
+从 24 bytes 改为 32 bytes，读取并验证 CRC-32 与 stored flag；stored entry
+直接写入，compressed entry 继续走现有 inflate。补丁：
+`diagnostics` 外的 `patches/xnu/zzzz...-h473-addon-v2-parser.patch`。
+
+真机 H472 已先证明 addon 开启、错误路径以及 `ext=4/2` 可观测；H473 不再混入
+accelerator 注入。因此本轮的验收是 `addon=7/7/...` 和
+`ext=4/2 dm=5/0 wp=5/0`，不是 `NATIVE_MTL`。
+
+构建结果：
+
+```text
+source commit       da78e9f
+source kernel       e8b35199a3abb27c786b63f079c9b1e573c4b7b6af98396c9448604f1f2a160d
+NativeUfsProbe.o    4f7dc3c648597b3f4b20859a1e242590be01c776749c737cc43edbde707ceb76
+prelink kernel      4577d3bc93a48dec1c910e76d4262e8ceda64869f6b370a2ee3ff42556364b00
+```
+
+H473 payload/boot：
+
+```text
+ADT          62e9130439cfdccf7dae8a72150924ae0f15c51fc2c52165cb7b451ff1fee7a5
+payload      e236e6ddd866e9e2eec860e7b92acc625b25454a43d90ab8b542ba6fae775b48
+boot         8f5e42d7a72a64c21902f1ca637b56fdf0eb2a2455963bf3169911d6f668b36e
+```
+
+payload 内 kernel 回读一致；bootargs 仍 992 B，实际 `zap-base` 1012/1024，
+worst case 1020/1024，静态 fit PASS。marker 为 H473；旧 H471 checker 因
+期望 marker H471 而报告 build-marker FAIL，其余窗口锁和 display probe 静态门通过。
+证据目录：`display-first-frame/builds/H473/`。
