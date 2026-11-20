@@ -16512,3 +16512,35 @@ UXC1 `424434` 一次发送并在 `764.251987 s` ACK；poll helper 在 Android
 `3.4.0_9-10-mauronofrio`。没有 flash、erase、format、GPT 或额外分区写入。详见
 `diagnostics/H432-launchd-cache-2026-11-19.md` 和
 `diagnostics/H432-device-verification-20261119.json`。
+
+### §107 H467 UFS 可证伪观测候选（2026-11-20）
+
+H466 的同镜像两轮 boot 各出现一次短 UTRD stall，但旧记录不能区分该请求最终完成，
+也不能从“没有锁 timeout”推出锁等待下降。H467 保持 timeout、恢复、锁等待、请求
+顺序、显示、scene 和 watchdog 调度不变，只增加可审计观测：每个已提交 UTRD 的
+序号、冻结 LBA/字节数/方向/提交时间、四类终止计数、锁成功/失败等待累计和峰值，
+以及 watchdog 循环进度。
+
+静态 checker 已通过：
+
+```text
+H467 UFS observation static gate: PASS
+H467 status record: unique
+H467 terminal accounting: unique updates
+H467 device behavior changed: no
+```
+
+证据文件：
+
+```text
+diagnostics/H467-ufs-observability-2026-11-20.md
+diagnostics/H467-ufs-observability.patch
+diagnostics/H467-ufs-observability-check.py
+```
+
+状态为 `static-gated-candidate-not-built`，设备测试尚未进行。此 worktree 的 Git
+基线是 `4efd1f5c`，H466 文件仅作为已验证来源素材；提交或构建前必须把 H467 patch
+应用到对应 H466 源历史，或先提交并记录 H466 基线，不能仅以 H436 基线的文件名冒充
+H467。源码跨机传递只走 commit/push/pull，构建前须核验 H467 marker、UFS 计数唯一
+更新、kernel hash、prelink、payload kernel equality、bootargs fit 和 addon/trust
+cache。
