@@ -1,0 +1,108 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7460,6 +7460,7 @@ native_gpu_addon_zfree(voidpf opaque __unused, voidpf address)
+ 	memcpy(&bytes, block, sizeof(bytes));
+ 	kfree_data(block, bytes);
+ }
++extern uLong z_crc32(uLong crc, const Bytef *buf, uInt len);
+ static int
+ native_gpu_addon_inflate(const uint8_t *packed, uint64_t packed_size, uint8_t *data, uint64_t size)
+ {
+@@ -7590,19 +7591,22 @@ native_gpu_addon_install(proc_t p, user_addr_t scratch)
+ 	/* Validate the whole addon before writing anything. */
+ 	uint64_t at = 24;
+ 	for (uint32_t i = 0; i < count; ++i) {
+-		uint32_t name_bytes = 0, mode = 0;
++		uint32_t name_bytes = 0, mode = 0, crc = 0, flags = 0;
+ 		uint64_t size = 0, packed = 0;
+-		if (bytes - at < 24) {
++		if (bytes - at < 32) {
+ 			native_gpu_addon_error = EINVAL;
+ 			return;
+ 		}
+ 		memcpy(&name_bytes, addon + at, 4);
+ 		memcpy(&mode, addon + at + 4, 4);
+ 		memcpy(&size, addon + at + 8, 8);
+ 		memcpy(&packed, addon + at + 16, 8);
+-		at += 24;
++		memcpy(&crc, addon + at + 24, 4);
++		memcpy(&flags, addon + at + 28, 4);
++		at += 32;
+ 		uint64_t name_padded = (name_bytes + 7) & ~7ULL, size_padded = (packed + 7) & ~7ULL;
+ 		const char *name = (const char *)(addon + at);
+ 		if (name_bytes < 2 || name_bytes > 160 || bytes - at < name_padded || name[name_bytes - 1] || strnlen(name, name_bytes) != name_bytes - 1 ||
+-		    name[0] == '/' || (mode & ~0777) || size > INT32_MAX || !packed || packed > INT32_MAX || bytes - at - name_padded < size_padded) {
++		    name[0] == '/' || (mode & ~0777) || (flags & ~1u) || size > INT32_MAX || !packed || packed > INT32_MAX || bytes - at - name_padded < size_padded) {
+ 			native_gpu_addon_error = EINVAL;
+ 			return;
+ 		}
+@@ -7627,35 +7631,60 @@ native_gpu_addon_install(proc_t p, user_addr_t scratch)
+ 	char path[192];
+ 	at = 24;
+ 	for (uint32_t i = 0; i < count; ++i) {
+-		uint32_t name_bytes = 0, mode = 0;
++		uint32_t name_bytes = 0, mode = 0, crc = 0, flags = 0;
+ 		uint64_t size = 0, packed = 0;
+ 		memcpy(&name_bytes, addon + at, 4);
+ 		memcpy(&mode, addon + at + 4, 4);
+ 		memcpy(&size, addon + at + 8, 8);
+ 		memcpy(&packed, addon + at + 16, 8);
+-		at += 24;
++		memcpy(&crc, addon + at + 24, 4);
++		memcpy(&flags, addon + at + 28, 4);
++		at += 32;
+ 		const char *name = (const char *)(addon + at);
+ 		at += (name_bytes + 7) & ~7ULL;
+ 		snprintf(path, sizeof(path), "/private/var/ngpu/%s", name);
+-		uint8_t *data = kalloc_data(size ? size : 1, Z_WAITOK);
+-		int error = data ? native_gpu_addon_inflate(addon + at, packed, data, size) : ENOMEM;
+-		if (error) {
+-			printf("NATIVE_GPU_ADDON: inflate %s size=%llu packed=%llu error=%d\n", path,
+-			    (unsigned long long)size, (unsigned long long)packed, error);
+-		}
+-		if (!error) {
+-			error = native_gpu_addon_write(path, data, size, mode, ctx);
+-			if (error == ENOENT && !(error = native_gpu_addon_parents(p, scratch, path))) {
+-				error = native_gpu_addon_write(path, data, size, mode, ctx);
+-			}
+-		}
++		const uint8_t *source = addon + at;
++		uLong actual = z_crc32(0L, Z_NULL, 0);
++		for (uint64_t c = 0; c < packed; c += 1 << 20) {
++			uInt length = (uInt)(packed - c < (1 << 20) ? packed - c : (1 << 20));
++			actual = z_crc32(actual, source + c, length);
++		}
++		int error = 0;
++		uint8_t *data = NULL;
++		if ((uint32_t)actual != crc) {
++			native_gpu_addon_crc_bad++;
++			printf("NATIVE_GPU_ADDON: crc %s got=%08x want=%08x packed=%llu\n", path,
++			    (unsigned int)actual, crc, (unsigned long long)packed);
++			error = EILSEQ;
++		} else if (flags & 1u) {
++			if (packed != size) {
++				error = EINVAL;
++			} else {
++				error = native_gpu_addon_write(path, source, size, mode, ctx);
++				if (error == ENOENT && !(error = native_gpu_addon_parents(p, scratch, path))) {
++					error = native_gpu_addon_write(path, source, size, mode, ctx);
++				}
++			}
++		} else {
++			data = kalloc_data(size ? size : 1, Z_WAITOK);
++			error = data ? native_gpu_addon_inflate(source, packed, data, size) : ENOMEM;
++			if (error) {
++				printf("NATIVE_GPU_ADDON: inflate %s size=%llu packed=%llu error=%d\n", path,
++				    (unsigned long long)size, (unsigned long long)packed, error);
++			}
++			if (!error) {
++				error = native_gpu_addon_write(path, data, size, mode, ctx);
++				if (error == ENOENT && !(error = native_gpu_addon_parents(p, scratch, path))) {
++					error = native_gpu_addon_write(path, data, size, mode, ctx);
++				}
++			}
++		}
+ 		if (data) {
+ 			kfree_data(data, size ? size : 1);
+ 		}
