@@ -101,6 +101,11 @@ static volatile uint64_t gUfsFrozenLba;
 static volatile uint64_t gUfsFrozenBytes;
 static volatile uint32_t gUfsFrozenDir;
 static volatile uint64_t gWatchdogSeen;
+static volatile uint32_t gLockWaiters;
+static volatile uint64_t gLockOkCount;
+static volatile uint64_t gLockTimeoutCount;
+static volatile uint64_t gLockWaitTicks;
+static volatile uint64_t gLockWaitMaxTicks;
 
 #define UFS_TIMEOUT_TICKS 153600000ULL   // H361: 8 s; loaded boots run commands slower than 5.2 s
 static volatile uint64_t gWindowRequests;
@@ -2401,11 +2406,6 @@ waitForCompletion (uint8_t *list, uint32_t *ocs, unsigned *loops,
  * cannot take the lock in 100 ms is dropped and the next two seconds are skipped. */
 #define UFS_LOG_LOCK_TICKS   (1920000ULL)    /* 100 ms at 19.2 MHz */
 #define UFS_LOG_BACKOFF_TICKS (38400000ULL)  /* 2 s */
-static volatile uint32_t gLockWaiters;
-static volatile uint64_t gLockOkCount;
-static volatile uint64_t gLockTimeoutCount;
-static volatile uint64_t gLockWaitTicks;
-static volatile uint64_t gLockWaitMaxTicks;
 #define kLockOwnerRecords 8
 struct LockOwnerRecord {
   IOLock *lock;

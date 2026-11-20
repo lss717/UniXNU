@@ -65,6 +65,22 @@ H466 run 2 has a short UTRD stall at 559.626816 seconds while request 89d1aa/8 r
 
 Synthetic display transfer/frame counts and a SpringBoard product frame must be recorded separately. H465/H466 display gate evidence proves the display driver accepted transfer and selector activity; SpringBoard still reported workspace=0 class=nil and an empty layer. That evidence does not establish a product first frame.
 
+## Build failure-found and repair
+
+The first H468 kernel pass failed before linking in `NativeUfsProbe`. Moving
+the status record ahead of its definitions in source exposed a compiler
+ordering error: `gLockWaiters`, `gLockOkCount`, `gLockTimeoutCount`,
+`gLockWaitTicks`, and `gLockWaitMaxTicks` were still declared thousands of
+lines later. The error was reported at the watchdog status record, and the
+old kernel and payload remained unchanged. No boot image was produced or
+sent to the device.
+
+The repair moves those five declarations to the H467/H468 accounting block
+above the watchdog thread. It does not change any counter update, lock
+acquisition, timeout, recovery, request order, display behavior, or watchdog
+scheduling. The static gate now also requires every lock-counter declaration
+to precede the status use, so this compile-time ordering failure cannot recur
+under the checker.
 ## Build and device gates for H468
 
 1. Sync the H468 commit to the Mac by Git and confirm the source commit and clean driver sources on both machines.

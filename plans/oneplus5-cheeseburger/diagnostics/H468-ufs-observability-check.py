@@ -37,9 +37,15 @@ def main() -> None:
     require("gUfsFrozenDir = direction;" in text, "direction freeze missing")
     require("gUfsStartedTicks = mach_absolute_time ();" in text, "start tick missing")
     require(text.index("static volatile uint64_t gWatchdogSeen;") < text.index("gWatchdogSeen = gWatchdogSeen + 1;"), "watchdog declaration precedes use")
+    status = text.index("NATIVE_H468_STATUS:")
+    for declaration in ("gLockWaiters", "gLockOkCount", "gLockTimeoutCount", "gLockWaitTicks", "gLockWaitMaxTicks"):
+        if declaration == "gLockWaiters":
+            declaration_at = text.index("static volatile uint32_t gLockWaiters;")
+        else:
+            declaration_at = text.index(f"static volatile uint64_t {declaration};")
+        require(declaration_at < status, f"lock counter declared after watchdog status: {declaration}")
     watchdog = text.index("nativeWatchdogThread (void *, wait_result_t)")
     hb_timer = text.index("NativeUfsProbe::hbTimerTick (IOTimerEventSource *sender)")
-    status = text.index("NATIVE_H468_STATUS:")
     require(watchdog < status < hb_timer, "status must be in the executing watchdog thread, before hbTimerTick")
     require("if (!gH103StallRecorded && (seconds % 30) == 0) {" in text, "status must survive after a recorded UFS stall")
     for token in ("#define UFS_TIMEOUT_TICKS 153600001ULL",
