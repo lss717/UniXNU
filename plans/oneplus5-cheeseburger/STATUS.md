@@ -16983,3 +16983,38 @@ diagnostics/H469-ufs-unaligned-check.py
 下一次启动必须确认 GPT 之后的未对齐中止消失，并观察是否到达第一个
 `NATIVE_H469_STATUS` watchdog sample。到达状态行只证明观测线程执行；请求完成和锁
 等待下降仍须由 terminal/recovery 与 lock counters 分别证明。
+
+### §111 H469r：恢复 H466 payload sidecar（2026-11-21）
+
+H469 实测后确认 Data seed provider 为 `status=60 stage=0`，表示尚未到挂载点阶段。
+比较 payload 发现 H466 包含以下两个文件，而 H467/H468/H469 均缺失：
+
+```text
+scratch-data.img
+kernel.macho.gpuaddon
+```
+
+H469r 保持 H469 的 kernel、trust cache、ADT 和启动参数不变，只从已验证 H466 payload
+恢复这两个文件。输入：
+
+```text
+scratch-data.img       fed3a0e6bb39974da339bf7f9155b282dfb0438c454c00f0df7a94b5995c03a4
+kernel.macho.gpuaddon  88251c35d6a1b6b6df2c761c2c136f04a9090e1361f16fdaceac798ba6da5dee
+kernel                 700b50d93379bc804c955c29db0eb77451d1d3353cf1c0a7ad484bfa9a7d849c
+payload                fd340fee7633ec3ac5e694703790b3476fe0d71b7e007a7909c7a4425297512a
+boot                   8536911ce79b0f074029d3958dc619a87dcc6c89637cf347e8bca3b51b8f4dc3
+```
+
+payload 目录已回读确认 kernel、ADT、trust cache、scratch-data.img 与 gpuaddon 存在；
+payload 内 kernel 与 prelink kernel 逐字节一致，bootargs 仍为 992 B、worst-case
+1020/1024。当前状态为 `built-static-verified-not-device-tested`。
+
+证据：
+
+```text
+main-route/display-first-frame/builds/H469r/
+diagnostics/H469r-payload-sidecar-restore-2026-11-21.md
+```
+
+下一项设备门禁只比较 sidecar 恢复后 `NATIVE_H82_DATA_WAIT` 与 Data mount stage；
+同时要求保持 H469 的 unaligned-abort=0 和 `seq==done` 观测结果。
