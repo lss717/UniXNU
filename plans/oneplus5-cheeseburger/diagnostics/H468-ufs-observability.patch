@@ -1,0 +1,113 @@
+diff --git a/drivers/NativeUfsProbe/NativeUfsProbe.cpp b/drivers/NativeUfsProbe/NativeUfsProbe.cpp
+index 84f688e..3d029c4 100644
+--- a/drivers/NativeUfsProbe/NativeUfsProbe.cpp
++++ b/drivers/NativeUfsProbe/NativeUfsProbe.cpp
+@@ -87,7 +87,7 @@ static volatile uint64_t gUfsLastLoops;
+ static volatile uint64_t gUfsLastTicks;
+ static bool gNopActive;
+ 
+-/* H467: immutable accounting only. Each submitted UTRD gets one ordered
++/* H468: immutable accounting only. Each submitted UTRD gets one ordered
+  * sequence and every terminal path records at most one outcome. Frozen request
+  * fields let the heartbeat prove submit-minus-terminal deltas without changing
+  * a timeout, recovery decision, request ordering, or synchronization. */
+@@ -124,7 +124,7 @@ static uint32_t gH103SlotCursor;
+ // boot wrote it.  The header alone is not enough: it is written after the
+ // slot, and a late header write failure leaves a stale slots_written behind,
+ // which made earlier logs mix slots from several boots.
+-#define H103_BUILD "H467"
++#define H103_BUILD "H468"
+ static uint64_t gH103BootId;
+ static volatile int gH103Quiet;
+ static volatile uint64_t gH103LastSlotTicks;
+@@ -342,7 +342,7 @@ h107GateOpen (void)
+ }
+ 
+ // H360: doorbell/recovery accounting for the stall work (see the UFS plan document).
+-static volatile uint64_t gUfsDbTimeouts, gUfsRecovered, gUfsWriteFailed;
++static volatile uint64_t gUfsDbTimeouts, gUfsRecoverAttempts, gUfsRecovered, gUfsWriteFailed;
+ static void h103Marker (const char *kind, bool urgent);
+ // H358: the AppleKeyStore driver publishes the keybag service keybagd looks for; weak so a
+ // kernel built without that archive still links.
+@@ -464,8 +464,28 @@ nativeWatchdogThread (void *, wait_result_t)
+     h103StallCheck ();
+     h103MaybeKillExclavekit (seconds);
+     h103MaybeRestartSpringBoard (native_legacy_client_calls);
+-    if (gH103StallRecorded) {
+-      continue;
++    if (!gH103StallRecorded && (seconds % 30) == 0) {
++      const uint64_t flightMs = gUfsInFlight && gUfsStartedTicks ?
++          (mach_absolute_time () - gUfsStartedTicks) / 19200ULL : 0;
++      IOLog ("NATIVE_H468_STATUS: seq=%llu done=%llu timeout=%llu ocs_err=%llu dbto=%llu recover=%llu recovered=%llu flight=%llu age_ms=%llu lba=%llx bytes=%llu dir=%u lock_ok=%llu lock_timeout=%llu lock_wait_ms=%llu lock_wait_max_ms=%llu lock_waiters=%u watchdog_seen=%llu\n",
++             (unsigned long long) gUfsSubmitSeq,
++             (unsigned long long) gUfsDoneCount,
++             (unsigned long long) gUfsTimeoutCount,
++             (unsigned long long) gUfsOcsErrorCount,
++             (unsigned long long) gUfsDbTimeoutCount,
++             (unsigned long long) gUfsRecoverAttempts,
++             (unsigned long long) gUfsRecovered,
++             (unsigned long long) gUfsInFlight,
++             (unsigned long long) flightMs,
++             (unsigned long long) gUfsFrozenLba,
++             (unsigned long long) gUfsFrozenBytes,
++             (unsigned) gUfsFrozenDir,
++             (unsigned long long) gLockOkCount,
++             (unsigned long long) gLockTimeoutCount,
++             (unsigned long long) (gLockWaitTicks / 19200ULL),
++             (unsigned long long) (gLockWaitMaxTicks / 19200ULL),
++             (unsigned) gLockWaiters,
++             (unsigned long long) gWatchdogSeen);
+     }
+     // H342: the first alive stamp waited a full minute, so a boot that died around the display
+     // start (40-50 s) left no trace at all and the block still held an older boot's text.  Stamp
+@@ -2231,6 +2251,7 @@ ufsRecover (UfsQueue *q)
+     return false;
+   }
+   lastRecoverTicks = recoverNow;
++  gUfsRecoverAttempts = gUfsRecoverAttempts + 1;
+   const uint32_t beforeIs = read32 (q->hc, UFS_REG_IS);
+   const uint32_t beforeDb = read32 (q->hc, UFS_REG_UTRLDBR);
+   uint32_t hcs = 0;
+@@ -2748,8 +2769,12 @@ ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes,
+   gUfsCommands = gUfsCommands + 1;
+   gUfsInFlight = 1;
+   gUfsSubmitSeq = gUfsSubmitSeq + 1;
+-  gUfsFrozenLba = gUfsLastLba;
+-  gUfsFrozenBytes = gUfsLastBytes;
++  gUfsFrozenLba = (ucd[0] == 1 &&
++      static_cast<unsigned> (q->ucd[16]) == 0x28) ?
++      (static_cast<uint64_t> (q->ucd[18]) << 24) |
++      (static_cast<uint64_t> (q->ucd[19]) << 16) |
++      (static_cast<uint64_t> (q->ucd[20]) << 8) | q->ucd[21] : 0;
++  gUfsFrozenBytes = bytes;
+   gUfsFrozenDir = direction;
+   gUfsStartedTicks = mach_absolute_time ();
+   if (gNopActive) {
+@@ -3783,27 +3808,6 @@ NativeUfsProbe::hbTimerTick (IOTimerEventSource *sender)
+     native_legacy_test_pattern ();
+   }
+   uint64_t now = mach_absolute_time ();
+-  if ((fires % 30) == 0) {
+-    const uint64_t flightMs = gUfsInFlight && gUfsStartedTicks ?
+-        (now - gUfsStartedTicks) / 19200ULL : 0;
+-    IOLog ("NATIVE_H467_STATUS: seq=%llu done=%llu timeout=%llu ocs_err=%llu dbto=%llu flight=%llu age_ms=%llu lba=%llx bytes=%llu dir=%u lock_ok=%llu lock_timeout=%llu lock_wait_ms=%llu lock_wait_max_ms=%llu lock_waiters=%u watchdog_seen=%llu\n",
+-           (unsigned long long) gUfsSubmitSeq,
+-           (unsigned long long) gUfsDoneCount,
+-           (unsigned long long) gUfsTimeoutCount,
+-           (unsigned long long) gUfsOcsErrorCount,
+-           (unsigned long long) gUfsDbTimeoutCount,
+-           (unsigned long long) gUfsInFlight,
+-           (unsigned long long) flightMs,
+-           (unsigned long long) gUfsFrozenLba,
+-           (unsigned long long) gUfsFrozenBytes,
+-           (unsigned) gUfsFrozenDir,
+-           (unsigned long long) gLockOkCount,
+-           (unsigned long long) gLockTimeoutCount,
+-           (unsigned long long) (gLockWaitTicks / 19200ULL),
+-           (unsigned long long) (gLockWaitMaxTicks / 19200ULL),
+-           (unsigned) gLockWaiters,
+-           (unsigned long long) gWatchdogSeen);
+-  }
+   if (gUfsInFlight && gWindowStartTicks &&
+       now - gWindowStartTicks > 5 * 19200000ULL) {
+     if (!stallLogged) {
