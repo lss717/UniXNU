@@ -17018,3 +17018,80 @@ diagnostics/H469r-payload-sidecar-restore-2026-11-21.md
 
 下一项设备门禁只比较 sidecar 恢复后 `NATIVE_H82_DATA_WAIT` 与 Data mount stage；
 同时要求保持 H469 的 unaligned-abort=0 和 `seq==done` 观测结果。
+
+#### H469r 真机结果：Data 修复，用户态进入 lsd，仍未到桌面
+
+唯一 serial `16149951` 上的一次 `fastboot boot` 返回 `Sending OKAY` /
+`Booting OKAY`。CDC 为 COM8
+`USB\VID_1209&PID_0001\OP5CDCH408`，持续约 39 分钟后复位回 Android。H103 的
+`slot_build=H469`、`slot_boot=21ad9a9a`，最后环内 uptime 为 2070.196070 秒，
+live CDC 尾端到 2265.165742 秒。
+
+Data sidecar 修复有效：
+
+```text
+NATIVE_DATA_STATUS: requested=1 state=1 loaded=1 writes=0 errors=0
+offline scratch Data mount failure = none
+unaligned abort = none
+```
+
+launchd、SpringBoard、backboardd、lsd、containermanager、installd、迁移服务、
+iconservices 和 WebKit 等服务均进入执行。19 条 `NATIVE_H469_STATUS` 覆盖
+125.957374-2070.196070 秒，末条：
+
+```text
+seq=283944 done=283944 timeout=0 ocs_err=0 dbto=0 recover=0 recovered=0
+flight=0 lock_timeout=0 lock_wait_max_ms=25235 lock_waiters=1
+```
+
+短时 `flight=1` 样本后续回到完成。未出现 OCS timeout、recovery、读失败风暴或
+选中锁 timeout，因此“请求能够完成”和“锁 timeout 未增加”成立。不能宣称锁等待
+下降：累计 `lock_wait_ms` 达到 9,177,351，后段 live 样本的
+`lock_wait_max_ms` 还达到 27272。也没有 watchdog 触发证据。
+
+SpringBoard 的最早剩余可复现边界落在 LaunchServices：
+
+```text
+NATIVE_SBCHAIN: sb=27 n=4
+rcv=SpringBoard q=0 sr=1 so=1
+req=18951/95/lsd q=0 sr=1 so=1
+ld_out=669983 ld_in=671285 ld_reply=0
+```
+
+最后显示门仍是 `s345=0/0/0 val=0 xf=0 fr=0`，没有任何 SpringBoard 产品首帧。
+没有保留 panic，故末次复位原因未证实，不能写成 watchdog recovery。CDC 解码为
+0 CRC、0 sequence gap、0 boot switch、0 truncation；生产者仍报告约 100-190 KB
+字节丢失。分类为
+`H469r-userland-reached-lsd-scan-incomplete-reset-before-desktop`。
+
+```text
+main-route/display-first-frame/logs/H469r/device/20261121-025236/
+H469r-tail32.bin  889e58a31f2e409927afb04d7e9311ebdc78a4cdeddf41bf5dd8118a43bc2214
+H469r-h103.txt    c4c1fb7f8a0ec631e43574a880b2bbaa3b95fd90307344f2bbfb23bcbafdc7b0
+```
+
+#### 下一单变量：H470r LaunchServices Data seed readiness
+
+对 H469r 的 1 GiB seed 做只读展开检查后，确认以下目录不存在：
+
+```text
+db/lsd
+containers/Shared/SystemGroup/systemgroup.com.apple.lsd.iconscache
+containers/Shared/SystemGroup/systemgroup.com.apple.mobilegestaltcache
+mobile/Library/Caches/com.apple.LaunchServices
+mobile/Library/Caches/com.apple.IconsCache
+```
+
+运行日志在 376.097663 秒直接报出
+`systemgroup.com.apple.lsd.iconscache` 无 system group container，随后
+iconservicesagent 进入 temporary-sandbox。merlinx 同版本记录还明确指出，lsd
+会同步等待 iconservicesagent，且 iOS 17 读取大写
+`com.apple.DataMigration.plist`；当前 seed 只有旧的小写
+`com.apple.migration.plist`，H469r 中 `com.apple.datamigrator` 则至少重复启动
+8 次，时间覆盖 334.100394-2255.631337 秒。
+
+H470r 保持 H469 kernel、bootargs、display path 和 GPU addon 不变，只把 Data seed
+换成一个可审计版本：补齐上述 lsd/LaunchServices/MobileGestalt 目录，同时写大小
+写两份 DataMigration plist，并在 system 与 uid 501 两个 launchd disabled plist
+中只禁用 `com.apple.iconservices.iconservicesagent`。复现工具为
+`scripts/seed-data-launchservices-readiness.py`。
