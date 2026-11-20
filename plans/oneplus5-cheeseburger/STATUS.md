@@ -16544,3 +16544,332 @@ diagnostics/H467-ufs-observability-check.py
 H467。源码跨机传递只走 commit/push/pull，构建前须核验 H467 marker、UFS 计数唯一
 更新、kernel hash、prelink、payload kernel equality、bootargs fit 和 addon/trust
 cache。
+### §108 H390–H466 关键缺失记录补录（2026-11-21）
+
+用户指出 H378 之后的真实设备结果没有连续写入本文件。实际源码存在，但部分结论只保存在
+`diagnostics/`、route handoff 或提交差异中。本节按 Git 提交和已保存证据补录关键转折，
+不按实验序号补写未知结果；没有可核实设备记录的项目明确标为“仅实现/静态验证”。
+
+#### H390–H392：日志停止、数据库初始化与只读存储接线
+
+- H390 的单轮 ring boot `23eecad0` 保留约 341.3–487.0 秒；H389f 的 ring boot
+  `220ce7d8` 保留约 520.7–671.4 秒。屏幕帧仍为零，不能把“没有捕获 panic”当成
+  整机没有停止。`lsd` 两次采样都位于 `_dispatch_sync_f_slow`，经
+  `performJournalRecovery`/`beginListening` 等待数据库初始化；工作线程等待
+  `restoreInactiveInstalls` 的同一 dispatch group。当时只找到等待者，没有找到执行者。
+  证据：`diagnostics/H390-seeding-peers-2026-11-15.md`、
+  `diagnostics/H390-logstop-2026-11-15.md`。
+- H391 从当前活动 `NativeUfsProbe` 提供强 `NativeRamBlock` 只读存储桥，仅接受
+  `sheng-data-persist=1`；写入和 sync 返回失败。对默认窗口的 TWRP 只读检查发现首块
+  全零、无 `SHNGDATA`，只排除了该布局位置，不能扩展成所有历史 Data 布局均无数据。
+  H391 的真机 ring 只保留 120–279.7 秒，未出现 Data 打开或 USB probe，故不能据此
+  验收接线。证据：`diagnostics/H391-readonly-store-2026-11-15.md`、
+  `diagnostics/Data-persistence-audit-2026-11-15.md`。
+- H392 只增加低频 `NATIVE_DATA_STATUS`，给出 requested/state/header/first/present/
+  writes/errors 与 USB requested；没有新增存储 I/O 或写入实现。此后 AW 的
+  `cs_text_fixup_parsed/applied` 必须分别记录，`parsed=1, applied=0` 不是修复成功。
+  证据：`diagnostics/H392-periodic-data-status-2026-11-15.md`。
+
+#### H393–H397：LaunchServices、owning lock 与启动工具链
+
+- H393 ring boot `2326177e`，正文约 283.3–411.0 秒，display frames=0。共享缓存
+  slide `0x8c90000` 把 SpringBoard 的等待栈解析为 CCSModuleRepository 初始化查询
+  应用可用性；`lsd` 正通过 LaunchServices system-content scan 枚举
+  `/Applications/PaperBoard.app/PlugIns`。AW fixup 计数仍只有
+  `text=1/0`，规则已解析但未应用，不能称 AW 修复成功。
+- H394 通过实际 kernel `kernel_object_default` 地址、`vm_object.Lock` DWARF 偏移和
+  `LCK_RW_WRITER_EVENT` 三方核对，确认一次采样等待 `kernel_object` 写事件；后续
+  snapshot 的 raw lock word 为 `0x420000`、低 16 位 reader 计数为 0、无 writer/
+  upgrade waiter，排除了“长期持续持锁”，禁止强制解锁。证据：
+  `diagnostics/H393-device-analysis-2026-11-15.md`、
+  `diagnostics/H394-kernel-object-lock-2026-11-15.md`。
+- H395 只测 `lsd` 在 `vn_open_modflags` 中 ≥50 ms 的打开；慢记录≤96 行，每 256 次
+  打开输出总量。干净 bootstrap 曾再次遇到 stale `ios-obj` mockfs 约定，删除
+  `xnu-work` 和 `build/xnu/ios-obj` 后通过。已保存的 H395r USB2 payload/boot 为
+  `2ba6777d…` / `e617d841…`。
+- H396q 只改变观测消耗：`native-probe-quiet=2→1` 与两个
+  `h103-log-secs=1→60`；payload/boot 为 `334b628b…` / `5801d3c1…`。
+  H396clean 从 source `3b77a750d`、device `0c66d9998` 删除两套生成树与旧 skip-setup
+  seed 后重建，kernel/payload/boot 为 `81b117da…` / `a9bc9d14…` /
+  `df7b7279…`。H396clean 运行至 1848 秒、frames=0。
+- H397 在 H396clean 暴露的 `pkd` 循环后，仅以只读 bindfs 把 OS 侧 framework
+  metadata/signature 与 SystemOS 侧可执行文件在
+  `PlugInKitDaemon.framework` 精确组合；不跳过 pkd。kernel/payload/boot 为
+  `5bb80578…` / `f946e19a…` / `253e04fc…`。证据集中在
+  `diagnostics/H395-lsd-open-latency-2026-11-15.md` 与
+  `diagnostics/H397-pluginkit-cryptex-union-2026-11-15.md`。
+
+#### H404–H408：USB、CDC 与 Format 1 主路线
+
+- H404 恢复 H403-cp 的 main 用户态：boot `96279334…`，输入源码 `836c5075…`，
+  build `MAIN-UR-1`。到约 385.6 秒 SpringBoard/backboardd/lsd 都存在，
+  `NATIVE_PANIC=0`；UFS refused block requests=0。旧 USB 控制仍表现为
+  `ep0 command 9 timeout`，这是独立的 USB 设备/端点问题，不回退用户态基线。
+- H405 以已验证 kernel `7d3ad1be…` 仅修补 DWC3 三个字节，boot
+  `1b42ff89…`；真机两次启动改进了 role 与端点命令。
+- H406 以 H405 单字节修补接收 DWC3 XferComplete 状态，boot 阶段确认 EP0
+  descriptor/control transfer，PnP 最终仍为 EP0-only，不能称 CDC 全接口完成。
+- H407 从当前 main 重新生成 Format 1 主路线，args 992 B，最终门禁重构建后
+  `zap-base` worst-case 1020/1024。旧 H407 ring 不能冒充最终重建 H407 证据。
+- H408 集成 CDC ACM：PnP 为 `USB\VID_1209&PID_0001\OP5CDCH408`、`usbser`、
+  COM8、status OK/problem 0；随后一次验证中出现 OCS timeout/recover 重复，
+  不能宣称 UFS 已清洁。上述结论的详细记录在现有 STATUS H404–H408 段和
+  `diagnostics/H408-integration-manifest-20261118.json`。
+
+#### H413–H432：显示探针、scene 与 CA/Metal 交界的连续主线
+
+- H413 的只读 IPC correlation 记录的结论是“显示/IPC probe PASS，但首帧仍无”。
+  H415 Data readiness smoke 通过 `stage 4`，但 retry 分支未实际触发；H416/H417
+  typed CA 与 AKS observation 没有生成 selector/scene 成功；H418 AKS 成功，
+  scene 仍为零；H419/H420 继续追踪 BKS reply/main scene，observer 自身存在缺陷。
+  证据：`diagnostics/H413-first-frame-correlation-2026-11-18.md`、
+  H415–H420 对应 `diagnostics/` 文件。
+- H421/H422 先把 LaunchServices 文件系统扫描作为独立可观测 gate，H423 记录
+  LaunchServices lifecycle 与 renderer abort 交界。H424 只在 32 slots 完成且
+  `stable=1` 后输出稳定 gate；H425 只改 A540Trace 的 fault naming，kernel 与 H424
+  逐字节相同；H426 进入 Objective-C/C++/signal exception forensics，未改变
+  kernel、ADT、Data 或显示行为。提交与哈希分别见
+  `a4903ca`、`3dcee27`、`ac1efbd` 和对应诊断 JSON。
+- H427/H428/H429/H430 的连续结论已写入现有 H427–H430 段：renderer 的
+  `CMImaging` exception、buffer factory、heap factory 依次修复，但 SpringBoard
+  scene observer 未投递，draw/commit/present 仍为零。H430 的 `scene#=0` 是
+  observer 未到达的证据，不是 scene 不存在的证明。
+- H431 新增只读 SpringBoard scene observer 与 scenebootstrap；ring 只看到自然
+  SpringBoard exec（约 145.399 s），`H431_SBBOOT/H431_SBSCENE/scenebootstrap exec`
+  均为 0。分类 `springboard-observer-job-not-delivered`，不能升级为 scene 阴性。
+  证据 `diagnostics/H431-springboard-scene-delivery-2026-11-19.md`。
+- H432 把 SpringBoard wrapper 写进 LaunchDaemon overlay，结果 `launchd_cache_loader`
+  在 142.084 s 先执行，145.358 s 仍直接 exec 原 SpringBoard；
+  `H432_SBWRAP/H432_SBSCENE/observer open/scene#` 全为零。分类
+  `launchd-cache-bypasses-overlaid-springboard-job`。该轮后期还有 44 次 UFS lock
+  timeout、3 次 mediaserverd SIGBUS，但发生在 wrapper 已被绕过之后，不能与首帧 gate
+  混作同一变量。证据 `diagnostics/H432-launchd-cache-2026-11-19.md`。
+
+#### H433–H466：源码修复链与未补齐的记录边界
+
+- H433 `ffc6d50` 目标从 LaunchDaemons overlay 转向
+  `/System/Library/xpc/launchd.plist` 的 cached job set；H434 `abf813f` 尝试绕过
+  app spawn policy；H435 `db89565` 增加 shell trampoline；H436 `7765d14`、
+  `4efd1f5` 改为 SpringBoard bundle wrapper 并修正 mount context。这些提交
+  存在且有静态 builder/checker，但没有像 H431/H432 那样连续写入可核验的独立设备
+  结论，本节不把它们标成“已验证首帧修复”。
+- H437–H466 的大量工作位于 route handoff、First-Frame Analysis 和后续诊断提交，
+  并非全部有 `STATUS` 编号。已知可复用的边界是：H465 的 Metal heap 结果仅为
+  `heap-return-and-texture-contract-smoke-partial-pass`；H466 两轮同镜像采集没有
+  panic/watchdog 状态，其中第二轮有 559.626816 s 的 UTRD stall，但没有该请求的
+  精确完成记录。H466 无 stall 的轮次是 `watchdog-not-exercised-control`，
+  不能作为 watchdog 通过证据。不得从文件名或后续构建倒推 H437–H464 每轮已验证。
+- 详细证据主要在：
+  `main-route/display-first-frame/HANDOFF.md`、
+  `main-route/FIRST-FRAME-ANALYSIS.md`、
+  `main-route/display-first-frame/logs/H465/`、
+  `main-route/display-first-frame/logs/H466/`。若后续需要逐个编号补录，应依据
+  对应日志的 boot id、产物哈希和路线 handoff，不依据仅存在的提交标题。
+
+#### 记录规则的补强
+
+每次成功的 kernel build、prelink、payload package 或 boot image package 完成后，
+必须立即更新本 `STATUS.md`，记录候选编号、唯一变量、源码 commit、kernel/payload/boot
+哈希、验证门禁和“是否已上机”。设备启动后必须追加实际 boot id、日志窗口、最终分类
+和失败/first-frame 结论。提交存在不等于实验成功；没有日志时只能写源码/静态状态。
+### §109 H467/H468 UFS 观测实测与首秒数据中止（2026-11-21）
+
+§107 的 `static-gated-candidate-not-built` 是当时状态，已被本节更正。H467 和
+H468 均已构建、打包并上机；它们不是复用 H466 镜像。H467 首轮运行到约 168 秒，
+H468 在 GPT 读取后立即触发 `Unaligned kernel data abort`。H467 的状态计数观测
+没有执行，H468 的 watchdog 状态采样也没有机会执行。两者都不能证明 UTRD 完成、
+锁等待下降或 watchdog 恢复。
+
+#### H467 构建与首轮设备记录
+
+H467 的源码提交、构建和用户态/内核输入如下：
+
+```text
+source commit       080beaaeb7baa281852dded02737ecd4e465479e
+H467 source        2f0cb0ddf6526c5e3355adb1e1c5e4ebd275e29336e96afd4bbf0724e23655e1
+H467 patch         e864f378eeb1274a94acf5c4a066683b7b5f44c380f7c89696c87170a5ccbdb3
+H467 tree kernel   139a8fba2634728bd612d32f5f0b8f51e270758e5794935aa3fa517883d4af1c
+H467 kernel        a6946b0f0ffd035f311c31f5d0ca86227746e5b6af5ca016174c3f7e8932013b
+H467 payload       633db9045ceb82522eb93456be8ea5e6871e900a490a31031be8e871e76a1459
+H467 boot          2700249705d428691cad658f84a5b17511923ec591a656ac765c61ef883d41bc
+H467 ADT           982befd348009f18675d23e8f62219ed8b2fa5b4bf7989c60bcc313f5fd73186
+H466 boot          af715c36fc53abee61b77023be4535b189dc171d33c2bed357827b34aa2d6914
+H466 payload       54d403b78fafedfec5ddfe3be698743e02a6c21869494a2a273470e53a5dcc1a
+H466 kernel        71f7c456e64bbcec529caa80bb11b4b1c7437d0d9ebcbe8436a4522b0390df07
+```
+
+boot、payload 和 kernel 三层 SHA 都与 H466 不同。H467 实际启动记录含
+`NATIVE_BUILD: H467 boot=7b371778`，H103 的 `slot_build` 为 `H467`，保留 120
+个 slot，最后消息时间约 168.023 秒。运行目录：
+
+```text
+main-route/display-first-frame/logs/H467/device/20261121-003000/
+H467 tail32 SHA256 a0c31ba06cce2de0da1a96cf8aec045e20daa517586650c003dffe93c9739299
+```
+
+该记录的启动参数行明确为：
+
+```text
+NATIVE_UFS_HB: slotMode=1 logSecs=60 hbTimer=0 loadIogpu=0
+```
+
+因此 `NATIVE_H467_STATUS` 虽然存在于 kernel 字符串中，却位于未启用的
+`NativeUfsProbe::hbTimerTick()`，没有任何状态采样记录。H467 条目仍能证明显示
+驱动探测到达 `NativeLegacyDisplay`，但不能把合成显示转移当作 SpringBoard 产品
+首帧，也不能把日志末尾的 168 秒当作 watchdog 验证。
+
+H467 patch 相对精确 H466 源文件以计数为主，但 Git 提交层同时包含了此前的锁 owner
+记录和恢复 rate gate 等源码，因此仓库层看是 194 行变化。H466→H467 的可重放 patch
+结果为 `PASS`，但记录“只增加日志、行为未变”时必须限定为 patch 的源码增量，不能
+把整个 Git commit 描述成仅诊断。
+
+#### H468 构建
+
+H468 是 H467 之后的独立诊断镜像，源码提交：
+
+```text
+initial source commit  d5b1ca13c58e1a8f1f4df68e5e2d8cf03e6c914b
+lock-scope repair      23f6c1b72a0a57d8bfdd0a05cfcc40e148d1d52e
+H468 source            880e8663bb69da2c045347cb7605f5ebaad141a29148d4a3f2b70f9b62eda6cf
+H468 patch             b47e39b3245567dc5af46f0a681555a69342aef4fcd94c8d2c3c5e78e3144da7
+H468 tree kernel       5eac5d73370bcc2f782aaddaefd3fb0fe3af71377e76a1a1c203b5222eac181e
+H468 kernel            af04dbabf596c465209b6f0b5bf81bcafd00f372b60ad031f99d60b2508ed31c
+H468 payload           86f0e885f651280c3f1c3c05d758a37541d6cb70f097dac8af005a142ac10c18
+H468 boot              c5d28a1cadf8b0ed852bb4fc5cac6cc64fa36d8a9c32ec9156961aaf46ea6c61
+H468 ADT               64a3268ca3e95da35162df2e334c56044144be8f8ec4382d91ca42a98fa81b8c
+owner trust            cd754067b9587960d336715b35c933cfb50b29f3b5b7b48feb0d8988092541cf
+H468 PMGR archive      a50f2cf4d2ee2ff985e9eb55d91d69c20b6c6e7e1ff61cc8d5fc942102e9ce8e
+21H461 kernelcache     f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7
+H407 UEFI             9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6
+```
+
+H468 把状态输出移入已在 H467 日志中证明运行的 watchdog 线程，状态继续在 UFS stall
+记录之后采样；同时把 READ(10) LBA 观测改为从本次提交的 CDB 读取，并增加恢复
+attempt 与 success 两套计数。timeout、锁上限、恢复 rate gate、请求排序、显示和
+watchdog 调度值均没有改变。
+
+payload 内 kernel 回读与 `H468 kernel` 完全一致，bootargs 原长 992 字节，附加
+`zap-base` 和 16 位十六进制值后的最坏长度为 1020/1024。第一次 kernel 编译因
+watchdog 状态行前移至锁计数声明之前而失败；将五个锁计数声明前移后重新构建，静态
+gate 与两次 kernel 构建均通过。两次 tree kernel SHA 不同，是因为第二遍 PMGR archive
+从第一遍生成的真实绑定更新；最终生成的是 `5eac5d73…`。
+
+证据：
+
+```text
+main-route/display-first-frame/builds/H468/
+main-route/display-first-frame/logs/H468/device/20261121-015900/
+```
+
+#### H468 设备结果：GPT 读取后未对齐数据中止
+
+设备在唯一 serial `16149951` 上把 boot 镜像完整发送；Fastboot 返回
+`Sending OKAY` 后，控制通道报 `Too many links`，但用户确认镜像实际进入 XNU。启动前
+只清除并回读授权日志窗口最后 32 MiB，全零 SHA 为
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+
+复位后的 H468 授权窗口仍为该全零 SHA，说明这次 boot 在第一次持久化之前结束。进入
+TWRP 后 `/sys/fs/pstore` 为空，`/proc/last_kmsg` 不存在，因此持久存储没有留下崩溃
+链。用户提供的重启前屏幕照片给出直接内核证据。关键顺序：
+
+```text
+NATIVE_UFS_GPT: L0..L5 present
+NATIVE_IOMFB: native display provider registered
+NATIVE_IOMFB_PROBE: provider ... IOMobileFramebufferLegacy / NativeLegacyDisplay
+virtual bool IOMobileFramebufferLegacy::start(IOService *): all kernel threads created
+NATIVE_UFS_GPT: GPT data phys=... size=1000
+NATIVE_PANIC_STR: Unaligned kernel data abort. at pc 0xfffffff0079d6090, lr 0xfffffff0079d3328
+panic(cpu 0 caller 0xfffffff007a45d20): Unaligned kernel data abort.
+```
+
+使用 H468 kernel 和 `native_sha256` 的匹配 dSYM 做精确映射：
+
+```text
+pc 0xfffffff0079d6090 -> ufsSubmit(UfsQueue*, unsigned, unsigned, unsigned long long)
+                         NativeUfsProbe.cpp:2776
+lr 0xfffffff0079d3328 -> ufsCommand(...)
+                         NativeUfsProbe.cpp:2907
+```
+
+2776 正好是 H468 新增的当前 READ(10) LBA 组装：
+
+```cpp
+gUfsFrozenLba = (ucd[0] == 1 &&
+    static_cast<unsigned> (q->ucd[16]) == 0x28) ?
+    (static_cast<uint64_t> (q->ucd[18]) << 24) |
+    (static_cast<uint64_t> (q->ucd[19]) << 16) |
+    (static_cast<uint64_t> (q->ucd[20]) << 8) | q->ucd[21] : 0;
+```
+
+目标文件反汇编在 H468 `ufsSubmit` 的同一段生成：
+
+```text
+ldur w8, [x8, #0x12]
+rev  w8, w8
+```
+
+该 `w` 读取槽位从 UCD 基址加 18（`0x12`）开始，要求 4 字节对齐；UCD 基址为 2 的
+幂对齐时加 18 会产生 `2 mod 4` 的地址。这与屏幕报出的“未对齐内核数据读取”一致，
+也比原先的四个独立 byte 读取多了一个编译器合并后的多字节访问。源码语义是
+`ucd[18..21]`，但生成代码不保证不产生未对齐宽载。
+
+因此当前分类是
+`H468-unaligned-u32-read-in-current-request-lba-observation-after-gpt`。这是经地址
+映射确认的直接源码/二进制对应点。“未对齐读取是复位首发原因”已由 panic 和地址证据
+支持；为什么 H467 在相同外层读取路径上没有触发，仍需通过下一镜像验证，不能仅凭
+这段映射解释全部历史差异。
+
+不能使用的结论：
+
+- 不能把 H468 复位称为 watchdog recovery；
+- 不能从 H468 的空日志推出 UFS 请求没有完成；
+- 不能把截图中的合成 display transfer 或 diagnostic GIC 行当作 SpringBoard 首帧；
+- 不能把 Fastboot 的 `Too many links` 当作本次内核停机的根因。它只描述了 USB 控制
+  通道失去响应。
+
+#### 构建与验证坑
+
+1. 新候选必须先验证两边 commit，再用 Git 同步。H468 第一次构建失败时旧的
+   `kernel.macho` 和 payload 仍在，若只看脚本退出或目录存在就会误发 H467 旧产物。
+   必须核验 tree kernel、prelink kernel、payload 内 kernel 三层哈希及 kernel 内
+   H468 标记。
+2. `unixnu build prelink` 必须使用 `/opt/local/bin/python3.12`；系统 Python 没有
+   `tomllib`，但该失败不会覆盖旧 kernel。
+3. `unixnu build payload` 必须传 `-D ~/UniXNU-cheeseburger`，并把
+   `/opt/local/bin` 与 `/usr/local/bin` 加入 PATH；否则找不到 `mformat/mcopy`。
+4. `--out` 在这个 payload 构建入口是输出根目录，不是 payload 文件。需要单独生成
+   boot 镜像时使用 `make-bootimg.py --out`。
+5. shell 生命周期结束会终止直接以 `&` 启动的远端后台作业；构建必须在持续持有的
+   SSH 前台会话中完成，或使用能独立存活并验证的作业机制。不能用短 sleep 判断完成。
+6. XNU 生成目录可能在失败或中断后留下指向不完整对象的符号清单。H468 曾遇到
+   `KernelConfigTables.cpo` 的瞬时缺失；确认无活动编译器后同树重跑通过，不应立刻
+   删除已验证的 feeds 或 patched `xnu-work`。
+7. 状态输出所在函数必须在该镜像真实启用的执行路径上。H467 放在未启用的
+   `hbTimerTick()`，因此即使 boot 运行 168 秒也没有状态记录；除静态字符串检查外，
+   必须验证实际运行条件。
+8. 锁计数前移到 watchdog 状态行后，所有依赖声明也必须前移。检查器需验证声明位置、
+   不在编译后才发现 undeclared identifier。
+9. 每次 Windows 本机 ADB/Fastboot/SSH/SCP 命令只使用 PowerShell 启动；SSH 仅用
+   `mac`、`ai`、`y9000x` 配置别名。远端 Mac 构建脚本内部可使用其原生 shell。
+10. 设备只允许 `fastboot boot`。授权日志窗口可清除并回读为零；不改分区、GPT、
+    `userdata` 或任何持久启动分区。崩后应先取 pstore/last-kmsg、再进 TWRP 取 H103，
+    最后才决定是否重试同一镜像。
+11. 首次看 H468 截图必须把真实 PC/LR 和对应 kernel/dSYM 哈希绑定。不同候选或不同
+    prelink 产物的地址不可互用；atos 成功只意味着符号映射，仍须阅读对应源码和指令。
+12. H467/H468 的真实启动结果必须写入本文件与 route handoff。此前 STATUS 最后停在
+    H378 之后的 §107 静态候选，导致设备实测、失败镜像和修复动作没有形成连续记录。
+
+#### 状态与下一步
+
+```text
+H467  = booted-to-168s / status-observation-not-armed / no completion proof
+H468  = GPT-read / unaligned-kernel-data-abort at ufsSubmit:2776 / pstore-empty
+first-frame = unresolved
+watchdog recovery = unverified
+```
+
+下一步只做一项最小修复：保留 watchdog 状态输出，但把 LBA 观察改为逐 byte 读取并
+显式组装 `uint64_t`，禁止编译器将该访问合并为 16/32/64 位加载；更新 checker 必须
+拒绝 `ldur w*,[*, #0x12]` 一类生成的宽读取证据。构建后先比较 kernel 哈希、反汇编和
+payload 回读，再同条件 boot 一次。只有新截图/Pstore/H103 表明没有该 unaligned
+abort，才可恢复 UFS status 和请求完成判定。
