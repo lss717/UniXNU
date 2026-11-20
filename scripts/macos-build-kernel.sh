@@ -79,7 +79,12 @@ fi
 # The series overlaps (a later patch rewrites a hunk an earlier one added), so an
 # applied patch can fail its reverse check while still not applying forward. Reuse
 # is only safe when every patch is either applied or applicable; otherwise rebuild.
-if [ -d "$WORK/.git" ]; then
+# An explicitly requested patched-worktree reuse is accepted only when the
+# marker proves the patch series already ran. Fresh or unmarked trees still
+# pass through the complete patch application below.
+if [ -d "$WORK/.git" ] && [ "${XNU_SKIP_PATCH_LOOP:-0}" = 1 ] && grep -q "$PATCH_MARKER" "$WORK/bsd/kern/kern_exec.c"; then
+  echo "reusing explicit patched xnu-work after marker check"
+elif [ -d "$WORK/.git" ]; then
   for stale in "$SOURCE_ROOT"/patches/xnu/*.patch "$SOURCE_ROOT"/kits/NativePrelink/patches/*.patch; do
     git -C "$WORK" apply --reverse --check "$stale" >/dev/null 2>&1 && continue
     if git -C "$WORK" apply --check "$stale" >/dev/null 2>&1; then
