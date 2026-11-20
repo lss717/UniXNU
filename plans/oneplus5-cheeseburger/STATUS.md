@@ -17140,3 +17140,79 @@ boot         860fa9f6a3284bd15227e1f94347aad4ef05e0ad686da37816097c1ca2a86d25
 
 详细记录：
 `diagnostics/H470r-launchservices-seed-2026-11-21.md`。
+
+#### H470r 真机结果：跨过 lsd，随后窗口锁 timeout 引发 APFS 数据中止
+
+唯一 serial `16149951` 上单次 `fastboot boot` 成功，boot 前授权尾环为全零。
+CDC 在约 285 秒 uptime 出现。Data 持续 `state=1 loaded=1`，`lsd.iconscache`
+sandbox 缺口消失，lsd 于 298.671457 秒 exec 并持续运行。
+
+SpringBoard 到 2005.424518 秒仍同步等待 lsd；2221.470193 秒请求对端改为
+`cfprefsd`：
+
+```text
+rcv=102151/27/SpringBoard q=0 sr=1 so=1
+req=4099/85/cfprefsd q=1 sr=1 so=2
+```
+
+这证明 H470r seed 已让 SpringBoard 越过 lsd 等待。它不是首帧：到
+2221.567614 秒的最后显示门仍为 `s345=0/0/0 val=0 xf=0 fr=0`，没有
+`NATIVE_MTL` 或 SpringBoard 产品帧。
+
+2250.000827 秒出现一次 8-block window stall：
+
+```text
+NATIVE_UFS_STALL_LOG: req=d21fa/8 cmds=337136 winBytes=5752370176
+lastCmd=11eb9ea/262144 ufsFlight=1 waited=196719051
+```
+
+2255-2264 秒随后发生 38 条 `NativeUfsWindow` 30 秒锁 timeout。OS/SystemOS
+窗口各有 46-72 个 waiter，owner 在 sharingd、Setup、callservicesd、ind、
+accountsd 等仍在推进的用户进程之间变化。所有 timeout 都在进入 UFS 命令
+retry/recovery 之前返回 `kIOReturnTimeout`；本轮统计仍为 OCS timeout=0、
+doorbell timeout=0、retry=0、recover=0、`NATIVE_UFS_READFAIL=0`。
+
+块层随后报 `request failed to start!`、`disk3/disk6 I/O timeout`、
+`_vnode_dev_read ... err 60` 和 `apfs_slurp_file_data ... Operation timed
+out(60)`。2266.526421 秒内核数据中止：
+
+```text
+pc=0xfffffff007ab7ab4   -> memmove+0x64
+lr=0xfffffff00b68971c   -> com.apple.filesystems.apfs __TEXT_EXEC+0x48971c
+x0=0xfffffff0c2dd4000
+x1=0xfffffffac6ead000
+x2=0x0000000000001fe0
+```
+
+`memmove` 的源地址 `x1` 超出正常内核映射。当前最直接分类为重复 APFS 读错误后
+把损坏/未初始化源指针交给 8160 字节 `memmove`：
+`H470r-userland-crossed-lsd-wait-then-window-lock-timeout-apfs-data-abort`。
+
+证据：
+
+```text
+logs/H470r/device/20261121-034421/H470r-live.log
+  0b8f9d74f0b67fd83b7f1df0f94b175d4127a42841a63044b0e8363e21145d68
+H470r-h103.txt
+  4a055f0d302ace67ffee0949f6f6b02479ed10670261d6d4e05ada981dcadf99
+H470r-tail32.bin
+  e94b3577e604dad0a80c54a3842f0d9f0c25b847ab0b7685773194dbd3330592
+```
+
+H103 writer 在本轮约 237 秒后停止，live trace 是 2221-2266 秒序列的权威记录。
+CAPTURE 进程在设备已复位后终止，frame 容器未最终落盘。
+
+### §113 H471：只扩展 NativeUfsWindow 锁预算（2026-11-21）
+
+单变量为 `NativeUfsWindow::doAsyncReadWrite` 的 per-volume 锁等待预算：
+
+```text
+UFS_TIMEOUT_TICKS       153600000   8 s，不变
+UFS_DATA_LOCK_TICKS     576000000   30 s，全局命令锁不变
+UFS_WINDOW_LOCK_TICKS  2304000000   120 s，仅窗口锁
+```
+
+H470r 已证明底层 UFS 命令没有 OCS/doorbell/recovery 错误，而窗口请求在合法但
+繁忙的 owner 队列后因 30 秒预算批量变成合成 I/O timeout。H471 不改变 UFS
+controller recovery、请求顺序、read-ahead、显示或 Data seed。静态 checker：
+`diagnostics/H471-window-lock-budget-check.py`。
