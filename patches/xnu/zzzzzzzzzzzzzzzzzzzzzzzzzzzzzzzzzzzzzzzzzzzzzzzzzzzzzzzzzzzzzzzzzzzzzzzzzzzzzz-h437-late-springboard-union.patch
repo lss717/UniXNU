@@ -1,0 +1,70 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7334,6 +7334,8 @@
+ volatile int native_gpu_addon2_status = -1;
+ volatile int native_gpu_addon3_stage = 0;
+ volatile int native_gpu_addon3_status = -1;
++volatile int native_gpu_springboard_late_stage = 0;
++volatile int native_gpu_springboard_late_status = -1;
+ static void
+ native_gpu_addon_mount(proc_t p, user_addr_t scratch, user_addr_t offset, const char *source, size_t source_size,
+     const char *point, size_t point_size, const char *visible, const char *own, volatile int *stage, volatile int *status)
+@@ -7879,6 +7881,43 @@
+ 	}
+ }
+ 
++static int
++native_gpu_addon_springboard_prepare(proc_t p, user_addr_t scratch)
++{
++	uint32_t enabled = 0;
++	if (!PE_parse_boot_argn("sheng-gpu-addon", &enabled, sizeof(enabled)) || enabled != 1) {
++		return 0;
++	}
++	const char *source = "/private/var/ngpu/springboard";
++	const char *point = "/System/Library/CoreServices/SpringBoard.app";
++	const char *visible = "/System/Library/CoreServices/SpringBoard.app/Info.plist";
++	const char *own = "/System/Library/CoreServices/SpringBoard.app/SpringBoard";
++	vnode_t probe = NULLVP;
++	int target_before = vnode_lookup(own, 0, &probe, vfs_context_current());
++	if (!target_before) {
++		vnode_put(probe);
++		probe = NULLVP;
++	}
++	native_gpu_addon_mount(p, scratch, 0xb00, source, strlen(source) + 1, point, strlen(point) + 1,
++	    visible, own, &native_gpu_springboard_late_stage, &native_gpu_springboard_late_status);
++	uint64_t target_size = 0;
++	int target_after = vnode_lookup(own, 0, &probe, vfs_context_current());
++	if (!target_after) {
++		struct vnode_attr va;
++		VATTR_INIT(&va);
++		VATTR_WANTED(&va, va_data_size);
++		if (!vnode_getattr(probe, &va, vfs_context_current()) && VATTR_IS_SUPPORTED(&va, va_data_size)) {
++			target_size = va.va_data_size;
++		}
++		vnode_put(probe);
++		probe = NULLVP;
++	}
++	printf("NATIVE_GPU_SPRINGBOARD_LATE: before=%d mount_stage=%d mount_status=%d after=%d size=%llu\n",
++	    target_before, (int)native_gpu_springboard_late_stage,
++	    (int)native_gpu_springboard_late_status, target_after, (unsigned long long)target_size);
++	return target_after;
++}
++
+ /* The deletable system apps (Weather, Notes, Calendar, ...) ship in the OS volume's /private/var/staged_system_apps. A restore copies
+  * them into the Data volume, where SystemAppMigrator installs them during the first-boot data migration; until then only the
+  * placeholders in /System/Library/AppPlaceholders exist and the widgets of those apps stay blank. The owner Data mount hides the OS
+@@ -8825,6 +8864,14 @@
+ 		printf("NATIVE_CRYPTEX_PLUGINKIT: union not applied: %d\n", pluginkit_error);
+ 	}
+ #endif
++#if defined(XNU_OWNER_DATA_MOUNT) && XNU_OWNER_DATA_MOUNT
++	boot_progress_stage("late SpringBoard union enter");
++	int springboard_error = native_gpu_addon_springboard_prepare(p, (user_addr_t)scratch_addr);
++	boot_progress_stage("late SpringBoard union returned");
++	if (springboard_error) {
++		printf("NATIVE_GPU_SPRINGBOARD_LATE: union not visible: %d\n", springboard_error);
++	}
++#endif
+ #if CONFIG_MEMORYSTATUS
+ 	(void) memorystatus_init_at_boot_snapshot();
+ #endif /* CONFIG_MEMORYSTATUS */

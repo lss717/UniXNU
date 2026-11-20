@@ -1,0 +1,19 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -9403,8 +9403,15 @@
+ 	}
+ 
+ 	/* call the launch constraints hook */
+ 	os_reason_t launch_constraint_reason;
+-	if ((error = mac_proc_check_launch_constraints(p, imgp, &launch_constraint_reason)) != 0) {
++	uint32_t no_launch_constraints = 0;
++	boolean_t skip_launch_constraints =
++	    PE_parse_boot_argn("sheng-no-lc", &no_launch_constraints, sizeof(no_launch_constraints)) &&
++	    no_launch_constraints == 1;
++	if (skip_launch_constraints) {
++		printf("NATIVE_LAUNCH_CONSTRAINT_BYPASS: pid=%d comm=%s bootarg=%u\n",
++		    proc_getpid(p), p->p_name, no_launch_constraints);
++	} else if ((error = mac_proc_check_launch_constraints(p, imgp, &launch_constraint_reason)) != 0) {
+ 		signature_failure_reason = launch_constraint_reason;
+ 		goto done;
+ 	}
