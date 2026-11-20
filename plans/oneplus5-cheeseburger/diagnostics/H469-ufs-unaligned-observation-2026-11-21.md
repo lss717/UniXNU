@@ -64,6 +64,38 @@ A build is not accepted from source inspection alone. Before packaging:
 4. verify prelink, payload kernel round-trip and boot-argument length;
 5. record kernel, payload and boot hashes in `STATUS.md`.
 
+## Build result
+
+The H469 source commit is `66ff03ec85830b262ac21569d5633c962d55cba0`.
+Both kernel passes, prelink, payload packaging and boot-image packaging passed.
+
+```text
+tree kernel          65853e3945cc18f27e71bd15b2bce74ffb8957ac1eebc559db208209494106ec
+NativeUfsProbe.o     2635b6e7ecb153ba0f7e32f25c1be629a43aa88af7eefbf01a802b63b58941c8
+kernel               700b50d93379bc804c955c29db0eb77451d1d3353cf1c0a7ad484bfa9a7d849c
+payload              593ad3a363d90a3b3f100ac8684f0c84710de4275181d321c7916f314b257b4e
+boot                 f2d25dd20487c27c878ac07497bd4a65db918f8422354460da4a9e0684f20495
+ADT                  d97c6b8140c6745d6871fbdb771c5d55f8cc1be3d0d51452af4ad758e28bf36e
+owner trust          cd754067b9587960d336715b35c933cfb50b29f3b5b7b48feb0d8988092541cf
+PMGR archive         5c59361277e7d479313e7f880e1c742d234abf9fed72d6d0088126f53117d097
+```
+
+The payload kernel round-trip passed. Boot arguments remain 992 bytes, and the
+worst-case `zap-base` form is 1020/1024 bytes.
+
+The compiled `NativeUfsProbe.o` contains:
+
+```text
+ldrb w10, [x8, #0x12]
+ldrb w11, [x8, #0x13]
+ldrb w11, [x8, #0x14]
+ldrb w8,  [x8, #0x15]
+```
+
+The object has zero `ldur w*, [x*, #0x12]` instructions. The final kernel has
+exactly one `H469` tag and one `NATIVE_H469_STATUS` string, with no H468 status
+string.
+
 ## Device gate
 
 Only after all build checks pass, boot once on serial `16149951`. The direct

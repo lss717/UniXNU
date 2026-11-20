@@ -16873,3 +16873,62 @@ watchdog recovery = unverified
 拒绝 `ldur w*,[*, #0x12]` 一类生成的宽读取证据。构建后先比较 kernel 哈希、反汇编和
 payload 回读，再同条件 boot 一次。只有新截图/Pstore/H103 表明没有该 unaligned
 abort，才可恢复 UFS status 和请求完成判定。
+
+### §110 H469：修复 CDB byte 18 的未对齐观测加载（2026-11-21）
+
+H468 的未对齐数据中止已经由匹配 kernel/dSYM 与目标文件反汇编定位。崩溃 PC
+`0xfffffff0079d6090` 映射到 `ufsSubmit():NativeUfsProbe.cpp:2776`，LR
+`0xfffffff0079d3328` 映射到 `ufsCommand():2907`。H468 在 CDB byte 18 观测处生成：
+
+```text
+ldur w8, [x8, #0x12]
+rev  w8, w8
+```
+
+UCD 位于页对齐内存时，`+0x12` 为 `2 mod 4`，因此该四字节读取触发
+`Unaligned kernel data abort`。
+
+H469 只改变 LBA 观测读取：
+
+```text
+source commit       66ff03ec85830b262ac21569d5633c962d55cba0
+base commit         da314ccdb7896e480e7c75350233b112c965c02c
+source SHA-256      7c59fe6d6f0f7cbc159f9d50fc5429475f3a9a1cfb5b8f2a99b80192e6956aab
+patch SHA-256       b0a286b35959089985a5d3db32b1938559b9113a1a934d577ae40ad2c1907175
+checker SHA-256     a94f3f386599da68e1560549634dfea88e8cbb4089733f3b985bc0d6e07db8c2
+```
+
+四个 CDB byte 通过 `volatile const uint8_t` 独立读取，再显式组装 big-endian LBA。
+timeout、恢复 rate gate、锁边界、请求顺序、显示和 watchdog 调度均未改变。状态行从
+H468 改名到 H469，仍位于实际运行的 watchdog 线程。
+
+两遍 kernel build、prelink、payload 和 boot-image package 均通过：
+
+```text
+tree kernel          65853e3945cc18f27e71bd15b2bce74ffb8957ac1eebc559db208209494106ec
+NativeUfsProbe.o     2635b6e7ecb153ba0f7e32f25c1be629a43aa88af7eefbf01a802b63b58941c8
+kernel               700b50d93379bc804c955c29db0eb77451d1d3353cf1c0a7ad484bfa9a7d849c
+payload              593ad3a363d90a3b3f100ac8684f0c84710de4275181d321c7916f314b257b4e
+boot                 f2d25dd20487c27c878ac07497bd4a65db918f8422354460da4a9e0684f20495
+ADT                  d97c6b8140c6745d6871fbdb771c5d55f8cc1be3d0d51452af4ad758e28bf36e
+owner trust          cd754067b9587960d336715b35c933cfb50b29f3b5b7b48feb0d8988092541cf
+PMGR archive         5c59361277e7d479313e7f880e1c742d234abf9fed72d6d0088126f53117d097
+```
+
+payload 内 kernel 与 prelink kernel 逐字节一致；bootargs 为 992 bytes，最坏
+`zap-base` 形式为 1020/1024。目标文件在 CDB `+18..+21` 处生成四个 `ldrb`，
+未对齐 `ldur w*, [x*, #0x12]` 计数为零。最终 kernel 只有一个 `H469` marker 和
+一个 `NATIVE_H469_STATUS` 字符串，没有 H468 status。
+
+当前状态为 `built-static-disassembly-verified-not-device-tested`。证据目录：
+
+```text
+main-route/display-first-frame/builds/H469/
+diagnostics/H469-ufs-unaligned-observation-2026-11-21.md
+diagnostics/H469-ufs-unaligned-observation.patch
+diagnostics/H469-ufs-unaligned-check.py
+```
+
+下一次启动必须确认 GPT 之后的未对齐中止消失，并观察是否到达第一个
+`NATIVE_H469_STATUS` watchdog sample。到达状态行只证明观测线程执行；请求完成和锁
+等待下降仍须由 terminal/recovery 与 lock counters 分别证明。
