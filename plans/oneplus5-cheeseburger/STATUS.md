@@ -17216,3 +17216,31 @@ H470r 已证明底层 UFS 命令没有 OCS/doorbell/recovery 错误，而窗口�
 繁忙的 owner 队列后因 30 秒预算批量变成合成 I/O timeout。H471 不改变 UFS
 controller recovery、请求顺序、read-ahead、显示或 Data seed。静态 checker：
 `diagnostics/H471-window-lock-budget-check.py`。
+
+H471 首次构建暴露了既有 xnu-work 重建坑：干净 feed 无法用 plain `git apply`
+顺序应用全部重叠 series，因此补丁树必须显式复用。重建过程中还发现 H437 late
+SpringBoard union hunk 需要按当前 context 重新锚定；该补丁已改为无 fuzz 应用。
+最终链接还需要既有 addon ABI 的两个零初值观测符号
+`native_gpu_addon_calls` 与 `native_gpu_addon_crc_bad`，已用独立 build-fix
+补丁恢复，不改变 H471 行为变量。
+
+构建结果：
+
+```text
+source commit       3dbec14abfa03a648e32d30c23fbfb3cd1dddc23
+source kernel       f06bc36cd41661f1d365cc79d8e5afc5ce304a2e68876375e378f03e292274d4
+NativeUfsProbe.o    08f1706a457754cf9cb9da4d70d2232b39fcf7fc8d98cde8d542deca5fd535c3
+prelink kernel      6a9f064a85d3ba44b7fe3fac48c8a9b77de6f59f78f8642dfdabbceaad1d5a59
+```
+
+目标文件在窗口锁调用处生成
+`mov w2, #0x4000; movk w2, #0x8954, lsl #16`，即 `0x89544000 =
+2,304,000,000` ticks。最终 kernel 含 H471 marker，并保留 H469 status ABI 与 H437
+late SpringBoard union 字符串。构建记录：
+
+```text
+h468-build/h471-kernel-build-pass3.log
+h468-build/h471-prelink-pass3.log
+h468-build/h471-ufs-disasm.txt
+diagnostics/H471-window-lock-budget-2026-11-21.md
+```
