@@ -1,0 +1,11 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7426,6 +7426,8 @@
+ 	return result == Z_STREAM_END && stream.total_out == size && !stream.avail_in ? 0 : EINVAL;
+ }
+ volatile int native_gpu_addon_files = -1;
++volatile int native_gpu_addon_calls = 0;
++volatile uint32_t native_gpu_addon_crc_bad = 0;
+ volatile int native_gpu_addon_written = 0;
+ volatile int native_gpu_addon_same = 0;
+ volatile int native_gpu_addon_failed = 0;
