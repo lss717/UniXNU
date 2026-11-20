@@ -17267,3 +17267,87 @@ boot    827b699f964f88dde03bd29977f2920051a8b2a75b3ddaf301981110ba097d5a
 ```
 
 当前状态为 `boot-built-static-verified-not-device-tested`。
+
+同镜像在一次本地 `fastboot boot`（serial `16149951`）上运行超过 3380 秒，
+kernel boot ID 为 `212bb495`。H470r 在 2250–2266 秒触发的窗口锁超时风暴和
+APFS data abort 没有复现：到样本 3386.395635 秒，
+
+```text
+seq=442170 done=442170 timeout=0 ocs_err=0 dbto=0
+recover=0 recovered=0 flight=0
+lock_ok=1153588 lock_timeout=0 lock_wait_max_ms=38114
+```
+
+这不是“锁等待下降”。最大窗口锁等待从 16.742 秒增长到 27.063 秒（2186.958650
+秒），再增长到 38.114 秒（2277.995474 秒）；旧 30 秒预算会在后者期间截断
+合法排队请求，而 H471 的 120 秒窗口预算让请求继续并完成。UFS 命令层仍没有
+OCS、doorbell、recovery 或 read-failure 记录。唯一 `NATIVE_UFS_STALL_LOG`
+位于 1942.850879 秒，计为 8-block/206086825-tick 短窗口停顿，之后请求计数和
+completion 计数继续增长。
+
+观测缺陷也要保留：从 2920.038862 秒起 `lock_waiters=4294967293`，是
+`uint32_t gLockWaiters` 在并发 increment/decrement 下的下溢，不是 42 亿个
+waiters。该字段不能用于 H472 之后的定量 waiter 比较，除非先原子化。当前没有
+watchdog 触发，所以本轮不能证明 watchdog recovery。
+
+用户态在约 2140 秒从 SpringBoard 的 4 个线程推进到 13 个以上，约 2399 秒继续
+启动 `corecaptured`、`nearbyd`、`assetsd`、`installcoordinationd`、
+`fileproviderd` 等。2645.960247 秒 backboardd（pid 56）第一次提交 selector 4，
+显示门由
+`s345=0/0/0 val=0 xf=0 fr=0` 变为 `s345=1/209/209 val=209 xf=209 fr=0`
+（3257.070285 秒）。每次 CPU copy 都是 8294400 bytes，采样 readback 基本为
+`ff000000`，只偶见 `ffaeaeae`、`ff282828`。这是真实 backboardd client
+提交和黑/近黑产品 surface，仍不是 SpringBoard 桌面首帧。
+
+日志路径：
+
+```text
+display-first-frame/logs/H471/device/20261121-044208/H471-live.log
+```
+
+当前设备门分类为
+`H471-window-lock-budget-passes-apfs-abort/no-product-frame`。
+
+### §114 H472：只挂载已验证 GPU addon（2026-11-21）
+
+H471 已在约 2646 秒进入真实 display-client 提交流程，但 payload 的
+`sheng-gpu-addon=0` 与 `offline-accelerator=0` 保持关闭，H465 的
+`NATIVE_MTL`/A540Trace 路径没有加载。H472 只执行一项行为变化：
+
+```text
+sheng-gpu-addon=0 -> 1
+offline-accelerator=0 保持不变
+```
+
+这样先验证 boot-time addon 文件安装和两个 union mount，不提前把
+`offline-accelerator`/`_offline-accelerator-plugin` 混入同一轮。H472 复用
+H471 kernel 和同一 Data seed，唯一 payload 差异是这一个 boot 参数。
+
+H472 回读：
+
+```text
+kernel       6a9f064a85d3ba44b7fe3fac48c8a9b77de6f59f78f8642dfdabbceaad1d5a59
+trust cache  cd754067b9587960d336715b35c933cfb50b29f3b5b7b48feb0d8988092541cf
+GPU addon    88251c35d6a1b6b6df2c761c2c136f04a9090e1361f16fdaceac798ba6da5dee
+Data seed    7522c2b803bac371190e5f316bacc825d1dd3c964ef3a3ab6ffd75bf0f9bae79
+ADT          1d30e6395cc6d9151b5731b6887df1105d658f1d02311c42ef418b03f9ddee90
+unixnu.toml  3618bc87a6da78ffc2c52f480fa119f4b709e0780ae325eb65e3f40be4a8a0c6
+payload      1360be39242b16f431a55bdcd04e3104911702c59307bcb743d3ff2baa69bb8c
+```
+
+payload 内 kernel 与 H471 prelink kernel 逐字节一致；bootargs 为 992 B，
+worst-case 1020/1024，`check-bootargs-fit.py` PASS。boot：
+
+```text
+UEFI    9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6
+payload 1360be39242b16f431a55bdcd04e3104911702c59307bcb743d3ff2baa69bb8c
+boot    a7e8f5f557524eadb448d2a5f8267a55e4136bc069c138dc253fe7b9063bfa2a
+```
+
+设备门要求 `NATIVE_UFS_ALIVE addon=7/7/0/0/0/1`、
+`ext=4/2 dm=5/0 wp=5/0`，同时保持 UFS/APFS/userland 通过。该轮只验证 addon
+安装；`offline-accelerator=0`，所以 `NATIVE_MTL` 仍应为零。只有这一步通过后，
+下一轮才单独打开 A540Trace accelerator。
+
+证据目录：
+`display-first-frame/builds/H472/`。

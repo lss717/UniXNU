@@ -129,3 +129,75 @@ evidence that the previous 30-second budget was truncating valid queued work.
 
 The display gate remains separate. A synthetic transfer is not a SpringBoard
 product frame.
+
+## Device result
+
+One local `fastboot boot` on serial `16149951` returned
+`Sending OKAY` and `Booting OKAY`; the runtime boot ID was `212bb495`.
+Ring preclear and readback both succeeded before boot. CDC appeared about
+285 seconds after the boot command.
+
+The H470r failure window was crossed without the previous terminal cascade:
+
+```text
+2277.995474 s
+seq=348374 done=348374 timeout=0 ocs_err=0 dbto=0
+recover=0 recovered=0 flight=0
+lock_ok=923543 lock_timeout=0
+lock_wait_ms=15895409 lock_wait_max_ms=38114 lock_waiters=7
+```
+
+The one `NATIVE_UFS_STALL_LOG` was at 1942.850879 seconds:
+
+```text
+req=99030/8 cmds=276953 winBytes=5322675200
+lastCmd=11f2f72/262144 ufsFlight=1 waited=206086825
+```
+
+It was a bounded 8-block window stall, not one of H470r's 38
+`NativeUfsWindow` timeout records. The block path returned no `errno 60`,
+there was no `apfs_slurp_file_data` failure, and no data abort appeared.
+
+The result proves that a valid request can wait longer than 30 seconds and
+still finish. Maximum window-lock wait grew from 16.742 seconds to 27.063
+seconds at 2186.958650 seconds, then 38.114 seconds at 2277.995474 seconds.
+It does not prove lower lock latency or watchdog recovery.
+
+The waiter counter underflowed to `4294967293` from 2920.038862 seconds.
+`gLockWaiters` is a volatile `uint32_t` with non-atomic increment and
+decrement, so this is an observation defect. Do not use that field for
+quantitative H472 comparisons until it is atomic.
+
+Userland advanced. SpringBoard grew from four threads to at least 13, and
+continued through `corecaptured`, `nearbyd`, `assetsd`,
+`installcoordinationd`, `fileproviderd` and other first-boot services.
+The earliest display-client submission was:
+
+```text
+2645.960247 s selector=4 pid=56/backboardd
+2646.039415 s NATIVE_LEGACY_COPY bytes=8294400 us=69182
+2646.039491 s NATIVE_LEGACY_READBACK tl=ff000000 c=ff000000 br=ff000000 q=ff000000
+2646.040328 s transfer status=0
+2646.040388 s retirement observed
+```
+
+By 3257.070285 seconds the gate had advanced to
+`s345=1/209/209 val=209 xf=209 fr=0`. Readbacks remained black almost
+everywhere, with isolated non-black center pixels `ffaeaeae` and
+`ff282828` around 3269 seconds. This is a real backboardd client surface,
+but no SpringBoard product frame.
+
+The latest sample inspected before this record was 3386.395635 seconds:
+
+```text
+seq=442170 done=442170 timeout=0 ocs_err=0 dbto=0
+recover=0 recovered=0 flight=0
+lock_ok=1153588 lock_timeout=0 lock_wait_max_ms=38114
+```
+
+No `NATIVE_MTL`, `NATIVE_FRAME frames>0`, watchdog event, SIGBUS, or panic
+was present. Classification:
+`H471-window-lock-budget-passes-apfs-abort/no-product-frame`.
+
+Live evidence:
+`display-first-frame/logs/H471/device/20261121-044208/H471-live.log`.
