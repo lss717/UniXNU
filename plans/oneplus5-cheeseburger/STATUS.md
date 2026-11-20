@@ -17596,4 +17596,30 @@ becf899a246099a87f2eda9c7062b303403ac8500f25264c80a06ad75742913c
 - 分别记录 synthetic swap 与 SpringBoard 真实首帧，避免把黑 readback 或
   driver selector 4/5 当成桌面。
 
-当前状态：`packaging`。
+H476 打包回读：
+
+```text
+source commit 20fd44b
+kernel        4577d3bc93a48dec1c910e76d4262e8ceda64869f6b370a2ee3ff42556364b00
+trust cache   cd754067b9587960d336715b35c933cfb50b29f3b5b7b48feb0d8988092541cf
+GPU addon     befc899a246099a87f2eda9c7062b303403ac8500f25264c80a06ad75742913c
+Data seed     7522c2b803bac371190e5f316bacc825d1dd3c964ef3a3ab6ffd75bf0f9bae79
+ADT           f706384b2e8edb63461c4651f3444739658cbca136c6712fcd10552bc24291dc
+unixnu.toml   dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e065f01e81
+payload       a5a874d48fa33703a8f704bd86b8cca51f5e077527387e529908f96966cc961c
+boot          4587cff751b330d6a670d469f78b4d0a32b7e4514daf5ef85618bd211fb064fe
+```
+
+payload 内 kernel 与 prelink kernel 逐字节一致，`unixnu.toml` 与 H475 逐字节
+一致，kernel_args 字符串也与 H475 完全相同。命令行仍为 988 B，实际
+`zap-base` 1008/1024，worst case 1016/1024，bootargs fit PASS。ADT 的
+PackedRAMDisk/TrustCache/GpuAddon 占位符和 iPad7,1/MSM8998 检查均 PASS；
+boot header、地址重叠和 payload `OP5ESP` 检查 PASS。payload 内含 kernel、ADT、
+trust cache、37,856-byte plugin addon、scratch Data 与 `unixnu.toml`。
+
+安装器只覆盖 addon 当前列出的文件，不主动删除旧路径。这里的干净前提来自
+H474/H475 两轮均从同一 Data seed 重复记录 `7/5/2/0/0/0`，并同时报告
+`NATIVE_DATA_STATUS present=0`：新增的五个 full-addon 文件没有通过 persistent
+store 跨轮残留。H476 预期 `addon=3/...`，以三个当前文件计数验证。
+
+当前状态：`boot-built-static-verified-not-device-tested`。
