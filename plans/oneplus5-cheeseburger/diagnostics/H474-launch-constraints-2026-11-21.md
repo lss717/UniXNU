@@ -74,3 +74,43 @@ as one feature: `offline-accelerator=1` and
 
 Evidence directory:
 `display-first-frame/builds/H474/`.
+
+## Device result
+
+One local `fastboot boot` on serial `16149951` returned `Sending OKAY`
+and `Booting OKAY`. CDC appeared about 249 seconds after the boot
+command. Runtime boot ID was `2234f4d3`.
+
+The expected gates passed:
+
+```text
+addon=7/5/2/0/0/0
+owner=4/0 ext=4/2 dm=5/0 wp=5/0
+accel=0/0/0/0
+```
+
+SpringBoard survived the launch constraint. At 343.107224 seconds the
+sampler saw a live process with nine threads:
+
+```text
+NATIVE_SBCHAIN:
+  sb=27 n=9
+  req=11275/1/launchd q=1 sr=0 so=3
+```
+
+No `Constraint not matched` restart loop or SpringBoard `NATIVE_EXIT`
+appeared. UFS reached `seq==done` samples with no OCS, recovery or
+window-lock timeout. The bounded observation stopped after about 403
+seconds once the launch gate had remained stable.
+
+```text
+H474-live.log
+  f70ca97d336427743e119c9ccac960d28e1ac232c1d28c3721ef4256a5c9efbb
+H474-tail32.bin
+  d4e9885f7167249b280c3cf2ddbeeebbe89c3772c90174231543b50d84fa879
+H474-h103.txt
+  cce368240f98260f7cf5ac4b702befbf2dc6a273c429423d236c53721accd8d5
+```
+
+Classification:
+`H474-launch-constraint-bypass-pass/addon-mounted`.

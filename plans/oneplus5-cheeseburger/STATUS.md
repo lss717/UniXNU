@@ -17458,3 +17458,44 @@ boot  7d1dcaafdf7b95c592a92c990e519d56eff280873c396697f6521dbe4580b5fe
 设备门：保持 `addon=7/5/2/0/0/0` 与三个 mount stage，SpringBoard 能越过
 AMFI constraint 并持续存活；`offline-accelerator` 仍为 0，所以 `NATIVE_MTL`
 仍应为零。证据目录：`display-first-frame/builds/H474/`。
+
+真机 boot ID `2234f4d3`，CDC 约 249 秒出现。addon 仍为
+`7/5/2/0/0/0`，三个 mount 仍为 `4/2 5/0 5/0`。SpringBoard 不再被 AMFI
+constraint 拒绝；343.107224 秒已看到 `sb=27 n=9`，同步请求为
+`req=11275/1/launchd q=1 sr=0 so=3`。无 `Constraint not matched` 重启循环，
+UFS 保持 `seq==done` 且无 terminal error。`offline-accelerator=0` 下
+`NATIVE_MTL=0` 属预期。分类：
+`H474-launch-constraint-bypass-pass/addon-mounted`。证据：`H474-live.log` SHA
+`f70ca97d336427743e119c9ccac960d28e1ac232c1d28c3721ef4256a5c9efbb`。
+
+### §117 H475：只启用 A540Trace accelerator（2026-11-21）
+
+H475 复用 H474 的 kernel、Data seed、trust cache、addon 文件安装与
+`sheng-no-lc=1`。单一功能变化是恢复 H465 已验证的 accelerator 注入：
+
+```text
+offline-accelerator=0 -> 1
+_offline-accelerator-plugin=A540Trace
+```
+
+为保持命令行预算，只移除 tracing-only 的
+`native-trace-amfi-syscall=1` 与已为 0 的 `h114-icc=0`；不改变 UFS、display、
+scene 或 scanout 路径。
+
+H475 回读：
+
+```text
+kernel       4577d3bc93a48dec1c910e76d4262e8ceda64869f6b370a2ee3ff42556364b00
+trust cache  cd754067b9587960d336715b35c933cfb50b29f3b5b7b48feb0d8988092541cf
+GPU addon    88251c35d6a1b6b6df2c761c2c136f04a9090e1361f16fdaceac798ba6da5dee
+Data seed    7522c2b803bac371190e5f316bacc825d1dd3c964ef3a3ab6ffd75bf0f9bae79
+ADT          9fa9e5ba88b84546ef89f79b26bbd9a9cea5e881b8efebf2c2149d09259eb74d
+unixnu.toml  dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e065f01e81
+payload      8bef2a7991f1e6164074d44398006cf7f8fc09648dc58f3663190710e30712bf
+boot         43f709eb4f796881e586bd3ff6694b96056f4c46fd94f9bb0b08e48251530dc5
+```
+
+bootargs 988 B，实际 `zap-base` 1008/1024，worst 1016/1024，静态 fit PASS。
+设备门要求 `NATIVE_UFS_ACCEL` 的 `MetalPluginName=A540Trace source=arg`、
+`accel` 计数增长、addon/SpringBoard 门保持通过，并观察
+`NATIVE_MTL`、CA draw/commit/present 与产品帧。
