@@ -17406,3 +17406,55 @@ payload 内 kernel 回读一致；bootargs 仍 992 B，实际 `zap-base` 1012/10
 worst case 1020/1024，静态 fit PASS。marker 为 H473；旧 H471 checker 因
 期望 marker H471 而报告 build-marker FAIL，其余窗口锁和 display probe 静态门通过。
 证据目录：`display-first-frame/builds/H473/`。
+
+真机 boot ID `22420a95`，CDC 约 249 秒出现。H473 的 addon 门通过：
+
+```text
+addon=7/5/2/0/0/0
+owner=4/0 ext=4/2 dm=5/0 wp=5/0
+```
+
+7 个文件完整，5 个写入、2 个相同、失败 0、CRC 0，三个 union mount 均成功；
+UFS 仍 `seq==done` 且无 OCS/recovery/窗口锁超时。`offline-accelerator=0`，
+`NATIVE_MTL` 仍为 0，符合单变量边界。
+
+紧接着出现新的确定阻断：SpringBoard 每次 exec 都被 AMFI launch constraint
+`c[8]p[1]m[1]e[6]` 拒绝，`NATIVE_EXIT status=0x9`，很快达到
+`Too many corpses being created`。H465 的同一 addon profile 使用了
+`sheng-no-lc=1`，而 H471 曾去掉该参数。分类：
+`H473-addon-v2-install-pass/springboard-launch-constraint-blocked`。
+证据：`H473-live.log` SHA
+`7f17e31089d15f33a66bec27f7fb11d5514de66b61fd2216479ac1f720879f03`。
+
+### §116 H474：只恢复 SpringBoard launch-constraints bypass（2026-11-21）
+
+H474 复用 H473 kernel 和 payload sidecars，只增加一个行为参数：
+
+```text
+sheng-no-lc=1
+```
+
+原 payload 中重复的 `h103-log-secs=60` 通过同名 override 收敛为一次，只缩短命令
+行，不改变日志周期。因此功能变量只有 AMFI launch-constraints bypass。
+
+H474 回读：
+
+```text
+kernel       4577d3bc93a48dec1c910e76d4262e8ceda64869f6b370a2ee3ff42556364b00
+trust cache  cd754067b9587960d336715b35c933cfb50b29f3b5b7b48feb0d8988092541cf
+GPU addon    88251c35d6a1b6b6df2c761c2c136f04a9090e1361f16fdaceac798ba6da5dee
+Data seed    7522c2b803bac371190e5f316bacc825d1dd3c964ef3a3ab6ffd75bf0f9bae79
+ADT          f5ac162d313d9d9c46847080ee3a405c3e9bae056e6990abb545e2bf00ede93b
+unixnu.toml  4166c00899ff757d4548f81ce90033533e1307573ff5cc533289644ea658f7f1
+payload      b3bde11fd3a25e28c63b7c9c51c84d2e8e14a0b0190ce87881a1f4f47f48ecb7
+```
+
+bootargs 989 B，实际 `zap-base` 1009/1024，worst 1017/1024，静态 fit PASS。
+
+```text
+boot  7d1dcaafdf7b95c592a92c990e519d56eff280873c396697f6521dbe4580b5fe
+```
+
+设备门：保持 `addon=7/5/2/0/0/0` 与三个 mount stage，SpringBoard 能越过
+AMFI constraint 并持续存活；`offline-accelerator` 仍为 0，所以 `NATIVE_MTL`
+仍应为零。证据目录：`display-first-frame/builds/H474/`。

@@ -114,3 +114,53 @@ A540Trace accelerator profile as the next single feature variable.
 
 Evidence directory:
 `display-first-frame/builds/H473/`.
+
+## Device result
+
+One local `fastboot boot` on serial `16149951` returned
+`Sending OKAY` and `Booting OKAY`. CDC appeared about 249 seconds after
+the boot command. Runtime boot ID was `22420a95`.
+
+The addon gate passed:
+
+```text
+addon=7/5/2/0/0/0
+owner=4/0 ext=4/2 dm=5/0 wp=5/0
+accel=0/0/0/0
+```
+
+Five files were written, two were already equal, no file failed, CRC
+errors remained zero, and all three union mounts reached their success
+stages. `seq==done` samples had no OCS, doorbell, recovery, or window
+lock timeout. `NATIVE_MTL` stayed absent because the accelerator remained
+disabled.
+
+A new, deterministic userland gate followed immediately. SpringBoard was
+rejected by AMFI before userspace entry:
+
+```text
+AMFI: Launch Constraint Violation (enforcing),
+  error info: c[8]p[1]m[1]e[6], (Constraint not matched)
+  launching proc: /System/Library/CoreServices/SpringBoard.app/SpringBoard
+NATIVE_EXIT: comm=SpringBoard status=0x9
+```
+
+The rejection repeated rapidly and reached `Too many corpses being
+created`. H465 used `sheng-no-lc=1` for this addon profile. H471 omitted
+that argument, so enabling the SpringBoard union in H473 exposed the
+missing launch-constraints bypass.
+
+The capture was stopped after about 432 seconds because both the success
+gate and the next blocker were deterministic.
+
+```text
+H473-live.log
+  7f17e31089d15f33a66bec27f7fb11d5514de66b61fd2216479ac1f720879f03
+H473-tail32.bin
+  f59648f114e80d6a22ab3279c5aaf52cbf23c8ba19b7f20d70e2a6ee27cbe8c1
+H473-h103.txt
+  76604ba91952671cf7e23a5c4d74b26cdf3c35817832dbf2879340b9edd541f1
+```
+
+Classification:
+`H473-addon-v2-install-pass/springboard-launch-constraint-blocked`.
