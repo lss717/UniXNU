@@ -80,3 +80,70 @@ gate.
 
 Evidence directory:
 `display-first-frame/builds/H475/`.
+
+## Device result
+
+One local `fastboot boot` on serial `16149951` returned `Sending OKAY`
+and `Booting OKAY`. Runtime boot ID was `22532505`; CDC appeared about
+250 seconds after the boot command.
+
+The accelerator and Metal observer loaded:
+
+```text
+NATIVE_UFS_ACCEL: service=0xfffffff38308e560
+  MetalPluginName=A540Trace source=arg set=1
+NATIVE_MTL: dev#13 initialize loaded=1
+NATIVE_MTL: dev#15 initWithAcceleratorPort: port=0x3c03
+NATIVE_MTL: ca#53 display list[0] id=0x1 name=LCD
+  device=primary bounds=1080x1920 scale=3
+NATIVE_MTL: srv#365 ctx ctx[0] id=0xe42fa222
+  displayId=0x1 mask=0xffffffff layer=CALayer subs=2
+NATIVE_MTL: queue#50 commandBuffer self-completing
+NATIVE_MTL: cmdbuf#215 commit self-completed
+```
+
+The display driver reached:
+
+```text
+s345=0/1/1 val=1 xf=1 fr=0
+```
+
+This closes the earlier provider/Metal/CA-context gate. It does not produce
+a product frame:
+
+```text
+NATIVE_MTL: sample=22 app=1 delegate=SpringBoard scenes=0 windows=0
+NATIVE_MTL: encoder ... dealloc binds=0 draws=0 dispatch=0
+NATIVE_MTL: layer ... contents=-
+```
+
+SpringBoard aborted twice at the same boundary:
+
+```text
+2148.138134 s pid=27  status=0x6 ns=2 code=0x6
+2152.100762 s pid=187 NATIVE_MTL observer load build=H457
+2165.219698 s pid=187 status=0x6 ns=2 code=0x6
+```
+
+UFS remained healthy at the same time:
+
+```text
+2161.057427 s seq=311634 done=311633 flight=1
+timeout=0 ocs_err=0 dbto=0 recover=0 recovered=0 lock_timeout=0
+lock_wait_max_ms=33281
+```
+
+`lock_waiters=4294967295` is the known concurrent counter underflow and is
+not a waiter count.
+
+Classification:
+`H475-accelerator-metal-ca-path-active/springboard-sigabrt-no-scene`.
+
+```text
+H475-live.log
+  44b5f71017ff3af903fb01af8e660c8c88b37e6e6bfe82149648c18d33087fd6
+H475-tail32.bin
+  4d543f223d4f83ec1aad90d0287b7b1147c7f54190115cf8371423be6d68f074
+H475-h103.txt
+  57aebf412c492777d9d3a80522341234d77a6cbf2925e4fef0497b5057fb7d57
+```

@@ -17499,3 +17499,101 @@ bootargs 988 B，实际 `zap-base` 1008/1024，worst 1016/1024，静态 fit PASS
 设备门要求 `NATIVE_UFS_ACCEL` 的 `MetalPluginName=A540Trace source=arg`、
 `accel` 计数增长、addon/SpringBoard 门保持通过，并观察
 `NATIVE_MTL`、CA draw/commit/present 与产品帧。
+
+真机 boot ID `22532505`，CDC 约 250 秒出现。A540Trace accelerator 与
+Metal observer 均真实加载：
+
+```text
+NATIVE_UFS_ACCEL: service=0xfffffff38308e560 MetalPluginName=A540Trace source=arg set=1
+NATIVE_MTL: dev#13 initialize loaded=1
+NATIVE_MTL: dev#15 initWithAcceleratorPort: port=0x3c03
+NATIVE_MTL: ca#53 display list[0] id=0x1 name=LCD device=primary bounds=1080x1920 scale=3
+NATIVE_MTL: srv#365 ctx ctx[0] id=0xe42fa222 displayId=0x1 mask=0xffffffff ...
+NATIVE_MTL: queue#50 commandBuffer self-completing
+NATIVE_MTL: cmdbuf#215 commit self-completed
+```
+
+这关闭了“accelerator 未注册、Metal 未进入、CA 没有 display/context”的旧门，
+但没有形成产品帧。FBSWorkspace 观测持续为 `scenes=0 windows=0`；大多数 render
+encoder 在释放时仍是 `draws=0 dispatch=0`；layer contents 为 `-`。显示门截至
+2110.384733 秒仍为 `s345=0/1/1 val=1 xf=1 fr=0`。selector 4/5、CPU copy 和
+driver transfer 可以证明提交/复制链路，不能替代 SpringBoard 真实桌面帧。
+
+SpringBoard 原 pid 27 在 2148.138134 秒以
+`status=0x6 ns=2 code=0x6` 退出，即 SIGABRT。launchd 重启的 pid 187 于
+2152.100762 秒加载 `NATIVE_MTL ... build=H457`，又在 2165.219698 秒以同一退出码
+崩溃。UFS 同时保持 `timeout=0 ocs_err=0 dbto=0 recover=0 lock_timeout=0`；
+最后一个样本 2161.057427 秒为 `seq=311634 done=311633`、`flight=1`，
+最大窗口锁等待 33281 ms，没有证据把这次用户态 SIGABRT 归因于 UFS。
+`lock_waiters=4294967295` 仍是已知并发下溢，不能用于定量比较。
+
+分类：`H475-accelerator-metal-ca-path-active/springboard-sigabrt-no-scene`。
+证据：
+
+```text
+H475-live.log   44b5f71017ff3af903fb01af8e660c8c88b37e6e6bfe82149648c18d33087fd6
+H475-tail32.bin 4d543f223d4f83ec1aad90d0287b7b1147c7f54190115cf8371423be6d68f074
+H475-h103.txt   57aebf412c492777d9d3a80522341234d77a6cbf2925e4fef0497b5057fb7d57
+```
+
+### §118 H474b：full addon 长对照排除 accelerator 因果（2026-11-21）
+
+H475 的 SIGABRT 需要对照。H474b 复用 H474 的同一 kernel、Data seed、trust
+cache、full 7-file addon、`sheng-no-lc=1` 和
+`sheng-gpu-addon=1`，保持 `offline-accelerator=0`。因此本轮日志应没有
+`NATIVE_MTL`，该对照只改变 accelerator/observer 层，不改 addon 内容。
+
+真机 boot ID `2247fedf`，观测至 2405.616845 秒。确认：
+
+```text
+accel=0/0/0/0
+NATIVE_MTL lines=0
+display gate s345=0/0/0 val=0 xf=0 fr=0
+SpringBoard status=0x6 ns=2 code=0x6
+```
+
+原 pid 27 在 2166.240319 秒崩溃，几乎与 H475 的 2148 秒相同。后续 pid 189、
+194、199、219 分别于 2217.609221、2233.849345、2291.854704、2366.458940 秒以
+同一 SIGABRT 退出；没有 AMFI launch-constraint loop。UFS 到 2402.885791 秒仍为
+`seq=352327 done=352326`，`timeout=0 ocs_err=0 dbto=0 recover=0
+lock_timeout=0`，最大窗口锁等待 33803 ms。这里的
+`watchdog_seen=4680` 是现有观测计数，不是已记录的 watchdog fired/recovery；
+不能据此声称验证了 watchdog。`lock_waiters=4294967295` 同样已下溢。
+
+结论：在 accelerator 完全不加载时，SpringBoard 仍稳定复现 SIGABRT。因此
+A540Trace/Metal observer 不是该基线崩溃的必要条件；下一步必须把 full addon
+中的 SpringBoard wrapper、observer dylib 与 launchd cache overlay 从
+A540Trace bundle 本身拆开。
+
+分类：`H474b-no-accelerator-same-springboard-sigabrt`。证据：
+
+```text
+H474b-live.log   c7e97c24fbfa748da73c15b81fbff25a2520d2832a1f64e3a6846b78495f1a87
+H474b-tail32.bin 763d4fc1ebfd07e42707da9c12fee1a7273e8feded32a803a73fb68e25d6029a
+H474b-h103.txt   732d2b1a08e7d1f81a3fc2a62f205bed713e09c4b8d2dcae972c967b68c7f21e
+```
+
+### §119 H476 单一变量：full addon 换成 3-file plugin addon（2026-11-21）
+
+H475/H474b 把下一变量收敛到 addon 内容。H476 保持 H475 的 kernel、Data seed、
+trust cache、bootargs、`sheng-gpu-addon=1`、`sheng-no-lc=1` 与 A540Trace
+accelerator 不变，只把 7-file full addon 换成 H465 的 3-file plugin addon：
+
+```text
+H465-plugin-addon.img
+becf899a246099a87f2eda9c7062b303403ac8500f25264c80a06ad75742913c
+```
+
+该 addon 只含 `A540Trace.bundle` 可执行文件、`Info.plist` 和
+`_CodeSignature/CodeResources`，不含 SpringBoard wrapper、
+`SpringBoardSceneObserver.dylib` 或 `launchd.plist` overlay。
+
+设备门分别记录：
+
+- addon 安装计数应从 `7/5/2/0/0/0` 变为 3-file 结果；
+- A540Trace/Metal 是否仍加载；
+- SpringBoard 是否越过约 2160 秒且不再出现 `status=0x6 ns=2 code=0x6`；
+- 分别记录 synthetic swap 与 SpringBoard 真实首帧，避免把黑 readback 或
+  driver selector 4/5 当成桌面。
+
+当前状态：`packaging`。
