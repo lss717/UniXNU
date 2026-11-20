@@ -87,6 +87,21 @@ static volatile uint64_t gUfsLastLoops;
 static volatile uint64_t gUfsLastTicks;
 static bool gNopActive;
 
+/* H467: immutable accounting only. Each submitted UTRD gets one ordered
+ * sequence and every terminal path records at most one outcome. Frozen request
+ * fields let the heartbeat prove submit-minus-terminal deltas without changing
+ * a timeout, recovery decision, request ordering, or synchronization. */
+static volatile uint64_t gUfsSubmitSeq;
+static volatile uint64_t gUfsDoneCount;
+static volatile uint64_t gUfsTimeoutCount;
+static volatile uint64_t gUfsOcsErrorCount;
+static volatile uint64_t gUfsDbTimeoutCount;
+static volatile uint64_t gUfsStartedTicks;
+static volatile uint64_t gUfsFrozenLba;
+static volatile uint64_t gUfsFrozenBytes;
+static volatile uint32_t gUfsFrozenDir;
+static volatile uint64_t gWatchdogSeen;
+
 #define UFS_TIMEOUT_TICKS 153600000ULL   // H361: 8 s; loaded boots run commands slower than 5.2 s
 static volatile uint64_t gWindowRequests;
 static volatile uint64_t gWindowBytes;
@@ -109,7 +124,7 @@ static uint32_t gH103SlotCursor;
 // boot wrote it.  The header alone is not enough: it is written after the
 // slot, and a late header write failure leaves a stale slots_written behind,
 // which made earlier logs mix slots from several boots.
-#define H103_BUILD "H424"
+#define H103_BUILD "H467"
 static uint64_t gH103BootId;
 static volatile int gH103Quiet;
 static volatile uint64_t gH103LastSlotTicks;
@@ -426,6 +441,7 @@ nativeWatchdogThread (void *, wait_result_t)
   for (;;) {
     IOSleep (500);
     half++;
+    gWatchdogSeen = gWatchdogSeen + 1;
     if ((half & 1U) == 0U) {
       seconds++;
       // H343: how far the bar got is how long the machine lived, whatever the log does.
@@ -2209,6 +2225,12 @@ ufsRecover (UfsQueue *q)
   if (!q || !q->hc) {
     return false;
   }
+  static volatile uint64_t lastRecoverTicks;
+  uint64_t recoverNow = mach_absolute_time ();
+  if (lastRecoverTicks && recoverNow - lastRecoverTicks < 19200000ULL) {
+    return false;
+  }
+  lastRecoverTicks = recoverNow;
   const uint32_t beforeIs = read32 (q->hc, UFS_REG_IS);
   const uint32_t beforeDb = read32 (q->hc, UFS_REG_UTRLDBR);
   uint32_t hcs = 0;
@@ -2233,7 +2255,29 @@ ufsRecover (UfsQueue *q)
       spinTicks (192000);                             /* 10 ms before the next toggle */
     }
   }
-  q->poisoned = false;
+  if (!ready) {
+    const uint32_t preUicHcs = read32 (q->hc, UFS_REG_HCS);
+    uint32_t wakeResult = 0;
+    bool woke = false;
+    bool gotMode = false;
+    uint32_t mode = 0;
+    if (preUicHcs & 8U) {
+      woke = uicCommand (q->hc, UFS_UIC_DME_HIBERNATE_EXIT, 0, 0, &wakeResult);
+      gotMode = uicCommand (q->hc, UFS_UIC_DME_GET, 0x15710000U, 0, &mode);
+      for (unsigned i = 0; i < 1000 && !ready; ++i) {
+        hcs = read32 (q->hc, UFS_REG_HCS);
+        if ((hcs & 3U) == 3U) {
+          ready = true;
+          break;
+        }
+        IOSleep (1);
+      }
+    }
+    IOLog ("NATIVE_UFS_RECOVER_UIC: pre=%x exit=%u result=%x get=%u mode=%x post=%x ready=%u\n",
+           preUicHcs, woke ? 1u : 0u, wakeResult, gotMode ? 1u : 0u, mode,
+           read32 (q->hc, UFS_REG_HCS), ready ? 1u : 0u);
+  }
+  q->poisoned = !ready;
   gUfsInFlight = 0;
   if (ready) {
     gUfsRecovered = gUfsRecovered + 1;
@@ -2261,10 +2305,11 @@ ufsCommandRetry (UfsQueue *q, uint8_t lun, const uint8_t *cdb, unsigned bytes, v
       // H323: recover instead of abandoning the read for the rest of the boot.
       IOLog ("NATIVE_UFS_RETRY: %s poisoned at attempt=%u, recovering\n", who, attempt);
       if (!ufsRecover (q)) {
-        // H361: a controller that is not ready yet is not a reason to fail a page-in (EIO kills
-        // the process that touched the page). Wait and try the toggle again instead.
-        IOSleep (5);
-        continue;
+        // H460: do not spend sixteen 8-second command timeouts while holding the
+        // global UFS lock. Return so the caller releases the lock; a later request
+        // may perform one bounded recovery.
+        IOLog ("NATIVE_UFS_RETRY: %s abandon while device absent attempt=%u\n", who, attempt);
+        break;
       }
       continue;
     }
@@ -2316,7 +2361,7 @@ waitForCompletion (uint8_t *list, uint32_t *ocs, unsigned *loops,
       *loops = loop;
       return false;
     }
-    __asm__ volatile ("yield" ::: "memory");
+    IOSleep (1);
   }
 }
 
@@ -2335,9 +2380,60 @@ waitForCompletion (uint8_t *list, uint32_t *ocs, unsigned *loops,
  * cannot take the lock in 100 ms is dropped and the next two seconds are skipped. */
 #define UFS_LOG_LOCK_TICKS   (1920000ULL)    /* 100 ms at 19.2 MHz */
 #define UFS_LOG_BACKOFF_TICKS (38400000ULL)  /* 2 s */
-static volatile uint64_t gLockOwnerTid;
-static volatile uint64_t gLockAcquiredTicks;
 static volatile uint32_t gLockWaiters;
+static volatile uint64_t gLockOkCount;
+static volatile uint64_t gLockTimeoutCount;
+static volatile uint64_t gLockWaitTicks;
+static volatile uint64_t gLockWaitMaxTicks;
+#define kLockOwnerRecords 8
+struct LockOwnerRecord {
+  IOLock *lock;
+  thread_t owner;
+  const char *who;
+  uint64_t acquiredTicks;
+};
+static LockOwnerRecord gLockOwners[kLockOwnerRecords];
+
+static LockOwnerRecord *
+ownerRecord (IOLock *lock)
+{
+  for (unsigned i = 0; i < kLockOwnerRecords; ++i) {
+    if (gLockOwners[i].lock == lock) return &gLockOwners[i];
+  }
+  for (unsigned i = 0; i < kLockOwnerRecords; ++i) {
+    if (!gLockOwners[i].lock) return &gLockOwners[i];
+  }
+  return &gLockOwners[0];
+}
+
+static void
+markLockOwner (IOLock *lock, const char *who)
+{
+  LockOwnerRecord *record = ownerRecord (lock);
+  record->owner = current_thread ();
+  record->who = who;
+  record->acquiredTicks = mach_absolute_time ();
+  record->lock = lock;
+}
+
+static void
+processOwner (thread_t thread, int *pidOut, int *kernelOut, uint64_t *tidOut)
+{
+  int pid = 0;
+  uint64_t tid = 0;
+  bool kernel = !thread;
+  if (thread) {
+    task_t task = get_threadtask (thread);
+    kernel = !task || task == kernel_task;
+    if (!kernel) {
+      pid = task_pid (task);
+      tid = thread_tid (thread);
+    }
+  }
+  if (pidOut) *pidOut = pid;
+  if (kernelOut) *kernelOut = kernel ? 1 : 0;
+  if (tidOut) *tidOut = tid;
+}
 // Bounded lock acquisition: a stuck holder must not turn a diagnostic read into
 // an unobservable hang. 19.2 MHz timebase, so 38400000 ticks is two seconds.
 // H128: the wait must sleep, not spin.  `yield` is only a pipeline hint and
@@ -2350,17 +2446,39 @@ lockWithTimeout (IOLock *lock, const char *who, uint64_t timeoutTicks, bool trac
    * the "count=8, nothing started" storms need.  Track the holder and how long it has
    * been holding, and print both when a waiter gives up. */
   if (track) gLockWaiters = gLockWaiters + 1;
-  uint64_t start = mach_absolute_time ();
+  const uint64_t start = mach_absolute_time ();
+  thread_t waiter = current_thread ();
   unsigned spins = 0;
   while (!IOLockTryLock (lock)) {
     if (mach_absolute_time () - start > timeoutTicks) {
-      const uint64_t held = gLockAcquiredTicks ? (mach_absolute_time () - gLockAcquiredTicks) : 0;
-      IOLog ("NATIVE_UFS_LOCK: %s timeout ticks=%llu owner=%llu held_ms=%llu waiters=%u\n", who,
+      LockOwnerRecord *record = ownerRecord (lock);
+      const uint64_t held = record->acquiredTicks ? (mach_absolute_time () - record->acquiredTicks) : 0;
+      int ownerPid = 0;
+      int ownerKernel = 0;
+      int waiterPid = 0;
+      int waiterKernel = 0;
+      uint64_t ownerTid = 0;
+      uint64_t waiterTid = 0;
+      char ownerComm[32] = {};
+      char waiterComm[32] = {};
+      processOwner (record->owner, &ownerPid, &ownerKernel, &ownerTid);
+      processOwner (waiter, &waiterPid, &waiterKernel, &waiterTid);
+      if (ownerPid > 0) proc_name (ownerPid, ownerComm, sizeof ownerComm);
+      if (waiterPid > 0) proc_name (waiterPid, waiterComm, sizeof waiterComm);
+      IOLog ("NATIVE_UFS_LOCK: %s timeout ticks=%llu owner_thread=%p owner_tid=%llu owner_pid=%d owner_comm=%s owner_kernel=%d holder=%s waiter_thread=%p waiter_tid=%llu waiter_pid=%d waiter_comm=%s waiter_kernel=%d held_ms=%llu waiters=%u\n", who,
              (unsigned long long) (mach_absolute_time () - start),
-             (unsigned long long) gLockOwnerTid,
+             record->owner, ownerTid, ownerPid, ownerComm[0] ? ownerComm : "-", ownerKernel,
+             record->who ? record->who : "-", waiter, waiterTid, waiterPid,
+             waiterComm[0] ? waiterComm : "-", waiterKernel,
              (unsigned long long) (held / 19200ULL),
              (unsigned) gLockWaiters);
-      if (track) gLockWaiters = gLockWaiters - 1;
+      if (track) {
+        const uint64_t waited = mach_absolute_time () - start;
+        gLockWaiters = gLockWaiters - 1;
+        gLockTimeoutCount = gLockTimeoutCount + 1;
+        gLockWaitTicks = gLockWaitTicks + waited;
+        if (waited > gLockWaitMaxTicks) gLockWaitMaxTicks = waited;
+      }
       return false;
     }
     if (++spins < 64) {
@@ -2374,11 +2492,15 @@ lockWithTimeout (IOLock *lock, const char *who, uint64_t timeoutTicks, bool trac
      * result as a function pointer and killed early boot (UEFI green line).  Only the
      * data paths pay for this bookkeeping - logWrite/logSync pass track=false and stay
      * byte-identical to the baseline. */
+    const uint64_t waited = mach_absolute_time () - start;
     gLockWaiters = gLockWaiters - 1;
-    /* This kernel exports no thread_tid(); the thread pointer itself is a stable
-     * enough owner marker for "same holder or not". */
-    gLockOwnerTid = (uint64_t) (uintptr_t) current_thread ();
-    gLockAcquiredTicks = mach_absolute_time ();
+    gLockOkCount = gLockOkCount + 1;
+    gLockWaitTicks = gLockWaitTicks + waited;
+    if (waited > gLockWaitMaxTicks) gLockWaitMaxTicks = waited;
+    /* Keep a per-lock record: several tracked data paths may legitimately hold
+     * different locks concurrently. Emit process identity only on timeout,
+     * outside the critical section, so diagnostics cannot delay the holder. */
+    markLockOwner (lock, who);
   }
   return true;
 }
@@ -2625,6 +2747,11 @@ ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes,
   }
   gUfsCommands = gUfsCommands + 1;
   gUfsInFlight = 1;
+  gUfsSubmitSeq = gUfsSubmitSeq + 1;
+  gUfsFrozenLba = gUfsLastLba;
+  gUfsFrozenBytes = gUfsLastBytes;
+  gUfsFrozenDir = direction;
+  gUfsStartedTicks = mach_absolute_time ();
   if (gNopActive) {
     IOLog ("NATIVE_UFS_NOP: submit before cacheClean is=%x hcs=%x db=%x\n",
            read32 (q->hc, UFS_REG_IS), read32 (q->hc, UFS_REG_HCS),
@@ -2652,6 +2779,7 @@ ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes,
                read32 (q->hc, UFS_REG_HCS), read32 (q->hc, UFS_REG_HCE));
         q->poisoned = true;
         gUfsInFlight = 0;
+        gUfsDbTimeoutCount = gUfsDbTimeoutCount + 1;
         return false;
       }
       __asm__ volatile ("yield" ::: "memory");
@@ -2675,27 +2803,32 @@ ufsSubmit (UfsQueue *q, unsigned direction, unsigned bytes,
   if (!waitForCompletion (q->list, &ocs, &loops, timeoutTicks)) {
     q->poisoned = true;
     gUfsInFlight = 0;
+    gUfsTimeoutCount = gUfsTimeoutCount + 1;
     gUfsLastLoops = loops;
     gUfsLastTicks = mach_absolute_time () - commandStart;
     IOLog ("NATIVE_UFS_GPT: OCS timeout type=%08x ocs=%x loops=%u "
-           "db=%x is=%x hcs=%x hce=%x ucd0=%x cdb=%02x%02x%02x%02x%02x%02x\n",
+           "db=%x is=%x hcs=%x hce=%x ucd0=%x cdb=%02x%02x%02x%02x%02x%02x "
+           "elapsed_ms=%llu\n",
            utrd[0], ocs, loops,
            read32 (q->hc, UFS_REG_UTRLDBR), read32 (q->hc, UFS_REG_IS),
            read32 (q->hc, UFS_REG_HCS), read32 (q->hc, UFS_REG_HCE),
            q->ucd[0], q->ucd[16], q->ucd[17], q->ucd[18], q->ucd[19],
-           q->ucd[20], q->ucd[21]);
+           q->ucd[20], q->ucd[21],
+           (unsigned long long) (gUfsLastTicks / 19200ULL));
     return false;
   }
   cacheInvalidate (q->list, 4096);
   cacheInvalidate (q->ucd, UFS_FW_UCD_SIZE);
   if (ocs) {
     gUfsInFlight = 0;
+    gUfsOcsErrorCount = gUfsOcsErrorCount + 1;
     gUfsLastLoops = loops;
     gUfsLastTicks = mach_absolute_time () - commandStart;
     IOLog ("NATIVE_UFS_GPT: OCS=%x type=%08x loops=%u\n", ocs, utrd[0], loops);
     return false;
   }
   gUfsInFlight = 0;
+  gUfsDoneCount = gUfsDoneCount + 1;
   gUfsLastLoops = loops;
   gUfsLastTicks = mach_absolute_time () - commandStart;
   if ((gUfsCommands & 63) == 0) {
@@ -3650,6 +3783,27 @@ NativeUfsProbe::hbTimerTick (IOTimerEventSource *sender)
     native_legacy_test_pattern ();
   }
   uint64_t now = mach_absolute_time ();
+  if ((fires % 30) == 0) {
+    const uint64_t flightMs = gUfsInFlight && gUfsStartedTicks ?
+        (now - gUfsStartedTicks) / 19200ULL : 0;
+    IOLog ("NATIVE_H467_STATUS: seq=%llu done=%llu timeout=%llu ocs_err=%llu dbto=%llu flight=%llu age_ms=%llu lba=%llx bytes=%llu dir=%u lock_ok=%llu lock_timeout=%llu lock_wait_ms=%llu lock_wait_max_ms=%llu lock_waiters=%u watchdog_seen=%llu\n",
+           (unsigned long long) gUfsSubmitSeq,
+           (unsigned long long) gUfsDoneCount,
+           (unsigned long long) gUfsTimeoutCount,
+           (unsigned long long) gUfsOcsErrorCount,
+           (unsigned long long) gUfsDbTimeoutCount,
+           (unsigned long long) gUfsInFlight,
+           (unsigned long long) flightMs,
+           (unsigned long long) gUfsFrozenLba,
+           (unsigned long long) gUfsFrozenBytes,
+           (unsigned) gUfsFrozenDir,
+           (unsigned long long) gLockOkCount,
+           (unsigned long long) gLockTimeoutCount,
+           (unsigned long long) (gLockWaitTicks / 19200ULL),
+           (unsigned long long) (gLockWaitMaxTicks / 19200ULL),
+           (unsigned) gLockWaiters,
+           (unsigned long long) gWatchdogSeen);
+  }
   if (gUfsInFlight && gWindowStartTicks &&
       now - gWindowStartTicks > 5 * 19200000ULL) {
     if (!stallLogged) {

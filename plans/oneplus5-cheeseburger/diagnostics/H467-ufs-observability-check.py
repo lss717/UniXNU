@@ -35,6 +35,7 @@ def main() -> None:
     require("gUfsFrozenBytes = gUfsLastBytes;" in text, "byte freeze missing")
     require("gUfsFrozenDir = direction;" in text, "direction freeze missing")
     require("gUfsStartedTicks = mach_absolute_time ();" in text, "start tick missing")
+    require(text.index("static volatile uint64_t gWatchdogSeen;") < text.index("gWatchdogSeen = gWatchdogSeen + 1;"), "watchdog declaration precedes use")
     for token in ("#define UFS_TIMEOUT_TICKS 153600001ULL",
                   "#define UFS_DATA_LOCK_TICKS  (576000001ULL)",
                   "getMatchingService ()", "waitForService", "presentSurface:",
