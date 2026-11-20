@@ -88,6 +88,21 @@ prelink kernel      6a9f064a85d3ba44b7fe3fac48c8a9b77de6f59f78f8642dfdabbceaad1d
 The final kernel contains the `H471` marker, the H469 status ABI, and the H437
 late SpringBoard union strings.
 
+Payload:
+
+```text
+kernel       6a9f064a85d3ba44b7fe3fac48c8a9b77de6f59f78f8642dfdabbceaad1d5a59
+trust cache  cd754067b9587960d336715b35c933cfb50b29f3b5b7b48feb0d8988092541cf
+GPU addon    88251c35d6a1b6b6df2c761c2c136f04a9090e1361f16fdaceac798ba6da5dee
+Data seed    7522c2b803bac371190e5f316bacc825d1dd3c964ef3a3ab6ffd75bf0f9bae79
+ADT          bcd878eac10ea377b77df96fc10a2eece6bb8732ec8beadd7dba829886b7a59f
+unixnu.toml  c64e6ffb9c09df96eafbb2689851cefbfceeb718d3069379063d8d61004c072d
+payload      924d162ff2dd33583e2dd13e31969f87ba6b5ce7c65dbd8c782736d310bddb82
+```
+
+The payload kernel round-trip is byte-identical. The argument string is still
+992 bytes, with worst-case `zap-base` usage 1020/1024.
+
 ## Device gate
 
 The candidate is accepted only if:
