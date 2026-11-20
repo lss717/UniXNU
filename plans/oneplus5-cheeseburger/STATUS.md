@@ -17091,7 +17091,45 @@ iconservicesagent 进入 temporary-sandbox。merlinx 同版本记录还明确指
 8 次，时间覆盖 334.100394-2255.631337 秒。
 
 H470r 保持 H469 kernel、bootargs、display path 和 GPU addon 不变，只把 Data seed
-换成一个可审计版本：补齐上述 lsd/LaunchServices/MobileGestalt 目录，同时写大小
-写两份 DataMigration plist，并在 system 与 uid 501 两个 launchd disabled plist
+换成一个可审计版本：补齐上述 lsd/LaunchServices/MobileGestalt 目录，同时写大、
+小写两份 DataMigration plist，并在 system 与 uid 501 两个 launchd disabled plist
 中只禁用 `com.apple.iconservices.iconservicesagent`。复现工具为
 `scripts/seed-data-launchservices-readiness.py`。
+
+### §112 H470r：LaunchServices Data seed read-back（2026-11-21）
+
+H470r 的唯一变量是 `scratch-data.img`。H469 kernel、全部 bootargs、trust cache、
+H466 GPU addon、UEFI 和显示路径均保持 H469r 基线。复现工具
+`scripts/seed-data-launchservices-readiness.py` 补齐 `db/lsd`、lsd icons cache、
+MobileGestalt cache、用户 LaunchServices/IconsCache 目录；写 iOS 17 使用的大写
+`com.apple.DataMigration.plist` 并保留小写项；在 system 与 uid 501 的用户域
+launchd disabled plist 中只禁用 `com.apple.iconservices.iconservicesagent`。
+
+```text
+base encoded               fed3a0e6bb39974da339bf7f9155b282dfb0438c454c00f0df7a94b5995c03a4
+base logical               584ead3c2c469c2b950cffd66753f6f2c5bdf115fa357f2345376407ef8c5bf9
+H470r seed encoded         7522c2b803bac371190e5f316bacc825d1dd3c964ef3a3ab6ffd75bf0f9bae79
+H470r seed logical         09e540bf07775d94371c8c73ad25e26a144caaf8510437cb7837b57e73b4b578
+H470r seed encoded bytes   4714752
+```
+
+seed transform 在挂载期间写完全部 postcondition，detach 后确认 raw APFS 的
+`NXSB` magic，再重新打包；逻辑大小仍为 1 GiB，Volume UUID 不变。H470r payload
+回读：
+
+```text
+kernel       700b50d93379bc804c955c29db0eb77451d1d3353cf1c0a7ad484bfa9a7d849c
+trust cache  cd754067b9587960d336715b35c933cfb50b29f3b5b7b48feb0d8988092541cf
+GPU addon    88251c35d6a1b6b6df2c761c2c136f04a9090e1361f16fdaceac798ba6da5dee
+Data seed    7522c2b803bac371190e5f316bacc825d1dd3c964ef3a3ab6ffd75bf0f9bae79
+ADT          6e1225183284519ae88fda0cc1492c4c771b6bbc21094b6c13e8fd5d52edac04
+payload      9791328f6c271871ff74d342921bf70cb1e55af89e7ebe01572b4a89f129478b
+```
+
+ADT 哈希从 H469 的 `d97c...` 变为 `6e12...` 是 board ADT 与 packed Data seed
+身份耦合后的预期结果，不是显示或启动参数变化。bootargs 仍为 992 B；
+`check-bootargs-fit.py` 为当前 `zap-base` 1012/1024、最坏 16 位形式 1020/1024。
+当前状态为 `built-static-verified-not-device-tested`。
+
+详细记录：
+`diagnostics/H470r-launchservices-seed-2026-11-21.md`。
