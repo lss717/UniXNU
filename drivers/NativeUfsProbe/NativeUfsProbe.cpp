@@ -129,7 +129,7 @@ static uint32_t gH103SlotCursor;
 // boot wrote it.  The header alone is not enough: it is written after the
 // slot, and a late header write failure leaves a stale slots_written behind,
 // which made earlier logs mix slots from several boots.
-#define H103_BUILD "H469"
+#define H103_BUILD "H471"
 static uint64_t gH103BootId;
 static volatile int gH103Quiet;
 static volatile uint64_t gH103LastSlotTicks;
@@ -2402,6 +2402,12 @@ waitForCompletion (uint8_t *list, uint32_t *ocs, unsigned *loops,
  * timing out says the command took longer than the bound, not that the queue is
  * wedged. Give it enough room to survive a slow command before failing. */
 #define UFS_DATA_LOCK_TICKS  (576000000ULL)  /* 30 s at 19.2 MHz */
+/* H471: the per-window lock serializes APFS requests across a shared
+ * read-ahead buffer. A valid request can occupy it for more than 30 seconds
+ * when the storage queue is busy, even though the underlying command path is
+ * still completing. Keep the global command lock at 30 seconds, but give
+ * window waiters four times that budget before returning a synthetic timeout. */
+#define UFS_WINDOW_LOCK_TICKS (2304000000ULL) /* 120 s at 19.2 MHz */
 /* H317: the log is a diagnostic, so it must never make the main I/O path wait.  A flush that
  * cannot take the lock in 100 ms is dropped and the next two seconds are skipped. */
 #define UFS_LOG_LOCK_TICKS   (1920000ULL)    /* 100 ms at 19.2 MHz */
@@ -3944,7 +3950,7 @@ NativeUfsWindow::doAsyncReadWrite (IOMemoryDescriptor *buffer, UInt64 block,
   uint64_t writeTicks = 0;
   bool ok = true;
   uint64_t lockStart = mach_absolute_time ();
-  if (!lockWithTimeout (lock, label, UFS_DATA_LOCK_TICKS, true)) {
+  if (!lockWithTimeout (lock, label, UFS_WINDOW_LOCK_TICKS, true)) {
     IOLog ("NATIVE_UFS_LOCK: window %s blocked req=%llu block=%llx count=%llu\n",
            label, request, block, count);
     gWindowInFlight = 0;
