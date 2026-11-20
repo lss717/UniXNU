@@ -80,7 +80,7 @@ fi
 # applied patch can fail its reverse check while still not applying forward. Reuse
 # is only safe when every patch is either applied or applicable; otherwise rebuild.
 if [ -d "$WORK/.git" ]; then
-  for stale in "$HOME"/UniXNU/patches/xnu/*.patch "$HOME"/UniXNU/kits/NativePrelink/patches/*.patch; do
+  for stale in "$SOURCE_ROOT"/patches/xnu/*.patch "$SOURCE_ROOT"/kits/NativePrelink/patches/*.patch; do
     git -C "$WORK" apply --reverse --check "$stale" >/dev/null 2>&1 && continue
     if git -C "$WORK" apply --check "$stale" >/dev/null 2>&1; then
       # Applicable but not applied: the archive builders compile from this worktree and

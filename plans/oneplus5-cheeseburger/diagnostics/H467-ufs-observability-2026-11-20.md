@@ -76,3 +76,14 @@ a control, not a watchdog pass.
 ## Current status
 
 `static-gated-candidate-not-built`, `device-tested=false`.
+
+## Build script provenance gate
+
+`macos-build-kernel.sh` previously checked `$HOME/UniXNU/patches/xnu` while running from a
+separate checkout. That compared the H467 build cache against unrelated patches from the
+main tree and forced a rebuild. The check now uses `$SOURCE_ROOT/patches/xnu` and the
+matching NativePrelink patch directory, so reuse is decided against the checkout that is
+actually being built.
+
+This is a build-entry correction only. It does not alter kernel source, timeout values,
+UFS behavior, display behavior, or patch content.
