@@ -106,11 +106,60 @@ Reaching the first status row would establish that the status path executes.
 It would not yet establish that the earlier UTRD stall completed or that lock
 waiting decreased; those require matching terminal/recovery and lock counters.
 
-## Unverified until device run
+## Device result
 
-- Whether unaligned byte 18 was the sole cause of the H468 abort.
-- Whether H469 reaches the 30-second watchdog status sample.
-- Whether UFS requests complete normally under the corrected observation.
-- Whether display-driver transfer corresponds to any SpringBoard product frame.
+One `fastboot boot` on serial `16149951` returned `Sending OKAY` and
+`Booting OKAY`. The H103 record identifies:
+
+```text
+slot_build             H469
+slot_boot              2354909e
+first status           62.142620 s
+second status          92.676184 s
+last message           93.737166 s
+```
+
+The earlier unaligned data abort did not recur. H469 therefore fixes the
+H468 `ufsSubmit():2776` observation fault and reaches the watchdog status path.
+
+The first status counter set was:
+
+```text
+seq=380 done=380 timeout=0 ocs_err=0 dbto=0
+recover=0 recovered=0 flight=0
+lock_ok=409 lock_timeout=0 lock_wait_ms=0 lock_wait_max_ms=0 lock_waiters=0
+watchdog_seen=60
+```
+
+The second status counter set was:
+
+```text
+seq=499 done=499 timeout=0 ocs_err=0 dbto=0
+recover=0 recovered=0 flight=0
+lock_ok=409 lock_timeout=0 lock_wait_ms=0 lock_wait_max_ms=0 lock_waiters=0
+watchdog_seen=120
+```
+
+These rows establish no terminal errors and no selected-lock wait in the
+observed interval. They do not retroactively prove the earlier H466 UTRD
+completion and do not exercise watchdog recovery.
+
+The next independent blocker is:
+
+```text
+NATIVE_H82_DATA: status=60 stage=0 ro=-1 dev=-1 size=0
+NATIVE_PANIC_STR: offline scratch Data mount failed: 60 @kern_exec.c:8829
+NATIVE_PANIC: flags=fd7f0000 client=0 xfer=0 frames=0
+```
+
+Android returned after the XNU reset. The last H103 message is 93.737166 seconds.
+This H469 run is classified
+`H469-unaligned-repair-pass-next-data-mount-errno60`.
+
+The display provider was reached (`NativeLegacyDisplay` match records at
+91.12-91.24 seconds), but display transfer counters were still zero at the
+panic. That is not a SpringBoard product first frame.
+
+## Remaining unverified
 
 H468 remains a failed candidate. Do not relabel it as a watchdog or UFS result.

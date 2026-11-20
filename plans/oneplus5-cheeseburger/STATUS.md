@@ -16920,7 +16920,58 @@ payload 内 kernel 与 prelink kernel 逐字节一致；bootargs 为 992 bytes�
 未对齐 `ldur w*, [x*, #0x12]` 计数为零。最终 kernel 只有一个 `H469` marker 和
 一个 `NATIVE_H469_STATUS` 字符串，没有 H468 status。
 
-当前状态为 `built-static-disassembly-verified-not-device-tested`。证据目录：
+静态构建状态为 `built-static-disassembly-verified-not-device-tested`。随后在唯一
+serial `16149951` 上执行一次 `fastboot boot`，传输与启动均返回 OKAY。H103 结果：
+
+```text
+slot_build       H469
+slot_boot        2354909e
+first status     62.142620 s
+second status    92.676184 s
+last message     93.737166 s
+unaligned abort  0
+```
+
+第一次 status：
+
+```text
+seq=380 done=380 timeout=0 ocs_err=0 dbto=0 recover=0 recovered=0 flight=0
+lock_ok=409 lock_timeout=0 lock_wait_ms=0 lock_wait_max_ms=0 lock_waiters=0
+watchdog_seen=60
+```
+
+第二次 status：
+
+```text
+seq=499 done=499 timeout=0 ocs_err=0 dbto=0 recover=0 recovered=0 flight=0
+lock_ok=409 lock_timeout=0 lock_wait_ms=0 lock_wait_max_ms=0 lock_waiters=0
+watchdog_seen=120
+```
+
+这证明 H468 的 unaligned observer fault 已消除，并证明 H469 status 执行路径与 UFS
+计数在工作。观察区间内没有 terminal error 或选中锁等待；这不追溯证明 H466 的旧
+UTRD 请求完成，也没有执行 watchdog recovery。
+
+新的独立 blocker 是：
+
+```text
+NATIVE_H82_DATA: status=60 stage=0 ro=-1 dev=-1 size=0
+NATIVE_PANIC_STR: offline scratch Data mount failed: 60 @kern_exec.c:8829
+NATIVE_PANIC: flags=fd7f0000 client=0 xfer=0 frames=0
+```
+
+显示 provider 在约 91.12-91.24 秒出现，但 panic 时 transfer/frame 计数仍为零；
+不能把这个探测记录写成 SpringBoard 产品首帧。分类为
+`H469-unaligned-repair-pass-next-data-mount-errno60`。设备证据：
+
+```text
+main-route/display-first-frame/logs/H469/device/20261121-024555/
+H469-h103.txt      1d0984a3c6c8bd038a1a430d99bc5c5c0344fd91966c8200bf56a13ded27c929
+H469-tail32.bin    d9d933842c8c501135941fb21a6148b6572f118f32e32d45fed6bbd67af207d5
+result summary     6140f1bedd3b640ad1dd82aff0868cf8c696891267301b28bf2ce83f1f194f88
+```
+
+证据目录：
 
 ```text
 main-route/display-first-frame/builds/H469/
