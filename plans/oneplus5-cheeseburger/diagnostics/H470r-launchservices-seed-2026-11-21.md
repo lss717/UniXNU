@@ -109,6 +109,14 @@ The packaged argument string remains 992 bytes. `check-bootargs-fit.py`
 reports 1012/1024 after the current `zap-base` and 1020/1024 in the worst-case
 16-digit form.
 
+Boot image:
+
+```text
+UEFI         9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6
+payload      9791328f6c271871ff74d342921bf70cb1e55af89e7ebe01572b4a89f129478b
+boot         860fa9f6a3284bd15227e1f94347aad4ef05e0ad686da37816097c1ca2a86d25
+```
+
 ## Device gate
 
 The only behavior question is whether the corrected seed lets `lsd` finish

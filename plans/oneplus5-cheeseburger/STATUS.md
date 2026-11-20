@@ -17129,6 +17129,13 @@ payload      9791328f6c271871ff74d342921bf70cb1e55af89e7ebe01572b4a89f129478b
 ADT 哈希从 H469 的 `d97c...` 变为 `6e12...` 是 board ADT 与 packed Data seed
 身份耦合后的预期结果，不是显示或启动参数变化。bootargs 仍为 992 B；
 `check-bootargs-fit.py` 为当前 `zap-base` 1012/1024、最坏 16 位形式 1020/1024。
+
+```text
+UEFI         9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6
+payload      9791328f6c271871ff74d342921bf70cb1e55af89e7ebe01572b4a89f129478b
+boot         860fa9f6a3284bd15227e1f94347aad4ef05e0ad686da37816097c1ca2a86d25
+```
+
 当前状态为 `built-static-verified-not-device-tested`。
 
 详细记录：
