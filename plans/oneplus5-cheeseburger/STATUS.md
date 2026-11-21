@@ -20484,3 +20484,66 @@ H510-reboot-recovery-state    0118c84f7d162914d93c67e22ef1d598d15e45777360932188
 `CFRunLoopWakeUp(main)`。同时记录“已排入 run loop”的 worker-side
 marker，用主块进入/退出和可见性变化分别验证投递与执行。不进入 Metal、
 IOMFB 或内容注入分支。
+
+### §171 H511 候选：只更换主线程投递原语（2026-11-21）
+
+H511 保持 root window、`makeKeyAndVisible`、可见性前后状态、2 秒
+post-visible 深树和所有 CA/server hooks 不变。唯一行为变量是把 H510 的
+`dispatch_async(dispatch_get_main_queue())` 改为：
+
+```text
+h511_runloop_enqueue_begin
+CFRunLoopPerformBlock(main, kCFRunLoopCommonModes, block)
+CFRunLoopWakeUp(main)
+h511_runloop_enqueued
+```
+
+主块自身记录 `h511_main_block_enter/exit`。调用函数记录
+`h511_before`、`h511_root_visibility_request`、`h511_after`。NativeMetal
+`ab8bbef0d7f33e4ec903aac67b48ed891fe597a9`，superproject
+`d750ec1c24016494e88b490a6129aec839733b4f`。observer gate、arm64
+Mach-O、strict codesign 和 4096-byte code-signing page 均 PASS。
+
+首次泛化 bundle 没有用于上机验证：原始 build 输入同时改变了
+bootstrap/wrapper/launchd。最终 H511 addon 以 H510 addon 为字节基线，只替换：
+
+```text
+addons/A540Trace.bundle/A540Trace
+lib/SpringBoardSceneObserver.dylib
+```
+
+其余 5 个 entry 逐字节不变；Info.plist/CodeResources 内容也未改变。
+
+产物：
+
+```text
+observer SHA-256       010674bc73d2686c80a99a0346d6b5b76cabd8ee26ecdde06f76b955265c05f2
+observer CDHash        73b66bfd5e090453576aab7cfdabfbbd00cfc0fa
+A540Trace SHA-256      5a10872186de18abcd6637bbed0ac739b10bbf0b446c8fb8ecc79ad4b013d870
+A540Trace CDHash       00dce5f97ffd29ca928728392c9042dedae15e89
+addon SHA-256          b5480e04781a093517f71caa6c503d5bc7418340d1fd8b9cc840b44b1586ef6e
+trust SHA-256          ec7b319382d90c21d315b5b893958aa745106a110203f47bf21ce0f13ce01ad0
+payload SHA-256        1d238f6ea38718f8716b3f93d9d8babf740dfc644f94e7efb0681b5307ad937c
+boot SHA-256           4805da67f25c6c0350aa19fa37d4fc1b1bbbde93f61a5d88f28d55ff367106f4
+boot.json SHA-256      d90d467c5aedb86e4cf927615f924e23834e56591f0dbdf5f48107d0242bcf10
+```
+
+owner trust 为 3 modules / 55 own CDHashes。重新提取的两个 original trust
+module 组合 SHA-256 仍为
+`7416ca4f8377146626bb284e2133c76bee6cb4e3ee0af5d648b186235a7323a7`。
+payload 从 H510 FAT 基线重新生成，只改变 trustcache 和 gpuaddon；
+kernel `4577d3bc…`、ADT `9fa9e5ba…`、Data seed `7522c2b8…`、
+`unixnu.toml` `dd6f80f1…` 均逐字节相同。bootargs 仍为 988 字符，
+当前 `1008/1024`、最坏 `1016/1024`。状态：
+`boot-built-static-verified-not-device-ready`。
+
+设备判据按投递边界分开：
+
+- 没有 `h511_runloop_enqueue_begin`：sample 4 未到达调度函数；
+- 有 begin、无 enqueued：`CFRunLoopPerformBlock` 路径失败；
+- 有 enqueued、无 main block enter：即使显式 wake，主 run loop 仍未服务；
+- block enter 后 root 仍 hidden=1：只查 scene/window association；
+- root 变 visible 但 contents 为空：只查 root content creation；
+- 出现 context slot 后才进入 CA commit/present/IOMFB。
+
+本轮不以 sample 5 或单个日志 marker 的缺失作为产品首帧结论。
