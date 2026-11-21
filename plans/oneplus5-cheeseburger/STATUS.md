@@ -20663,3 +20663,34 @@ sample 0/1/2 在 372–373 秒集中完成，sample 3 在 408.128547 秒完成�
 closure 入口、`snapshot()` 在 `dlopen` 前的入口、`dlopen` 后节点和
 monitor start/exit。观测落点就绪后，再根据第一条缺失标记选择调度、
 阻塞或 UIApplication 分支。
+
+### §175 H513 观测候选：定位 sample 4 的首个缺失节点（2026-11-21）
+
+H513 不改变显示、窗口或 run-loop 行为，只增加 constructor/process filter、
+五个 `dispatch_after` 调度点、closure 进入/退出、`snapshot()` 在
+`dlopen` 前的入口、两个 `dlopen` 结果和 snapshot 退出。NativeMetal
+`0b999775dcf4023be44ca55efd606658c1684d5a`，superproject `83365a2`。
+
+addon 从 H512 窄化，只替换 A540Trace 与 observer：
+
+```text
+observer SHA-256       d3b440a636d4526a7e698dc52c747dc7a253dfffe4f6f5bc7c2720abfab94a07
+observer CDHash        3377abe32d7b4b02d40dccdda5d3413be1f34acf
+A540Trace SHA-256      148e1b07c536768637fc340d1036d86ad3b65bea9413f910154cda98ce490db2
+A540Trace CDHash       a8f19e2dbb2499e0dc1e6cc5f88ddcf9ddf20765
+addon SHA-256          3906e3cff5cdb7721c9906c0369aa13321a6595e64e19f9f1b5073835e9f7eac
+trust SHA-256          726b0b08518e2437a353f7aee33dd354ce82b7717100cd39a6f90792b9a1f94b
+payload SHA-256        9e8d0a7bacb7f334787ae4b03c1bdb0a787ee57e7548d873f123b0b9b2482c78
+boot SHA-256           5a9e5585549898ae5b1ed4c1f57b972fbdb5beca61e246512ef64822a564c421
+boot.json SHA-256      9aece0b7bf893c8b660ff827305b7f18d9991a361a23b25ec6bf72b24b422f2d
+```
+
+owner trust 为 59 个 own CDHash，observer gate、arm64、strict codesign 与
+addon/trust readback 均 PASS。状态：
+`boot-built-static-verified-not-device-ready`。
+
+设备门按第一条缺失标记判定：constructor 后缺 dispatch scheduled →
+构造函数/调度登记；scheduled 后缺 closure enter → GCD 派发；closure enter
+后缺 snapshot enter → 调用边界；dlopen 间缺失 → `dlopen`；snapshot exit
+后缺 monitor start → sample 4 收尾路径。所有节点都在同一 SpringBoard PID
+下按 PID、sample 和进程名核对。
