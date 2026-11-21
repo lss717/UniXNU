@@ -18264,3 +18264,32 @@ toml 回读一致；machine-code 插入检查、wrapper 检查、ADT、bootargs�
 `NATIVE_MTL: observer load process=SpringBoard.real`。只有第二次加载之后才
 接受 5/30/90/180/300/480 秒 scene sampler。若 real 在 dyld 初始化阶段失败，
 必须记录 dyld 错误与 exit，不能把 wrapper 内的一次成功当成首帧探针已运行。
+
+H484 真机 boot SHA `465f309d...c9021`。H103 显示 dyld 确实消费了 new real
+的依赖：每次进入 `SpringBoard.real` 后都出现对该 dylib 的
+`file-map-executable` policy 行及既有 MACF bypass，随后进程以
+`status=0x6 ns=2 code=0x6` SIGABRT。共观察到 16 次 real exec、16 次
+wrapper 内 observer load、0 次 `process=SpringBoard.real` observer load、
+0 次 scene sample；其中 15 次 real 为明确 SIGABRT，另一次由恢复流程的
+0xf 终止。没有 `dyld: Library not loaded` 或 constructor 行。
+
+因此 H484 增加了新的最早断点：
+`H484-real-dylib-dependency-mapped/abort-before-observer-constructor`。
+不能继续往 observer constructor 里猜测修改，也不能把 wrapper 内的
+`dlopen ok` 当成 real 已注入。下一轮 H485 只把依赖对象从 observer 换成
+一个无 Foundation/IOKit、仅向 `/dev/console` 写一行 `H485_LCPROBE` 的最小
+4 KiB dylib。若最小 dylib 也被 real 消费后 abort，说明当前
+`SpringBoard.real + owner-signed LC_LOAD_DYLIB` 组合本身不可达；若最小
+dylib 加载且 real 存活，则再把 observer 的“earliest dyld 构造器”与普通
+延后加载拆开。observer、wrapper、A540Trace、bootargs、kernel 和 Data 保持
+不变。
+
+证据目录：
+`display-first-frame/logs/H484/device/20261121-102505/`。
+
+```text
+H484-live.log      91e150e12c8123b4f91ae96ea15ab5c5eb38e7546b9843bc3bd413e668b280ea
+H484-tail32.bin    00c5417b02c748d45c85a8848b7c34bd20d8c8e2a47f989a92628d1a2c385b8b
+H484-h103.txt      a801503a7aea93f698b62036cb859ae33d2b5b4930a48865a4b6fa485697a525
+H484-device-state  4b5e2064ceeb3254dec2c676ebdb858e762332d082bf8cf9282f439cd3ca221a
+```
