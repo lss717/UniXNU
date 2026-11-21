@@ -20829,3 +20829,34 @@ H514-reboot-recovery-state    77d4ddc7c15f0e698e4a33df76fcbe3e6f02ef302c0c5654f6
 
 下一步应观测 `sharedApplication` 创建路径的主线程等待关系，优先确认它是否
 同步投递到 SpringBoard main queue/run loop；而不是继续扫描应用是否稍后出现。
+
+### §179 H515 候选：停止主动 sharedApplication 轮询（2026-11-21）
+
+H514 的后台轮询可能诱发 UIKit 初始化停点。H515 删除所有后台
+`sharedApplication` 调用，只 hook SpringBoard 自己对该方法的调用并透传原
+IMP，同时订阅 UIKit launch/foreground/active 通知。快照只读取已观察到的
+application 指针；没有已观察到对象时记录 `app=0`，不再主动创建。
+
+源码：NativeMetal `870d6d1af733278ad7067075e0d8a79582b1a661`，superproject
+`3c35b30`。
+
+```text
+observer SHA-256       b5354f26a7675c94688f5d78a7dbcf931794ac4028c9073e5c83e483bf9387a0
+observer CDHash        3f9a9f09c10317193f8b1439d20163dda45e1e4b
+A540Trace SHA-256      2914a9081723cb6ecdac3f1e59852a5a11d89e73efcf136d9908aa09b1bfeef7
+A540Trace CDHash       f29621004f6fb50e98f8e657acf13b432306953b
+addon SHA-256          849321734bb379d57fe7406221543429ac2f5b159c12282ab87e2f75f1258b7e
+trust SHA-256          8a5b9050e14ffbcb4f4b2f3c9784244ad23969eabffb65e0fa7a785db4e4bb2a
+payload SHA-256        1730fdd609cd9518960a7ea146ea3be3cec870bb1abf5d86a4479c006edd6e58
+boot SHA-256           d4058dd68de5af37fa9c8b7e03116d135962f89752d67460802a0c68512a8565
+boot.json SHA-256      c71747d83fa038cb4e7c1c10e6c6532769b9bb27a4462ad7189e15bb5eb63200
+```
+
+owner trust 为 63 个 own CDHash。payload 从 H514 baseline 只替换
+trustcache/gpuaddon。observer gate、arm64、strict codesign 与 readback
+均 PASS。状态：`boot-built-static-verified-not-device-ready`。
+
+设备判据：若移除主动轮询后 SpringBoard 自己调用
+`sharedApplication` 并收到 didFinishLaunching/外设通知，则 H514 的 poll 15
+属于探针诱发停点；若整轮仍无自然调用和通知，下一步转查
+`UIApplicationMain` 之前的前台 scene/activation 输入。
