@@ -19939,3 +19939,101 @@ Android boot 结构和 bootargs 均 PASS，bootargs 最坏 1016/1024 bytes。
 windowScene activation 和各层 contents。若 worker thread 仍不执行，下一轮
 只改 scheduling primitive；若 sample 5 出现，则根据这些字段只选择一个首帧
 分支。本门不以 synthetic selector、window 存在或 watchdog 无异常代替。
+
+真机 boot ID `28f75bf5`。sample 4 在 541.129115 秒完成，workspace=1、
+scenes=0；到 live 日志最后 1140 秒和 900 秒采集结束，sample 5 仍没有出现。
+SpringBoard pid 27 没有 exit、signal 或 panic。分类：
+`H505-sample5-thread-still-not-fired`。显示门从 351 到 1140 秒持续为
+`dpy=4/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0`。
+
+采集健康为 `frames=7154 payload_bytes=936763 crc_errors=0 sequence_gaps=0
+boot_switches=0`，frame 文件为 1,165,691 bytes。最后 H469 live 行为在
+1166.503302 秒为 `seq=228224 done=228224 flight=0 lock_timeout=0`；
+`lock_wait_ms=12448318 lock_ok=652647`，平均约 19.07 ms，
+`lock_wait_max_ms=27306`。请求完成路径继续工作，锁等待没有下降，也没有
+OCS、doorbell timeout 或 recovery。无异常仍不验证 watchdog。
+
+证据：
+
+```text
+H505-live.log             3c412dc42c425af77b7f27b71732e52a82f509730bdc7361529aa9b26da1d468
+H505-live.frames.bin      92613f50159f7980ec47ef3b946e6526895022077d17228b6b8e2fc878678ba9
+H505-live.capture.stdout  97535f81f0c612fdecbe9547e6b802a0c02a9bd594ef3f499e6f69c7d7340361
+```
+
+### §161 H506：跟踪桌面 root/status window 到 CA 提交与 backboardd context（2026-11-21）
+
+H505 证明继续押注第 5 次定时快照不能缩小首帧故障。H506 改为事件驱动，
+kernel、ADT、Data seed、bootargs、显示驱动和 trust 基线不变。SpringBoard
+observer 转发原 IMP 后，限次记录：
+
+```text
+CALayerHost.setContextId:
+CALayerHost.layerDidBecomeVisible:
+CAContext.setLayer:
+CALayer.setContents:
+CALayer._didCommitLayer:
+CATransaction.flushAsRunLoopObserver
+```
+
+每条 layer event 从 superlayer/delegate 向上寻找含 `RootSceneWindow` 或
+`StatusBarWindow` 的祖先，分别记录 `window=root/status/-`。这样同一轮可
+区分 `SBRootSceneWindow` 与 `SBStatusBarWindow` 的可见、contents 和 commit。
+H505 的 pthread 入口/唤醒探针保留为 fallback，首帧结论不再依赖 sample 5。
+
+backboardd 内 A540Trace 只读转发并限次记录：
+
+```text
+CAContext.setLayer:
+CAContext.setObject:forSlot:
+CAContext.waitForCommitId:timeout:
+CALayer._didCommitLayer:
+CAWindowServerDisplay.presentSurface:withOptions:
+```
+
+事件携带 contextId、displayId、slot、layer/contents class、owner pid/comm。
+没有 setter、scene 创建、context 绑定、surface 填充、present 或 scanout 调用。
+NativeMetal `e2644aaa12bbacffd727e974d588ef923cede879`，superproject
+`4201447`。H506 observer/CCS gate、ARC compile、arm64 4 KiB 签名和
+`git diff --check` 均 PASS。
+
+产物：
+
+```text
+observer SHA-256       cd89b0fffea229051426fd6c533c724b4875067c5e7a92cd832a186993588d84
+observer CDHash        e549638d9a05d30244e4bfbd1c8cf468ea383151
+A540Trace SHA-256      219b8513a97b522d0994ab0746ece4b03fde1ec6d7db5ca97e8551d78a4fea16
+A540Trace CDHash       e8805ee7bf33d2a756c5f2367656bbd355ebf0c6
+Info.plist SHA-256     b0ffb95ee492416dbe27f60da07bb8908474e5f65dad58460ce0e26a98262bcd
+addon SHA-256          2c3d997e8a66ee87e805a0891164fc5665fd29c90b86c98e3f52c0b67d541215
+trust SHA-256          c0f6cbd418d25767c6c4713e4dccf00ea4b382fa3c1cb94379ab28bdfc0cab56
+payload SHA-256        671be05107dc4c7faa2d3f565dfbed94c5e00bf0e67eeae920e92b451f2f23fe
+boot SHA-256           87030530c9be783f6cc372bbfb1a5378f94d4ad25025db633876239f21b55ff5
+boot.json SHA-256      f43ea824db6d9da0e73e0ba10d4bbaeaa31ed166af99be64d73ff70865da6ebc
+```
+
+owner trust 为 45 项。addon 的 7 项中，A540Trace executable、Info.plist、
+CodeResources 和 observer dylib 改变；scene marker、SpringBoard wrapper 与
+launchd cache 不变。payload 以 H505 为 FAT 基线，kernel、ADT、Data seed 和
+`unixnu.toml` 均逐字节相同：
+
+```text
+kernel.macho      4577d3bc93a48dec1c910e76d4262e8ceda64869f6b370a2ee3ff42556364b00
+kernel.macho.adt  9fa9e5ba88b84546ef89f79b26bbd9a9cea5e881b8efebf2c2149d09259eb74d
+scratch-data.img  7522c2b803bac371190e5f316bacc825d1dd3c964ef3a3ab6ffd75bf0f9bae79
+unixnu.toml       dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e065f01e81
+```
+
+bootargs 仍为 988 B，实际 1008/1024，worst case 1016/1024。状态：
+`boot-built-static-verified-not-device-tested`。
+
+设备门先要求 `srv event_hooks` 和 `ca_event_hooks` 每个已安装 hook 的
+结果可见。随后分别记录 root/status 的 `ca_layer_set_contents`、
+`ca_layer_commit`、host bind/visible，以及 backboardd 的
+`event_context_layer/slot/layer_commit/display_surface`。状态栏仅作探针
+正对照，必须实际看到其提交才算覆盖有效。判决按以下分支：
+
+- status 有提交而 root 无：查 root scene activation 后主界面内容创建；
+- root 有提交但 host/context 不匹配：查 SpringBoard 到 backboardd 的托管绑定；
+- root 提交与 host/context 对齐但 `fr=0`：再追合成、present 和 IOMFB；
+- 两个 window 都没有事件：只判观测覆盖不足，不判 SpringBoard 未绘制。
