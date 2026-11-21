@@ -17695,4 +17695,30 @@ accelerator，只把 addon 从 3 files 扩为 6 files：
 selector 4/5/readback 分开记录。`wp=1/2` 仍属预期，因为本轮不加 wallpaper
 overlay。
 
-当前状态：`pending-package`。
+H477 addon 从 H465 的七文件包按原 entry bytes 去掉
+`springboard/SpringBoard` 后重封为六文件；其余 entry、压缩数据、CRC 和 flags
+保持原样：
+
+```text
+H477-observer-only-addon.img
+e9fb9b9b5a7f9fbc8a3e21b756db4e1d455c80847494a1fc39640d070b0490e8
+```
+
+header 回读为 `NGPUADD2 count=6 total=330112 consumed=330112`。payload 回读：
+
+```text
+source commit da8ff76
+kernel        4577d3bc93a48dec1c910e76d4262e8ceda64869f6b370a2ee3ff42556364b00
+trust cache   cd754067b9587960d336715b35c933cfb50b29f3b5b7b48feb0d8988092541cf
+GPU addon     e9fb9b9b5a7f9fbc8a3e21b756db4e1d455c80847494a1fc39640d070b0490e8
+Data seed     7522c2b803bac371190e5f316bacc825d1dd3c964ef3a3ab6ffd75bf0f9bae79
+ADT           b6071a4e380c095b4af69990696bae14c87e73c44db74f9fd681082e7c280eb8
+unixnu.toml   dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e065f01e81
+payload       2fd65dc720c1f4e02571692427d60a7dbe91b230c8ccb3f9665c5f98175bdc52
+boot          67e0583a486040ecbeec50b8788175e06b5e507989cd920a7ce7e7d0345de03e
+```
+
+kernel 与 prelink 逐字节一致，`unixnu.toml` 和 kernel_args 与 H475/H476 相同；
+bootargs 988 B，实际 1008/1024，worst 1016/1024。ADT placeholders、
+iPad7,1/MSM8998、boot header、地址重叠和 `OP5ESP` 静态检查 PASS。
+状态：`boot-built-static-verified-not-device-tested`。
