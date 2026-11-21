@@ -20641,11 +20641,25 @@ H512 的 `observer load process=SpringBoard pid=27 build=H512` 文本行未进�
 pid 27，进程名过滤通过。`builder#2 build H512` 多次出现，但那些行来自
 backboardd/mediaserverd，只能证明 addon 加载，不能代替 SpringBoard pinning。
 
+sample 0/1/2 在 372–373 秒集中完成，sample 3 在 408.128547 秒完成；
+据此 observer 构造期约在 223–228 秒，`.300` 秒 sample 4 的预期窗口约为
+523–528 秒。该窗口前后日志仍在持续输出，但在 529.672665 秒
+`CHEESEBURGER_USB: alive` 的 `dropped` 已增至 2966。
+
 全轮没有 `sample=4 phase=springboard`，因此也没有
 `h512_app_monitor_start/app_wait/app_ready`、run-loop 入队或主块进入。
-`.300` 秒的 sample 4 投递在 sample 2/3 已成功执行后仍未出现。
-分类：`H512-SpringBoard-observer-loaded/sample4-not-dispatched`。
+不过单凭这一点还不能区分以下三态：
 
-下一步不检查 `UIApplication` 实例化，也不构建 H513。先解释同一组
-`dispatch_after` 中 sample 2/3 到达、sample 4 未到达的原因；恢复
-sample 4 的可达性后，才轮到应用就绪与 run-loop 判据。
+1. sample 4 closure 未执行；
+2. sample 4 已进入，但在 `snapshot()` 首条日志前的 `dlopen` 阻塞；
+3. sample 4 的若干行恰好落入 529 秒附近的日志丢弃窗口。
+
+后续每 60 秒一次的 `h512_app_wait` 也没有出现，因此“已经执行到
+`h512_app_monitor_start` 后整个 worker 长期无输出”缺乏支持。当前分类修订为：
+`H512-SpringBoard-observer-loaded/app-monitor-not-started/sample4-boundary-ambiguous`。
+
+下一步仍不检查 `UIApplication` 实例化，也不据此把问题归给主 run loop。
+现有日志已用尽；若要消除三态歧义，下一镜像只能增加纯观测：dispatch
+closure 入口、`snapshot()` 在 `dlopen` 前的入口、`dlopen` 后节点和
+monitor start/exit。观测落点就绪后，再根据第一条缺失标记选择调度、
+阻塞或 UIApplication 分支。
