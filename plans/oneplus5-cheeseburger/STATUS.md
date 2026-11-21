@@ -19694,3 +19694,84 @@ bootargs 均 PASS。状态：`boot-built-static-verified-not-device-tested`。
 且 sample 5 给出 Host props、context options 和 windowScene activation。
 若两者仍只有一个出现，下一轮只改采样时刻；若两者都出现但 scene 仍为
 activationState 0，才进入 scene activation 路径。
+
+### §155 H502 真机：sample 4 深 walk 不阻塞，但 sample 5 仍未触发（2026-11-21）
+
+H502 在 serial `16149951`、boot ID `213c7d3c` 上运行。sample 4 完整完成，
+不再在 singleton probe 处停止：
+
+```text
+525.850 秒  sample=4 workspace=1 scenes=0
+529.673 秒  appState=0 hasAppState=1
+531.281 秒  windowScene=_UIScreenBasedWindowScene
+            activationState=0 interfaceOrientation=1
+532.250 秒  hierarchy=window rootVCView=0 subviews=1
+532.376 秒  UIView -> CALayer contents=0
+533.644 秒  UIWindowLayer contents=0 -> CALayer contents=0
+```
+
+这关闭了 “sample 4 的 window/subviews 读取会阻塞” 的假设，也再次确认
+application active 与 window scene unattached 并存。此时还没有 CALayerHost，
+hostprops 与 context options 也没有可打印对象。预期中的 sample 5 最终仍
+没有出现，因此阻塞位于 sample 4 完成之后、sample 5 进入之前。分类：
+`H502-sample4-complete/sample5-not-dispatched`。
+
+显示门在 1151.451251 秒仍为
+`dpy=4/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0`。采集共收到 6799 个 live
+frame、917520 payload bytes；CRC error、sequence gap、boot switch 和
+truncated frame 均为 0。H103 最后可见 H469 行为
+`seq=225287 done=225287 flight=0 lock_timeout=0 lock_waiters=1`。
+
+本轮未成功发送 UXC1；再次是 COM8 已在请求前消失。设备自行进入 Android，
+随后一次 recovery reboot 返回 TWRP，没有捕获 ACK。因此本轮同样分类为
+`unattributed-reset-after-live-capture`，不证明 watchdog。
+
+证据目录：
+`display-first-frame/logs/H502/device/20261121-161213/`。
+
+```text
+H502-live.log              b179adf822f8705eb89ee5655cc16bf2afbbbd31ec88427382e920a885283702
+H502-live.frames.bin       530f197099c8d0110fb7a5134cb8d8c0c9cf4a315d80e33a4570d16180f0bfcb
+H502-live.capture.stdout   2ce0be82a95a7c3ec7f3fa3a878bab373bca9e89a111fa743e94e938d22b6104
+H502-tail32.bin            d6462529abb0e20a9e256d4414ee8ec4edeb8a85d2d5693e4cf1fb78386604b9
+H502-h103.txt              dbfbc5ef80ba0bcf62e8a885281c9db75982b9d378e321a7f3a22802d28f300f
+H502-device-state.txt      1bdae008267c63bd4beaea1c6cd31ae00de5728101acd08e5eb894aa446ceaf6
+```
+
+### §156 H503：只保留 sample 0 singleton 探针，并把深 walk 放回 sample 5（2026-11-21）
+
+H503 保持 H502 的 kernel、ADT、Data、bootargs、A540Trace、trust 基线和全部
+只读字段，只采用 H501/H502 两步结果得到的调度组合：
+
+```text
+sample 0  inventory + probe_nonblocking_shared_instances
+sample 4  普通 scene/application/window 元数据
+sample 5  window/view/layer/context/host/options 深 walk
+```
+
+这既避开 sample 4 深 walk 的不确定性，也不在后续 sample 重复 shared-instance
+探针。没有 setter、context 绑定，不修改 scene/window/layer、Metal、IOMFB、
+surface 或 scanout。NativeMetal
+`5fa6d6abd2e8f22953961f330a2b3706dedc533e`，superproject `67686e2`。
+
+产物：
+
+```text
+dylib SHA-256   e2bd25a55e15214a24f65a0b6d73af49987672d01716254642c5fac365a0e068
+dylib CDHash    623b90482b7ca050f1e1756247e5d832ec64a18d
+addon SHA-256   16280d9ed7e194390d7469f002d6be9b81902f48834791e41153ad154378bd44
+trust SHA-256   3f982a7460aa1b8d8599cf96540d25964fdcfcf68467b1c5ed87e4fc41c7e7a8
+payload SHA-256 7708f4859f1b0175e74218f09291527c4c42a9adff85cb36fbc6523e9a8db108
+boot SHA-256    a4729007129897804f6ee1a9268a6f84e92e35b1428526d80a8fdb6bd909ab5c
+boot.json SHA-256 24e44a7f37f5dd6f6eaffcb2755456bc2192fd3513084611f979062d7390834d
+```
+
+owner trust 为 41 项。addon 的 7 项中只有 observer dylib 改变。payload
+逐文件回读确认 kernel、ADT、Data seed、`unixnu.toml` 与 H502 相同，UEFI
+不变。observer/A540Trace/CCS gate、arm64 4 KiB 签名、Android boot 结构和
+bootargs 均 PASS。状态：`boot-built-static-verified-not-device-tested`。
+
+设备门要求 sample 4 正常完成，随后必须出现 sample 5，并输出 hostprops、
+context options 与 activationState。若 sample 5 再次缺失，下轮只替换
+`dispatch_after` 为独立等待线程；若 sample 5 出现但 scene 仍未激活，则按已
+记录的 activationState 进入 scene activation 分支。
