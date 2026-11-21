@@ -18399,3 +18399,62 @@ boot layout 均 PASS。状态：
 scenes/windows 与 layer contents。若 observer 再次加载但 scenes=0，下一步才
 进入 scene API；若完全不加载，则 H475 单次成功不是稳定的 launchd-cache
 投递，需要重新审计那次 boot 的状态来源。
+
+H486 真机稳定复现 H475 注入路径。boot SHA
+`6dd01e38...fa998` 的 H103 在 249.141883 秒出现：
+
+```text
+NATIVE_MTL: observer load process=SpringBoard pid=27 build=H481
+```
+
+observer sampler 在 261.297、280.918、343.161、447.645、574.460、
+762.677 秒分别执行 sample 0..5；每次都是
+`workspace=0 class=nil`。BKS display request 在约 447–455 秒由
+`responder=0 response=0x0` 转为
+`responder=56 response=0x5b91d7`，随后 display gate 到 936 秒仍为
+`s345=0/1/1 val=1 xf=1 fr=0`。SpringBoard 没有 exit。
+
+分类：`H486-observer-load-pass/workspace-nil-through-762s`。这证明
+H475 路径不是一次偶然：observer、A540 tunnel 和 launchd cache 均可稳定
+工作；最早产品断点已经变成 SpringBoard 内 `FBSWorkspace` 始终不存在。
+当前 observer 在 `workspace == nil` 时提前返回，隐藏了同进程
+`CADisplay` 与 `UIApplication connectedScenes/windows` 的证据，因此 H487
+只移除该 early return，让既有只读字段继续执行。
+
+### §130 H487：workspace 为空时继续采样 UIApplication/CADisplay（2026-11-21）
+
+源码只删除 observer 中的：
+
+```c
+if (!workspace) return;
+```
+
+并把 build token 更新为 H487。FBSWorkspace 查找、场景字段、CADisplay 和
+UIApplication 字段本身均不变。submodule `081d8df`，superproject `50d42c0`。
+
+新 observer：
+
+```text
+SHA-256  cabbe83ee1ce8b3fff214fd7cb92ed0a4625b8f73d4e060188ab27683e69ef15
+CDHash   a0d27ad7cb157ce719a71f7ebbd10b34a38f6cd6
+```
+
+H487 输入与产物：
+
+```text
+GPU addon   83a17e4e9571ad6ea011b7568df28c74c5e636f1ae8e6a8a1a551f23f803ddde
+trust cache 4d18d9691d2eec00c02aa94ef74b0fbfa98c6ba8e77b40f029bda6701b24b8c1
+payload     d6684ee52537be0a922bab99e67a8287cb42c5bf76a6a61b32bab1c167790a14
+boot        44e45abcf9e0cd95c9356ef3ebe21f73ddf4e96c7b31e9fe3e789c7d2c267c72
+```
+
+owner trust 为 27 项。H475 的七文件结构、kernel、Data、bootargs 和 ADT 保持
+不变；observer、payload 校验、ADT、bootargs 和 boot layout 均 PASS。状态：
+`boot-built-static-verified-not-device-tested`。
+
+设备门要求 FBSWorkspace 仍为空时也能打印
+`sample=N cadisplay=...` 和
+`sample=N app=... scenes=... windows=...`。若 UIApplication 已有 window，
+下一步应从 `UIApplication` 的实际 window/layer 继续，而不是等待
+`FBSWorkspace sharedWorkspace`；若两者都为空，下一轮才定位 SpringBoard
+scene manager 初始化。
