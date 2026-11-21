@@ -21670,3 +21670,55 @@ receiver 已完成：
 - `seen=1 match=1 q=1` 且 `TARGETWAIT seen=0`：消息已排队但无线程接收；
 - `TARGETWAIT seen=1`：符号化 lsd waiter 的栈和 handler；
 - 请求消失：转向 LaunchServices 返回后的 scene 或 CA 内容门。
+
+#### 首轮设备结果与同镜像复测前置检查
+
+首轮 `fastboot boot` 使用上面的 `139287c2...` boot 镜像，serial `16149951`。
+界面在约 1 秒内复位，CDC 在 122 秒等待窗内没有出现。持久环显示 addon 10 个
+文件全部安装，SpringBoard late union 和 launchd exec 均已发生，最后停在：
+
+```text
+37.621322 NATIVE_H67_OPEN:
+dir=-2 path=/System/Cryptexes/OS/System/Library/Caches/com.apple.dyld -> 0
+```
+
+该 boot 的持久环中没有 `NATIVE_TARGETPORT`、`NATIVE_TARGETWAIT`、OCS error、
+doorbell timeout、UFS recovery、lock timeout、panic 文本或 watchdog 触发记录。
+分类只能是
+`H523-first-candidate-early-reset/pre-target-port-probe`，不能据此判断 target-port
+探针失败，也不能把“无 OCS/lock timeout”写成 watchdog 已验证。
+
+首轮证据：
+
+```text
+logs/H523/device/20261122-021850/
+H523-h103.txt
+  ad109c2adf2f91f34ebe3cb6ffd62308b2400d1567d4d2a0c287e079bc8fcfd2
+H523-tail32.bin
+  1ea78d9474bdf3c2247ecd96fc601a3ab69ecb2caa6cc3f8fe9479528e5809c5
+```
+
+设备回到 TWRP 后，在 `20261122-022608` 再次只读拉取相同的尾部 32 MiB，
+SHA-256 仍为 `1ea78d94...`，也没有新的 boot ID 或探针记录。这说明用户观察到
+的那次重启没有产生额外持久日志，不能作为第二轮样本。
+
+随后核对了 payload 内容。H522 与 H523 payload 中 `unixnu.toml`、ADT、Data
+seed、owner trust 和 GPU addon 均逐字节相同，唯一不同是
+`Payloads/kernel.macho`：
+
+```text
+H522 kernel  4577d3bc93a48dec1c910e76d4262e8ceda64869f6b370a2ee3ff42556364b00
+H523 kernel  4a6027c94321545740e86a2f335f6a56e78e0d4b42fad4098ca507bd8529e02c
+```
+
+在本机使用同一 H407 固件、H523 payload 和原打包参数重新运行
+`make-bootimg.py`，输出仍为 `139287c226cd3dc8643ae1713ef278566377b017cabe0f5da856b8b330c19433`。
+`H523-retest-boot.json` 的 input 和 output hash 均与首轮一致，`problems=[]`。
+bootargs 仍为 988 字符，`check-bootargs-fit.py --toml` 得
+`1008/1024`、最坏 `1016/1024`，PASS；kernel 中存在
+`NATIVE_TARGETPORT` 和 `NATIVE_TARGETWAIT` 字符串。
+
+下一步是在清零 `userdata_ios` 尾部 32 MiB 后，用完全相同的 boot 做一次有界
+同镜像复测。若仍在 CDC 前复位，就回 TWRP 拉取持久环并与
+`37.621322` 的打开 dyld cache 点比较；只有 CDC 出现后才进入 900 秒采集和
+target-port 判定。
