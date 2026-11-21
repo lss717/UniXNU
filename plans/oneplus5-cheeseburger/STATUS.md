@@ -20332,3 +20332,88 @@ owner trust 为 51 项。payload 以 H508 为 FAT 基线，kernel、ADT、Data s
 `sample=6 phase=springboard`。若 root 可见后 rootVC 仍 nil 且 contents=0，
 下一轮只处理 root content creation；若 sample 6 未出现，则判定 post-visible
 callback 仍被主队列/queue 调度阻断，不据此推断内容状态。
+
+### §168 H509 真机：无 root visible 事件，也未触发 sample 6（2026-11-21）
+
+H509 在 serial `16149951`、boot ID `28f33b5a` 上完成 900 秒 live capture
+和持久日志读取。observer 与 A540Trace 均报告 `build H509`。状态栏仍在
+511.810974 秒产生 `uiwindow_set_hidden window=status`，证明 UIKit/CA 事件
+钩子有效。sample 4 在 537.668316 秒开始，540.033537 秒得到
+`app=1 delegate=SpringBoard scenes=0 windows=1`，541.292771 秒唯一的应用
+window 是 `class=SBRootSceneWindow hidden=1`。
+
+全轮没有 `uiwindow_scene_visible window=root`、`uiwindow_set_hidden
+window=root`、`ca_host_context_bind`、`ca_host_visible`、
+`root_visibility_state`、`root_visibility_window` 或
+`sample=6 phase=springboard`。因此 H509 没有走 pre-active scene →
+post-active scene 的差异路径，也没有新的 `event_context_slot`、
+`event_context_commit_wait` 或 `event_display_surface`。不能从这一轮推断
+root 内容曾出现或消失，分类为：
+`H509-root-visibility-not-reached/post-visible-snapshot-not-triggered`。
+
+显示门在 1133.925632 秒仍为
+`dpy=4/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0`。最后 H469 行为在
+1167.353382 秒为 `seq=224915 done=224914 timeout=0 ocs_err=0 dbto=0
+recover=0 recovered=0 lock_timeout=0`；`lock_wait_ms=12139611
+lock_ok=638601`，平均约 19.01 ms。软件锁等待与 H508 的约 17.04 ms
+相比没有下降；请求完成且没有 OCS、doorbell timeout 或 recovery。该稳定轮
+仍不验证 watchdog 触发后的完成或恢复路径。
+
+live capture 为 `frames=6612 payload_bytes=877981 crc_errors=0
+sequence_gaps=0 boot_switches=0`。UXC1 `424511` 只发送一次，在
+1206.911440 秒 ACK 并 normal reboot；Android `boot_completed=1` 后一次
+recovery reboot 返回 TWRP。恢复动作不证明 watchdog。
+
+证据：
+
+```text
+H509-live.log                 da7b099e26e1fb775c32f9fafd9e3090ab30d114e6b21a98ef1c0273719a768c
+H509-live.frames.bin          fcef89efac9453eac92accd6294358188bb8cad66cf55e383c8eca995dfd4cb0
+H509-live.capture.stdout      fa909ff81b6995edd660a6062679601b606e38cf8895f68dbb6ccbe5d5a0272a
+H509-h103.txt                 b9a23b182199664ba4064b550bcb6d4e12881c505691a1520f5361b3554c323e
+H509-tail32.bin               1418cd4b4190b6cdd59572939a21f4228b68b111f5629d44b6d24ce22cbf5699
+H509-reboot-recovery-state    e485b724f1492e3d0c774899f74213cce0cd1eb253c34ca4f7198e21d84d3bce
+H509-reboot.log               b0d0a26ca9eeddd6ebe1d3e34d1576d6abcd82b962009955d0580acf11ca6079
+```
+
+### §169 H510 候选：主动请求 root visible 与事件后深树组合（2026-11-21）
+
+H509 的对照表明 H508 的 root visible 具有 boot variability。H510 恢复
+H508 的唯一写操作，并把它与 H509 的事件驱动深树组合起来。sample 4 完成后
+在主队列对已存在的 `SBRootSceneWindow` 调用一次 `makeKeyAndVisible`，
+记录 `h510_before`、`h510_root_visibility_request`、`h510_after`。当
+`uiwindow_scene_visible` 或 `CALayerHost.layerDidBecomeVisible:` 首次
+报告 `window=root` 时，2 秒后在主队列记录 root/status 可见性，再在 utility
+queue 执行一次 sample 6 window/view/layer/context 深树。没有新增内容写入、
+commit、present 或 scanout。
+
+除 observer 与 A540Trace build marker/包成员外，kernel、ADT、Data seed、
+bootargs、显示驱动、CA/server hooks 和 H509 基线保持不变。NativeMetal
+`64569904bccb1ad501144957c2365e22d2e62c98`，superproject `0d36351`。
+H510 observer/CCS gate、arm64 4 KiB 签名与 ARC compile 均 PASS。
+
+产物：
+
+```text
+observer SHA-256       ef78cb586fe5f90cd7d7e61312b4f78b07bcf9aa1b2ad0b0dbed45ad19bd10cb
+observer CDHash        a48376af45fe3cd00b9466e78923cdf8da3ccff2
+A540Trace SHA-256      09f92a6eaa5cae37e0d6a17f9ea0680ecd81923b86683eb4b583456ff391aa10
+A540Trace CDHash       d8370249869924de435eff891f2f8203b6eba3cd
+addon SHA-256          455d1c249adeaaaba1e53cf00d43a27dd90511ccacff590abbb6fd42e8967b28
+trust SHA-256          696002d8904fb4deefc2d282edc85d6fc5a6a103ca87963122d98d44c4bd0ea7
+payload SHA-256        ffee8ae3fbcf14f91ce2680fdc66a9b921891b0886aecfa2c6f5f81199890d9f
+boot SHA-256           3c8ac8a9efc0d89d15c3115791ab2479d7616712c252cfb182ffacce95f9b6cc
+boot.json SHA-256      bb30c95a16fa0743911a39d486fc9619c3e36b967e3a71670bcd0cfd085eb7d0
+```
+
+owner trust 为 53 项。payload 以 H509 为 FAT 基线，kernel、ADT、Data seed
+和 `unixnu.toml` 保持已知哈希；addon/trust 回读匹配输入。bootargs 为 988
+字符，当前 `1008/1024`、最坏 `1016/1024`。状态：
+`boot-built-static-verified-not-device-ready`。
+
+设备门先要求出现 `h510_root_visibility_request`，并在
+`h510_before/h510_after` 之间观察到 root 可见性变化。若 marker 不出现，
+只查主队列调度；若请求后仍 hidden=1，只查 scene/window association；若
+hidden=0 但 rootVC/view/layer contents 为空，只查 root content creation；
+只有出现内容或 context slot 后才进入 CA commit/present/IOMFB。sample 6
+缺失只说明 post-visible callback 调度失败，不能推断内容状态。
