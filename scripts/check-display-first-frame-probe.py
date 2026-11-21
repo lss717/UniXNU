@@ -9,6 +9,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = ROOT / "drivers/NativeUfsProbe/NativeUfsProbe.cpp"
 PATCH = ROOT / "patches/xnu/zzzzzzzzzzz-h103-proc-state.patch"
+TARGET_PATCH = ROOT / "patches/xnu/zzzzzzzzzzzzzzzzzzzz-h523-target-port.patch"
 
 
 def require(condition, message):
@@ -19,6 +20,7 @@ def require(condition, message):
 def main():
     driver = DRIVER.read_text()
     patch = PATCH.read_text()
+    target_patch = TARGET_PATCH.read_text()
 
     build = re.search(r'#define H103_BUILD "(H[0-9]+)"', driver)
     require(build and int(build.group(1)[1:]) >= 420,
@@ -41,6 +43,12 @@ def main():
             "request port queue/send-once state missing")
     require("ld_out=%llu ld_in=%llu ld_reply=%llu ld_other=%llu" in patch,
             "launchd request/reply counters missing")
+    require("NATIVE_TARGETPORT:" in target_patch,
+            "target receive-port record missing")
+    require("NATIVE_TARGETWAIT:" in target_patch,
+            "target receive-waiter record missing")
+    require("target.port == native_sb_target_port" in target_patch,
+            "target send/receive port identity comparison missing")
 
     # The probe must remain observation-only: these files are the behavioral
     # boundary and are deliberately untouched from H420 onward.
