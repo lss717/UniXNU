@@ -21413,3 +21413,155 @@ owner trust 为 78 个 own CDHash。kernel、ADT、Data seed 和 boot header
 
 若请求仍不消费，查 lsd utility queue 上原 recovery 的实际栈；若请求消费，则
 记录下一处 scene/content 门。不能以 `H491_LSD` console 行单独判定阴性。
+
+### §190 H520 真机：System 路径通过，但 lsd.real 仍剥离 DYLD 注入（2026-11-22）
+
+H520 在 serial `16149951`、boot ID `22759126` 上启动。H519 的路径门保持
+通过，且没有 xpcproxy 拒绝：
+
+```text
+302.592621 s  xpcproxy -> com.apple.lsd
+306.060251 s  lsdwrap argv0=/System/Library/xpc/lsdwrap
+306.949112 s  lsd.real argv0=lsd
+```
+
+但 lsd main 在 sample 7110/7140/7170 仍稳定位于：
+
+```text
+kevent_id
+<- -[_LSInstallProgressService performJournalRecovery]
+<- +[_LSInstallProgressService beginListening]
+<- __LSServerMain
+```
+
+主线程 CPU 在 480–622 秒没有推进，SpringBoard sample 6150–6270 仍是
+同一 `_LSContextInitCommon` 请求 `q=1`。因此 H520 的失败点已经明确为原始
+`lsd.real` 剥离 dyld 环境，不是 filter 名称。分类：
+`H520-lsd-path-pass/dyld-insert-stripped`。
+
+本轮未形成 journal-recovery 行为阴性；也没有 root content、context slot、
+commit wait 或 display surface。证据：
+
+```text
+H520-live.log               4bb33b1435738683a6676d1827736c09d9a980d0768328f8991d439dca21f3da
+H520-live.capture.stdout    691a58159ef7741f97fc4bfe81097142160592d2fd6d66e6f74fe2a37bfaadad
+H520-h103.txt               d3eeff86aaf263e73325ab9d8135a859fef7c4bb3b1bebc1ac3ef6e01d062eba
+H520-tail32.bin             d037a899b4cf7a806ee0767bfb2260526175b71a30a05b4ab808933d3f72ff71
+```
+
+UXC1 `424517` 已发送并返回 Android；CDC 重启窗口没有捕获 ACK 帧，
+因此只记录 Android 恢复为该轮完成条件。
+
+### §191 H521：给 lsd.real 增加显式 recovery LC_LOAD_DYLIB（2026-11-22）
+
+H521 保留 H520 的 launchd、wrapper、System xpc 路径和所有非 lsd 文件，
+只为同版 21H461 lsd 副本增加：
+
+```text
+LC_LOAD_DYLIB
+/private/var/ngpu/lib/LsdRecoveryAsync.dylib
+```
+
+实现由 `scripts/add-macho-load-dylib.py` 在 Mach-O 头部 padding 内写入，
+不移动原 section。随后从原 lsd 提取完整 entitlements，以
+`com.apple.lsd` identifier、4 KiB pages、ad-hoc 签名重新签署，并把新
+CDHash加入 owner trust。source lsd SHA-256
+`43ee16e03145f3ad6b84fc7dac63ee767ec8182b51bc9cb5bd8bf8650baa4e5b`
+仍由构建器硬校验。
+
+源码：NativeMetal `ae283bf10318f6e1a73a628a925b18b04184d7cf`，
+superproject `99e8913`。产物：
+
+```text
+patched lsd SHA-256    dcc3b7be9123b6ff16d6c5f1393e1f3b4a27f22ac84f5b1dabdfb4618c66675b
+patched lsd CDHash     f60e94dcecd375aac636c420e8bdf82b6e494b0a
+observer SHA-256       1724aec99e5ce54bb2e6da6f89361055d86e941679c9b28759d43dc5228e19f2
+observer CDHash         17cab4039fb23044512e3e9fb3771e7f3a721a5e
+A540Trace SHA-256      36d894cb96f8bd28fba114c18d98ee756fb2a94f8710792240b06e1da91a1b2e
+A540Trace CDHash       ae0890007218544f6d162aeba368150af24a8890
+recovery SHA-256       177a7bf76eb8ee880455db5420e83e6371f3d39f84869315c192e73e4cc465a1
+recovery CDHash        f8e5a173368cc4e139fcbe649c088e02468587f6
+addon SHA-256          760c5188480511925f60e72055685dad220c323263ff76f9fa13c9ae0afa2047
+trust SHA-256          781a2c5fd4ba24c5c4b59a1f0db323c15160994ee90a56cdc806340ea5d15356
+payload SHA-256        b9dbd44069633618da11107d95fc962840f692daa30af3f2f346c3aa6a838969
+boot SHA-256           149c6be8f49a61c2bfe786c517ceb18ef3932a1e320ae4dc01efd4855d424018
+boot.json SHA-256      a575d4c941a4509ee5e0b10cf29d94105e3edaf9828b916ae826c4beefa3b223
+```
+
+H521 真机在 boot ID `22c2ce2d` 上确认，kernel 启动后 lsd 仍经历
+`xpcproxy -> lsdwrap -> lsd.real argv0=lsd`。显式 load command 产生了两项
+确定性变化：
+
+```text
+lsd main sample 7110:
+kevent_id -> __CFRunLoopServiceMachPort -> __CFRunLoopRun
+-> runServerMainRunLoop -> _LSServerMain
+
+异步 recovery worker:
+performJournalRecovery +88，CPU 在 482-929 秒保持 3865 不变
+```
+
+这说明 shim 确实被加载，`performJournalRecovery` 已移出 lsd main。它仍永久
+等待，且 SpringBoard sample 6150/6180/6210/6240/6270 继续停在
+`_LSContextInitCommon/DMFSupport::reloadAllPolicies`。没有 root window
+visible、context commit 或 `fr=1`；最后显示门 925.260800 秒仍为
+`dpy=4/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0`。分类：
+`H521-load-command-pass/recovery-worker-stalls-forever`。
+
+设备日志的 `NATIVE_TC_QUERY` 对 lsd.real 报
+`cdhash=73a1e5f8e1c48c3664befc39028e089cf6878546`，与 Mac
+`codesign` 的 `f60e94dc...` 不同；进程仍由 launch-constraint bypass 启动，
+且显式 LC_LOAD_DYLIB 的加载效果在栈上成立。该差异保留为待解释项，不能据此
+声称 trust/CDHash 已完成闭环。证据：
+
+```text
+H521-live.log               0d7ea9533dc7efb07b562bf36c7a83dec0c0220113fdd23cb46e0cbe00e54233
+H521-live.capture.stdout    6ba2dd2e98f941d0aa43c3e958e38154448c9dbd7ac4c0a2731eb1191a298cc9
+H521-h103.txt               39414e065ca52fffe5c0673664c097c56507b71cf5d882168a83e04376d69ee0
+H521-tail32.bin             6d57bf2e50fd966f0b76f4ea011746b1dd9439b51c86f319eb730d984a21f5eb
+H521-reboot.log             5e7b5c4b450da4f4e283be3cf4fac9c69b2744940758bfe872d2b6bf98214e41
+H521-reboot.frames.bin      e815364c5ed884594c0d9fa42917772ab2488c8893aced5af23ea46aa29f9414
+```
+
+UXC1 `424518` 在 1034.051200 秒 ACK；Android `sys.boot_completed=1` 后
+返回 TWRP，持久环只读拉取成功。
+
+### §192 H522：跳过永久等待的 lsd journal recovery（2026-11-22）
+
+H521 已证明 recovery 即使移到后台也不会完成。H522 只把原来的异步调用改成：
+
+```text
+-[_LSInstallProgressService performJournalRecovery]
+-> return immediately
+```
+
+shim 仍只匹配 `lsd*`，不再调用原 IMP，也不再创建 utility worker。这是诊断性
+门禁，用于区分“recovery 持有 LaunchServices 锁”与“后面还有独立 IPC 门”。
+
+源码：NativeMetal `5ba227d803a15366efabcaf6c83f4d73daef0f53`，
+superproject `6ffccdc`。候选 addon 从 H521 十文件产物继承，只替换
+observer/trace/recovery shim；`lsd.real`、wrapper、launchd cache、kernel
+和 Data seed 字节不变。产物：
+
+```text
+observer SHA-256       65c682cb1657aec620b4fe6129dde9b1b55cf5e98a884fd537415f229121d21f
+observer CDHash         689423fc1964c755e8b1ebd873d3bb84c33ade12
+A540Trace SHA-256      6f30e7f4f77ff970c1bd50b80794d40c1a1d672d0b61d5e97f15021d3ca3da4e
+A540Trace CDHash       e874b48ff6795c4c7008a9d4fa022d794585680a
+recovery SHA-256       dae4b901341462b27804244be21a3a7d7a0d665aa979bb26699d6e75143608ae
+recovery CDHash        277a5655f5e0896d6305d6dbd0cd2ece39e57a8f
+addon SHA-256          dc2dc3a157f1498ce5d0fa1ec5b0bb5383e6fb6b6d914fd505c59e6936250026
+trust SHA-256          fde42382e4cfe41e3407c0f2f50854c8a3ac2f9042f142ddcaa1b1582bd9ab69
+payload SHA-256        51cee986cb2a4b720764c895d762cbb7fb92209275f10d4a88b67113e4f934f8
+boot SHA-256           7586fe20e2e58a753b0730916094a72f1e9108c6ffc7590252898668a65f1cf7
+boot.json SHA-256      ca5b586b60d66066195e077a5db7f608d1c3cb4e52db952dcd0e91c9c1689744
+```
+
+owner trust 为 84 个 own CDHash。kernel、ADT、Data seed 和 boot header
+与 H521 相同，bootargs 仍为 988 字符，当前 `1008/1024`、最坏
+`1016/1024`。状态：`boot-built-static-verified-not-device-ready`。
+
+设备门先要求 lsd main 不出现 `performJournalRecovery`，随后看 SpringBoard
+的 `_LSContextInitCommon` 是否返回、q=1 是否消失。若仍不返回，下一轮沿该
+请求的实际 destination port 和 service 追对端；若返回，则记录
+`SBMainWorkspace`、root content、context commit 与首帧的下一处边界。
