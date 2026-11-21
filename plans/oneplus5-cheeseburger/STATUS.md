@@ -17999,3 +17999,67 @@ boot          8569e14d72e163275f7ecf9b4fc36a2a3b4bdefe0680dd24e118a1f98068c3a6
 kernel round-trip、ADT、boot layout、`OP5ESP`、static wrapper checker 和
 bootargs fit 全部 PASS；bootargs 仍 980 B，实际 1000/1024，worst
 1008/1024。状态：`boot-built-static-verified-not-device-tested`。
+
+真机 boot ID `2160424b`，CDC 约 256 秒出现。H481 wrapper 已按预期执行：
+
+```text
+NATIVE_MTL: wrapper exec target=/System/Library/CoreServices/SpringBoard.app/SpringBoard.real
+NATIVE_EXEC: pid=27 ppid=1 comm=SpringBoard.real argv0=.../SpringBoard.real
+NATIVE_SBCHAIN: sb=27 ... rcv=.../SpringBoard.real
+```
+
+SpringBoard.real 在采集窗口内持续存活，没有 `NATIVE_EXIT`，说明 wrapper
+one-shot 问题已修复。但 observer load 仍为 0：observer constructor 只接受
+`strcmp(process, "SpringBoard")`，而实际进程名是 `SpringBoard.real`，所以
+constructor 主动返回。分类：
+`H481-wrapper-multiload-pass/observer-filter-rejects-springboard-real`。证据：
+
+```text
+H481-live.log      a87861e922f5c9d638eca4563048792c41a7d1ca69209fe806f302ddfcdd2441
+H481-tail32.bin    cbfc287df4eb20373d7ed6200a4758c0cd79e80bfaa4cdf6f3b4038c8ddc65e8
+H481-h103.txt      112d02458b02be4b4bcaa5efd74f40b43efe89236dae02d18edea2ff8359c4a0
+```
+
+### §125 H482：让只读 observer 接受 SpringBoard.real（2026-11-21）
+
+源码只把 observer 的进程过滤从精确 `"SpringBoard"` 改为
+`strncmp(process, "SpringBoard", 11)`，并把 build token 从 H436 更新为 H481
+（本轮包由已提交的 H481 wrapper 加新 observer 组成，设备候选记为 H482）。
+只读 sampler 的字段、延时与行为不变。submodule 提交 `539bbf7`，superproject
+提交 `21c782f`。
+
+新 observer：
+
+```text
+SHA-256  3c53d822c042a138bd3bd03c4827bfa373dad5e19e50fc55517fb26074dce6af
+CDHash   71a8804f53a304c7574cdcb07d77b09016eb7085
+```
+
+新 addon/trust：
+
+```text
+H482-observer-real-addon.img
+f930fee38c1476e3144c50ce022f25da77a5e2d26f07047a26658d724ab207e9
+
+H482-owner-trust.bundle
+2656a471f4869a0673316bc070f7208d7f8ac3d675a9c3423f3fe2db99ae4ec6
+```
+
+H482 payload 回读：
+
+```text
+source commit 21c782f
+kernel        4577d3bc93a48dec1c910e76d4262e8ceda64869f6b370a2ee3ff42556364b00
+trust cache   2656a471f4869a0673316bc070f7208d7f8ac3d675a9c3423f3fe2db99ae4ec6
+GPU addon     f930fee38c1476e3144c50ce022f25da77a5e2d26f07047a26658d724ab207e9
+Data seed     7522c2b803bac371190e5f316bacc825d1dd3c964ef3a3ab6ffd75bf0f9bae79
+ADT           5d25de26c8940c3d9493676ab4a4796f268c784ec22578b855d32fcbebf764d4
+unixnu.toml   80a6086e774d3d997a2fee1184d6cffdd5cf3b5f80c7da701c3ff574c47e3803
+payload       aad2c59c29b4082e865b237a0dc43d1de5d74e40f5a92373d285410b41b718d9
+boot          561bdaaa9dc942802c913099c7e6de7ba02bdda4dc74af21be06fa63fe76437b
+```
+
+owner trust 为 29 项；H481 wrapper、H482 observer、SpringBoard.real 与
+A540Trace 的 CDHash 均在 owner module。bootargs 仍 980 B，实际 1000/1024，
+worst 1008/1024，所有静态检查 PASS。状态：
+`boot-built-static-verified-not-device-tested`。
