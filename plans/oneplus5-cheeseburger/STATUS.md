@@ -18063,3 +18063,54 @@ owner trust 为 29 项；H481 wrapper、H482 observer、SpringBoard.real 与
 A540Trace 的 CDHash 均在 owner module。bootargs 仍 980 B，实际 1000/1024，
 worst 1008/1024，所有静态检查 PASS。状态：
 `boot-built-static-verified-not-device-tested`。
+
+真机 boot ID `21563c66`，CDC 在 258 秒出现，采集在约 360 秒停止。
+addon 门为 `8/6/2/0/0/0`，`ext=4/2 dm=5/0 wp=5/0`。wrapper 与真实
+SpringBoard 的链路均按预期通过：
+
+```text
+143.916973 s  NATIVE_MTL: bootstrap enter uid=501 euid=501 pid=27
+144.128518 s  NATIVE_MTL: wrapper exec target=/System/Library/CoreServices/SpringBoard.app/SpringBoard.real
+144.165490 s  NATIVE_EXEC: pid=27 ppid=1 comm=SpringBoard.real argv0=.../SpringBoard.real
+144.222710 s  NATIVE_LAUNCH_CONSTRAINT_BYPASS: pid=27 comm=SpringBoard.real bootarg=1
+```
+
+`SpringBoard.real` 到采集结束仍存活，没有 `NATIVE_EXIT: pid=27`。但 H103
+中没有 `NATIVE_MTL: observer load`、`H436_SBSCENE` 或 sampler 行；observer
+加载数为 0，因此 scenes/windows 仍为无条件评价。全日志检索
+`DYLD_INSERT|SpringBoardSceneObserver|AMFI|Library Validation|reject|deny`
+没有给出 observer 被拒绝的记录。唯一相关的
+`NATIVE_GPU_ADDON: open ...SpringBoardSceneObserver.dylib error=2` 位于
+32.945141 秒，是 addon 安装前的预期缺失，不是本次运行原因。分类：
+`H482-wrapper-real-runs/observer-injection-still-absent`。
+
+本轮同时得到一个必须保留的反例。H475 boot ID `22532505` 的 launchd 直接
+启动路径曾在 `SpringBoard` pid 187 中打印：
+
+```text
+System Policy: SpringBoard(187) deny(1) file-map-executable .../SpringBoardSceneObserver.dylib
+NATIVE_MMAP: ignore MACF check 1
+NATIVE_MTL: observer load process=SpringBoard pid=187 build=H457
+```
+
+所以 observer 的构造器与 A540 tunnel 在目标系统上具备运行能力。H482 的
+缺口是 wrapper 设置环境后 `execv("SpringBoard.real")` 没有再加载 observer，
+而不是 observer 代码在当前版本完全不可加载。下一项必须只改变一个变量：
+先在 wrapper 中打印
+`getenv("DYLD_INSERT_LIBRARIES")` 和
+`getenv("DYLD_FORCE_FLAT_NAMESPACE")`，再执行一次
+`dlopen(...SpringBoardSceneObserver.dylib, RTLD_NOW)` 并记录返回值与
+`dlerror()`，最后仍 exec 原来的 `SpringBoard.real`。这一轮不改变 observer、
+真实 SpringBoard 或 scene 采样行为，用来区分环境传播失败和平台二进制加载
+策略失败。若环境值存在且 `dlopen` 成功，再单独尝试把 observer 固化到
+`SpringBoard.real` 的 load command，避免把两个变量混在同一轮。
+
+证据目录：
+`display-first-frame/logs/H482/device/20261121-094949/`。
+
+```text
+H482-live.log      c50d73318cc0761113f7eab2eec353b90e88a80758be504db48b485e07a2a173
+H482-tail32.bin    346c6f43b38a92147205fffc288a0c2e44293c6da640be2d6bbd95fb020e83c3
+H482-h103.txt      66bbdeb6130e14bc3ec952359522db5025a505646771e3e6368d06ee5216304a
+H482-device-state  7a99a087e786386bd813d3d35b9e6f59b005c6204d7d512eb7e79d5ecca8c5cf
+```
