@@ -170,6 +170,11 @@ git clone https://github.com/lss717/UniXNU-cheeseburger
   diff, add it to `patches/xnu/`, add its filename at the required position in
   `patches/xnu/series`, then rebuild kernel + prelink. The series is
   authoritative; duplicate, missing, and unlisted patch entries are errors.
+- **Patch filenames must be functional. Never use `a-`, `z-`, `zz-`, `zzz-`,
+  or any other lexical-prefix scheme to encode apply order.** Ordering belongs
+  exclusively to `patches/xnu/series`. Historical `zz...` filenames may remain
+  only as history; do not create new copies, aliases, or branches with that
+  naming.
 - **Edit source with a text editor (`edit`) or `sed`, never with a script that
   rewrites files in bulk.** A Python heredoc doing multi-line replacements is
   what produced two "corrupt patch at line N" failures and one duplicated
