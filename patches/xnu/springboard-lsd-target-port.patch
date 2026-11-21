@@ -1,53 +1,15 @@
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -10589,6 +10589,14 @@
+@@ -10589,6 +10589,8 @@
  static int native_sb_hdr_ok;
  static uint32_t native_sb_hdr[6];
  static int native_sb_capture;
 +static unsigned native_sb_target_rname;
 +static uint64_t native_sb_target_port;
-+static int native_sb_target_pid;
-+static unsigned native_sb_target_waiter;
-+static uint64_t native_sb_target_tid;
-+static uint64_t native_sb_target_pc;
-+static uint32_t native_sb_target_state;
-+static uint32_t native_sb_target_rcvname;
  static int native_sb_pid;
  static task_t native_sb_task;
  
-@@ -10717,7 +10725,19 @@
- 			native_sb_capture = 1;
- 			native_sb_buf = (uint64_t)get_saved_state_reg(state, 0);
- 			native_sb_rcv_name = (unsigned)(uint32_t)
-+			    (get_saved_state_reg(state, 5) >> 32);
-+		}
-+		if (native_sb_target_rname != 0 &&
-+		    (int32_t)(uint32_t)get_saved_state_reg(state, 16) == -47) {
-+			unsigned recv_name = (unsigned)(uint32_t)
- 			    (get_saved_state_reg(state, 5) >> 32);
-+			if (recv_name == native_sb_target_rname) {
-+				native_sb_target_waiter = 1;
-+				native_sb_target_tid = thread_tid(th);
-+				native_sb_target_pc = pc;
-+				native_sb_target_state = th->state;
-+				native_sb_target_rcvname = recv_name;
-+			}
- 		}
- 		if (native_sb_count < sizeof(native_sb_rows) / sizeof(native_sb_rows[0])) {
- 			native_sb_rows[native_sb_count].tid = thread_tid(th);
-@@ -10786,6 +10806,11 @@
- 	native_sb_buf = 0;
- 	native_sb_rcv_name = 0;
- 	native_sb_local_name = 0;
-+	native_sb_target_waiter = 0;
-+	native_sb_target_tid = 0;
-+	native_sb_target_pc = 0;
-+	native_sb_target_state = 0;
-+	native_sb_target_rcvname = 0;
- 	native_sb_service[0] = '-'; native_sb_service[1] = 0;
- 		memset(&native_sb_rcv, 0, sizeof native_sb_rcv);
- 		memset(&native_sb_req, 0, sizeof native_sb_req);
-@@ -11123,6 +11148,34 @@
+@@ -11123,6 +11125,55 @@
  			    native_sb_rows[0].recv_kmsg, native_sb_rows[0].recv_name,
  			    native_sb_rows[0].recv_seqno);
  		}
@@ -56,7 +18,6 @@
 +		    strncmp(native_sb_qname2, "lsd", 3) == 0) {
 +			native_sb_target_rname = native_sb_req.rname;
 +			native_sb_target_port = native_sb_req.port;
-+			native_sb_target_pid = native_sb_req.pid;
 +			printf("NATIVE_TARGETPORT: sample=%u set sender=%d/%s sname=0x%x rname=0x%x sport=0x%llx\n",
 +			    sample, native_sb_pid, name, native_sb_hdr[2],
 +			    native_sb_target_rname,
@@ -64,8 +25,30 @@
 +		}
 +		if (native_sb_target_rname != 0 && strncmp(name, "lsd", 3) == 0) {
 +			struct native_sb_probe target;
++			unsigned waiters = 0;
++			unsigned waiter = 0;
++			uint64_t waiter_tid = 0;
++			uint64_t waiter_pc = 0;
++			uint32_t waiter_state = 0;
++			uint32_t waiter_rname = 0;
 +			native_sb_probe_name(native_sb_task->itk_space,
 +			    native_sb_target_rname, &target);
++			for (unsigned i = 0; i < native_sb_count; i++) {
++				unsigned rname = (unsigned)(uint32_t)
++				    (native_sb_rows[i].x5 >> 32);
++				if ((int32_t)(uint32_t)native_sb_rows[i].x16 != -47 ||
++				    rname != native_sb_target_rname) {
++					continue;
++				}
++				waiters++;
++				if (!waiter) {
++					waiter = 1;
++					waiter_tid = native_sb_rows[i].tid;
++					waiter_pc = native_sb_rows[i].pc;
++					waiter_state = native_sb_rows[i].state;
++					waiter_rname = rname;
++				}
++			}
 +			printf("NATIVE_TARGETPORT: sample=%u check comm=%s rname=0x%x seen=%d set=%d q=%d cnt=%u qlim=%u seq=%u sr=%u ms=%u so=%u rn=0x%x port=0x%llx match=%d peer=%d\n",
 +			    sample, name, native_sb_target_rname, target.seen,
 +			    target.is_set, target.queued, target.msgcount,
@@ -73,11 +56,11 @@
 +			    target.mscount, target.sorights, target.rname,
 +			    (unsigned long long)target.port,
 +			    target.port == native_sb_target_port, target.pid);
-+			printf("NATIVE_TARGETWAIT: sample=%u seen=%u tid=%llu pc=0x%llx state=0x%x rcvname=0x%x\n",
-+			    sample, native_sb_target_waiter,
-+			    (unsigned long long)native_sb_target_tid,
-+			    (unsigned long long)native_sb_target_pc,
-+			    native_sb_target_state, native_sb_target_rcvname);
++			printf("NATIVE_TARGETWAIT: sample=%u seen=%u count=%u tid=%llu pc=0x%llx state=0x%x rcvname=0x%x\n",
++			    sample, waiter, waiters,
++			    (unsigned long long)waiter_tid,
++			    (unsigned long long)waiter_pc,
++			    waiter_state, waiter_rname);
 +		}
  		native_ipc_focus_emit(sample, native_sb_hdr[5], native_sb_req.port, native_sb_local.port);
  		native_xpc_register(native_sb_rcv.port, native_sb_pid, name, 'r');

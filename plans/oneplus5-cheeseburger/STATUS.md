@@ -21722,3 +21722,70 @@ bootargs 仍为 988 字符，`check-bootargs-fit.py --toml` 得
 同镜像复测。若仍在 CDC 前复位，就回 TWRP 拉取持久环并与
 `37.621322` 的打开 dyld cache 点比较；只有 CDC 出现后才进入 900 秒采集和
 target-port 判定。
+
+#### H523 同镜像复测与 H522 对照
+
+同镜像复测仍使用 boot
+`139287c226cd3dc8643ae1713ef278566377b017cabe0f5da856b8b330c19433`。
+清理后日志窗的全零回读哈希为
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+这次在 `02:28:15` 接受启动，CDC 仍未出现；约 60 秒时手机已经回到 Android。
+持久环最后一条为 `54.191685 s` 的 launchd trust-cache 查询，最后一个 dyld
+文件为 `dyld_shared_cache_arm64.16`：
+
+```text
+logs/H523/device/20261122-022805/
+H523-h103.txt
+  f48502faafdce78f6d12a5187ae735bb5c38efc1c12cf3625982dd326affd900
+H523-tail32.bin
+  b5ded41f4e9acf7a5a6423e302c501f128c6000ba8ef6c323446f70e481505dc
+```
+
+该轮环中有顺序增长的 `NATIVE_UFS_LOG_FAIL`，这是持久记录写入失败，不是 OCS
+或软件锁超时；最后的 `NATIVE_UFS_ALIVE` 为
+`winFlight=1 ufsFlight=1 cmds=5039 winReq=1609 winBytes=766280704`。环中没有
+`NATIVE_TARGETPORT`、`NATIVE_TARGETWAIT`、OCS error、doorbell timeout、UFS
+recovery、lock timeout、panic 文本或 watchdog 触发记录。两次 H523 都在
+SpringBoard 启动前复位，但停机点不同，分别为 `.00` 和 `.16` 两处 dyld cache
+进度。分类为 `H523-replay-early-reset/dyld-cache-preuserspace`，仍不能用于判定
+target-port 探针结果。
+
+随后在同一设备、同一 `userdata_ios` 状态和相同清理流程下启动 H522 boot
+`7586fe20e2e58a753b0730916094a72f1e9108c6ffc7590252898668a65f1cf7`。
+该轮超过 900 秒没有复位，Windows 上的 iOS USB 设备虽然进入描述符失败状态，
+但持久环证明系统继续运行到约 1507 秒：
+
+```text
+SpringBoard pid=27
+NATIVE_DISPLAY_OPEN: service=IOPMrootDomain process=SpringBoard match=1
+NATIVE_DISPLAY_OPEN: service=AppleKeyStore process=SpringBoard match=1
+last NATIVE_H469_STATUS:
+  seq=249784 done=249784 timeout=0 ocs_err=0 dbto=0
+  recover=0 recovered=0 flight=0 lock_timeout=0 lock_waiters=0
+  watchdog_seen=2580
+```
+
+对照证明 H523 的两次早复位不是 Data seed、ADT、trust、addon 或启动方式的共同
+不稳定；唯一不同的构建输入是 target-port 补丁及其引起的 XNU 代码布局。H522
+这轮仍未触发 watchdog，`watchdog_seen=2580` 只是采样数，不能据此说 watchdog
+已验证。USB 状态单独记录为 `fault=1 connected=0`，是这轮没有 CDC 的原因，不
+影响 H522 已进入 SpringBoard 的结论。
+
+对照证据：
+
+```text
+logs/H522/device/20261122-023045-H523-kernel-control/
+H522-h103.txt
+  1a0e437afdc636977e22f8cb31fe41bd43cb50763868133e7c6bf532e70703f0
+H522-tail32.bin
+  dc635952a3f707d0ef47f670ed6d1ae662a97c840b86045daaecb88fb4dec81
+```
+
+H524 只收缩 target-port 的注入点。原 H523 补丁在
+`native_sb_collect()` 的每个等待线程上增加了目标 receive name 检查；这与
+H523 第一次 60 秒采样之前就复位的时间线不一致，但紧贴 early-boot 的高频
+线程遍历路径。H524 删除这条热路径修改，只在 SpringBoard 已观察到 queued
+`lsd` 请求时保存 receive name 和 send-right port，并在随后的 lsd 样本中复用
+已经采集的 `native_sb_rows[]` 查找 Mach trap `-47` 的同一 receive name。
+这样仍能输出 `seen/match/q` 和 waiter，同时不改变线程遍历行为或早期启动
+路径。
