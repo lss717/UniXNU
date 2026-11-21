@@ -22539,6 +22539,56 @@ payload kernel         7a4c2fa018f552313563c8adfe1a624139b073d65b2fe1b9193ed5006
 第一次退出时是否出现带有效 sender 的 reason，以及
 `OS_REASON_FLAG_ABORT` 等 flags。
 
+### §201 H531：记录 threadsignal 的 Mach exception code（2026-11-22）
+
+H530 已验证修正后的 KCDATA sender 解析能输出
+`sender=<pid>/exc handler`。源码中 `"exc handler"` 唯一来自
+`threadsignal()`：它把 trap exception 转成进程信号并建立
+`OS_REASON_SIGNAL`。H530 的 reason 只保留 signum，不保留原始
+`mach_exception_code_t`，因此 H531 只增加该路径的观测。
+
+新补丁 `threadsignal-exception-source.patch` 对 SpringBoard 的
+`threadsignal()` 入队记录：
+
+- 目标 PID、线程 TID、signum；
+- 原始 `mach_exception_code_t`；
+- `set_exitreason`；
+- current sender PID/comm 与 kernel caller。
+
+记录沿用现有 lock-free drain 路径，在普通采样上下文输出
+`NATIVE_THREADSIG`。它不改变 exception、信号、线程或退出状态。补丁已在 H530
+最终 source 上通过 `git apply --check`，clean build 实际应用，最终 kernel
+同时含 `NATIVE_THREADSIG: ... code=... setreason=...` 和 H530 的
+`NATIVE_EXIT ... flags/sender` 格式。
+
+源码与构建：
+
+```text
+superproject commit     75da19e7
+kernel build log        /Users/lss/h468-build/h531-threadsignal-build.log
+  918aa5670f201848f13a9c9682f22754df491259aedb0c256e733b51de23eb8b
+prelink log             /Users/lss/h468-build/h531-threadsignal-prelink.log
+  08eada457fd1495d63a16d8a1265e639599272a75295edfe4490d288fcf80e8f
+```
+
+payload 从 H530 复制，只替换 `Payloads/kernel.macho`；payload kernel
+回读一致，sidecar 文件保持逐字节一致。bootargs 和 boot JSON 检查 PASS。
+
+产物：
+
+```text
+kernel SHA-256         001e98f42a7f8dbd40d23d92ededc8dc6095cc115c50da07466f2f4d4de7031e
+payload SHA-256        1959cc3d4452d6748cfb95fe74d4e0188837542123402d18388dd7e20a7804a0
+boot SHA-256           2bcebef3c6ade41d455b09d6a6060209d9ac99ad470081fe18b65678013a8cbd
+boot.json SHA-256      dedd9e988554f5d1178ead66e9963f7dd80061556eb4256fb9b3dc96d8b5507f
+unixnu.toml SHA-256    dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e065f01e81
+payload kernel         001e98f42a7f8dbd40d23d92ededc8dc6095cc115c50da07466f2f4d4de7031e
+```
+
+状态为 `H531-built-static-verified-device-pending`。设备判定读取 SpringBoard
+退出前的 `NATIVE_THREADSIG`；该 `code` 与 UUX 中的 exception type/subcode
+编码将直接指出首个 fault，而不再停留在笼统的 SIGABRT。
+
 同日曾尝试用 H473 历史 glob 顺序重建 target-port 控制，并为让新补丁排到末尾
 临时引入 `zz…` 文件名。该分支没有成功构建，也没有产生 boot 镜像，已删除。
 这个命名方式自此明确禁止：补丁必须使用功能名，顺序只由
