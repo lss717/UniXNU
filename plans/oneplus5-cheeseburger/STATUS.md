@@ -20694,3 +20694,63 @@ addon/trust readback 均 PASS。状态：
 后缺 snapshot enter → 调用边界；dlopen 间缺失 → `dlopen`；snapshot exit
 后缺 monitor start → sample 4 收尾路径。所有节点都在同一 SpringBoard PID
 下按 PID、sample 和进程名核对。
+
+### §176 H513 真机：sample 4 与 app monitor 均可达，停在 UIApplication 创建前（2026-11-21）
+
+H513 在 serial `16149951`、boot ID `21cf1c67` 上完成 900 秒采集。
+SpringBoard PID 27 的观测链为：
+
+```text
+312.113836 s  h513_dispatch_closure_enter sample=2
+312.190395 s  h513_snapshot_enter sample=2 pre_dlopen=1
+312.270807 s  h513_dlopen FrontBoardServices ok=1
+312.344404 s  h513_dlopen QuartzCore ok=1
+379.295676 s  h513_snapshot_exit sample=2
+399.038778 s  h513_dispatch_closure_enter sample=3
+399.340218 s  h513_snapshot_enter sample=3
+400.104937 s  h513_snapshot_exit sample=3
+532.777279 s  h513_dispatch_closure_enter sample=4
+532.777370 s  h513_snapshot_enter sample=4
+532.777438 s  h513_dlopen FrontBoardServices sample=4 ok=1
+532.777494 s  h513_dlopen QuartzCore sample=4 ok=1
+532.777819 s  sample=4 app=0 windows=0
+532.777989 s  h513_snapshot_exit sample=4
+532.778042 s  h513_dispatch_closure_exit sample=4
+532.778112 s  h512_app_monitor_start pid=27
+532.778166 s  h512_app_wait app=0 windows=0 poll=0
+598.479093 s  h512_app_wait app=0 windows=0 poll=12
+```
+
+因此 H512 中 sample 4 缺失属于日志覆盖问题；sample 4 没有被漏派发，
+两个 `dlopen` 也没有阻塞，app monitor 已经启动。到 598.479 秒，
+`UIApplication` 仍不存在。之后没有更多 app-wait 行，但同期 UXL dropped
+从 2024 增至 11578，不能据此单独判定 monitor worker 已停住。
+
+全轮没有 status window、client CA context、root visible、`ca_host_*`、
+context slot 或 display-surface 事件。显示门在 1114.162776 秒仍为
+`dpy=4/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0`。最后 H469 行为
+`seq=220956 done=220956 timeout=0 ocs_err=0 dbto=0 recover=0
+recovered=0 lock_timeout=0`；`lock_wait_ms=10266670 lock_ok=629190`，
+平均约 16.32 ms。请求完成且无 OCS、doorbell timeout 或 recovery。
+
+live capture 为 `frames=6263 payload_bytes=823461 crc_errors=0
+sequence_gaps=0 truncated_frames=0 boot_switches=0`。UXC1 `424515`
+ACK 后正常重启，Android 完成启动并返回 TWRP。持久环仍有
+`NATIVE_UFS_LOG_FAIL`，但 live transport 完整。
+
+证据：
+
+```text
+H513-live.log                 b8c5866c491bb8f88b13b2ca1137b48435f20fd9b23011d5a63f19d509fdb8a1
+H513-live.frames.bin          64cdd635c4b37c6d2df695b515a9f9d101b0c27b6afaebb53fd46daee93b8df6
+H513-h103.txt                 2488631897ad3852e430e6269d31f4f814ef362856a63b582223f6a1a8785054
+H513-tail32.bin               0829598bb47beace1aa4e0ea791393734920d39d06cb96120237f167e202d135
+H513-reboot.log               f4a7e7e7fdf67eb38f670c81a2e3e6fd7054c403e66c12c5fc153fb2875be845
+H513-reboot.frames.bin        8cadd6e84e8b075cfb8be4043fe429bc421a974a40bdf4ec7ee037dbfcdf6fdc
+H513-reboot-recovery-state    1194d4c23148a53c45c576f8bb81df75030293c9d9dac457806603fb38ebb79c
+```
+
+分类：`H513-sample4-and-monitor-reached/UIApplication-absent`。下一轮不应
+继续修改 root window 的可见请求，也不应先查 main run loop。应在 H514 中只
+增加 UIKit 应用实例化边界观测，定位 SpringBoard 在
+`UIApplicationMain`、shared application 创建或 delegate 接续中的停顿。
