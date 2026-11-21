@@ -21910,3 +21910,34 @@ boot JSON 的 input/output hash 与上表一致，`problems=[]`。状态为
   的存在或它造成的二进制布局是早复位因素，需重新设计观察点；
 - H525 仍在相似早期点复位：问题来自当前 series/build 的其它共同变化，不能
   继续归因于 target-port patch。
+
+H525 实际 boot ID 为 `1993443908`，Android 在 CDC 前恢复。持久环显示它没有
+在 H524 的 dyld 位置直接断流，而是继续到 Data 挂载门：
+
+```text
+40.968590  NATIVE_H82_DATA_PATH_WAIT: 0 seed=3 root=1 err=2
+...
+98.496935  NATIVE_H82_DATA_PATH_WAIT: 550 seed=3 root=1 err=2
+103.682961 NATIVE_H82_DATA_PATH:
+             status=60 seed=3 mount=597 root=1 err=2
+103.719979 NATIVE_H82_DATA: status=60 stage=1 ro=-1
+             dev=16777240 size=1073741824
+103.757319 NATIVE_PANIC_STR:
+             offline scratch Data mount failed: 60 @kern_exec.c:8832
+103.796127 NATIVE_PANIC: flags=fd7f0000 client=0 xfer=0 frames=0
+```
+
+因此这次复位有明确的 Data mount `errno=60` panic，和 H523/H524 在 dyld cache
+阶段的无 panic 断流不是同一种结果。H525 不能作为 target-port patch 的干净
+对照，也不能据此宣称该 patch 与复位有关。分类为
+`H525-control-data-mount-errno60/not-comparable-for-target-port`。
+
+H525 设备证据：
+
+```text
+logs/H525/device/20261122-032957/
+H525-h103.txt
+  0cc46e1e9c68fd3b7240f122d6b306278631665fbe9f06a45698c1f01b3eb227
+H525-tail32.bin
+  31a5a469a5f16af30a4b6183f8f67c3964b7cc4883f61b932042e56a33c2c1b3
+```
