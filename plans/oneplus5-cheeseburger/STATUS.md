@@ -19267,3 +19267,89 @@ bootargs 均 PASS。状态：`boot-built-static-verified-not-device-tested`。
 `renderContext`、有效/冻结状态和根层 contents。若 context layer 有内容，
 下一轮只追 CA transaction/present；若仍为空，只检查该 context 的 surface
 或 renderer producer，不回到 UIView 猜测。
+
+### §145 H497 真机：host 与 CAContext ID 分离，根层链到 depth 6 仍未携带内容（2026-11-21）
+
+H497 在 serial `16149951`、boot ID `212af99a` 上完成 900 秒运行。sample 5
+得到：
+
+```text
+CALayerHost.contextId=0x438645e2
+CAContext.contextId=0x3154ef43
+CAContext.displayId=0x1
+CAContext.displayMask=0x0
+CAContext.layer=UIWindowLayer
+CAContext.renderContext=nil
+CAContext.options present=1 class=__NSDictionaryM
+```
+
+`isValid` 与 `isFrozen` 都返回 `has*=0`，说明本轮没有取得这两个 getter 的
+可用类型，不能把缺省值解释成 context 无效或冻结。host ID 与 CAContext 自身
+ID 明确不同，后续日志必须分别命名，不能互换。
+
+CAContext 根层链至少为：
+
+```text
+UIWindowLayer
+  -> _UIWindowTransformLayer
+     -> _UIWindowTransformLayer
+        -> UIWindowLayer
+           -> CALayer
+              -> CALayer
+                 -> CALayer
+```
+
+depth 0..6 每一层都是 `contents=0`，depth 6 仍有 1 个 sublayer。H497 的
+depth 上限因此在链真正结束前截断。最后显示门在 1159.226656 秒仍为
+`s345=0/1/1 val=1 xf=1 fr=0`。分类：
+`H497-host-and-context-ids-separate/context-tree-not-at-leaf`。
+
+采集共收到 6383 个 live frame、838297 payload bytes；CRC error、sequence
+gap、boot switch 和 truncated frame 均为 0。H103 最后可见 H469 状态为
+`seq=221078 done=221078 flight=0 lock_timeout=0 lock_waiters=1`，没有
+OCS、doorbell 或 recovery。UXC1 `424498` 发送成功但未捕获 ACK，设备仍正常
+返回 Android 并完成一次 recovery reboot。这不证明 watchdog。
+
+证据目录：
+`display-first-frame/logs/H497/device/20261121-141302/`。
+
+```text
+H497-live.log              9fb55f679f6be25422a0ba7d72cbf0612043fe4bdd2565cc8d1d5dab084794c7
+H497-live.frames.bin       464114c8c4ccdbd42f79fbbebafb9058e5281155c6c9f3f1554eff5ed1cc4bbe3
+H497-live.capture.stdout   71b4c6f307ec7603bbae4e49b102cb9173f7cff1d63ba6cc4d6dcc7db08ef13a
+H497-tail32.bin            3ab559b8a58a880459d4b24e6b70a78674f6b4bc0007a61da8bff68b53a11f01
+H497-h103.txt              7557e57687bfbc9928a6f7f151b4c219e290e4794c26f6e45467cbb0e3ad649b
+H497-device-state.txt      6a33fbd90362e2821ee189add2895dd36d5468cae5cfcad9a5a0c7692ac7ce00
+```
+
+### §146 H498：CAContext layer 下钻到 depth 12（2026-11-21）
+
+H498 保持 H497 的 kernel、ADT、Data、bootargs、addon 文件集、CAContext
+字段和显示路径不变。唯一诊断变化是把已有 layer tree 的深度上限从 6 增加到
+12，并保存当前祖先路径；只有重复对象才输出 `cycle=1` 并停止，避免私有树
+出现环。总 layer 预算从 160 增加到 240，view 预算仍为 96。没有 setter、
+context 绑定、scene/window 修改或 surface/scanout 操作。NativeMetal
+`83550219fdd9fd5b9a67d80bf265ebc99d6620aa`，superproject `b9663c3`。
+
+产物：
+
+```text
+dylib SHA-256   d9178fd5b26775e7edb055d0ad184177e49d1951bd0c85c8a475d08008a1dfda
+dylib CDHash    3d09035173fd72b58c014b2bb614c90cec2dfb9c
+addon SHA-256   e2ce1caf1ccca3f440f2151d9b68624492781af0843034c2cdb287db45a792e5
+trust SHA-256   331daea9ad85bbae2bcc74b4aa97603d66b66f617b095cd9abe16368ca89e40c
+payload SHA-256 1fc442840554220ce30c8c69b3bc74f23899a105f14e631ae43c79c3ae8120b4
+boot SHA-256    82bcf92ebf242d28811bd3ff1ce47bc4d1f7fda2fee8bda1cb235586963c8982
+boot.json SHA-256 ec8c1712673b594e8ca7680a921d537900e484b59ebbd8bfdd415eb27223ed7d
+```
+
+owner trust 为 36 项。addon 仍为 7 项且只有 observer dylib 改变。payload
+逐文件回读确认 kernel、ADT、Data seed 和 `unixnu.toml` 与 H497 相同。
+observer/CCS gate、arm64 4 KiB 签名、Android boot 结构、UEFI 不变和
+bootargs 均 PASS；最坏 bootargs 为 1016/1024 bytes。状态：
+`boot-built-static-verified-not-device-tested`。
+
+设备门接受 sample 5 的 `scope=context` layer tree 到达真实叶子、出现
+`contents=1`，或命中并报告 cycle。若 depth 12 仍被预算/深度截断，再单独
+提高深度；若叶子已出现且全部无 contents，下一轮转向 CAContext 的 surface、
+transaction 或 renderer producer。不得再把 UIView 存在当作首帧证据。
