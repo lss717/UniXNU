@@ -17839,4 +17839,23 @@ DYLD_FORCE_FLAT_NAMESPACE=1
 真实 scene/window。若 wrapper 再出现 exit 0x9，说明新的确定点是 wrapper
 签名/launch constraint，而不是 cache 投递。
 
-当前状态：`packaging`。
+H479 回读：
+
+```text
+source commit eb4f276
+kernel        4577d3bc93a48dec1c910e76d4262e8ceda64869f6b370a2ee3ff42556364b00
+trust cache   cd754067b9587960d336715b35c933cfb50b29f3b5b7b48feb0d8988092541cf
+GPU addon     92a52628f1becad4b63f881d74b9bc179e0afe15d4b9cc67e9f220bca9e530dc
+Data seed     7522c2b803bac371190e5f316bacc825d1dd3c964ef3a3ab6ffd75bf0f9bae79
+ADT           205227cad97956b384dc53084873174168cf22a137752c15e8051bab55d3a0c3
+unixnu.toml   80a6086e774d3d997a2fee1184d6cffdd5cf3b5f80c7da701c3ff574c47e3803
+payload       752227a8da6b00c5c41dc44ac5e1e1465b8d8069fddbe587c394a1ebf8df7a4a
+boot          f5c7976da63730fd3c647854cc7e8fb06414171fc9faf2dac77b4951031d71b6
+```
+
+addon header 为 `NGPUADD2 count=8 total=350936 consumed=350936`。八项为
+H477/H478 的六项，再加 H436 的 `springboard/SpringBoard`（88,064 B）和
+`springboard/SpringBoard.real`（120,864 B）。kernel、Data、trust、bootargs
+均与 H478 相同；bootargs 仍 980 B，实际 1000/1024，worst 1008/1024。
+ADT、boot layout 和 `OP5ESP` 检查 PASS。状态：
+`boot-built-static-verified-not-device-tested`。
