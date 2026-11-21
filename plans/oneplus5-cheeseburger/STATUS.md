@@ -18945,10 +18945,111 @@ boot                 0d02dc427e67ffedb1009d4d4f5f6f5205459d9fbb74afb4a1a91bd1294
 ```
 
 合并 dylib 签名、bundle gate、payload、ADT、bootargs 和 boot layout 均
-PASS，owner trust 为 31 项。状态：
+PASS，owner trust 为 32 项。状态：
 `boot-built-static-verified-not-device-tested`。
 
 设备门只接受 H103/live log 中出现 H494 observer load，以及 application/scene
 窗口的 `layer`、`contents`、`rootViewController`、`windowScene` 实测值。
 若窗口层和 contents 已存在，下一轮才沿 CA scene activation、draw、commit、
 present、IOMFB transfer/copy/scanout 单向推进。窗口对象存在本身不是首帧。
+
+### §139 H494 真机：窗口对象与 root view controller 已出现，layer contents 仍为空（2026-11-21）
+
+H494 在唯一设备 serial `16149951` 上启动，boot ID `212fad8b`。这一轮没有
+改变 H493 的 kernel、Data、bootargs、addon 组成、CCS bypass 或显示路径；
+新增的窗口字段已经实际执行。
+
+关键结果：
+
+```text
+513.382 秒  sample=4 workspace=1 class=FBSWorkspace
+519.002 秒  sample=4 app=1 delegate=SpringBoard scenes=0 windows=1
+520.510 秒  windows=application count=1
+521.189 秒  application/0 class=SBRootSceneWindow hidden=1 level=0
+521.269 秒  application/0 layer=UIWindowLayer rootVC=0 windowScene=1
+521.948 秒  application/0 layer.contents=nil
+726.819 秒  sample=5 scenes=1
+727.722 秒  windows=scene count=2
+727.722 秒  scene/0 class=SBStatusBarWindow hidden=0
+727.722 秒  scene/0 layer=UIWindowLayer rootVC=_SBStatusBarWindowRootViewController
+727.723 秒  scene/0 layer.contents=nil
+727.723 秒  scene/1 class=SBStatusBarReusePoolWindow hidden=1
+727.723 秒  scene/1 layer.contents=nil
+739.715 秒  application/1 class=SBRootSceneWindow hidden=0 rootVC=0
+740.835 秒  application/1 layer.contents=nil
+741.473 秒  application/2 class=SBStatusBarWindow hidden=0
+741.795 秒  application/2 rootVC=_SBStatusBarWindowRootViewController
+742.105 秒  application/2 layer.contents=nil
+770.912 秒  display gate s345=0/1/1 val=1 xf=1 fr=0
+```
+
+这比 H493 前进了一层。窗口对象已经能从 `UIApplication.windows` 和
+`SBWindowScene.windows` 同步读取，`SBRootSceneWindow` 已解除 hidden，状态栏
+已有 root view controller，window layer 也存在。但所有受检 window layer 的
+`contents` 仍为 nil，显示门仍为 `fr=0`。分类：
+`H494-window-tree-present/no-layer-content`。
+
+窗口数量、hidden 状态或 root view controller 本身都不是产品首帧。完整
+900 秒采集、H103 尾环和最终文件哈希在采集结束后补录。
+
+### §140 H495：只读下钻 UIView/CALayer 层级（2026-11-21）
+
+H495 保持 H494 的 kernel、ADT、Data seed、bootargs、trust 基线、A540Trace、
+SpringBoard、launchd cache、CCS bypass 和显示逻辑不变。唯一运行时诊断变化
+是从既有的窗口对象只读下钻：
+
+```text
+window.subviews
+rootViewController.view
+UIView.subviews / isHidden / layer
+UIView.layer.sublayers / contents
+CALayer.sublayers / contents
+```
+
+遍历只在 sample 5 执行，最大深度 6、每层最多 8 个子对象，总预算为 96 个
+view 和 160 个 layer。observer 不调用任何 setter，不创建 scene，不修改
+窗口、view、layer、Metal、IOMFB、surface 或 scanout。NativeMetal
+`32d720d43c6e15c17548e15717bb43a37c5ac105`，superproject
+`81ac084`。
+
+H495 dylib 使用 arm64 iOS 17、4 KiB pages、adhoc 签名编译：
+
+```text
+dylib SHA-256 e916efe08ee30d96836f78b4a8d7df6a83fd9d570494c842f40b2f0d43b8f9a7
+dylib CDHash  3f51578ace14426350710b8708494bcd08eb40ba
+```
+
+addon 从 H494 的 7 项结构重打包，逐项比较后只有
+`lib/SpringBoardSceneObserver.dylib` 改变；A540Trace、它的签名资源、scene
+marker、SpringBoard 和 launchd cache 内容与模式保持：
+
+```text
+addon SHA-256 fc0ef9092a787402bea937f48a825554499809850e1a3f48438e4b430cd54891
+```
+
+owner trust 从 H494 的 32 项增加到 33 项，保留旧 hash 并加入新 observer
+CDHash：
+
+```text
+trust SHA-256 d3a466a9a413101b55395ea54700710cadd9528b8ec172f149edf6c14d8b39fd
+```
+
+payload 以 H494 payload 为 FAT 基线，只替换 trustcache 与 gpuaddon。回读确认
+kernel、ADT、Data seed 和 `unixnu.toml` 与 H494 逐字节相同，trust 与 addon
+各自与打包输入相同：
+
+```text
+payload SHA-256 c67e125baf3af88ea0267cfcc85fc3070f35c9df536e655f2b69b852b81f5801
+boot    SHA-256 a60dd3349d7d3afc843a8b4b6d97d329aa0e60ba476dad13da7ee76ec7b8788a
+boot.json SHA-256 9047f60c18df2d702e309975c6e17d57425d6e849d1f85231b220d8c8f64c5f6
+```
+
+H495 的 observer/CCS source gate、arm64 与 4 KiB 签名、Android boot 结构、
+bootargs、UEFI 不变、payload FAT 回读均 PASS。bootargs 为 988 bytes，
+加 `zap-base` 后 1008 bytes，最坏 16 位值 1016/1024 bytes。状态：
+`boot-built-static-verified-not-device-tested`。
+
+设备门要求 sample 5 出现 hierarchy window/view/layer 行，并明确回答
+`rootViewController.view`、subviews、sublayers 与各层 `contents` 是否为空。
+若 view 树存在但内容仍空，下一轮只检查绘制事务、present 或具体纹理入口；
+若得到有内容的 layer/IOSurface，再单独推进 CA commit 与 IOMFB scanout。
