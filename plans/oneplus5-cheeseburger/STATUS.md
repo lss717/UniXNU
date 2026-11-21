@@ -21981,6 +21981,41 @@ kernel 比 H524 大约 36 KiB，也解释了 H525 两次稳定出现的 Data mou
 series、重建编译记录和 archives。H526 必须从这个修复后的 clean 状态重新构建；
 不得复用 H525 kernel 或 payload。
 
+### §196 H526：从真正 clean 的 XNU 对象树重建 target-port 候选（2026-11-22）
+
+H526 使用修复后的 `macos-build-kernel.sh --clean`。构建开始时源码 worktree 和
+`ios-obj` 均不存在；bootstrap 明确应用 134 个 XNU patch 和 2 个 NativePrelink
+patch，再从 clean source 构建 archives 和最终 kernel。没有再复用 H525 的
+源码树、对象、kernel 或 payload。
+
+源码与构建：
+
+```text
+superproject                  eb4d1ddd
+NativePrelink                 84aa36d00a29e22a39b4eb2465fbbf6a4b693126
+build log                     /Users/lss/h468-build/h526-clean-build.log
+prelink log                   /Users/lss/h468-build/h526-clean-prelink.log
+```
+
+最终 kernel 含两个 `NATIVE_TARGETPORT` 字符串和带 `count=` 的
+`NATIVE_TARGETWAIT` 字符串。payload 从 H522 payload 复制，只替换
+`Payloads/kernel.macho`；其余五个文件不变。bootargs 988 字符，
+`1008/1024`、最坏 `1016/1024`，PASS；boot JSON `problems=[]`。
+
+产物：
+
+```text
+kernel SHA-256         664404b6261a2b1886d2325ee6f5da04e0e80da9ca9cf01dc154eac4a616a9db
+payload SHA-256        2b909c71277d812e0d7f5da150ec9ba3135b45b9696daf19d8abc38dc2939384
+boot SHA-256           afd595707a466bf7efe5e92c1eb5f95a263abba72d882c74af780f8aa1dcfc5f
+boot.json SHA-256      2d0c28a8c186b2b7fbba7eaa47b992d3f57614f398064d8bfd3f560b677b2619
+unixnu.toml SHA-256    dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e065f01e81
+```
+
+状态为 `H526-clean-build-static-verified-device-pending`。设备先比较是否越过
+H525 的 `105.442120 s` Data panic 和 H523/H524 的两个 early reset 点；若进入
+SpringBoard，再按 `NATIVE_TARGETPORT` / `NATIVE_TARGETWAIT` 结果继续。
+
 同日曾尝试用 H473 历史 glob 顺序重建 target-port 控制，并为让新补丁排到末尾
 临时引入 `zz…` 文件名。该分支没有成功构建，也没有产生 boot 镜像，已删除。
 这个命名方式自此明确禁止：补丁必须使用功能名，顺序只由
