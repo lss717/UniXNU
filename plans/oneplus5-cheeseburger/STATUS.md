@@ -18661,3 +18661,110 @@ owner trust 为 30 项。payload、ADT、bootargs 和 boot layout 均 PASS。状
 `boot-built-static-verified-not-device-tested`。设备门要求 method inventory
 再次结束，且两个 `sbexists` 行都出现；若仍均为 nil，下一轮把重点转到
 SpringBoard 主线程和 UIKit/scene manager 初始化断点。
+
+H490 真机 sample 2/3/4 都是：
+
+```text
+sbexists name=SBMainWorkspace value=0 class=nil
+sbexists name=SBApplicationController value=0 class=nil
+workspace=0
+cadisplay=1 list=6 main=1
+app=0 scenes=0 windows=0
+```
+
+同 boot dyld slide `0x1578c000` 的离线符号化将 SpringBoard 主线程
+tid 291 固定在 `_mach_msg2_trap`。BKS reply 前的完整栈为：
+
+```text
+SBSystemAppMain
+ <- FBSystemShellInitialize
+ <- +[FBSystemShell _createSingletonWithOptions:]
+ <- -[FBSystemShell _initWithOptions:]
+ <- BKSDisplayServicesStart
+ <- BKSDisplayServicesGetMainScreenInfo
+ <- _BKSDisplayGetMainScreenInfo
+ <- _mach_msg2
+```
+
+BKS response 在 449–455 秒闭合后，582 秒的主线程栈转为：
+
+```text
+CCSModuleRepository _queue_filterModuleMetadataByAssociatedBundleAvailability:
+ <- LSApplicationRecord initWithBundleIdentifier:fetchingPlaceholder:error:
+ <- _LSContextInitCommon
+ <- _LSCopyServerStore
+ <- NSXPCConnection synchronous reply
+ <- mach_msg2
+```
+
+同一时刻 lsd pid 99 的主线程仍在：
+
+```text
+_kevent_id
+ <- __dispatch_event_loop_wait_for_ownership
+ <- __DISPATCH_WAIT_FOR_QUEUE__
+ <- __dispatch_sync_f_slow
+ <- -[_LSInstallProgressService performJournalRecovery]
+ <- +[_LSInstallProgressService beginListening]
+ <- __LSServerMain
+```
+
+分类：
+`H490-nonblocking-owners-nil/main-thread-blocked-in-lsd-journal-recovery`。
+这关闭了 scene-class 猜测，并证明主线程尚未进入 `UIApplicationMain`。
+证据目录：
+`display-first-frame/logs/H490/device/20261121-115846/`。
+
+```text
+H490-live.log      efbd98ef37ab11ccf1a962b71c4b461702aa479e13d61b5fa7fcd58256aaa4c1
+H490-tail32.bin    6b2525dc3ea116973bab04bc01da454d7d2336fe1c27eabdf41679ce829f7da7
+H490-h103.txt      e5120b367ccfa18dd207391fb99e6504921895b2b572ff5c252a42f747dca096
+H490-device-state  5c215a701a1d30702ddf4adbea03cc7036fc881a37840267f0dd9532fe0e78ed
+```
+
+### §134 H491：只把 lsd journal recovery 移到后台队列（2026-11-21）
+
+H491 保持 H490 observer、kernel、Data、bootargs 和 ADT 不变。新增
+`LsdRecoveryAsync.dylib`，只在该进程名为 `lsd` 时 swizzle：
+
+```text
+-[_LSInstallProgressService performJournalRecovery]
+```
+
+新实现保存原 IMP，立即把原方法投递到 utility global queue，让
+`beginListening` 的启动路径先返回；原 recovery 仍会执行，并记录
+`queued/enter/complete`。未替换 `restoreInactiveInstalls`，未改 scene、
+display、Metal、IOMFB、surface 或 scanout。
+
+launchd cache 只给
+`/System/Library/LaunchDaemons/com.apple.lsd.plist` 增加：
+
+```text
+DYLD_INSERT_LIBRARIES=/private/var/ngpu/lib/LsdRecoveryAsync.dylib
+DYLD_FORCE_FLAT_NAMESPACE=1
+```
+
+其余 launchd jobs、SpringBoard env 和 addon 文件保持。submodule `cb8696c`，
+superproject `97f3c41`。
+
+新 shim：
+
+```text
+SHA-256  971265e255a5cb5f8f35bc232503250e34579964452afb6067cbcfdc7d77f540
+CDHash   1f09258d81b9daefe1c3ddff5c77822bfbbbd996
+```
+
+H491 回读：
+
+```text
+launchd cache 6738c30f918735d7500e5af88cf4615cc65aebef3be67617bf6ffb2c1618c151
+GPU addon     eb9268124ca9c1d66737358efbd56a6092d412349711ddcc6f2aa5b95cff9c8b
+trust cache   47d8b190dbb6588b3c8f71ac49ee707a2fabe783c14b6cb89559e92202347a38
+payload       eda47d010713ec31c2878e6ca35fc4d2308311567c79c82c72a860c67e502ac6
+boot          4d71988264b7da85fbd52dc10f2dda04e7cc173fdfd4e65632ee4b0a6cbc4caa
+```
+
+owner trust 为 31 项。launchd cache、payload、ADT、bootargs 和 boot layout
+均 PASS。状态：`boot-built-static-verified-not-device-tested`。设备门要求
+`H491_LSD: recovery async installed/queued`，随后 SpringBoard 主线程离开
+`performJournalRecovery` 并产生 `SBMainWorkspace` 或 scene/window 进展。
