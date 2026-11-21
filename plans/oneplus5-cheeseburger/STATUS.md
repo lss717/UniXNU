@@ -17622,4 +17622,77 @@ H474/H475 两轮均从同一 Data seed 重复记录 `7/5/2/0/0/0`，并同时报
 `NATIVE_DATA_STATUS present=0`：新增的五个 full-addon 文件没有通过 persistent
 store 跨轮残留。H476 预期 `addon=3/...`，以三个当前文件计数验证。
 
-当前状态：`boot-built-static-verified-not-device-tested`。
+真机只发送一次 H476 boot，CDC 约 257 秒出现，runtime boot ID 为
+`2160c455`。三文件 addon 门通过：
+
+```text
+addon=3/1/2/0/0/0
+owner=4/0 ext=4/2 dm=1/2 wp=1/2
+```
+
+没有 `xpc` 与 `springboard` 覆盖目录，所以 `dm/wp=1/2` 是本轮预期；extension
+覆盖仍为 `4/2`。A540Trace Metal plugin 继续真实工作：
+
+```text
+NATIVE_MTL: return#22 ... class=A540TraceQueue
+NATIVE_MTL: dev#13 initialize loaded=1
+NATIVE_MTL: dev#15 initWithAcceleratorPort: port=0x6307
+NATIVE_MTL: ca#218 probe observer class=1 main=1 list=6 server=6
+```
+
+完整采集 2700 秒，25,098 帧、3,565,359 bytes，CRC 错误 0、sequence gap 0、
+boot switch 0。日志覆盖到 kernel uptime 2975 秒，SpringBoard 始终是同一个
+`pid=27`，没有任何 `NATIVE_EXIT ... comm=SpringBoard`。它在 2152 秒越过
+H475/H474b 的首个崩溃点，2226 秒有 13 线程，2298 秒 16 线程，2894.907742
+秒仍为 `sb=27 n=16`。这确认 full addon 中的 SpringBoard/launchd 覆盖是
+SIGABRT 的必要条件，A540Trace bundle 本身不是。
+
+这仍不是桌面首帧。431.002937 秒 backboardd 到 selector 4，
+432.162410 秒完成 8,294,400-byte transfer 和 retirement，432.162545 秒完成
+selector 5；但 `NATIVE_LEGACY_SWAP skip req=0 valid=0`，readback 为
+`c=ff2020ff br=ff2020ff q=ff20ff20`，属于 synthetic/clear 路径。最后一个
+显示门 2894.988842 秒仍为 `s345=0/1/1 val=1 xf=1 fr=0`。由于 addon 不含
+scene observer，本轮也没有可用的 SpringBoard scene/window 结果。
+
+UFS 并未完全无异常。2529.896104 秒出现一次
+`req=59c7ea/8`、`waited=200770114` 的 stall；同一 `seq=422525
+done=422524` 一直保持到 2801.596478 秒。2825.186673 秒出现一次
+`readWindowBulk` 120 秒锁超时（holder=studentd，waiter=voiced，
+held_ms=1，waiters=36），随后 APFS/named-stream 报 read error。到
+2831.868864 秒计数推进为 `seq=424011 done=424011 flight=0`，说明等待路径
+已经恢复，但现有 probe 没有 per-UTRD 闭环，不能声称 `59c7ea` 这个特定请求
+完成。最终到 2970.719268 秒为 `seq/done=435340`，`timeout=0
+ocs_err=0 dbto=0 recover=0 recovered=0`，`lock_timeout=1`，
+`lock_wait_max_ms=119055`。H103 ring 本轮 `msg_bytes=0` 且 slot 已环绕，
+不能覆盖 live log 末日志；live log 是权威记录。
+
+分类：
+`H476-three-file-addon-clears-springboard-sigabrt/one-window-lock-timeout-no-product-frame`。
+证据：
+
+```text
+H476-live.log             58ecc39e60d2c80626b8c9473eb4982b07747add08834e9aa2371ee0913f5e23
+H476-live.frames.bin      9ec09474f258631115398801e1b8f286ded5ce2ce0dac409e8e698aad3e5577a
+H476-tail32.bin           c9a674fe9d3001bc58749db3def6f2def603faf0b1765bc7ed671f95cb667789
+H476-h103.txt             432558dbb10f175902d5879239c77122675d3b49eb2df58cfc5c115500d82c1c
+```
+
+### §120 H477：只注入 scene observer，不替换 SpringBoard（2026-11-21）
+
+H476 已把 full addon 的 SpringBoard binary overlay 排除在 crash 原因之外。
+下一步保持同一 kernel、Data seed、trust cache、bootargs 与 A540Trace
+accelerator，只把 addon 从 3 files 扩为 6 files：
+
+- 保留 A540Trace bundle 的三个文件；
+- 加入 `SpringBoardSceneObserver.dylib` 与 scene marker；
+- 加入修改后的 `xpc/launchd.plist`，给原始 SpringBoard job 设置
+  `DYLD_INSERT_LIBRARIES`；
+- 不包含 `springboard/SpringBoard` wrapper。
+
+设备门同时要求 `addon=6/...`、`dm=5/0`、原始 SpringBoard 存活、出现
+`NATIVE_MTL: observer load ... build=H457` 与真实 `scenes/windows`
+采样。要把 observer 的 SpringBoard 首帧与已有的 synthetic/clear
+selector 4/5/readback 分开记录。`wp=1/2` 仍属预期，因为本轮不加 wallpaper
+overlay。
+
+当前状态：`pending-package`。
