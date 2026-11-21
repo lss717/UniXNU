@@ -18592,3 +18592,72 @@ boot        911e2ed6769dfb658b8a238e8372d6dd883a909d30d724729fa7915d3895c249
 owner trust 为 29 项。payload、ADT、bootargs 和 boot layout 均 PASS。状态：
 `boot-built-static-verified-not-device-tested`。设备门要求
 `sbinventory begin/end` 都出现且不再停在任何 accessor。
+
+H489 的 sample 0 method inventory 在 268.304409–280.759620 秒完整结束，
+随后同一 sample 仍能打印 workspace/cadisplay/app。关键 selector：
+
+```text
+SBMainWorkspace:
+  sharedInstance
+  sharedInstanceIfExists
+  _sharedInstanceWithNilCheckPolicy:
+SBSceneManagerCoordinator:
+  mainDisplaySceneManager
+  sharedInstance
+SBApplicationController:
+  _sharedInstanceCreateIfNecessary:
+  sharedInstance
+  sharedInstanceIfExists
+FBSceneManager:
+  sharedInstance
+```
+
+`SBMainDisplaySceneManager`、`SBWindowSceneManager` 存在但没有相关 class
+methods；`SpringBoard` 有 4 个 class methods，均未被本轮调用。
+分类：`H489-method-inventory-pass/scene-owner-instance-unresolved`。
+这确认 H488 的阻塞确实是 `sharedInstance` 调用，而非类枚举或日志系统。
+
+证据目录：
+`display-first-frame/logs/H489/device/20261121-114725/`。
+
+```text
+H489-live.log      d1327606c2356aba79e45b50227c8eb57a85c70897a7e0c333e4e2fec77c1371
+H489-tail32.bin    19fe48ed74e729d16ee6f6acdb6a6935d442d70bfa8d280b557ce0d02f6a128e
+H489-h103.txt      266219f3a8e7476582e33875b74980e1aec69ca4926ad078beab5142d5b4d656
+H489-device-state  f3588f47e687c280532ad9b9173a5628a43b36da1d24a0fdd881d70e31e95b1a
+```
+
+### §133 H490：只用 sharedInstanceIfExists 探测 scene owner（2026-11-21）
+
+H490 在每次 sample 只调用两个明确带 `IfExists` 的非阻塞 accessor：
+
+```text
++[SBMainWorkspace sharedInstanceIfExists]
++[SBApplicationController sharedInstanceIfExists]
+```
+
+不调用 `sharedInstance` 或 `SBSceneManagerCoordinator`。若
+`SBMainWorkspace` 实例存在，则只读枚举其 instance method selectors，最多
+32 个相关项。H489 的 class method inventory 和 CADisplay/UIApplication
+采样保持。submodule `01854aa`，superproject `02a4dae`。
+
+新 observer：
+
+```text
+SHA-256  37e4e4489c10b79a9edfffaa325ec86e9c4c3c6ea5997943f18a63807dcce219
+CDHash   ecba155832d1d2320326a4ceedb661063328ec20
+```
+
+H490 回读：
+
+```text
+GPU addon   bbacf7cfd7b59f901a1e29e71370a8118c189ea5191911ce3c6374162e2b0657
+trust cache bcd0b14ad725f60c7e0011a7a25592f0b5918b42e9fcb47b5dcb0bfc6d0fc997
+payload     3ba76d7613f56e585daa67cdc252adbaba6c501ffcb73fdddf8ddfda464be453
+boot        42d038171867adb58694dcf1541ab98cb980a63d90d10e2d304170195eaf5361
+```
+
+owner trust 为 30 项。payload、ADT、bootargs 和 boot layout 均 PASS。状态：
+`boot-built-static-verified-not-device-tested`。设备门要求 method inventory
+再次结束，且两个 `sbexists` 行都出现；若仍均为 nil，下一轮把重点转到
+SpringBoard 主线程和 UIKit/scene manager 初始化断点。
