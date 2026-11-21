@@ -1,0 +1,15 @@
+diff --git a/bsd/kern/kern_sig.c b/bsd/kern/kern_sig.c
+--- a/bsd/kern/kern_sig.c
++++ b/bsd/kern/kern_sig.c
+@@ -2793,6 +2793,11 @@
+ void
+ psignal_uthread(thread_t thread, int signum)
+ {
++	task_t task = get_threadtask(thread);
++	proc_t target = task != TASK_NULL ? (proc_t)get_bsdtask_info(task) : PROC_NULL;
++
++	native_sigbus_probe(target, signum, OS_REASON_NULL,
++	    __builtin_return_address(0));
+ 	psignal_internal(PROC_NULL, TASK_NULL, thread, PSIG_THREAD, signum, NULL);
+ }
+ 

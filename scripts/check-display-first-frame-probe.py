@@ -13,6 +13,7 @@ TARGET_PATCH = ROOT / "patches/xnu/springboard-lsd-target-port.patch"
 SIGNAL_PATCH = ROOT / "patches/xnu/sigbus-ring.patch"
 EXIT_REASON_PATCH = ROOT / "patches/xnu/exit-reason-signal-source.patch"
 THREADSIGNAL_PATCH = ROOT / "patches/xnu/threadsignal-exception-source.patch"
+UTHREAD_PATCH = ROOT / "patches/xnu/psignal-uthread-probe.patch"
 
 
 def require(condition, message):
@@ -27,6 +28,7 @@ def main():
     signal_patch = SIGNAL_PATCH.read_text()
     exit_reason_patch = EXIT_REASON_PATCH.read_text()
     threadsignal_patch = THREADSIGNAL_PATCH.read_text()
+    uthread_patch = UTHREAD_PATCH.read_text()
 
     build = re.search(r'#define H103_BUILD "(H[0-9]+)"', driver)
     require(build and int(build.group(1)[1:]) >= 420,
@@ -75,6 +77,10 @@ def main():
             "threadsignal exception source record missing")
     require("native_threadsignal_probe(p, sig_actthread, signum, code" in threadsignal_patch,
             "threadsignal caller arguments are not captured")
+    require("get_threadtask(thread)" in uthread_patch,
+            "uthread signal target task is not resolved")
+    require("native_sigbus_probe(target, signum, OS_REASON_NULL" in uthread_patch,
+            "uthread signal probe is missing")
 
     # The probe must remain observation-only: these files are the behavioral
     # boundary and are deliberately untouched from H420 onward.
