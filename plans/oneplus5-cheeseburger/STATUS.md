@@ -18768,3 +18768,59 @@ owner trust 为 31 项。launchd cache、payload、ADT、bootargs 和 boot layou
 均 PASS。状态：`boot-built-static-verified-not-device-tested`。设备门要求
 `H491_LSD: recovery async installed/queued`，随后 SpringBoard 主线程离开
 `performJournalRecovery` 并产生 `SBMainWorkspace` 或 scene/window 进展。
+
+H491 真机 boot SHA `4d719882...c4caa` 的 H103 中没有 `H491_LSD` marker。
+`lsd` 首次在 320.942198 秒以正常 `/usr/libexec/lsd` 启动，但修改后的
+launchd job env 没有让 shim 进入进程。同期 SpringBoard 两个
+`sharedInstanceIfExists` 仍为 nil，BKS response 仍在约 451 秒出现。
+
+结论是明确的平台二进制行为：`lsd` 不消费新增的
+`DYLD_INSERT_LIBRARIES`；这和 wrapper exec `SpringBoard.real` 遇到的
+platform-binary stripping 属于同一类，不是 launchd cache 缺失。分类：
+`H491-lsd-platform-binary-strips-injected-shim`。证据目录：
+`display-first-frame/logs/H491/device/20261121-121558/`。
+
+```text
+H491-live.log      149ad897e255068a0f8c882b6fd12c600a2da209c46397f5ad134b963d4ca175
+H491-tail32.bin    40d5c986ea24aaa4f8ce618df3c3cb8ab5313220585fcac01ecb8fe6cc31a402
+H491-h103.txt      cf4982b6569b71efae56c975b01c108071afeb5d31ac68367bf74ec4a2b13c80
+H491-device-state  c3a8233df7156a0ada0b5fe42c81d2418c42933dee71003d57ea6b5f3d55f33b
+```
+
+### §135 H492：在 SpringBoard 内绕过仅一个 CCS LaunchServices filter（2026-11-21）
+
+H492 回到 H490 的可注入 `SpringBoard` 路径，不修改 lsd。新增
+`SpringBoardCCSBypass.dylib`，只在 `SpringBoard*` 中替换：
+
+```text
+-[CCSModuleRepository
+  _queue_filterModuleMetadataByAssociatedBundleAvailability:]
+```
+
+替换实现直接返回原输入 collection，跳过该处同步
+`LSApplicationRecord` 查询；不创建 scene，不调用 UIApplication，不改
+display/Metal/IOMFB/surface/scanout。SpringBoard `DYLD_INSERT_LIBRARIES`
+仅增加第二个 dylib，observer 仍先加载。submodule `5931cf2`，superproject
+`be194bb`。
+
+新 shim：
+
+```text
+SHA-256  84192c7afa5c641d173bb5bbea44a25b82cc980bc1e9b4f5f573a3610a3cbc30
+CDHash   6d3169392438b43116270b686d35f0a87d5787f5
+```
+
+H492 回读：
+
+```text
+launchd cache c36539f687467d8fc5935f01d5a15a9a93b0795db92bd480455496f6ae50503f
+GPU addon     23395265576bee608f90f509ec56810aee4231ee2ce445b3ad2e73ed6485e2e2
+trust cache   e1a4af37f242ede539292b88e6eebed6b26a148bb401c4b882d0aee248e79b42
+payload       cc95399181d08f85c9385e91ae12024c9309834f2853ffbba87d09e5728e032b
+boot          2d4ed41e4950f281f9486e264c7cf14eadee99ffd2bb269c3d5f29221ae83fca
+```
+
+owner trust 为 31 项。launchd env、payload、ADT、bootargs 和 boot layout
+均 PASS。状态：`boot-built-static-verified-not-device-tested`。设备门要求
+`H492_CCS: filter bypass installed`、至少一次 filter bypass，以及主线程离开
+`CCSModuleRepository` 同步查询后出现 scene owner 或 scene/window 进展。
