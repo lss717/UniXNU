@@ -19618,3 +19618,79 @@ bootargs 均 PASS。状态：`boot-built-static-verified-not-device-tested`。
 scene settings 三个字段、两个 LayerHost 属性以及 context options。下一轮只
 根据这些结果决定 scene activation、security/flip 或 context producer 中的
 单一分支。
+
+### §153 H501 真机：应用为 active，但 window scene 仍为 activationState 0；sample 5 未执行（2026-11-21）
+
+H501 在 serial `16149951`、boot ID `2116c1bf` 上运行。sample 4 完整输出：
+
+```text
+521.977 秒  app=1 delegate=SpringBoard scenes=0 windows=1
+521.977 秒  appState=0 hasAppState=1
+521.979 秒  windowScene=_UIScreenBasedWindowScene
+            activationState=0 hasActivation=1
+            interfaceOrientation=1 hasOrientation=1
+```
+
+`UIApplicationState=0` 对应 active，但 window 的
+`_UIScreenBasedWindowScene` 为 activationState 0，且
+`connectedScenes=0`。因此 UIKit 应用状态与 scene 激活状态在该时点明确分离。
+scene 的 `settings` 对象没有进入输出；hostprops、context options 和
+view/layer 树也未输出，因为预期中的 `sample=5` 从未出现。
+
+这个缺失不是图像内容问题。sample 4 之后 observer 仍未到达自己的
+`sample=5 phase=springboard` 行；前几轮相同位置曾正常完成，因此把它收敛为
+重复 `probe_nonblocking_shared_instances()` 的不确定阻塞，而不是用缺失字段
+猜测属性值。分类：
+`H501-application-active/window-scene-unattached/sample5-blocked`。
+
+显示门在 1055.450701 秒仍为
+`dpy=4/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0`，没有产品帧。采集共收到
+6747 个 live frame、886601 payload bytes；CRC error、sequence gap、boot
+switch 和 truncated frame 均为 0。H103 最后可见 H469 行为
+`seq=227898 done=227898 flight=0 lock_timeout=0 lock_waiters=0`，没有
+OCS、doorbell 或 recovery。UXC1 `424503` 收到 ACK、armed，并执行 normal
+reboot；Android 与 TWRP 正常返回。
+
+证据目录：
+`display-first-frame/logs/H501/device/20261121-154831/`。
+
+```text
+H501-live.log              8bb81851410153a41b4060d9c73375256423e4479d951d59522e49fafa52813f
+H501-live.frames.bin       ea52764cffc624a4a9b3d337266cee347e6505effb787f91e5acb945d6e26a2c
+H501-live.capture.stdout   2a4da87747cd227ee2e83acea6dcabb11a1908cf687862ed6f7ec9b33d6e54ef
+H501-tail32.bin            4a6a5495dd60752774f1367bfefc30b84094d72eed66e966e9f3f92d9492d0fc
+H501-h103.txt              cb6cc0dde8a598b85e8ddecbad5260cfb43298c705d988853665a9f28e863c5a
+H501-device-state.txt      3519a2f250f822b98872fd1d347c508a7d313abaac216fdb134dde0c5bb91c08
+H501-reboot.log            b34f131a622d531d820f8627b5b17299287d0848903ea7505da189e27c41d9a5
+```
+
+### §154 H502：避免重复 singleton 探针，在 sample 4/5 执行现有检查（2026-11-21）
+
+H502 保持 H501 的 kernel、ADT、Data、bootargs、A540Trace、trust 基线和所有
+scene/context 字段，只改变 observer 调度。`inventory_springboard_classes()`
+和 `probe_nonblocking_shared_instances()` 现在只在 sample 0 调用；sample 4 与
+5 都复用同一套只读 window/view/layer/context/property 检查。没有新增 setter、
+context 绑定、scene/window 修改或 surface/scanout 操作。NativeMetal
+`879543cbbd76d4b74b3826011cbea1161b275cb8`，superproject `cd56334`。
+
+产物：
+
+```text
+dylib SHA-256   6f288533dead4c510a54cb834a7a54351a3c43887e4aa1aabb8df47b880119d3
+dylib CDHash    6ac8a43f4419237003c868ee929c7d5404b38150
+addon SHA-256   158864425906f7b270b019859e30c596013f84f687c60193e4dcb4c5f71245d8
+trust SHA-256   1bf85773a2536bfa579566cefecaf3c7f105978f555e8e594ec8f5936b70a036
+payload SHA-256 db6ac6f233bcd5655acf9274ed6b7e513514d6d3b3a95f8c4832c0126672ca83
+boot SHA-256    633a2016487ebff5c3e1c58fd2dcf6e2891706ee4cba75e776d715bb21782db5
+boot.json SHA-256 3b944b46c77bb52eef96c0efba7ae2b8cede7309d2fdb392513c0f7bae75f9fb
+```
+
+owner trust 为 40 项。addon 的 7 项中只有 observer dylib 改变。payload
+逐文件回读确认 kernel、ADT、Data seed、`unixnu.toml` 与 H501 相同，UEFI
+不变。observer/A540Trace/CCS gate、arm64 4 KiB 签名、Android boot 结构和
+bootargs 均 PASS。状态：`boot-built-static-verified-not-device-tested`。
+
+设备门要求 sample 4 与 sample 5 至少各出现一次 `sample=* phase=springboard`，
+且 sample 5 给出 Host props、context options 和 windowScene activation。
+若两者仍只有一个出现，下一轮只改采样时刻；若两者都出现但 scene 仍为
+activationState 0，才进入 scene activation 路径。
