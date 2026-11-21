@@ -19353,3 +19353,96 @@ bootargs 均 PASS；最坏 bootargs 为 1016/1024 bytes。状态：
 `contents=1`，或命中并报告 cycle。若 depth 12 仍被预算/深度截断，再单独
 提高深度；若叶子已出现且全部无 contents，下一轮转向 CAContext 的 surface、
 transaction 或 renderer producer。不得再把 UIView 存在当作首帧证据。
+
+### §147 H498 真机：CAContext layer 的终点是另一个 CALayerHost（2026-11-21）
+
+H498 在 serial `16149951`、boot ID `212b0adb` 上完成 900 秒运行。
+sample 5 的 host/context ID 是：
+
+```text
+CALayerHost.contextId=0x494add8b
+CAContext.contextId=0xbb247ae9
+```
+
+context layer 树完整到达叶子：
+
+```text
+depth 0  UIWindowLayer
+depth 1  _UIWindowTransformLayer
+depth 2  _UIWindowTransformLayer
+depth 3  UIWindowLayer
+depth 4  CALayer
+depth 5  CALayer
+depth 6  CALayer
+depth 7  CALayer
+depth 8  CALayerHost, sublayers=0
+```
+
+depth 0..8 全部 `contents=0`。depth 8 的 `CALayerHost` 仍报告
+`contextId=0x494add8b`，但已没有 sublayer。因此 depth 6 的空白不是观察深度
+不足；CAContext 提供的 layer 树本身在 leaf 仍没有本地像素内容。最后显示门
+在 1160.134449 秒保持 `s345=0/1/1 val=1 xf=1 fr=0`。分类：
+`H498-context-layer-leaf-host/no-local-contents`。
+
+采集共收到 6458 个 live frame、856957 payload bytes；CRC error、sequence
+gap、boot switch 和 truncated frame 均为 0。H103 最后一个 H469 状态为
+`seq=228105 done=228105 flight=0 lock_timeout=0 lock_waiters=0`，没有
+OCS、doorbell 或 recovery。UXC1 `424499` 收到 ACK、armed，并执行 normal
+reboot；Android 与 TWRP 正常返回。该恢复仍不证明 watchdog。
+
+证据目录：
+`display-first-frame/logs/H498/device/20261121-143531/`。
+
+```text
+H498-live.log              377fc67bb115a2eff9c43887baf3e750cb050ad58f15e59c9e59a51ef910212
+H498-live.frames.bin       1f770af75d4112cc5d38aa7d825369ae44ef6ee6b9ef55c57afee317014341f0
+H498-live.capture.stdout   024abd521602ea758a88443f3fead2e97461d2612f6fd0ad81e52475b32d3527
+H498-tail32.bin            d00cab6814890f0c4c83223e93be5133f84735479348d5fdcce9ac71c524d00a
+H498-h103.txt              d550f587d7ab604b68f1500c7817ceb8b7c8e2ce103e76ef522f1fa69638dfcc
+H498-device-state.txt      61dd7fbd74f83eed3192b36edc0e3512756ad7743d0f94938052e9f3209117d5
+H498-reboot.log            e9a2dc56b246d724dcc1c453d72d787eeee146b3b0006b9efca1ff876fc14d01
+```
+
+### §148 H499：把 host/context ID 映射到 CAWindowServer 与进程（2026-11-21）
+
+H499 保持 H498 的 kernel、ADT、Data、bootargs、addon 文件集、trust 基线、
+context layer 遍历和显示路径不变。sample 5 首次遇到非零 host context 时，
+只读查询：
+
+```text
+CAWindowServer.serverIfRunning / server
+contextIdHostingContextId:
+clientPortOfContextId:
+taskNamePortOfContextId:
+pid_for_task + proc_name
+CAContext.allContexts
+```
+
+分别查询 `CALayerHost.contextId` 与 `CAContext.contextId`，并记录
+`allContexts` 中是否有匹配项。没有 setter、context 绑定、layer 修改或
+surface/scanout 操作。NativeMetal 先提交 `c5e8b77`，首次 Mac `-Werror`
+编译因 `&&`/`||` 缺少括号失败；修复提交为
+`ce4b9cf5ad7c222240e0ea47ca6906ba447968d3`，superproject `dd0d6ab`。
+之后 arm64、4 KiB pages 与 adhoc signing 均通过。
+
+产物：
+
+```text
+dylib SHA-256   98177ddb72d1de87b450a4341f80dfdc2eaa375cfef5b947dc69078f80671292
+dylib CDHash    910f34adfdee9e079d82461683e1531768d0670a
+addon SHA-256   b874c8dea78b508b7d208be291c60fae5c4285bf044fe9bfec451a0705bc072f
+trust SHA-256   0332e6f14580076c1c254f8ccfc71c0948d5b6a5afa08b929d989f73de60d900
+payload SHA-256 82d6b0d5177ee5df2aa13451e4826d935df0310d0c2802009fc740e1cdda3233
+boot SHA-256    a7405aa29370ed8ed3e90f418ab21850e31aef79e7d20f7900756ee125d962ff
+boot.json SHA-256 8c4a004b1bfec1d317c7cb70841342b23cfde3b8048e665dd2d1bd88936a91cd
+```
+
+owner trust 为 37 项。addon 的 7 项中只有 observer dylib 改变。payload
+逐文件回读确认 kernel、ADT、Data seed 和 `unixnu.toml` 与 H498 相同；
+observer/CCS gate、Android boot 结构、UEFI 不变和 bootargs 均 PASS。状态：
+`boot-built-static-verified-not-device-tested`。
+
+设备门要求 sample 5 输出 H499 `contextserver`、两条 `contextmap` 和
+`contextlist`。若 server 为 nil，只说明 SpringBoard 侧没有可用代理；若端口
+映射成功，则记录 owning pid/comm。下一轮只跟随该 owner 的 renderer producer、
+surface 或 transaction，不回到 UIView 或 layer-depth 猜测。
