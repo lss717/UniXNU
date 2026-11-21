@@ -18824,3 +18824,49 @@ owner trust 为 31 项。launchd env、payload、ADT、bootargs 和 boot layout
 均 PASS。状态：`boot-built-static-verified-not-device-tested`。设备门要求
 `H492_CCS: filter bypass installed`、至少一次 filter bypass，以及主线程离开
 `CCSModuleRepository` 同步查询后出现 scene owner 或 scene/window 进展。
+
+H492 真机中 observer 仍在 249.640671 秒加载，但 H103 只有 observer 的
+file-map policy 行，没有第二个 dylib 的 policy 行或
+`H492_CCS` marker。sample 2/3 的
+`SBMainWorkspace`、`SBApplicationController` 和 UIApplication 仍为 0。
+因此本轮的断点不是 bypass 逻辑，而是 dyld 未映射
+`DYLD_INSERT_LIBRARIES` 的第二项。分类：
+`H492-colon-separated-second-dylib-not-loaded`。
+
+证据目录：
+`display-first-frame/logs/H492/device/20261121-122758/`。
+
+```text
+H492-live.log      91516e72f0ca991d434ae00816a59a727bcbbbad5cb86fb57ad71eb9aaee6de2
+H492-tail32.bin    6df132f3bd328d39567fc233a3feb4a97f044841854a44a20895ffb35f85b498
+H492-h103.txt      0fbd27cae52447794bee226d87f88a2fd54387b1c06d288ec165c27537800a86
+H492-device-state  c2f59d91977c0f1a6c417abfc24cefefd268b0d20ca3dd4f34a1daa5f089ab8b
+```
+
+### §136 H493：observer 与 CCS bypass 合并为单个 dylib（2026-11-21）
+
+H493 不改变任何一行运行时逻辑，只把
+`SpringBoardSceneObserver.mm` 与 `SpringBoardCCSBypass.mm` 链接到同一个
+4 KiB 签名 dylib，继续沿用已证实的单个 `DYLD_INSERT_LIBRARIES` 路径。
+observer build marker 保持 H490，CCS shim marker 保持 H492。payload 基于
+H490 七文件 addon，仅 observer 文件变化；launchd cache 回到只有单一 observer
+路径。
+
+合并 dylib：
+
+```text
+SHA-256  3cdcae95dc00a6b4fc6c29db1b915ce0a4e571a9fba784ebb86fa3a07bac8627
+CDHash   3563c6eb61271b0bc6e04e1e6ee4afa8f1efd922
+```
+
+H493 回读：
+
+```text
+GPU addon   3bec91d417c8a65cb71b8206cb2f86777e4107df30e2a46aa81d73035538ee47
+trust cache ddf9c775c8217aa434ffeef8babc11c85d21e4974916d2b9a58f180764660599
+payload     f3f990c908763351ec83209bedfa4a4480879800dfe0a411527e56789aa66159
+boot        bb0c9903b219eb128018c5409845b58aef26b2ace0bd6bc83cf01cc54eead46e
+```
+
+owner trust 为 31 项。合并 dylib 签名、payload、ADT、bootargs 和 boot
+layout 均 PASS。状态：`boot-built-static-verified-not-device-tested`。
