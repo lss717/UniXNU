@@ -20754,3 +20754,29 @@ H513-reboot-recovery-state    1194d4c23148a53c45c576f8bb81df75030293c9d9dac45780
 继续修改 root window 的可见请求，也不应先查 main run loop。应在 H514 中只
 增加 UIKit 应用实例化边界观测，定位 SpringBoard 在
 `UIApplicationMain`、shared application 创建或 delegate 接续中的停顿。
+
+### §177 H514 观测候选：UIApplication 初始化边界（2026-11-21）
+
+H514 不改变窗口或 run loop 行为，只 hook
+`+[UIApplication sharedApplication]` 的进入/返回，记录每轮 app monitor
+轮询线程，并订阅 UIKit launch/foreground/active 通知。源码为 NativeMetal
+`6823deeb927be057ab7306e486e0d3ceeea5131b`、superproject `d5fdd9f`。
+
+```text
+observer SHA-256       3c812832dbf0d5fa75161a5ecee02dca0951d065bc93306450ee97aea3b88835
+observer CDHash        a4bdefbaa19346d418a84bdfaa85771f31e9aabf
+A540Trace SHA-256      36167666e5c9873557cdd41dfa4ba1d289c0b8f9cb07db4a09d409e6de2f7239
+A540Trace CDHash       a9a5e1324fe65c572cd907e2c13d444f26aaa31c
+addon SHA-256          9de15e1ccb19c357cf4c1c0d6b88da4547334790d20497861e103e89157dde11
+trust SHA-256          f6e5b8fbad4ce898b9bcb4ca0017222db2d2922587484ca3d7faaea89e1fe101
+payload SHA-256        db4624ca03a3fd5d60ca4bb7d2bf52f838b5e9317278b38c7f6cbec65239b15a
+boot SHA-256           f412bf1f620de0a55be48cfaa6bb8c9f6af6da2a165cedf86ce73ec4fd1894ab
+boot.json SHA-256      c1a32be4c4f0a94c5c5aa8f324f6ca2dbb6ad5e379dac96d8229cfda1670de26
+```
+
+owner trust 为 61 个 own CDHash。首次构建因 `IMP` 类型和未使用 block 参数
+触发 `-Werror`，修正后 observer gate、arm64、strict codesign 均 PASS。
+payload 从 H513 baseline 只替换 trustcache/gpuaddon。状态：
+`boot-built-static-verified-not-device-ready`。设备判据：
+`h514_shared_application_enter` 后是否有 return、monitor poll 是否持续推进、
+以及 UIKit 三通知是否出现。
