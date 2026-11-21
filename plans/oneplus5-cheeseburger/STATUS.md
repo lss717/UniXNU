@@ -17767,4 +17767,22 @@ SpringBoard 发送 SIGTERM；launchd 重启时才会重新读取已挂入的 lau
 `NATIVE_EXEC`、`NATIVE_MTL: observer load ... build=H457`，随后记录真实
 `scenes/windows`。没有 observer load 时不得把 scene 记录写成阴性。
 
-当前状态：`pending-package`。
+H478 回读：
+
+```text
+source commit 41b38ae
+kernel        4577d3bc93a48dec1c910e76d4262e8ceda64869f6b370a2ee3ff42556364b00
+trust cache   cd754067b9587960d336715b35c933cfb50b29f3b5b7b48feb0d8988092541cf
+GPU addon     e9fb9b9b5a7f9fbc8a3e21b756db4e1d455c80847494a1fc39640d070b0490e8
+Data seed     7522c2b803bac371190e5f316bacc825d1dd3c964ef3a3ab6ffd75bf0f9bae79
+ADT           2e9abccaa1297317731e0d32c4015330da320ade9dd6b96980a61ae01d9d379c
+unixnu.toml   80a6086e774d3d997a2fee1184d6cffdd5cf3b5f80c7da701c3ff574c47e3803
+payload       e45d4b7f8711d60b2d70b3c575f4aa2f37e6f5cb3bb3ce20bb18b94cab1589c0
+boot          c5feb19068a694223bc098ec031d286f70c5bbcb3b5527d619d53f6f97048494
+```
+
+kernel round-trip 一致；addon SHA 与 H477 完全相同。bootargs 980 B，实际
+1000/1024，worst case 1008/1024。ADT required placeholders、boot layout 和
+`OP5ESP` 检查 PASS。`sheng-restart-sb=1` 是唯一新增行为参数；删除的另外两个
+参数仍是 tracing-only/旧零值。状态：
+`boot-built-static-verified-not-device-tested`。
