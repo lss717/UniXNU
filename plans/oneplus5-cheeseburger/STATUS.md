@@ -21942,6 +21942,45 @@ H525-tail32.bin
   31a5a469a5f16af30a4b6183f8f67c3964b7cc4883f61b932042e56a33c2c1b3
 ```
 
+H525 同镜像第二次复测也得到相同结果：
+
+```text
+42.653351 NATIVE_H82_DATA_PATH_WAIT: 0 seed=3 root=1 err=2
+105.367715 NATIVE_H82_DATA_PATH:
+             status=60 seed=3 mount=597 root=1 err=2
+105.442120 NATIVE_PANIC_STR:
+             offline scratch Data mount failed: 60 @kern_exec.c:8832
+```
+
+这次不是单次随机。`seed=3` 表示 seed provider 在约 0.6 秒后已找到；
+失败的是 `/private/var` 在 60 秒总预算结束时仍返回 `ENOENT`。该轮也没有
+H522 中 `apfs_vfsop_mountroot -> disk3s1 mount-complete -> /private/var`
+这条完成链。
+
+第二次证据：
+
+```text
+logs/H525/device/20261122-033720-replay/
+H525-h103.txt
+  2a421949a0f051b655c98d765cce69b21f1bb1d64b6f45892fda544e4444a023
+H525-tail32.bin
+  4fdad404ed0c6cd7ec206c582dd474a94f913e9688315d318eb540abdb3b7358
+```
+
+随后定位到构建污染：`scripts/macos-build-kernel.sh --clean` 以往只删除
+`.cache/xnu-work`，没有删除同一 XNU 构建中的
+`out/cheeseburger/tree/build/xnu/ios-obj`。后者保存
+`startup.o.json`，也就是 bootstrap 是否执行的哨兵。旧记录仍在时 bootstrap
+被跳过，archive 阶段和最终链接可能使用不同 patch state；这既解释了 H525
+kernel 比 H524 大约 36 KiB，也解释了 H525 两次稳定出现的 Data mount 回归。
+因此 H525 产物分类为
+`H525-invalid-build-state/data-mount-errno60`，不能用于 target-port 结论。
+
+修复后 `--clean` 同时删除 `$WORK` 和
+`$TREE/build/xnu/ios-obj`，迫使下一轮从 clean XNU source 重新应用全部
+series、重建编译记录和 archives。H526 必须从这个修复后的 clean 状态重新构建；
+不得复用 H525 kernel 或 payload。
+
 同日曾尝试用 H473 历史 glob 顺序重建 target-port 控制，并为让新补丁排到末尾
 临时引入 `zz…` 文件名。该分支没有成功构建，也没有产生 boot 镜像，已删除。
 这个命名方式自此明确禁止：补丁必须使用功能名，顺序只由

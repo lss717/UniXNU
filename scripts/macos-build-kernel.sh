@@ -58,6 +58,11 @@ trap 'rm -f "$PATCH_LIST"' EXIT
 
 if [ "${1:-}" = "--clean" ]; then
   rm -rf "$WORK"
+  # Compile records are the bootstrap sentinel. Removing only the source
+  # worktree leaves an old object recipe tree behind, skips the patch bootstrap,
+  # and can link objects produced from a different patch set. A clean build
+  # must remove both generated trees.
+  rm -rf "$TREE/build/xnu/ios-obj"
 fi
 
 # `unixnu tree` clears every symlink under tree/refer, and the bootstrap clone below reads
