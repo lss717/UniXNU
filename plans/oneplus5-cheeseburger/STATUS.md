@@ -17859,3 +17859,43 @@ H477/H478 的六项，再加 H436 的 `springboard/SpringBoard`（88,064 B）和
 均与 H478 相同；bootargs 仍 980 B，实际 1000/1024，worst 1008/1024。
 ADT、boot layout 和 `OP5ESP` 检查 PASS。状态：
 `boot-built-static-verified-not-device-tested`。
+
+真机 boot ID `215bf163` 在 CDC 出现前复位到 Android。H103 ring 给出确定
+原因：
+
+```text
+NATIVE_RESTART: gate=1
+Sandbox: hook..execve() killing org.blu-sharky.H435SpringBoardWrapper[pid=27, uid=501]:
+  outside of container && not a driver && !i_can_has_debugger
+NATIVE_PANIC_STR: userspace panic: unexpected exec of non-platform binary:
+  /System/Library/CoreServices/SpringBoard.app/SpringBoard: com.apple.SpringBoard [27]
+NATIVE_PANIC: flags=fd7f6008 client=0 xfer=0 frames=0
+```
+
+因此 H479 没有到达 wrapper main，也不是 `SpringBoard.real` 的 exec 失败。
+wrapper 是 4 KiB ad-hoc 签名的
+`org.blu-sharky.H435SpringBoardWrapper`，当前 owner trust 只含 A540Trace，
+缺失 wrapper/observer/real 的 CDHash。分类：
+`H479-wrapper-platform-trust-rejected-before-main`。证据：
+
+```text
+H479-tail32.bin   7b93c14979a5257d1a0878f9fc0243700a0267e4c736102080d591fc03b7612b
+H479-h103.txt     4e93504b7d73e049f4cd1bde5d9e9390b15b4397bae7d6a876189681632341bf
+```
+
+### §123 H480：只补齐 wrapper/observer/real 的 owner trust（2026-11-21）
+
+H480 复用 H479 的 kernel、addon、Data seed、bootargs 和 restart trigger，只将
+trust cache 从 H465 的 CDHash 集合扩入下列三个实际 4 KiB 签名：
+
+```text
+SpringBoard wrapper  b38048a8bea7c22e2102a17b8346e20ebf5b3e0c
+scene observer       c6eb103dccefa7f5cdb845f0a35cb23d7449291f
+SpringBoard.real     8c139abc7a69cfc5dd1cef94f092035731b5e237
+```
+
+新增 trust 文件由 `scripts/add-owner-trust-hash.py` 从既有 H465 owner module
+生成，Apple 的两个原始 trust modules 保持逐字节不变。设备门首先要求越过上述
+userspace panic，再分别记录 wrapper main、observer load、真实 scene 和产品帧。
+
+当前状态：`packaging`。
