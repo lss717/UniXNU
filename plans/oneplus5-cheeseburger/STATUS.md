@@ -22686,6 +22686,50 @@ payload kernel         7fb58f798b632696ccb72a54d78e818ba890db681621bf272553fb2d5
 `a-`、`z-`、`zz-`、`zzz-` 等字典序前缀。规则已写入 `AGENTS.md` 和主路线
 `HANDOFF.md`。
 
+#### H532 真机结果：`psignal_uthread` 是实际 SpringBoard self-SIGABRT 入口
+
+H532 boot ID `385eb86f` 在 serial `16149951` 上启动。SpringBoard
+主线程 TID 291 在样本 6330、6390 和 6420 重复停在
+`_ulock_wait2` / LaunchServices context 初始化路径。前两次
+SpringBoard 退出为：
+
+```text
+1578.945065 pid 27  status=0x6 ns=2 code=0x6 flags=0x0 sender=27/SpringBoard
+1579.249065 pid 27  sig=6 sender=27/SpringBoard caller=0xfffffff007862e80
+1630.100240 pid 221 status=0x6 ns=2 code=0x6 flags=0x0 sender=221/SpringBoard
+1630.296377 pid 221 sig=6 sender=221/SpringBoard caller=0xfffffff007862e80
+```
+
+整轮没有任何 `NATIVE_THREADSIG`。结合 H530 的 sender、H531 的
+threadsignal 观测和 H532 新覆盖的 `psignal_uthread`，本次 SIGABRT 实际由
+thread-target signal 路径投递，旧 `psignal` 包装自然为阴性。该结论解除
+“信号包装是否覆盖”这一未决点，但 product frame 仍为零。
+
+第二次退出后设备自动回到 Android，`boot_completed=1`。随后一次
+`adb reboot recovery` 进入 TWRP
+`3.4.0_9-10-mauronofrio`，只读拉取 `userdata_ios` 末尾 32 MiB：
+
+```text
+H532-tail32.bin
+  06724e7960982e2dd004adfa8a526464e4e08e3be7da5eb93471ecac46b8a4e7
+H532-h103.txt
+  d54591fa72d23d50516f553f10f22e3e5e654934ebecb24a64fe9ccf3050279d
+```
+
+H103 header 为 `slot_boot=385eb86f`、`window_blocks=8192`、
+`slots_written=816/247`、`write_errors=316`。尾环保留了 1273 秒之后的
+SpringBoard 退出。停止旧 console wrapper 时，其自动重试重新打开了输出文件，
+把完整 live log 截短；截短前的 live SHA-256 已记录为
+`10ebcada5a27ba7e997f797420dca365ea69c1577348e5962ed0dda9ba185cda`。
+因此本轮的 canonical 退出证据是 TWRP 尾环，不能把截短后的 live 文件当作
+整轮原文。
+
+启动 H533 前按既有授权清零同一 `userdata_ios` 尾部 32 MiB。目标解析为
+`/dev/block/sda14`，容量 `52840607744` 字节，从 4096-byte block
+`12892347` 写 8192 块。独立回读 SHA-256 为
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`，
+即 32 MiB 全零。
+
 ### §203 H533：旁路 SpringBoard 的 LaunchServices observer 注册（2026-11-22）
 
 H530 的主线程栈已经把较抽象的 lsd target-port 队列落到一个具体同步点。
