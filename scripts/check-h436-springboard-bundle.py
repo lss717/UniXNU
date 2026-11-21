@@ -32,7 +32,7 @@ def main():
         '("xpc/lsd.real"',
         '("lib/LsdRecoveryAsync.dylib"',
         '"/System/Library/xpc/lsdwrap"',
-        'b"build=H519"',
+        'b"build=H520"',
         '"observer_cdhash"',
         '"bootstrap_cdhash"',
         '"lsd_bootstrap_cdhash"',
