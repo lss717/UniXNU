@@ -139,7 +139,7 @@ def main() -> int:
         OBSERVER,
         (
             b"observer load process=",
-            b"build=H520",
+            b"build=H521",
             b"H492_CCS",
             b"filter bypass installed",
             b"filter bypass pid",
@@ -218,20 +218,39 @@ def main() -> int:
             LSD_SHIM,
             "org.blu-sharky.H491LsdRecoveryAsync",
         )
-        lsd_binary_cdhash = subprocess.run(
-            ["codesign", "--display", "--verbose=4", str(lsd_source)],
+        lsd_entitlements = subprocess.run(
+            ["codesign", "-d", "--entitlements", ":-", str(lsd_source)],
             capture_output=True,
-            text=True,
-            check=False,
-        ).stderr
-        match = re.search(r"^CDHash=([a-f0-9]{40})$", lsd_binary_cdhash, re.MULTILINE)
-        if not match:
-            raise SystemExit("No CDHash in codesign output for lsd input")
-        lsd_binary_cdhash = match.group(1)
-        LSD_BINARY.write_bytes(lsd_source.read_bytes())
+            check=True,
+        )
+        if b"<plist" not in lsd_entitlements.stdout:
+            raise SystemExit("Original lsd had no readable entitlements")
+        entitlements_path = OUT / "lsd-entitlements.plist"
+        entitlements_path.write_bytes(lsd_entitlements.stdout)
+        subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts/add-macho-load-dylib.py"),
+                str(lsd_source),
+                "/private/var/ngpu/lib/LsdRecoveryAsync.dylib",
+                str(LSD_BINARY),
+            ],
+            check=True,
+        )
         os.chmod(LSD_BINARY, 0o755)
+        lsd_binary_cdhash = compact_signed_bundle(
+            LSD_BINARY,
+            "com.apple.lsd",
+            entitlements_path,
+        )
+        load_commands = subprocess.check_output(
+            ["otool", "-l", str(LSD_BINARY)], text=True
+        )
+        if "/private/var/ngpu/lib/LsdRecoveryAsync.dylib" not in load_commands:
+            raise SystemExit("Patched lsd is missing the recovery LC_LOAD_DYLIB")
         lsd_report = {
-            "lsd_binary_sha256": actual_lsd_sha256,
+            "lsd_source_sha256": actual_lsd_sha256,
+            "lsd_binary_sha256": hashlib.sha256(LSD_BINARY.read_bytes()).hexdigest(),
             "lsd_binary_cdhash": lsd_binary_cdhash,
             "lsd_bootstrap_cdhash": lsd_bootstrap_cdhash,
             "lsd_recovery_cdhash": lsd_shim_cdhash,
