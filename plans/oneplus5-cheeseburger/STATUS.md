@@ -17917,3 +17917,85 @@ modules 未改动。kernel/addon/Data/bootargs 均与 H479 相同；bootargs 980
 实际 1000/1024，worst 1008/1024。ADT placeholders、boot layout 和
 `OP5ESP` 检查 PASS。状态：
 `boot-built-static-verified-not-device-tested`。
+
+真机 boot ID `216fdda9`，CDC 约 258 秒出现。H479 的 trust panic 已消失，
+addon 门为 `8/6/2/0/0/0`，`ext=4/2 dm=5/0 wp=5/0`。H103 显示 wrapper
+实际进入：
+
+```text
+NATIVE_MTL: bootstrap enter uid=501 euid=501 pid=27
+NATIVE_RESTART: display client seen
+NATIVE_RESTART: sent
+NATIVE_EXIT: pid=27 ... status=0xf ns=2 code=0xf
+```
+
+但后续每次 launchd 启动 SpringBoard wrapper 都命中 one-shot 文件并退出：
+
+```text
+NATIVE_MTL: bootstrap already claimed errno=17
+NATIVE_EXIT: pid=85 ... comm=SpringBoard status=0x0 ns=0 code=0x0
+```
+
+live log 内 `NATIVE_EXEC SpringBoard=15`、`NATIVE_EXIT SpringBoard=15`，
+observer load 为 0；`/tmp/h436-scenebootstrap.done` 状态使 wrapper 永远不
+exec `SpringBoard.real`。本轮在约 357 秒停止。分类：
+`H480-wrapper-runs-one-shot-exits-without-exec-real/observer-not-loaded`。证据：
+
+```text
+H480-live.log      de2d70ef9f9baf5310ce8e64f85fe16bd623d9982339b6522d84cbfd7d71a737
+H480-tail32.bin    71015b8677d2a0f2a28b0cab713067312740956e768a78f1a8a603a089613443
+H480-h103.txt      9389ebb488591f5dcaac19bd613ffd35146e01df9576a3cd5e62ff93dc0a27cb
+```
+
+### §124 H481：wrapper 每次启动都 exec real（2026-11-21）
+
+源码已修改 `drivers/NativeMetal/SceneBootstrap.mm`：移除 one-shot 文件、
+自进程枚举、自 SIGTERM 和 LaunchServices terminate 分支。wrapper 的 `main`
+每次都直接调用 `launch_springboard()`：
+
+```text
+setenv DYLD_INSERT_LIBRARIES=/private/var/ngpu/lib/SpringBoardSceneObserver.dylib
+setenv DYLD_FORCE_FLAT_NAMESPACE=1
+execv /System/Library/CoreServices/SpringBoard.app/SpringBoard.real
+```
+
+日志前缀保留 `H436_SBWRAP` 以沿用已有工具，并增加 `build=H481`。submodule
+提交 `b66f72b`，superproject 提交 `bdf929b`；静态 checker PASS。
+
+新 wrapper：
+
+```text
+SHA-256  a63eef5aae5b95effc78f07f2d310bcb522a9c642b33dd949dea585be8241164
+CDHash   70995c9c6b3f85aee513fca3c3edcb6ac7bdac30
+```
+
+新 addon 与 trust：
+
+```text
+H481-multiload-addon.img
+1df2366c6d661193f3e88887636a8482e7f5104f8f60268ced01b74e62d98688
+
+H481-owner-trust.bundle
+5a6f18191480ebbe00873fbe79d3fe7ad3c8da7297bc86bebb13b819c42b22a1
+```
+
+trust owner module 28 entries；新增 wrapper CDHash，H480 的 observer 与
+`SpringBoard.real` 条目保留。
+
+H481 payload 回读：
+
+```text
+source commit bdf929b
+kernel        4577d3bc93a48dec1c910e76d4262e8ceda64869f6b370a2ee3ff42556364b00
+trust cache   5a6f18191480ebbe00873fbe79d3fe7ad3c8da7297bc86bebb13b819c42b22a1
+GPU addon     1df2366c6d661193f3e88887636a8482e7f5104f8f60268ced01b74e62d98688
+Data seed     7522c2b803bac371190e5f316bacc825d1dd3c964ef3a3ab6ffd75bf0f9bae79
+ADT           d4259be63c0235f9e97fd556b63a6e9bb66f8bcdefa1966d9909b80a09d319c3
+unixnu.toml   80a6086e774d3d997a2fee1184d6cffdd5cf3b5f80c7da701c3ff574c47e3803
+payload       00c8c03e1ec5fa27d60d60c3a59ed93f9d9ed4d334627635514362f55e0d3e5c
+boot          8569e14d72e163275f7ecf9b4fc36a2a3b4bdefe0680dd24e118a1f98068c3a6
+```
+
+kernel round-trip、ADT、boot layout、`OP5ESP`、static wrapper checker 和
+bootargs fit 全部 PASS；bootargs 仍 980 B，实际 1000/1024，worst
+1008/1024。状态：`boot-built-static-verified-not-device-tested`。
