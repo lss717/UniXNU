@@ -21565,3 +21565,48 @@ owner trust 为 84 个 own CDHash。kernel、ADT、Data seed 和 boot header
 的 `_LSContextInitCommon` 是否返回、q=1 是否消失。若仍不返回，下一轮沿该
 请求的实际 destination port 和 service 追对端；若返回，则记录
 `SBMainWorkspace`、root content、context commit 与首帧的下一处边界。
+
+H522 在 serial `16149951`、boot ID `2271cab3` 上完成一次真机运行。
+lsd main 的 sample `7110` 和 `7170` 均稳定位于
+`kevent_id -> __CFRunLoopServiceMachPort -> __CFRunLoopRun ->
+runServerMainRunLoop -> _LSServerMain`，原 `performJournalRecovery` 栈在
+两轮采样中均消失。`/dev/console` 的 `H491_LSD` 文本仍被该 job 吞掉，
+因此这里以 H522 的代码/加载状态和主线程栈变化确认 skip 已执行，不把缺失
+console 行单独当作阴性。
+
+SpringBoard 的 sample `6150`、`6180`、`6210` 和 `6240` 仍是同一请求：
+
+```text
+pc=0x1d2e44970
+req=35843/94/lsd.real q=1 send-rights=1 send-once=2
+target receive name=0x8c03
+```
+
+因此 journal recovery 已从该请求的接收阻塞点排除。`SBRootSceneWindow`
+在 `581.389490` 秒变为可见，`CALayerHost` 在 `586.1003145` 秒记录为
+`contents=0`；后续没有 context slot、`waitForCommitId`、
+`presentSurface`、IOSurface transfer 或 scanout。display gate 从 sample
+`6150` 到 `6240` 始终为
+`dpy=4/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0`。这是 SpringBoard 产品路径
+的真实阴性，不能与 H465 的合成首帧自检混写。
+
+UFS 请求在本轮继续完成。887.084850 秒的窗口状态为
+`seq=208918 done=208918 timeout=0 ocs_err=0 dbto=0 recover=0 recovered=0
+flight=0 lock_timeout=0 lock_waiters=0`。软件锁等待没有下降：
+`lock_wait_ms=11079520 lock_ok=605068 lock_wait_max_ms=33402`，平均约
+18.31 ms/次。`watchdog_seen=1680` 只是采样次数，本轮没有 watchdog 触发或
+恢复记录。UXC1 `424519` 在 911.141349 秒 ACK，随后正常重启。
+
+证据：
+
+```text
+logs/H522/device/20261122-003954/
+H522-live.log                  adc01f6d70dea957ae6b368fc67e0983f1936117a88438b9097143502afd576c
+H522-h103.txt                  9eac9eab691b433e36d7140392a22e98ea0624d6c8e204141e729efd9e0f9f48
+H522-tail32.bin                ee9a5569327ef0b2e5e5bbac8c3342fa1ce536cd606eff924a257af13fabe160
+```
+
+分类：`H522-recovery-skip-pass/lsd-target-request-still-unconsumed`。
+下一轮必须追 receive name `0x8c03` 在 lsd task namespace 的 port object、
+是否实际排队以及是否有线程在该 receive name 上阻塞；不能再把 lsd recovery
+当作该请求的阻塞候选。
