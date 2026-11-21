@@ -22535,9 +22535,51 @@ unixnu.toml SHA-256    dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e06
 payload kernel         7a4c2fa018f552313563c8adfe1a624139b073d65b2fe1b9193ed500645544cc
 ```
 
-状态为 `H530-built-static-verified-device-pending`。设备判定仍是 SpringBoard
-第一次退出时是否出现带有效 sender 的 reason，以及
-`OS_REASON_FLAG_ABORT` 等 flags。
+状态为 `H530-exit-source-self/flag0`。设备结果见下。
+
+#### H530 真机结果：退出 reason 指向 SpringBoard 自身且无 ABORT flag
+
+H530 在 serial `16149951` 上以 boot ID `35835317` 启动。该轮在
+`494.491346 s` 记录 target receive name `0x4f03`、lsd PID 98；
+`501-1531 s` 的连续样本保持 `seen=1 match=1 q=1 cnt=1` 和
+`NATIVE_TARGETWAIT seen=0 count=0`。
+
+同一轮在 `607.448983 s` 记录
+`SBRootSceneWindow` 根窗口可见，`607.813201 s` 记录其
+`contents=0 committed=0`；`610.245990 s` 的 `CALayerHost` 也为
+`contents=0 committed=0 hasCommitted=1`。没有 content setter、slot、
+commit wait、present 或 `fr=1`。
+
+修正后的 KCDATA 解码得到：
+
+```text
+1551.404180 pid 27  SpringBoard status=0x6 ns=2 code=0x6
+             flags=0x0 sender=27/SpringBoard
+1595.983566 pid 213 SpringBoard status=0x6 ns=2 code=0x6
+             flags=0x0 sender=213/SpringBoard
+```
+
+因此该 reason 的 `KCDATA_TYPE_PID/PROCNAME` 指向 SpringBoard 自身，
+`OS_REASON_FLAG_ABORT` 未设置。它把剩余内核入口缩小到以 thread 为目标的
+pthread signal 路径，而不是外部 launcher kill。
+
+H530 live frame 文件为 0 字节。设备在第二次 SpringBoard 重开后自动回到
+Android；TWRP 中拉取尾部 32 MiB 得到
+`H530-tail32.bin 5f123f8ddebad2d446d39217ac87c303e2f21eb84ee21971988a71d892346eac`，
+解码得到
+`H530-h103.txt b4ed1884a2a96f7867089e466436f7300c10d6f5390d620439c626159b894e46`，
+随后清零并回读全零。分类为
+`H530-target-queued/window-empty/self-SIGABRT-flag0`。
+
+证据：
+
+```text
+logs/H530/device/20261122-061613/
+H530-live.log
+  da379aedf3e61ac61fe4d5d65beeaadee859ac1321c9c96587466407d0c24b7c
+H530-live.capture.stdout.txt
+  6c9ec84289b8992103506ddf16ae25c925ffc7924f9f7e0bdf717c456d02ca01
+```
 
 ### §201 H531：记录 threadsignal 的 Mach exception code（2026-11-22）
 
@@ -22585,9 +22627,57 @@ unixnu.toml SHA-256    dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e06
 payload kernel         001e98f42a7f8dbd40d23d92ededc8dc6095cc115c50da07466f2f4d4de7031e
 ```
 
-状态为 `H531-built-static-verified-device-pending`。设备判定读取 SpringBoard
-退出前的 `NATIVE_THREADSIG`；该 `code` 与 UUX 中的 exception type/subcode
-编码将直接指出首个 fault，而不再停留在笼统的 SIGABRT。
+状态为 `H531-built-superseded-by-H532`。H530 已直接证明退出 reason 指向
+SpringBoard 自身且是 thread-target signal 形态；为避免再重复一整轮，H531 的
+`NATIVE_THREADSIG` 观测并入 H532 一起上机。这个处理不把 H531 标成已独立验证。
+
+### §202 H532：覆盖 psignal_uthread 的 thread-target signal（2026-11-22）
+
+H528 的所有公开 `psignal*` 包装中，唯一未覆盖的是
+`psignal_uthread(thread_t, signum)`，因为它以 `PROC_NULL` 调用
+`psignal_internal()`。H530 的退出 reason 已证明本次 SIGABRT 的 sender 是
+SpringBoard 自身、flags 为零，源码对应 pthread-target signal 入口。
+
+H532 只增加该入口的只读解析：
+
+- 用 `get_threadtask(thread)` 和 `get_bsdtask_info()` 取得目标 proc；
+- 目标非空时调用现有 `native_sigbus_probe()`；
+- 继续调用原来的 `psignal_internal(PROC_NULL, ...)`，不改变投递对象或行为。
+
+H532 同时保留 H531 的 SpringBoard `threadsignal` code/setreason caller 记录，
+以及 H530 的 exit reason sender/flags 解码。补丁在 H531 最终 source 上通过
+`git apply --check`，clean build 实际应用
+`threadsignal-exception-source.patch` 和 `psignal-uthread-probe.patch`，
+最终 kernel 同时包含三类字符串，最终链接和 prelink 成功。
+
+源码与构建：
+
+```text
+superproject commit     9d254523
+kernel build log        /Users/lss/h468-build/h532-uthread-build.log
+  c94d7db468b13f655e8b0d7c4ea5a56d7588a305f14bf491fc35ec0df6414e8d
+prelink log             /Users/lss/h468-build/h532-uthread-prelink.log
+  cf36e558644f516026d645189b243bde4971289c087112c6acb72ad1445b5b00
+```
+
+payload 从 H530 复制，只替换 `Payloads/kernel.macho`；payload kernel
+回读一致，其余 sidecar 文件逐字节一致。bootargs 和 boot JSON 检查 PASS。
+
+产物：
+
+```text
+kernel SHA-256         7fb58f798b632696ccb72a54d78e818ba890db681621bf272553fb2d5f9cb8ce
+payload SHA-256        9cedf7f54740ced998296818c35632f96e3d1e65028152d9b9309d15de6f711a
+boot SHA-256           74b779a2ff41a9fbddc77744092bd3fa0a93eb2ae28436eab449a932f1637594
+boot.json SHA-256      b59050f79421e862ee8bc7848c0f9187b259773e954fd5f8649b8dad76e17e61
+unixnu.toml SHA-256    dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e065f01e81
+payload kernel         7fb58f798b632696ccb72a54d78e818ba890db681621bf272553fb2d5f9cb8ce
+```
+
+状态为 `H532-built-static-verified-device-pending`。设备首先读取
+`NATIVE_SIG: ... comm=SpringBoard sig=6`，确认 self-pthread SIGABRT；同时读取
+`NATIVE_THREADSIG` 以判断是否还经过 trap exception。两侧都没有记录时，下一轮
+才改查 thread-target lookup 是否发生。
 
 同日曾尝试用 H473 历史 glob 顺序重建 target-port 控制，并为让新补丁排到末尾
 临时引入 `zz…` 文件名。该分支没有成功构建，也没有产生 boot 镜像，已删除。
