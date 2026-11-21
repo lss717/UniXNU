@@ -19844,3 +19844,98 @@ bootargs 均 PASS。状态：`boot-built-static-verified-not-device-tested`。
 设备门只要求 H504 sample 5 实际出现，并保留 H502 已确认的 sample 4 结果。
 若 timer 也不触发，下一轮改为普通 POSIX 等待线程；若 sample 5 出现，则直接
 按 hostprops、context options 和 activationState 的结果选择首帧分支。
+
+### §159 H504 真机：one-shot dispatch timer 仍未触发 sample 5（2026-11-21）
+
+H504 在 serial `16149951`、boot ID `2124da75` 上完成 900 秒 live 采集。
+sample 4 在 532.125 秒正常完成：
+
+```text
+532.125 秒  sample=4 workspace=1 scenes=0
+532.543 秒  appState=0 hasAppState=1
+532.945 秒  windowScene activationState=0
+```
+
+独立 `DISPATCH_SOURCE_TYPE_TIMER` 没有产生
+`sample=5 phase=springboard`，即使持久 H103 已记录到 1507 秒 reboot 请求。
+分类：`H504-sample5-timer-not-fired`。因此该 timer 与 H503 的 delayed block
+同样不能作为可执行采样调度；这不涉及 scene、window、layer 或显示路径结论。
+
+显示门在 1126.890604 秒仍为
+`dpy=4/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0`。捕获的 1,107,228 bytes
+frame 数据不构成产品首帧，sample 4 的 `UIView/CALayer` 存在也不构成首帧。
+
+持久 H103 的最后完整 H469 行为为
+`seq=254289 done=254289 timeout=0 ocs_err=0 dbto=0 recover=0 recovered=0
+lock_timeout=0 lock_waiters=0`，说明请求完成路径仍在工作，软件锁没有超时，
+也没有 OCS、doorbell timeout 或 recovery。锁等待没有下降：H503 最后
+`lock_wait_ms=11812654 lock_ok=655422 lock_wait_max_ms=24346`，平均约
+18.03 ms；H504 最后 `lock_wait_ms=13335561 lock_ok=706907
+lock_wait_max_ms=33589`，平均约 18.86 ms。`watchdog_seen=2880` 是 watchdog
+采样计数，不是 timeout；本无异常轮仍不能证明 watchdog 已被验证。
+
+UXC1 request `424506` 只发送一次，收到 ACK、armed 后执行 normal reboot。
+Android 以 `16149951` 返回且 `sys.boot_completed=1`，随后一次
+`adb reboot recovery` 进入 TWRP；`cheeseburger` 与 TWRP
+`3.4.0_9-10-mauronofrio` 已复核。
+
+证据目录：
+`display-first-frame/logs/H504/device/20261121-170011/`。
+
+```text
+H504-live.log                 396bb3fd9d81345a4ce6d7ea1f288c1df794681bccd529fd7730f85651893e1e
+H504-live.frames.bin          8ed0a942be0b4b00950550dbcc051e336e5d41f6d7371dc3c3e4155ce9ffd4ca
+H504-live.capture.stdout.txt  92aac9381bd6b9bfd3bfb064c6fbfcb78b6fa0a7e3029541317583845562c476
+H504-tail32.bin               726daa2604d5eaec092c6898e578293f8f67ede71e5e51e404578361107719e9
+H504-h103.txt                 1176e69760c4bf3f67fcdf513493e17139816249be122cc46cbc46c0090eb899
+H504-reboot.log               2cfac655d23008061f01a4cbcc00eb5a6aabb0e6e2df36d21d376f06bbcc0002
+H504-reboot-recovery-state    6d5d9d60571e3520c3cc5416d6e401970cc9485e75f8d6ba420275652c411fa7
+```
+
+### §160 H505：用普通 C++ worker thread 等待 sample 5（2026-11-21）
+
+H505 只把 sample 5 的 480 秒等待从 dispatch timer 改成：
+
+```cpp
+std::thread([] {
+    std::this_thread::sleep_for(std::chrono::seconds(480));
+    snapshot("springboard", 5);
+}).detach();
+```
+
+sample 0..4 的延迟、全部观测字段、只读行为和镜像输入不变。NativeMetal
+`ebef8be79b59c48e561ca34e34bdd57d519137d0`，superproject
+`b610627`。H505 SpringBoard observer gate、H492 CCS bypass gate 和
+`git diff --check` 均 PASS。
+
+产物：
+
+```text
+dylib SHA-256   3fded0458a37bab05698eac4d434d669f9965c057103312bd32a5bdc594ffe34
+dylib CDHash    6ecd29119377ba13be09eabb10d4403be8a3887f
+addon SHA-256   f9b2dba503ac74cd5cd8a8764354f19fad92da4743f7f334fc707335da3fbf59
+trust SHA-256   9c79c8912e1b74e2a6c1a3d819d06a1c103aef70a950baec76193dcc356f6222
+payload SHA-256 b14ac6ed3436902e108a47ff86453d2b1ba577ac338310427e67ea17524e447a
+boot SHA-256    40cf425b1eb9f68bd1a07347e052ed1d185ea5f2ce97f35eb03621f444ab489d
+boot.json SHA-256 cc4a9890beb6cafcddfa3c1b64b1af90f4ed01645068b01cacec9304aa7b59f6
+```
+
+owner trust 为 43 项。addon 仍为 7 项，只有
+`lib/SpringBoardSceneObserver.dylib` 改变。payload 以 H504 为 FAT 基线，
+逐文件回读确认 kernel、ADT、Data seed、`unixnu.toml` 与 H504 完全相同：
+
+```text
+kernel.macho      4577d3bc93a48dec1c910e76d4262e8ceda64869f6b370a2ee3ff42556364b00
+kernel.macho.adt  9fa9e5ba88b84546ef89f79b26bbd9a9cea5e881b8efebf2c2149d09259eb74d
+scratch-data.img  7522c2b803bac371190e5f316bacc825d1dd3c964ef3a3ab6ffd75bf0f9bae79
+unixnu.toml       dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e065f01e81
+```
+
+dylib 为 arm64 iOS 17、4 KiB pages、adhoc 签名；A540Trace/observer/CCS、
+Android boot 结构和 bootargs 均 PASS，bootargs 最坏 1016/1024 bytes。
+状态：`boot-built-static-verified-not-device-tested`。
+
+设备门只接受 sample 5 实际出现并输出 hostprops、context options、
+windowScene activation 和各层 contents。若 worker thread 仍不执行，下一轮
+只改 scheduling primitive；若 sample 5 出现，则根据这些字段只选择一个首帧
+分支。本门不以 synthetic selector、window 存在或 watchdog 无异常代替。
