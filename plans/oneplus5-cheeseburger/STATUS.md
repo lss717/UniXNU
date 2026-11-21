@@ -20596,3 +20596,33 @@ H511-reboot-recovery-state    d4c81c358b8d33daad8958e7f25a72ec6ef97bcd3bc09b7a2f
 应用就绪监视器，只有观察到 `UIApplication` 和至少一个 window 后才执行
 同一次 `CFRunLoopPerformBlock + WakeUp`。若监视器长期只看到 `app=0`，
 下一步转向 UIApplication 实例化/主线程入口，不再重复窗口写请求。
+
+### §173 H512 候选：等待 UIApplication/windows 后再请求可见（2026-11-21）
+
+H512 保留 H511 的 run-loop 投递和 root window 写操作，只改变触发时机：
+sample 4 启动后台应用就绪监视器，每 5 秒读取一次 `UIApplication` 和
+windows；只有 `app!=nil && windows>0` 时才执行一次 run-loop 请求。日志门为
+`h512_app_monitor_start/app_wait/app_ready`、`h512_runloop_enqueue_*`、
+`h512_main_block_*` 和 `h512_before/request/after`。
+
+NativeMetal `c653314992b7d66a61c5fc28b11867dfdba16bd6`，superproject
+`3b14c90`。addon 以 H511 为基线，只替换 A540Trace 与 observer：
+
+```text
+observer SHA-256       46a380e7cb9b2068bc1b3334a91be408845848fdf4b5893bb1240b2c415d10c3
+observer CDHash        98105a0b7a1a58d0c0a6260f246bcda9dd14b4c2
+A540Trace SHA-256      6a686d66bbf8d3bcb836249c84406c48503ca2096d2f0de3f1e81dc38d2d99f0
+A540Trace CDHash       850530dfc4938c1118fe42059d31b95861655300
+addon SHA-256          a6979dbfc9888301dda5211482dcc388ebc4dd63b2d151b721f66254ca3182fa
+trust SHA-256          eb1662aa53d7267d5f2a1e37827f92e517f50f7920e10ad94b21e0f32acc3dcc
+payload SHA-256        e639bcef6231ff3dae557e9317334d511400ad20bde25ec8b1550391dd7fb3e7
+boot SHA-256           1af2d639facf476532b6cc2cb61d05b750c259df3ae1e0befccd4b51444d4b45
+boot.json SHA-256      817c4d842dd08264cdc4b60963a51b2cc6f5e04502a4f7ba401e178bbb1a3345
+```
+
+owner trust 为 57 个 own CDHash；payload 从 H511 FAT 基线只替换
+trustcache/gpuaddon，kernel/ADT/Data seed/`unixnu.toml` 不变。observer gate、
+strict codesign、arm64 与 readback 均 PASS。状态：
+`boot-built-static-verified-not-device-ready`。设备门先判
+`h512_app_ready` 是否出现；若只出现 `app_wait app=0`，转查 UIApplication
+实例化，不在窗口可见性上循环。
