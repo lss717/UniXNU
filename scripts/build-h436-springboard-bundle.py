@@ -66,6 +66,15 @@ def compact_signed_bundle(path: Path, identifier: str,
     return match.group(1)
 
 
+def require_binary_markers(path: Path, markers: tuple[bytes, ...]) -> None:
+    data = path.read_bytes()
+    for marker in markers:
+        if marker not in data:
+            raise SystemExit(
+                f"{path} is missing required marker {marker.decode(errors='replace')}"
+            )
+
+
 def main() -> int:
     if len(sys.argv) != 4:
         raise SystemExit(__doc__)
@@ -116,10 +125,21 @@ def main() -> int:
          "-framework", "CoreGraphics",
          "-I", str(ROOT / "drivers/NativeAdreno"),
          str(ROOT / "drivers/NativeMetal/SpringBoardSceneObserver.mm"),
+         str(ROOT / "drivers/NativeMetal/SpringBoardCCSBypass.mm"),
          "-o", str(OBSERVER)],
         check=True,
     )
     subprocess.run(["strip", "-x", str(OBSERVER)], check=True)
+    require_binary_markers(
+        OBSERVER,
+        (
+            b"observer load process=",
+            b"build=H517",
+            b"H492_CCS",
+            b"filter bypass installed",
+            b"filter bypass pid",
+        ),
+    )
     observer_cdhash = compact_signed_bundle(
         OBSERVER, "org.blu-sharky.SpringBoardSceneObserver"
     )
