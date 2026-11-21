@@ -20250,3 +20250,85 @@ owner trust 为 49 项。payload 以 H507 为 FAT 基线，kernel、ADT、Data s
 `uiwindow_make_key_visible`。若 hidden 仍为 1，下一步单独处理 scene/window
 association；若 hidden 变 0 但 rootVC 仍 nil，下一轮只建立 root content；
 只有 root commit/context slot 出现后，才进入 CA present 与 IOMFB。
+
+### §166 H508 真机：root window 与 host context 变为可见，但仍无内容提交（2026-11-21）
+
+H508 在 serial `16149951`、boot ID `2989463d` 上完成了这项跃迁。sample 4
+开始时 `SBRootSceneWindow` 仍是 hidden=1、rootVC=nil、activationState=0；
+但本轮没有打印预期的 `root_activation_*` 标记，因此不能证明后续可见性是
+显式 `makeKeyAndVisible` 调用造成。运行时证据如下：
+
+```text
+606.663863 s  uiwindow_scene_visible window=root hidden=0 _isVisible=1
+607.041980 s  uiwindow_set_hidden window=root visible=1
+608.584924 s  CAContext remoteContext create contextId=0x72d4bdc1
+608.719563 s  CAContext.setLayer contextId=0x72d4bdc1 layer=UIWindowLayer
+609.229853 s  CALayerHost host=0x72d4bdc1 window=root
+609.416087 s  CALayerHost visible=1 host=0x72d4bdc1 window=root
+609.451542 s  status window scene=SBWindowScene
+```
+
+这说明 `SBRootSceneWindow` 已关联 `_UIScreenBasedWindowScene`，并从
+SpringBoard client context `0x72d4bdc1` 接到 `CALayerHost`。状态栏也进入
+`SBWindowScene`。但 root/status 的 `UIWindowLayer` contents 仍为零，两个
+backboardd context 没有新增 commit，也没有 `event_context_slot`、
+`event_context_commit_wait` 或 `event_display_surface`。分类：
+`H508-root-host-visible/content-absent`。
+
+显示门在 1136.195369 秒仍为
+`dpy=4/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0`。采集健康为
+`frames=6703 payload_bytes=896826 crc_errors=0 sequence_gaps=0
+boot_switches=0`，frame 文件为 1,111,322 bytes。最后 H469 行为在
+1167.807801 秒为 `seq=230534 done=230534 flight=0 lock_timeout=0`；
+`lock_wait_ms=11176378 lock_ok=656063`，平均约 17.04 ms，
+`lock_wait_max_ms=29834`。没有 OCS、doorbell 或 recovery。
+
+UXC1 `424510` 只发送一次；ACK 行未捕获，但 CDC 消失，Android
+`boot_completed=1` 后一次 recovery reboot 返回 TWRP。该恢复不证明 watchdog。
+
+证据：
+
+```text
+H508-live.log                 9b3f2862746a8774c624c4ba98da95a4f1c4584302e4b3f39a81d079c85a0f7e
+H508-live.frames.bin          d4ba8f07af467f5d822a0b70579c503cc709a3c8b3e3cf63409850ed6e2d8852
+H508-live.capture.stdout      bf0d16fa23ee7157c6afd5342d86292348df06e843fc663c7b41f44b98e888ac
+H508-h103.txt                 630519ac4ee1c572e8efa2d5d8d4a9f4af6b38c05b9398dc2cbe6ba0cdc41933
+H508-tail32.bin               a6c1b99420789410370062ab90066c42b31aea61514153f6e60c4d4a0f2adc66
+H508-reboot-recovery-state    22f95ead32b267a1a0cc8946760f9fb3b8efeead8d8340d947c2b6ca3eb0e5450
+```
+
+### §167 H509：只在 root 可见事件后抓取 post-visibility 深树（2026-11-21）
+
+H508 已证明 root/host visible 并不等于内容提交。H509 移除主动
+`makeKeyAndVisible` 调用，保留 H508 的 CA/server/UIKit 事件；当
+`uiwindow_scene_visible` 或 `CALayerHost.layerDidBecomeVisible:` 首次报告
+`window=root` 时，主队列等待 2 秒，记录 root/status hidden、visible、
+windowScene activation，再在 utility queue 执行一次 sample 6 深树。
+
+该采样由真实可见事件触发，不依赖 300/480 秒完整快照是否能完成。sample 6
+只读 window/view/layer/context，没有 setter、present 或 scanout。
+NativeMetal `4ae130e41e0270cca56b332f9fa0221c7e9d6fd2`，superproject
+`4c1e07d`。H509 observer/CCS gate、ARC compile 与 server trace build 均 PASS。
+
+产物：
+
+```text
+observer SHA-256       25c887a03768d32f02645a5dc0a494ea0b8357c55aa0cc6a54fb0096a9350145
+observer CDHash        3632a7520ffc18f8095d8a69469372dbb18b6946
+A540Trace SHA-256      be888f19d7aa4c438b541ba3b855e7d288d445abbff1b1366ac9e0115d408bd0
+A540Trace CDHash       74eb4c33bb787d44f453c640d8d2d1a65af7a1bc
+addon SHA-256          53fd2917782345df54c445cdb3a7675948fcc9fd1a792ea57c4181055b489954
+trust SHA-256          315c5ddc87cd87b799a46c97b90c999f70295b63f1407132b5c603c599fbf83f
+payload SHA-256        f25b377615d4752b021adbaac0540276915599d8d0d81108a67a17430be2fc80
+boot SHA-256           dca9b4d4712383e613a59dae3e53839f2cb22d833657b8fc393189fe708b0eb1
+boot.json SHA-256      ac927c7ac02f7fa3ed68c641e72b05c06cb7f8dc3a7349ba0243b68c9c5edeb0
+```
+
+owner trust 为 51 项。payload 以 H508 为 FAT 基线，kernel、ADT、Data seed
+和 `unixnu.toml` 保持已知哈希；addon/trust 回读匹配输入。bootargs 最坏
+1016/1024 bytes。状态：`boot-built-static-verified-not-device-ready`。
+
+设备门要求在同一轮出现 root visible、`event=root_visibility_*` 和
+`sample=6 phase=springboard`。若 root 可见后 rootVC 仍 nil 且 contents=0，
+下一轮只处理 root content creation；若 sample 6 未出现，则判定 post-visible
+callback 仍被主队列/queue 调度阻断，不据此推断内容状态。
