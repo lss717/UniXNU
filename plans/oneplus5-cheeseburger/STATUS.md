@@ -19076,3 +19076,99 @@ bootargs、UEFI 不变、payload FAT 回读均 PASS。bootargs 为 988 bytes，
 `rootViewController.view`、subviews、sublayers 与各层 `contents` 是否为空。
 若 view 树存在但内容仍空，下一轮只检查绘制事务、present 或具体纹理入口；
 若得到有内容的 layer/IOSurface，再单独推进 CA commit 与 IOMFB scanout。
+
+### §141 H495 真机：UIView 到 CALayerHost 的链路存在，所有 contents 仍为空（2026-11-21）
+
+H495 在 serial `16149951`、boot ID `2134540b` 上完成 900 秒运行。新增的
+view/layer 层级输出实际执行，SpringBoard 没有 exit。sample 5 的
+`SBRootSceneWindow` 没有 rootViewController，但 window 自身的 view 树已经
+建立：
+
+```text
+UIView
+  -> _UIScenePresentationView
+     -> _UISceneLayerHostContainerView
+        -> _UITouchPassthroughView
+           -> _UIContextLayerHostView
+              -> CALayerHost
+```
+
+同一窗口的 layer 树在 depth 0..4 全部为 `CALayer`，末端也是
+`CALayerHost`。状态栏窗口的 `_SBStatusBarWindowRootViewController` 也有
+`UIView -> UIWindowLayer -> CALayer -> CALayer`，但没有
+`_UIScenePresentationView`。所有 application/scene 窗口的 window layer、
+子层和 `CALayerHost` 都是 `contents=0`。
+
+同期 A540Trace 在渲染服务侧看到两个 1080×1920 CA context：
+
+```text
+ctx[0] id=0xde2c9662 displayId=0x1 mask=0xffffffff subs=2 rootContents=nil
+ctx[1] id=0x20050e90 displayId=0x1 mask=0xffffffff subs=2 rootContents=nil
+```
+
+display 0 自身的 `context`/`layer` 仍不存在。最后显示门在 1164.953686 秒
+仍为 `s345=0/1/1 val=1 xf=1 fr=0`。因此当前门已经从
+`UIApplication/UIWindow/UIView 创建` 移到
+`CALayerHost context 与 render-server scene context` 的对应和内容生产。
+分类：`H495-scene-host-chain-present/remote-content-absent`。
+
+采集共收到 6602 个 live frame、853975 payload bytes；CRC error、sequence
+gap、boot switch 和 truncated frame 均为 0。H103 最后 H469 状态为
+`seq=219767 done=219767 timeout=0 ocs_err=0 dbto=0 recover=0 recovered=0
+flight=0 lock_timeout=0 lock_waiters=0`，累计最大 lock wait 为 26283 ms。
+UXC1 request `424496` 发送成功；没有捕获到 ACK 帧，但 Android 正常出现并
+进入 boot_completed，随后一次 recovery reboot 返回唯一 TWRP。这个恢复方式
+仍不构成 watchdog recovery 验证。
+
+证据目录：
+`display-first-frame/logs/H495/device/20261121-132821/`。
+
+```text
+H495-live.log              6173bd69885dc7fe692df49202f15405f8f33914a3a5643bac0ac8a11f5ea40f
+H495-live.frames.bin       74266289d5b02d3ed3f38391477b68c3a46cca440044c9cfd87bde970a789bc3
+H495-live.capture.stdout   9a215c9d1b35fefb093d53d807e49cf6061bff250661ce6ef3350a2f9c5079c8
+H495-tail32.bin            acc1a2cc2e194fa620db03fb4a2c44787423e82a4382ecc5d69f289deacec999
+H495-h103.txt              9655bab9b7d3c8438114473ec61fae69dc09922b87a0a2da5d1333ef8608d72f
+H495-device-state.txt      58555d61eb7fcd94bbcf0648f66548d8ccfba56522bf3ce77f4bd41bae28c809
+```
+
+### §142 H496：输出每个 CALayerHost 的 contextId（2026-11-21）
+
+H496 保持 H495 的 kernel、ADT、Data、bootargs、addon 文件集、trust 基线、
+CCS bypass 和显示逻辑不变。observer 只增加一项只读信息。遇到类名含
+`LayerHost` 的 layer 时读取：
+
+```text
+CALayerHost.contextId
+CALayerHost.context
+```
+
+同时把 `contents` 日志改为只报告 present 标志，避免对可能存在的非
+Objective-C 内容对象调用 `object_getClassName()`。view/layer 遍历预算与
+H495 相同，不调用 setter，不绑定 context，不修改 window/scene/layer、
+Metal、IOMFB、surface 或 scanout。NativeMetal
+`2ef685f6821d0c831ef1e9307466f9e83eaeed37`，superproject `06abc1f`。
+
+产物：
+
+```text
+dylib SHA-256  72dbcf3c3c0b60abe0d52e65477cfda0f246200571b4f7b5592cf3c6f3e932ed
+dylib CDHash   f9374520af3cba429c7037eb4ee202e18d13307c
+addon SHA-256  16aee2b1c849eaed1b34bba457dbd02c16c1658fabbca68e8e58c91da57743a4
+trust SHA-256  1fa896d6af21982086e16149801efb79203bf00efb9d824de425845e8459938e
+payload SHA-256 5006576d826f736d963929667e55f2f305794b98904f255a014101af483671c9
+boot SHA-256    e75c69c1d5563c911e632ad04f5aec893a936e4f3eef9dfb47df8ee024f4545d
+boot.json SHA-256 68a92d1878ca6a68e761ccd6fd36f78bf03bd7013d3aeda41e000e4fc058196b
+```
+
+addon 仍为 7 项，逐项核验后只有 observer dylib 改变。owner trust 从
+H495 的 33 项增加到 34 项。payload 回读确认 kernel、ADT、Data seed 和
+`unixnu.toml` 与 H495 逐字节相同。observer/CCS gate、arm64 4 KiB 签名、
+Android boot 结构、UEFI 不变及 bootargs 均 PASS；最坏 bootargs 为
+1016/1024 bytes。状态：`boot-built-static-verified-not-device-tested`。
+
+设备门要求 H496 sample 5 的每个 `CALayerHost` 给出 `hasContextId` 与实际
+`contextId`。零值说明 scene presentation view 尚未拿到可托管的 remote
+context；非零值则可与 A540Trace 的两个 CA context 做对应，下一轮只检查该
+context 的无内容原因、事务或 present 路径。窗口存在和 host layer 存在仍不是
+产品首帧。
