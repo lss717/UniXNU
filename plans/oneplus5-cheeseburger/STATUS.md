@@ -21789,3 +21789,11 @@ H523 第一次 60 秒采样之前就复位的时间线不一致，但紧贴 earl
 已经采集的 `native_sb_rows[]` 查找 Mach trap `-47` 的同一 receive name。
 这样仍能输出 `seen/match/q` 和 waiter，同时不改变线程遍历行为或早期启动
 路径。
+
+H524 第一次 clean 构建暴露了 `macos-build-kernel.sh --clean` 的新构建坑：
+它只删除 `xnu-work`，保留既有 `ios-obj` 编译记录，因此 bootstrap 会被跳过；
+archive 构建再次应用 XNU series 后写入 marker，最终链接入口就跳过整个补丁
+块，连 `kits/NativePrelink/patches/series` 的两项也漏掉。结果 XNU 正常链接，
+但 prelink 以 `Native kernel lacks sparse-prelink index ABI` 拒绝。修复是把
+NativePrelink series 的应用移到 `XNU_SKIP_PATCH_LOOP` 分支之外，使每次最终
+链接都先运行 `--skip-applied` 的两项检查和补充应用。

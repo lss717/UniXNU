@@ -58,11 +58,16 @@ echo '== apply XNU patch series'
 python3 "$ROOT/scripts/apply-patch-series.py" \
   --root "$ROOT/patches/xnu" apply \
   --worktree .cache/xnu-work --skip-applied
+fi
+
+# NativePrelink patches add the ABI already carried by the Mac build entry.
+# Apply them even when archive builders have already put the XNU marker in the
+# tree; otherwise a --clean build with retained compile records can link a
+# kernel that satisfies the XNU marker but lacks the sparse-prelink ABI marker.
 echo '== apply NativePrelink patch series'
 python3 "$ROOT/scripts/apply-patch-series.py" \
   --root "$ROOT/kits/NativePrelink/patches" apply \
   --worktree .cache/xnu-work --skip-applied
-fi
 export XNU_AVAILABILITY_PL=$ROOT/.cache/fakeroot/usr/local/libexec/availability.pl
 python3 scripts/prepare-xnu-source.py
 # The first pass of a new tree (XNU_BOOTSTRAP=1, set by the unixnu driver) only has to leave the compile records and
