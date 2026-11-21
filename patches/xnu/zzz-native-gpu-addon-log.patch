@@ -14,10 +14,10 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  	return error ? error : close_error;
  }
 -/* Creates the missing parent directories of an addon path with the mkdir syscall. The scratch is one 4 KiB page; the mount arguments
-- * end below 0xa00. */
+- * end below 0xc00. */
 +/* Creates the missing parent directories of an addon path with the mkdir syscall, including /private/var/ngpu itself: the Data
 + * volume carries no ngpu directory, so starting below it left every addon write with ENOENT (H183 heartbeat addon=3/0/0/3/2/1).
-+ * The scratch is one 4 KiB page; the mount arguments end below 0xa00. */
++ * The scratch is one 4 KiB page; the mount arguments end below 0xc00. */
  static int
  native_gpu_addon_parents(proc_t p, user_addr_t scratch, const char *path)
  {
