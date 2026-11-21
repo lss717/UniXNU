@@ -22685,3 +22685,57 @@ payload kernel         7fb58f798b632696ccb72a54d78e818ba890db681621bf272553fb2d5
 `patches/xnu/series` 表达；不得为新分支、别名或兼容旧 glob 再引入
 `a-`、`z-`、`zz-`、`zzz-` 等字典序前缀。规则已写入 `AGENTS.md` 和主路线
 `HANDOFF.md`。
+
+### §203 H533：旁路 SpringBoard 的 LaunchServices observer 注册（2026-11-22）
+
+H530 的主线程栈已经把较抽象的 lsd target-port 队列落到一个具体同步点。
+SpringBoard 主线程停在
+`LSApplicationWorkspace addObserver:` 内，调用链经过
+`SBMainWorkspace _finishInitialization` 与
+`SBApplicationController init`，最后位于 CoreServices 的
+`_LSContextInitCommon` / `ulock_wait2`。H532 在样本 6330、6390 和 6420
+重复得到同一主线程位置，说明该等待在本次启动中持续存在。
+
+H533 只对 SpringBoard 替换
+`-[LSApplicationWorkspace addObserver:]` 的 IMP，使该 observer 注册立即
+返回并输出 `H533_LS: observer bypass installed` 和
+`H533_LS: observer bypass`。其他 SpringBoard CA/scene 观测、lsd recovery
+shim、A540Trace、kernel、ADT、Data seed、TOML 和 boot arguments 均保持 H532。
+
+H533 addon 从 H532 的 10-entry `NGPUADD2` 原样复制，只替换
+`lib/SpringBoardSceneObserver.dylib`。其余 9 个 entry 逐字节相同。新的
+observer 是 89,120-byte arm64
+ad-hoc binary，CDHash 为
+`ffa35cdcf4255b3d09eb874533b9f68a6f311597`。owner trust 从已有的 84 项
+扩为 85 项。
+
+源码与工具：
+
+```text
+NativeMetal commit       1c44cde
+superproject commit      d56b32e2
+observer SHA-256         ad970407dd282fc0c9b9c97d45f9131e1b47a582048fb33acf3eabbea4fcbf6a
+observer CDHash          ffa35cdcf4255b3d09eb874533b9f68a6f311597
+GPU addon SHA-256        7b564337701eaeb41f2dd95a92dd3cea0705a65ce9f8e1aaf7904b81fc7982c1
+owner trust SHA-256      e911ba7b804bf7e270e30ad83133b99b88044cc561a12e1f0f9b752d68456a9a
+payload SHA-256          e660e5b1ef2c71a23d728d05b955cf41f1193022ae28c1cd08ad607aa85ed3a4
+boot SHA-256             fcb29c37b4d4c5d56ad2db073fdaec8440ee35776b033dd95bf13de367c96ee6
+boot.json SHA-256        c098343948e378c151dfd2e841fd0ab60c9204626d02b76480c10e94d9673a88
+```
+
+payload 与 H532 的六项逐文件核对结果为 kernel、ADT、scratch Data 和
+`unixnu.toml` 相同，只有 GPU addon 与 owner trust 不同。payload 内
+kernel 回读仍为
+`7fb58f798b632696ccb72a54d78e818ba890db681621bf272553fb2d5f9cb8ce`。
+bootargs 仍为 988 字符，`1008/1024`，最坏 `1016/1024`。boot JSON
+`problems=[]`。
+
+产物位于 `display-first-frame/builds/H533/`。状态为
+`H533-built-static-verified-device-pending`。判定顺序固定为：
+
+1. 先确认 `build=H533` 和 `H533_LS: observer bypass installed`；
+2. 对比 H532，确认 SpringBoard 主线程已经离开
+   `LSApplicationWorkspace addObserver:` / `ulock_wait2`；
+3. 再检查 `SBMainWorkspace start` 是否完成、根窗口是否出现真实 contents、
+   context/host 是否绑定，以及是否出现 present 和 `fr=1`；
+4. 没有 observer 标记时不得把后续结果归因于 addObserver 旁路。
