@@ -21045,3 +21045,167 @@ H492_CCS: filter bypass pid=27
 的 pre-UIKit 退化由 bypass 打包回归造成。若 bypass 已安装并命中，但
 SpringBoard 仍停在 UIKit 前，再沿实际 IPC 对端继续；不能把“无异常”当作
 watchdog recovery 已验证。
+
+### §184 H517 真机：CCS 回归关闭，SpringBoard 稳定等待 lsd 回复（2026-11-21）
+
+H517 在 serial `16149951`、boot ID `21147014` 上只执行一次
+`fastboot boot`。`builder#2 build H517` 在 274.808041 秒出现，CDC 于
+229 秒左右枚举为唯一 COM8。CCS 安装行没有进入 live CDC 的首段窗口，但
+最终产物与运行行为同时证明 bypass 已加载：SpringBoard 主线程不再停在被
+替换的 CCS filter 内，且 UIKit 初始化由零恢复为真实调用。
+
+```text
+419.474062 s  h515_shared_application_enter  main=1
+419.520548 s  h515_shared_application_return app=class=SpringBoard
+424.019573 s  h515_shared_application_enter  main=1
+424.084076 s  h515_shared_application_return app=class=SpringBoard
+430.030498 s  uiwindow_set_hidden window=status hidden=0
+584.646668 s  UISystemGestureWindow scene visible
+590.486507 s  SBRootSceneWindow visible
+592.539262 s  CAContext remote create contextId=0xff364db0
+593.559219 s  CALayerHost visible window=root
+```
+
+这关闭了 H511-H516 的 pre-UIKit 回归。root host 仍然 `contents=0`，
+没有 `ca_layer_set_contents`、`event_context_slot`、
+`event_context_commit_wait`、`event_display_surface` 或 `fr=1`。显示门
+1201.963864 秒仍为
+`dpy=4/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0`。
+
+H516 样本 6090 的主线程连续位置经同版 21H461 dyld cache 符号化后为：
+
+```text
+mach_msg2_trap
+<- -[CCSModuleRepository
+     _queue_filterModuleMetadataByAssociatedBundleAvailability:]
+```
+
+H517 同一时刻已经离开该函数。从 sample 6180 起，连续样本
+6180/6210/6240/6270/6300/6330/6360 稳定落在：
+
+```text
+mach_msg2_trap
+<- _LSContextInitCommon
+<- LaunchServices::DMFSupport::reloadAllPolicies
+<- LaunchServices::DMFSupport::getNotificationCenter
+<- -[LSApplicationWorkspace addObserver:]
+<- -[FBSApplicationLibrary _initWithApplicationWorkspace:configuration:]
+<- -[SBApplicationController init]
+<- -[SBMainWorkspace _finishInitialization]
+<- -[SBMainWorkspace _resume]
+```
+
+同一轮 IPC 证据把对端固定为 pid 95/lsd。从 sample 6150 的长挂起开始：
+
+```text
+req=48391/95/lsd q=1 sr=1 so=2
+```
+
+该请求在 6180、6210、6240、6270、6300、6330、6360 样本中保持同一
+name/id 与 `q=1`；SpringBoard 主线程全程为 `mach_msg2_trap`。lsd 仍有
+多个活动线程，但启动栈包含：
+
+```text
+_LSInstallProgressService performJournalRecovery
+<- +[_LSInstallProgressService beginListening]
+<- __LSServerMain
+```
+
+H493、H508、H510 也分别在 sample 6150 以后持续保留
+`peer=lsd q=1`。因此该门是既有共同阻断，不是 H517 新引入。分类：
+`H517-CCS-regression-closed/springboard-waits-lsd-recovery`。
+
+UFS 在 1376.096165 秒仍为
+`seq=245457 done=245457 timeout=0 ocs_err=0 dbto=0 recover=0
+recovered=0 lock_timeout=0 lock_waiters=0`；
+`lock_ok=690289 lock_wait_ms=11639473 lock_wait_max_ms=29825`，平均
+约 16.86 ms。请求持续完成，软件锁等待没有相对 H510/H511 明显下降。
+稳定轮仍不验证 watchdog recovery。
+
+UXC1 `424514` 发送一次，在 1419.494943 秒 ACK 并正常重启；Android
+`sys.boot_completed=1` 后转回 TWRP `3.4.0_9-10-mauronofrio`，256-slot
+持久环只读拉取成功。证据：
+
+```text
+H517-live.log               8400c28e6c6e5bdabd175d2647e8b73459b4b34ab5c1de6e4a8a62415375356f
+H517-live.capture.stdout    6cbd65930fc3f4de0c852328ab029dc6656956675f93e727fd0f972755c57942
+H517-h103.txt               2ad96754c716d5418bc747ed969399e9076f88170b922703def20c5e052438a2
+H517-tail32.bin             3c64453aa146ba5e0306e1cc02b5c9e293a67bac13fe347f9b290e6a41f2d494
+H517-reboot.log             5c783c8ec09c7fc34fa7d68088a3f3f6953cd3f1a1a69234c9fb1134c9f6abd5
+H517-reboot.frames.bin      9108adc4e0f37fbd5216785b0dbecb9789350654463f59e1f89f58f0627a53c2
+```
+
+live frames 文件因手动停止外层采集而为空；live 文本与
+`capture.stdout` 一致，后续重启另有 42 帧完整 CDC 记录。该限制不用于证明
+没有日志丢失。
+
+### §185 H518：用 owner wrapper 将 lsd journal recovery 移出启动线程（2026-11-21）
+
+H491 曾只修改 lsd job 的 `DYLD_INSERT_LIBRARIES`，但原平台
+`/usr/libexec/lsd` 没有加载 shim。H518 保持 kernel、ADT、Data seed、
+SpringBoard 启动方式和 H517 addon 中其余文件字节不变，只修改移动版
+`com.apple.lsd` job：
+
+```text
+ProgramArguments[0]
+/usr/libexec/lsd
+-> /private/var/ngpu/bin/lsdwrap
+```
+
+新增 owner wrapper 设置仅一个 dylib：
+
+```text
+DYLD_INSERT_LIBRARIES=/private/var/ngpu/lib/LsdRecoveryAsync.dylib
+DYLD_FORCE_FLAT_NAMESPACE=1
+```
+
+随后以 `argv[0]=lsd` exec addon 内的同版原始签名
+`/private/var/ngpu/bin/lsd.real`。shim 只 swizzle
+`-[_LSInstallProgressService performJournalRecovery]`，把原实现投递到 utility
+global queue；`beginListening` 和 `LSServerMain` 先返回。未改
+`restoreInactiveInstalls`、SpringBoard、scene、display、Metal、IOMFB、
+surface 或 scanout。
+
+源码：NativeMetal `c46c8734617c470161c4024787b1d3d168c3b502`，
+superproject `8a5e9c3`。H518 addon 从 H517 七文件实际产物继承；不存在
+`bin/scenebootstrap` 或 `springboard/SpringBoard.real` 等无关新增项。
+launchd cache 与 H517 解析后逐对象比较，只差 `com.apple.lsd.
+ProgramArguments[0]`；其余 560 个 job、SpringBoard job 和环境项不变。
+
+```text
+observer SHA-256       d5af47eb15ad713a18ce06824ee7f97b526b7c69456791d8dfbb60d0ed39d38b
+observer CDHash        33057bef5802ec4ddf10ca41368427831cb17457
+A540Trace SHA-256      7b3e464350a4f1f5cb547a5713832adc8a9d27e1e0304f30f86c00f70e69f22e
+A540Trace CDHash       8e237c87d9a7e868419dee4cd7e659c698b24576
+lsd wrapper SHA-256    bb78dbd51a19365881983fb805c6b4c57c4d91ff767f03e102ee2071bd7eda19
+lsd wrapper CDHash     67dabb9320843f6b8f7035402901568fd0ee8895
+lsd.real SHA-256       43ee16e03145f3ad6b84fc7dac63ee767ec8182b51bc9cb5bd8bf8650baa4e5b
+lsd.real CDHash        ac94a8fe699b2a550b65baccc30e63d90de5215b
+recovery SHA-256       c8213c7ddaf860c380ecf92dd49725fb66e31ef04fe14fbd32c55a9d59053e38
+recovery CDHash        f0a67ae7df291dd40890d06c9c578df2fee1d6fe
+launchd.plist SHA-256  ef69c38b300e376832e27266487b1c890262b9ee251138391235c2c4e1c779e1
+addon SHA-256          e901fd2a0dc336bff5959f60dacb2de5ff4ef5b52f34e7a910cc60948e2679a4
+trust SHA-256          ad5c0c9d83e650d2769c4db4e1f9a185e072cd81d991e4919788931d8dd4a79a
+payload SHA-256        ce1dec278bfe62079abbb45c4c89f7690cd8163a4ea34b8f01472cd207ef6056
+boot SHA-256           17c22a63c049210f816d8438e60b58c1d859e995aca2618955102169ae064fbf
+boot.json SHA-256      27b74a93541fc6b4706f8b07d58780cb4661ff5c5c1fccdb805948af5aff2559
+```
+
+owner trust 为 72 个 own CDHash；五个新 CDHash 均从最终 trust bundle
+回读确认。kernel、ADT 和 Data seed 与 H517 字节一致，boot header/firmware
+输入不变，bootargs 仍为 988 字符，当前 `1008/1024`、最坏
+`1016/1024`。状态：`boot-built-static-verified-not-device-ready`。
+
+设备门先要求：
+
+```text
+H518_LSDWRAP: wrapper enter
+NATIVE_EXEC ... comm=lsd ... argv0=lsd
+H491_LSD: recovery async installed
+H491_LSD: recovery queued
+```
+
+随后检查 SpringBoard 发往 lsd 的 `q=1` 请求是否被消费并收到回复。若
+`recovery queued` 出现、请求完成且 `SBMainWorkspace` 继续初始化，记录
+下一处 scene/content 门；若 wrapper 被平台约束拒绝，按实际
+`NATIVE_EXIT/NATIVE_PANIC` 修正 wrapper，不能把 shim 未加载写成阴性。
