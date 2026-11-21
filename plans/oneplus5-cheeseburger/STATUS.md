@@ -22449,6 +22449,56 @@ payload kernel         9ee8f2b5e69bdfe5a0e4b74b8a499be04fd76916ae90073f7bef1f8b9
 状态为 `H529-built-static-verified-device-pending`。设备先等同一个 target-port
 断点，再在 SpringBoard 第一次退出时读取新增的 `flags` 与 `sender`。
 
+### §200 H530：修正 KCDATA 通用类型的 payload 读取（2026-11-22）
+
+H529 真机已经打印新增 `flags` 字段，但普通进程退出显示
+`flags=0x0 sender=-1/`。源码复核发现 H529 把
+`KCDATA_TYPE_PID`/`KCDATA_TYPE_PROCNAME` 当成带 32-byte descriptor 的类型，
+调用了 `kcdata_iter_get_data_with_desc()`；实际这两个值是通用类型，payload
+直接位于 `kcdata_iter_payload()`。
+
+H530 只修正这两个 payload 读取位置，继续在退出时解析：
+
+```text
+os_reason->osr_flags
+KCDATA_TYPE_PID
+KCDATA_TYPE_PROCNAME
+```
+
+不改变信号、退出路径或 KCDATA 内容。补丁再次通过独立 patch 解析，并在 H529
+最终源码树上通过 `git apply --check`。clean build 实际应用
+`sigbus-ring.patch` 后应用修正后的 `exit-reason-signal-source.patch`；最终
+源码包含直接 `kcdata_iter_payload()` 读取，最终链接和 prelink 成功。
+
+源码与构建：
+
+```text
+superproject commit     d262a724
+kernel build log        /Users/lss/h468-build/h530-exit-source-fixed-build.log
+  39e6a8e846f37fe566098291a1ae96763d49457132330cb7636687b791447af8
+prelink log             /Users/lss/h468-build/h530-exit-source-fixed-prelink.log
+  9e3a4fa05cbfc881cb4bcde0b3fd97a74305feca8ca53fd1e4bbd572bce0df8c
+```
+
+payload 从 H529 复制，只替换 `Payloads/kernel.macho`。payload 内 kernel
+回读一致；ADT、Data seed、GPU addon、owner trust 和 `unixnu.toml` 保持
+逐字节一致。bootargs 和 boot JSON 检查 PASS。
+
+产物：
+
+```text
+kernel SHA-256         7a4c2fa018f552313563c8adfe1a624139b073d65b2fe1b9193ed500645544cc
+payload SHA-256        6ac29c4c12379c194991bed5ad4288aae9ecaa420b5e17d2342bbded6f2254b9
+boot SHA-256           4fe316c07073b1e28a60615ea6a087b219797049ca24beaaba3f4112ac06bee1
+boot.json SHA-256      13611bbf79c89ffe26475f99704a7b67c7e0f1f65c434251fa3f5a65ca70a8bc
+unixnu.toml SHA-256    dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e065f01e81
+payload kernel         7a4c2fa018f552313563c8adfe1a624139b073d65b2fe1b9193ed500645544cc
+```
+
+状态为 `H530-built-static-verified-device-pending`。设备判定仍是 SpringBoard
+第一次退出时是否出现带有效 sender 的 reason，以及
+`OS_REASON_FLAG_ABORT` 等 flags。
+
 同日曾尝试用 H473 历史 glob 顺序重建 target-port 控制，并为让新补丁排到末尾
 临时引入 `zz…` 文件名。该分支没有成功构建，也没有产生 boot 镜像，已删除。
 这个命名方式自此明确禁止：补丁必须使用功能名，顺序只由
