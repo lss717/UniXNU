@@ -131,6 +131,7 @@ def main() -> int:
          "-I", str(ROOT / "drivers/NativeAdreno"),
          str(ROOT / "drivers/NativeMetal/SpringBoardSceneObserver.mm"),
          str(ROOT / "drivers/NativeMetal/SpringBoardCCSBypass.mm"),
+         str(ROOT / "drivers/NativeMetal/SpringBoardLSWorkspaceObserverBypass.mm"),
          "-o", str(OBSERVER)],
         check=True,
     )
@@ -139,10 +140,13 @@ def main() -> int:
         OBSERVER,
         (
             b"observer load process=",
-            b"build=H522",
+            b"build=H533",
             b"H492_CCS",
             b"filter bypass installed",
             b"filter bypass pid",
+            b"H533_LS",
+            b"observer bypass installed",
+            b"observer bypass pid=",
         ),
     )
     observer_cdhash = compact_signed_bundle(
