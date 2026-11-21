@@ -21842,3 +21842,30 @@ payload kernel        949b46fdd5a6af9d05bc14cba1042c25ad0edb5ad87afca66d72b62083
 
 boot JSON 的 input/output hash 与上表一致，`problems=[]`。状态为
 `H524-built-static-verified-device-pending`。
+
+H524 的 `fastboot boot` 返回 OKAY，但 CDC 未在约两分钟内出现，手机随后回到
+Android。持久环 boot ID `1273853237` 的最后时间为 `65.302317 s`：
+
+```text
+last dyld:
+  dyld_shared_cache_arm64.15 -> 0
+last UFS alive:
+  winFlight=1 ufsFlight=1 cmds=5037 winReq=1608
+  winBytes=766276608
+```
+
+环中没有 `NATIVE_TARGETPORT`、`NATIVE_TARGETWAIT`、OCS error、doorbell
+timeout、UFS recovery、lock timeout、panic 文本或 watchdog 触发记录。分类为
+`H524-early-reset/dyld-cache-preuserspace`。H524 移出 trap 热路径后仍复位，
+因此该分支不是充分原因；剩余候选是 target-port 补丁的其它静态影响或它造成的
+kernel 代码/数据布局变化。
+
+H524 设备证据：
+
+```text
+logs/H524/device/20261122-032231/
+H524-h103.txt
+  fdfa4120044666b9c3e8e0b83d0e144e1d16b0572115d64c53ae5dfcf50f609f
+H524-tail32.bin
+  8343d8aa43acc8cc2d11ff5ff3002a8364c23887931a43773605931a15059e063
+```
