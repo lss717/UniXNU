@@ -19532,3 +19532,89 @@ A540Trace/observer/CCS gate、arm64 4 KiB 签名、Android boot 结构、bootarg
 `srv#... ctxchange ... state=new ... owner=<pid>/<status>/<comm>` 给出实际
 owner。下一轮必须跟随该 owner 的 producer/surface 路径；SpringBoard 内的
 `CAWindowServer.server*` 代理不再调用。
+
+### §151 H500 真机：两个可见 CAContext 都属于 backboardd，且仍无 contents（2026-11-21）
+
+H500 在 serial `16149951`、boot ID `212b1bee` 上加载了
+`NATIVE_MTL: builder#2 build H500`。394.750661 与 394.752154 秒出现两个
+context：
+
+```text
+ctx=0xf7810964 display=0x1 mask=0xffffffff host=0x0
+client=0xf003 task=0x4f03 owner=56/0x0/backboardd
+root subs=2 nodes=4 contents=0
+
+ctx=0xe43d031b display=0x1 mask=0xffffffff host=0x0
+client=0xbc0f task=0x4f03 owner=56/0x0/backboardd
+root subs=2 nodes=4 contents=0
+```
+
+两个 context 的真实 owner 都是 backboardd，不是 SpringBoard。后期 A540
+observer 又多次重建 context，但 display 最终停留在
+`dpy=5/27/0/1/0 s345=0/0/0 val=0 xf=0 fr=0`。这表明问题不是
+“SpringBoard 没有创建窗口”，而是 render server 当前没有把 scene content
+放入可显示 context。
+
+采集共收到 8173 个 live frame、1054064 payload bytes；CRC error、sequence
+gap、boot switch 和 truncated frame 均为 0。H103 最后可见 H469 行为
+`seq=229522 done=229522 timeout=0 ocs_err=0 dbto=0 recover=0 recovered=0
+flight=0 lock_timeout=0 lock_waiters=0`，累计最大 lock wait 为 30170 ms。
+这仍不是 watchdog proof。
+
+本轮没有发送成功 UXC1。采集结束后下一次 COM8 `CreateFile` 已返回 Win32
+error 2，设备已自行回到 TWRP，`H500-reboot.log` 为空，H103 也没有
+`MACH Reboot`、watchdog 或 panic 标记。分类为
+`H500-unattributed-reset-after-live-capture`；不能把这次复位归因于测试请求，
+也不能称 watchdog 已验证。
+
+证据目录：
+`display-first-frame/logs/H500/device/20261121-152318/`。
+
+```text
+H500-live.log              d782f36d739483c2b0d3572927efff9c6a737c536e05abd005d1d100ae4cb0c1
+H500-live.frames.bin       35d1b9e4058608fc9cf2e0b114b2c53fad82b4dea54bb4682e6937dbfce83235
+H500-live.capture.stdout   c40a9176d5bae2c86079790f040f496604ec8405651d93d9fa18349d6874a7af
+H500-tail32.bin            e36e9abf77457ebcc87cfd894531681ee3cbeb7a4fb8fbc112685e96248d85aa
+H500-h103.txt              949287c6cbde602f4a96dc326371e76941e06400ae37146035145295b1bcb53f
+H500-device-state.txt      80e8b5424fc54fd5df4166b9b1b3b7a3be2caa1c17f64904221aef5c8f8cdc92
+```
+
+### §152 H501：读取 scene/application 激活状态与 context options（2026-11-21）
+
+H501 保持 H500 的 kernel、ADT、Data、bootargs、A540Trace H500、trust 基线、
+host/context layer 探针和显示路径不变。只增加只读字段：
+
+```text
+UIApplication.applicationState
+UIWindowScene.activationState / interfaceOrientation
+FBScene.settings isForeground / interfaceOrientation /
+  deactivationReasons
+CALayerHost.inheritsSecurity / preservesFlip
+CAContext.options dictionary keys and values
+```
+
+不再包含 H499 的 `CAWindowServer.server*` 代理代码。NativeMetal
+`72f54c8e96b74b01d6c3ed820206fae508b9bf9f`，superproject `919304a`。
+没有 setter、context 绑定、scene/window 修改或 surface/scanout 操作。
+
+产物：
+
+```text
+dylib SHA-256   dd3fb23052f1907ebfd113805f806e7bf62fcdf83bdb4929be0d5c7e3a0baedf
+dylib CDHash    c72b4098ea40ef3535f596b0bf0e5317e7c5d37e
+addon SHA-256   cfaf1e8a5287fa88dc73577efdced9b414d79117940d37b02048304417e4ad35
+trust SHA-256   f3113bcebfa155a2250fe408055cff3878123a7245d17845c71ffa628195fbc5
+payload SHA-256 c7e6e0f52a79f6dcc4523ca65c076d80eb30e34dbf0bcbe28b362b78788d6bf7
+boot SHA-256    786557361d52dc0622cfaf183d10e081e78397438db6075345a4f3b103d50dad
+boot.json SHA-256 33521b49a0bc0bb16abf073e010b72bb97d3aa4f0b861f8be47965cab6bf5c3e
+```
+
+owner trust 为 39 项。addon 的 7 项中只有 observer dylib 改变。payload
+逐文件回读确认 kernel、ADT、Data seed、`unixnu.toml` 与 H500 相同，UEFI
+不变。observer/A540Trace/CCS gate、arm64 4 KiB 签名、Android boot 结构和
+bootargs 均 PASS。状态：`boot-built-static-verified-not-device-tested`。
+
+设备门要求 sample 5 给出 `appState`、windowScene activation/orientation、
+scene settings 三个字段、两个 LayerHost 属性以及 context options。下一轮只
+根据这些结果决定 scene activation、security/flip 或 context producer 中的
+单一分支。
