@@ -28,8 +28,9 @@ OUT.mkdir(parents=True, exist_ok=True)
 BOOTSTRAP = ROOT / '.cache/xnu-work/bsd/kern/source_pthread_bootstrap.c'
 if not BOOTSTRAP.is_file():
     subprocess.run(
-        ['git', '-C', ROOT / '.cache/xnu-work', 'apply',
-         ROOT / 'patches/xnu/source-pthread-bootstrap.patch'],
+        [sys.executable, ROOT / 'scripts/apply-patch-series.py',
+         '--root', ROOT / 'patches/xnu', 'apply',
+         '--worktree', ROOT / '.cache/xnu-work', '--skip-applied'],
         check=True,
     )
 if not BOOTSTRAP.is_file():

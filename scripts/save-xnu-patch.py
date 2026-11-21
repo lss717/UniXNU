@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Regenerate one incremental XNU patch from the working tree: save-xnu-patch.py NAME FILE...
 
-The result is the difference between "pinned XNU + every patch that sorts before NAME" and the working tree, for the named
-files only, written to patches/xnu/NAME. zzz-boot-progress.patch must be reversed in the working tree first (the build
-script reverses and re-applies it around the others)."""
+The result is the difference between "pinned XNU + every series entry before
+NAME" and the working tree, for the named files only, written to
+patches/xnu/NAME. Patches that the build applies outside the normal series
+order must be reversed in the working tree first."""
 from pathlib import Path
 import shutil
 import subprocess
@@ -13,7 +14,15 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 XNU = ROOT / '.cache/xnu-work'
 name, files = sys.argv[1], sys.argv[2:]
-earlier = [p for p in sorted((ROOT / 'patches/xnu').glob('*.patch')) if p.name < name]
+series_path = ROOT / 'patches/xnu/series'
+series = [
+    line.strip()
+    for line in series_path.read_text(encoding='utf-8').splitlines()
+    if line.strip() and not line.lstrip().startswith('#')
+]
+if name not in series:
+    raise SystemExit(f'{name} is not listed in {series_path}')
+earlier = [ROOT / 'patches/xnu' / item for item in series[:series.index(name)]]
 
 
 def git(tmp, *args, check=True):

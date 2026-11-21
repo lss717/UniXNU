@@ -47,6 +47,14 @@ WORK="$TREE/.cache/xnu-work"
 FEED="$TREE/refer/xnu"
 GEN="$TREE/build/xnu/ios-obj/bsd/sys/_symbol_aliasing.h"
 PATCH_MARKER="H82_DATA_WAIT"   # added by patches/xnu/offline-owner-systemos-mount.patch
+export PATH=/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+PYTHON=/opt/local/bin/python3.12
+PATCH_LIST="$(mktemp "${TMPDIR:-/tmp}/unixnu-xnu-series.XXXXXX")"
+trap 'rm -f "$PATCH_LIST"' EXIT
+"$PYTHON" "$SOURCE_ROOT/scripts/apply-patch-series.py" \
+  --root "$SOURCE_ROOT/patches/xnu" list >>"$PATCH_LIST"
+"$PYTHON" "$SOURCE_ROOT/scripts/apply-patch-series.py" \
+  --root "$SOURCE_ROOT/kits/NativePrelink/patches" list >>"$PATCH_LIST"
 
 if [ "${1:-}" = "--clean" ]; then
   rm -rf "$WORK"
@@ -85,7 +93,7 @@ fi
 if [ -d "$WORK/.git" ] && [ "${XNU_SKIP_PATCH_LOOP:-0}" = 1 ] && grep -q "$PATCH_MARKER" "$WORK/bsd/kern/kern_exec.c"; then
   echo "reusing explicit patched xnu-work after marker check"
 elif [ -d "$WORK/.git" ]; then
-  for stale in "$SOURCE_ROOT"/patches/xnu/*.patch "$SOURCE_ROOT"/kits/NativePrelink/patches/*.patch; do
+  while IFS= read -r stale; do
     git -C "$WORK" apply --reverse --check "$stale" >/dev/null 2>&1 && continue
     if git -C "$WORK" apply --check "$stale" >/dev/null 2>&1; then
       # Applicable but not applied: the archive builders compile from this worktree and
@@ -100,7 +108,7 @@ elif [ -d "$WORK/.git" ]; then
     # builders compile a freshly cloned, unpatched source tree.
     rm -rf "$WORK" "$TREE/build/xnu/ios-obj"
     break
-  done
+  done <"$PATCH_LIST"
 fi
 NEED_PATCH=0
 if [ ! -d "$WORK/.git" ]; then
@@ -118,9 +126,7 @@ else
   export XNU_SKIP_PATCH_LOOP=1
 fi
 
-export PATH=/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
-PYTHON=/opt/local/bin/python3.12
 if [ ! -x "$PYTHON" ]; then
   echo "required Python is missing: $PYTHON" >&2
   exit 1

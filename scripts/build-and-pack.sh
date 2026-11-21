@@ -31,15 +31,10 @@ fail() { echo "build-and-pack: $*" >&2; exit 1; }
 
 echo "== 1/4 kit patches (NativePrelink)"
 cd "$ROOT/out/cheeseburger/tree/.cache/xnu-work" || fail "no xnu tree"
-for patch in "$ROOT"/kits/NativePrelink/patches/*.patch; do
-  if git apply --reverse --check "$patch" >/dev/null 2>&1; then
-    echo "   already applied: $(basename "$patch")"
-  elif git apply "$patch"; then
-    echo "   applied: $(basename "$patch")"
-  else
-    fail "cannot apply $(basename "$patch")"
-  fi
-done
+/opt/local/bin/python3.12 "$ROOT/scripts/apply-patch-series.py" \
+  --root "$ROOT/kits/NativePrelink/patches" apply \
+  --worktree "$ROOT/out/cheeseburger/tree/.cache/xnu-work" \
+  --skip-applied || fail "cannot apply NativePrelink patch series"
 
 echo "== 2/4 kernel (JOBS=$JOBS)"
 cd "$ROOT" || fail "no repo"

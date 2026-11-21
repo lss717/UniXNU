@@ -53,11 +53,9 @@ for LATE_PATCH in "$ROOT/patches/xnu/zzzzzzzz-h103-root-union.patch" \
     git -C .cache/xnu-work apply --reverse "$LATE_PATCH"
   fi
 done
-for PATCH in "$ROOT"/patches/xnu/*.patch "$ROOT"/kits/NativePrelink/patches/*.patch; do
-  if ! git -C .cache/xnu-work apply --reverse --check "$PATCH" >/dev/null 2>&1; then
-    git -C .cache/xnu-work apply --check "$PATCH"
-    git -C .cache/xnu-work apply "$PATCH"
-  fi
+for SERIES_ROOT in "$ROOT/patches/xnu" "$ROOT/kits/NativePrelink/patches"; do
+  python3 "$ROOT/scripts/apply-patch-series.py" --root "$SERIES_ROOT" apply \
+    --worktree .cache/xnu-work --skip-applied
 done
 fi
 export XNU_AVAILABILITY_PL=$ROOT/.cache/fakeroot/usr/local/libexec/availability.pl
