@@ -21315,3 +21315,101 @@ H491_LSD: recovery queued
 若 xpcproxy 仍拒绝 `/System/Library/xpc/lsdwrap`，下一轮必须改 kernel
 路径覆盖，不能再次只换 Data 子目录。若 wrapper/real/shim 均进入，则直接
 比较 SpringBoard 的 lsd reply queue 与 `SBMainWorkspace` 初始化是否继续。
+
+### §188 H519 真机：System xpc 路径允许 wrapper，shim 进程过滤未命中（2026-11-21）
+
+H519 在 serial `16149951`、boot ID `226e64cf` 上执行一次
+`fastboot boot`。H518 的 xpcproxy 路径拒绝已经消失，发生顺序为：
+
+```text
+301.513472 s  NATIVE_EXEC pid=96 comm=xpcproxy
+304.456886 s  NATIVE_EXEC pid=96 comm=lsdwrap
+              argv0=/System/Library/xpc/lsdwrap
+307.211937 s  NATIVE_EXEC pid=96 comm=lsd.real
+              argv0=lsd
+327.781255 s  builder#2 build H519
+```
+
+因此 System xpc union 路径、wrapper 签名/trust、owner wrapper 和原始
+`lsd.real` exec 均生效。实际进程名仍由内核记录为 `lsd.real`；H491 shim
+构造器要求 `getprogname()` 精确等于 `lsd`，live 与 TWRP 持久环都没有
+`H491_LSD: recovery async installed/queued`。本轮的确定问题是进程过滤不匹配，
+不能据此判断 `performJournalRecovery` 无法异步化。分类：
+`H519-lsd-wrapper-system-path-pass/lsd.real-filter-miss`。
+
+wrapper 对 `/dev/console` 的文本行也没有进入 UXL 文本，推测与该 job 的
+sandbox/console 路由有关；判断 wrapper 已执行依据是内核自己的 `NATIVE_EXEC`
+行，不是缺失的应用日志。
+
+UXC1 `424516` 在 376.520588 秒 ACK 后正常重启，Android
+`sys.boot_completed=1` 后转回 TWRP，256-slot 持久环只读拉取成功。证据：
+
+```text
+H519-live.log               76a18692131418e4cbbb915e64b14f250ff642a1d03ba53b784ac6d44b97e7ce
+H519-live.capture.stdout    0440d7071f4383ec029b6cbf320a601cfe999d355e94c2efac391034159fe749
+H519-h103.txt               245912c43a794e1267b4953631b083e104afa8f9570b6828db330603e8e265fd
+H519-tail32.bin             e6bd269944398429b49353805f09644ffd097974706dda4a4ec5c2b04854fd66
+H519-reboot.log             47ab05b8650b7d41b6790c36a54aa57c7f8091c19885a03d08538e4d6567bab3
+H519-reboot.frames.bin      e4f4a4999673d418e806436924da2c23b53f0e3a6b3c7195627697e29e8170f4
+```
+
+### §189 H520：让 recovery shim 接受 lsd.real（2026-11-21）
+
+H520 保持 H519 的 kernel、Data seed、launchd cache、System xpc wrapper 路径和
+所有 addon 文件布局不变，只把 H491 shim 的进程过滤从：
+
+```text
+strcmp(process, "lsd")
+```
+
+改为：
+
+```text
+strncmp(process, "lsd", 3)
+```
+
+并提升 observer/trace/shim build marker。这样 `lsd.real` 仍只匹配 lsd 系进程，
+不会进入 SpringBoard、backboardd 或其他服务。
+
+源码：NativeMetal `90a8897721de14f5d62d01c28f00518f7c890694`，
+superproject `bbd115a`。addon 从 H519 实际十文件产物继承，只替换：
+
+```text
+addons/A540Trace.bundle/A540Trace
+addons/A540Trace.bundle/_CodeSignature/CodeResources
+lib/SpringBoardSceneObserver.dylib
+lib/LsdRecoveryAsync.dylib
+```
+
+`xpc/launchd.plist`、`xpc/lsdwrap`、`xpc/lsd.real`、SpringBoard 和其余文件
+逐字节不变。产物：
+
+```text
+observer SHA-256       7546b956465b22902a2f6813db5478eccec53d1b5c3d32232d44ee3c53e39677
+observer CDHash         83e41981720a29ee34574099a6909f943a29a579
+A540Trace SHA-256      ad223e8e0eef027eb4483a385825e6ffbc5b9263d85c1d152f0550d7e424a84e
+A540Trace CDHash       358cd5cf1fca39868ef90772feabc5ad35a6558a
+recovery SHA-256       177a7bf76eb8ee880455db5420e83e6371f3d39f84869315c192e73e4cc465a1
+recovery CDHash        f8e5a173368cc4e139fcbe649c088e02468587f6
+addon SHA-256          59aa3beeff0902289c689434e46fdcf13d8bf954d9bc93a8742eaecd6567b24c
+trust SHA-256          ffebdef509aaf1c6a89bdbaff14a6289056b11336f6e5a470c79a6fff8e77f9e
+payload SHA-256        b66c1e5b2bf661aae3e35cee142f9be8e1397dbf49e21c9c2d02a10ebf7e0f5b
+boot SHA-256           040a98b8685227d1e65587e9edf7db805126e22a0223cbb7b93c42b5d8e27ae5
+boot.json SHA-256      26ae4f36da210aa5ebf65395a7009a1d608730e4653af8a5bf54174ab6eaf6e1
+```
+
+owner trust 为 78 个 own CDHash。kernel、ADT、Data seed 和 boot header
+与 H519 相同，bootargs 仍为 988 字符，当前 `1008/1024`、最坏
+`1016/1024`。状态：`boot-built-static-verified-not-device-ready`。
+
+设备判据不依赖被 sandbox 吞掉的 console 行，首先要求进程链继续为
+`xpcproxy -> lsdwrap -> lsd.real argv0=lsd`，然后比较：
+
+- SpringBoard 的 `peer=lsd q=1` 请求是否从队列消失；
+- SpringBoard 主线程是否离开
+  `_LSContextInitCommon/DMFSupport::reloadAllPolicies`；
+- `SBMainWorkspace _finishInitialization` 是否继续；
+- 是否出现新的 context/content commit。
+
+若请求仍不消费，查 lsd utility queue 上原 recovery 的实际栈；若请求消费，则
+记录下一处 scene/content 门。不能以 `H491_LSD` console 行单独判定阴性。
