@@ -139,7 +139,7 @@ def main() -> int:
         OBSERVER,
         (
             b"observer load process=",
-            b"build=H518",
+            b"build=H519",
             b"H492_CCS",
             b"filter bypass installed",
             b"filter bypass pid",
@@ -188,7 +188,7 @@ def main() -> int:
             LSD_BOOTSTRAP,
             (
                 b"H518_LSDWRAP",
-                b"/private/var/ngpu/bin/lsd.real",
+                b"/System/Library/xpc/lsd.real",
                 b"/private/var/ngpu/lib/LsdRecoveryAsync.dylib",
             ),
         )
@@ -270,7 +270,7 @@ def main() -> int:
         before_lsd = copy.deepcopy(lsd_job)
         if lsd_job.get("ProgramArguments") != ["/usr/libexec/lsd"]:
             raise SystemExit("cached lsd job has an unexpected executable")
-        lsd_job["ProgramArguments"] = ["/private/var/ngpu/bin/lsdwrap"]
+        lsd_job["ProgramArguments"] = ["/System/Library/xpc/lsdwrap"]
         lsd_report["lsd_job_before_program_arguments"] = before_lsd["ProgramArguments"]
         lsd_report["lsd_job_after_program_arguments"] = lsd_job["ProgramArguments"]
         modified = plistlib.dumps(cache, fmt=plistlib.FMT_BINARY, sort_keys=False)
@@ -306,8 +306,8 @@ def main() -> int:
     files.append(("springboard/SpringBoard.real", 0o755,
                   (SPRINGBOARD_DIR / "SpringBoard.real").read_bytes()))
     if lsd_source is not None:
-        files.append(("bin/lsdwrap", 0o755, LSD_BOOTSTRAP.read_bytes()))
-        files.append(("bin/lsd.real", 0o755, LSD_BINARY.read_bytes()))
+        files.append(("xpc/lsdwrap", 0o755, LSD_BOOTSTRAP.read_bytes()))
+        files.append(("xpc/lsd.real", 0o755, LSD_BINARY.read_bytes()))
         files.append(("lib/LsdRecoveryAsync.dylib", 0o755, LSD_SHIM.read_bytes()))
 
     body = b""
