@@ -21611,3 +21611,62 @@ H522-tail32.bin                ee9a5569327ef0b2e5e5bbac8c3342fa1ce536cd606eff924
 下一轮必须追 receive name `0x8c03` 在 lsd task namespace 的 port object、
 是否实际排队以及是否有线程在该 receive name 上阻塞；不能再把 lsd recovery
 当作该请求的阻塞候选。
+
+### §193 H523：追踪 SpringBoard 到 lsd 的 target receive port（2026-11-22）
+
+H523 保持 H522 的 kernel、Data seed、launchd cache、SpringBoard、lsd wrapper、
+`lsd.real`、observer、A540Trace 和其它 addon 文件布局不变，只增加只读内核
+target-port 探针。探针在 SpringBoard 的 `req=…/lsd.real q=1` 出现时记录目标
+receive name 和 send-right port object；随后在 lsd task namespace 查询同名
+receive port，并检查是否有线程在 Mach trap `-47` 上等待该 receive name。
+
+本次同时在独立 commit 中把 Format 1 XNU 补丁入口改成
+`patches/xnu/series` 加 `kits/NativePrelink/patches/series`，去掉 84 个纯排序
+前缀并保留原有应用顺序。旧顺序与最终 series 在 clean XNU
+`d8b80295118ef25ac3a784134bcf95cd8e88109f` 上都得到 tree
+`d472b9e76667a67d3e6194ca8c1b761cacf6db8a`，全部 84 个文件迁移均为 Git
+100% rename。该迁移与第一帧实验证据分开记录在
+`diagnostics/FORMAT1-XNU-patch-series-2026-11-22.md`。
+
+构建与打包源码：
+
+```text
+superproject          97a6219
+NativeMetal           5ba227d803a15366efabcaf6c83f4d73daef0f53
+NativePrelink        84aa36d00a29e22a39b4eb2465fbbf6a4b693126
+device repository    0e97aed
+```
+
+Mac 正常入口应用 134 个 XNU patch 加 2 个 NativePrelink patch，过滤后的编译
+错误为零，prelink 成功。H523 payload 从 H522 payload 复制后只替换
+`Payloads/kernel.macho`；ADT、scratch Data、owner trust、GPU addon 和
+`unixnu.toml` 均与 H522 逐字节一致，payload 内 kernel 回读也与构建产物一致。
+
+产物：
+
+```text
+kernel SHA-256         4a6027c94321545740e86a2f335f6a56e78e0d4b42fad4098ca507bd8529e02c
+ADT SHA-256            9fa9e5ba88b84546ef89f79b26bbd9a9cea5e881b8efebf2c2149d09259eb74d
+Data seed SHA-256      7522c2b803bac371190e5f316bacc825d1dd3c964ef3a3ab6ffd75bf0f9bae79
+GPU addon SHA-256      dc2dc3a157f1498ce5d0fa1ec5b0bb5383e6fb6b6d914fd505c59e6936250026
+owner trust SHA-256    fde42382e4cfe41e3407c0f2f50854c8a3ac2f9042f142ddcaa1b1582bd9ab69
+payload SHA-256        e4f932e0be71107faa02b4ff933f1dcc07786a94c84c5f630cc4fd9c9aa4b50b
+boot SHA-256           139287c226cd3dc8643ae1713ef278566377b017cabe0f5da856b8b330c19433
+boot.json SHA-256      26e632a5f7b464b9124e666c1e030cb5dbc9dc614838dab276e84d8faa602638
+unixnu.toml SHA-256    dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e065f01e81
+UEFI SHA-256           9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6
+```
+
+owner trust 仍为 84 项。bootargs 为 988 字符，当前 `1008/1024`、最坏
+`1016/1024`，`check-bootargs-fit.py` PASS。二进制包含
+`NATIVE_TARGETPORT` 和 `NATIVE_TARGETWAIT` 字符串。状态：
+`boot-built-static-verified-not-device-ready`。
+
+设备判定只看以下分支，不能把“收到 lsd 消息”或“watchdog counter 增加”当成
+receiver 已完成：
+
+- `sender` 已设置而 lsd `seen=0`：查看 receive name namespace；
+- `seen=1 match=0`：比较 send-right 与 receive-right port object；
+- `seen=1 match=1 q=1` 且 `TARGETWAIT seen=0`：消息已排队但无线程接收；
+- `TARGETWAIT seen=1`：符号化 lsd waiter 的栈和 handler；
+- 请求消失：转向 LaunchServices 返回后的 scene 或 CA 内容门。
