@@ -21209,3 +21209,109 @@ H491_LSD: recovery queued
 `recovery queued` 出现、请求完成且 `SBMainWorkspace` 继续初始化，记录
 下一处 scene/content 门；若 wrapper 被平台约束拒绝，按实际
 `NATIVE_EXIT/NATIVE_PANIC` 修正 wrapper，不能把 shim 未加载写成阴性。
+
+### §186 H518 真机：Data 路径 wrapper 在 xpcproxy 阶段被拒绝（2026-11-21）
+
+H518 在 serial `16149951`、boot ID `1f35f1e4` 上执行一次
+`fastboot boot`。addon 安装为 10 files/8 written，`builder#2 build H518`
+在 282.148041 秒确认。launchd 读取修改后的 `com.apple.lsd` job 后，在
+xpcproxy 执行实际程序之前拒绝 Data 路径：
+
+```text
+System Policy: xpcproxy(96) deny(1) process-exec*
+  /private/var/ngpu/bin/lsdwrap
+NATIVE_EXIT: pid=96 ppid=1 comm=xpcproxy status=0x4e00
+```
+
+PID 96/100/101/102/103/104/106/107/108/109/110/111/112/114/115/116/117/
+118/119/120/122/123/124/126/127/129/130/131/134/135/136/137/138 重复同一
+拒绝。live 与持久环均没有 `H518_LSDWRAP`, `H491_LSD` 或
+`comm=lsd argv0=lsd`。因此 wrapper main 未执行，shim 未安装；本轮不能形成
+journal-recovery 阴性。分类：
+`H518-lsd-wrapper-denied-before-main/private-data-exec-path`。
+
+CDC 保持健康，UXC1 `424515` 只发送一次并在 361.323146 秒 ACK，随后正常
+重启；Android `sys.boot_completed=1` 后转回 TWRP，只读拉取 256-slot 持久环。
+证据：
+
+```text
+H518-live.log               4b3bc5434b19d063c1e461bd1e1fb1f6801de455edbcb3715c1920040cac3eb6
+H518-live.capture.stdout    e0b59849bfe32c576bc4794cb6478b09eba2536d3a833817046a7961fdd953e8
+H518-h103.txt               f9dc0b3c21f09c5e3bdead7eb55def8f2f2c85cfe837a4c8965f4d16827bea8a
+H518-tail32.bin             2db6d73af07eec76e4d8ed532d7cff6f24408a483a8010e3f982cb48c4b6e1e4
+H518-reboot.log             be67004ee4d2a78ae4f2f92c647d02225014963b40d8a2c066fa9120b5446b58
+H518-reboot.frames.bin      8c20dd35ffed8d578c426b74ca4be67befdbc1d0d15e296c8d5fc9eb43fbf59e
+```
+
+H518 live text 同样因手动停止外层采集而没有 frames 文件；文本、
+`capture.stdout` 和 TWRP 持久环对拒绝行的证据一致。
+
+### §187 H519：把 lsd wrapper 放到已有 System xpc 联合层（2026-11-21）
+
+H519 保留 H518 的 wrapper/shim 逻辑，只改变被系统策略拒绝的两个路径：
+
+```text
+launchd ProgramArguments
+/private/var/ngpu/bin/lsdwrap
+-> /System/Library/xpc/lsdwrap
+
+wrapper exec target
+/private/var/ngpu/bin/lsd.real
+-> /System/Library/xpc/lsd.real
+```
+
+`/System/Library/xpc` 已经由现有 kernel patch 通过只读 union bindfs 映射到
+`/private/var/ngpu/xpc`，不再需要 kernel 或 Data seed 变化。除这个路径迁移和
+build marker 外，H519 沿用 H518 的 `LsdRecoveryAsync` 与 H517 的
+SpringBoard/display 基线。
+
+源码：NativeMetal `7ede7848a1b43ccb0dae8779f79f52030d078156`，
+superproject `4077861`。候选 addon 从 H517 实际七文件产物生成，最终十个
+条目；与 H517 比较，除 observer/trace/launchd 三个替换项外，原有文件
+字节不变，新增项只有：
+
+```text
+xpc/lsdwrap
+xpc/lsd.real
+lib/LsdRecoveryAsync.dylib
+```
+
+launchd cache 只把 `com.apple.lsd` 的 `ProgramArguments[0]` 从
+`/usr/libexec/lsd` 改成 `/System/Library/xpc/lsdwrap`。解析后其余 560 个
+job、SpringBoard job 和环境项均与 H517 相同。
+
+```text
+observer SHA-256       d45c1ac6e9c0cd8209f4f4747c3703c6303d42787420800111bd5f3bdd13798c
+observer CDHash        4f8496839073ed1f8d777b206f04810bbee5d5b2
+A540Trace SHA-256      d816e8a150938b48d0c01079be1f72f709cca1a67312b3ec2aa413747632f372
+A540Trace CDHash       3850193926fe56762e41413077c5851e22f864f7
+lsd wrapper SHA-256    ebeba8a3573619eba1614cee5aec7d989fd37a7a4ecc9cb510cbfb3def6b7d1b
+lsd wrapper CDHash     2448b2b99fd5b51f9d6f9aa6f7f7bfaa662806ff
+lsd.real SHA-256       43ee16e03145f3ad6b84fc7dac63ee767ec8182b51bc9cb5bd8bf8650baa4e5b
+lsd.real CDHash        ac94a8fe699b2a550b65baccc30e63d90de5215b
+recovery SHA-256       c8213c7ddaf860c380ecf92dd49725fb66e31ef04fe14fbd32c55a9d59053e38
+recovery CDHash        f0a67ae7df291dd40890d06c9c578df2fee1d6fe
+launchd.plist SHA-256  21cdbc11b0dda7c6f3cde31fde4abaf9730c4647f515717aea8766aab65ecd7f
+addon SHA-256          8a6f6a23a1b309822223a99c20c319644a4b7e664102e2b984f96ccf0e46a920
+trust SHA-256          48f7c7c493be4b113f1d4e3a8350c9912381a0dec381a2644ce4f0bb8cdb388c
+payload SHA-256        c495cd8f17ab02657d590056cd8f817258f2032a7bc1b8f21d6d1468d970e468
+boot SHA-256           3b5f086da24635891a3d52ece44d0f43378f8758705ccaef5eafef9709a0ffb8
+boot.json SHA-256      9dde3b448906af35cb4e7ff685ae9bbd2e3f422140106ac1c3203368b63824bd
+```
+
+owner trust 为 75 个 own CDHash。kernel、ADT、Data seed 和 boot header
+与 H518 相同，bootargs 仍为 988 字符，当前 `1008/1024`、最坏
+`1016/1024`。状态：`boot-built-static-verified-not-device-ready`。
+
+设备门要求：
+
+```text
+H518_LSDWRAP: wrapper enter
+NATIVE_EXEC ... comm=lsd ... argv0=lsd
+H491_LSD: recovery async installed
+H491_LSD: recovery queued
+```
+
+若 xpcproxy 仍拒绝 `/System/Library/xpc/lsdwrap`，下一轮必须改 kernel
+路径覆盖，不能再次只换 Data 子目录。若 wrapper/real/shim 均进入，则直接
+比较 SpringBoard 的 lsd reply queue 与 `SBMainWorkspace` 初始化是否继续。
