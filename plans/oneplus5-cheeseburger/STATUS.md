@@ -20154,3 +20154,99 @@ owner trust 为 47 项。payload 以 H506 为 FAT 基线，kernel、ADT、Data s
 sample 4 的 window/view/layer 树，以及 preceding CA/server context 事件。
 若仍只有 server 空树而没有 root/status 可见或提交事件，下一轮只增加
 window→layer→CAContext 的关联字段，不进入 Metal/IOMFB 分支。
+
+### §164 H507 真机：状态栏可见，SBRootSceneWindow 仍隐藏且为空（2026-11-21）
+
+H507 在 serial `16149951`、boot ID `28240bc3` 上完成 900 秒运行。
+backboardd 在 364.407465 秒为 context `0x393d1e19` 设置根 layer，随后四个
+commit 节点深度为 `1,2,1,0`，共同 root 为 `0x100d811d0`。366.412288 秒的
+第二个 context `0x514fe61` 同样产生深度 `1,2,1,0` 的四个 commit，共同 root
+为 `0x100d8c440`。两个 root 的 contents 都是空，context state 仍为
+1080x1920、subs=2、nodes=4、contents=0。
+
+SpringBoard 在 453.037080 秒创建 client context `0xf5efb2f1`，随即先把
+nil 再把它自己的 `UIWindowLayer` 设置为 context layer。457.062774 秒明确出现：
+
+```text
+event=uiwindow_set_hidden window=status
+hidden=0 _isVisible=1 layer=UIWindowLayer delegate=SBStatusBarWindow
+```
+
+因此状态栏探针有效且为可见状态；其 layer contents 仍为空。sample 4 在 537.832
+秒开始，546.551834 秒得到唯一 application window：
+
+```text
+class=SBRootSceneWindow hidden=1
+layer=UIWindowLayer rootVC=nil
+windowScene=_UIScreenBasedWindowScene activationState=0
+hierarchy=window rootVCView=0 subviews=1
+view[0] UIView hidden=0 -> CALayer contents=0
+window layer UIWindowLayer contents=0
+  -> CALayer contents=0
+```
+
+全轮没有 root window 可见事件，没有 `ca_layer_set_contents`、
+`event_context_slot`、`event_context_commit_wait` 或
+`event_display_surface`，sample 5 仍缺失。对照结论：
+`H507-status-visible/root-window-hidden-empty`。故障已缩小到 root scene
+建立/激活和 root content 创建，早于 Metal 合成与 IOMFB。
+
+显示门在 1131.752971 秒仍为
+`dpy=4/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0`。采集健康为
+`frames=6672 payload_bytes=887786 crc_errors=0 sequence_gaps=0
+boot_switches=0`，frame 文件为 1,101,290 bytes。最后 H469 行为在
+1167.844003 秒为 `seq=226117 done=226117 flight=0 lock_timeout=0`；
+`lock_wait_ms=11679699 lock_ok=651386`，平均约 17.93 ms，
+`lock_wait_max_ms=34033`。没有 OCS、doorbell 或 recovery。
+
+UXC1 `424509` 只发送一次，在 1197.896644 秒 ACK 并 normal reboot；
+Android 完成启动后一次 recovery reboot 返回 TWRP。
+
+证据：
+
+```text
+H507-live.log                 7404da09e3d81b9ef523389a6f6f7617cec4993ec5f95c9a018e2e254631bbca
+H507-live.frames.bin          6a8d757f14fa6fbc1381d85749875d31295a77b9723f3f0de96c379f8c1b1897
+H507-live.capture.stdout      fefa6729ce1e1e889adc14ef16f45a3e561b0d97a072bedc510e3f5e49e77f1c
+H507-h103.txt                 20df3210381baff2ec73a13670d84a655122d931896d3bd6e99a90cc1b37bd1a
+H507-tail32.bin               3162123af76e464edae21405e44429bc8276580959ffe21480495ac4a017c85f
+H507-reboot-recovery-state    10d2436891116a7d0b795c8e391c4fc1374c18db432f74cb020ac9bcf9aa5ac5
+```
+
+### §165 H508：在 sample 4 后只请求 SBRootSceneWindow 可见（2026-11-21）
+
+H507 的 root scene activation 仍为 0、rootVC 为 nil，root window 为 hidden。
+H508 因此只增加一个写操作：sample 4 完成后，把已存在的
+`SBRootSceneWindow` 提交到主队列并调用公开的 `makeKeyAndVisible`。调用前后
+各记录 window hidden、`_isVisible`、layer、windowScene 和 activationState；
+10 秒后再次记录同一状态。没有创建 scene、设置 rootViewController、填充
+surface 或直接调用 CA commit。
+
+其余 kernel、ADT、Data seed、bootargs、显示驱动、H507 CA/server hooks、
+status window 对照和 sample 4 深树保持不变。NativeMetal
+`bfc5fed461b96ba0680e9726a74d3f99fcd1023a`，superproject `4b13501`。
+H508 observer/CCS gate、arm64 4 KiB 签名和 ARC compile 均 PASS。
+
+产物：
+
+```text
+observer SHA-256       a7d97e9d131cff94c749c04e5e81f432e3a39c672ba665950a6ad0483ecb5691
+observer CDHash        bdd21389b4f8740a9f731e3c59d86e92fe127ff0
+A540Trace SHA-256      390af2e006853f3fbde777771da08a2391ec8db61489a5ce2a2ef9c497b7f950
+A540Trace CDHash       b820bc3732ad2f2e913e900c56e55ce5bd2b9d2e
+addon SHA-256          bbbd16bbec4cc338a1f46c7dd0b1183d32b8188c84759ea48a3b217593d287ed
+trust SHA-256          7d02242b74c37212957e77467d6202fb468d04c1f2e9b443a36a08c14f6cfefd
+payload SHA-256        a91bed6edb3ce7ea1ed56c550897ae4612039b84b1d200dcc66a47e599310588
+boot SHA-256           3ca84ba1b5eb72e85c255c33cf28425b945dbbaf62defc4e71826482fc78b98d
+boot.json SHA-256      663b5ebb72deda17207da76cbba8e6462c0414aa9cb556cccf263b21c7f36b38
+```
+
+owner trust 为 49 项。payload 以 H507 为 FAT 基线，kernel、ADT、Data seed
+和 `unixnu.toml` 逐字节相同；addon/trust 回读匹配输入。bootargs 最坏
+1016/1024 bytes。状态：`boot-built-static-verified-not-device-tested`。
+
+设备门要求 sample 4 先复现 root hidden=1，随后出现
+`root_activation_state before/request/after/post10` 和
+`uiwindow_make_key_visible`。若 hidden 仍为 1，下一步单独处理 scene/window
+association；若 hidden 变 0 但 rootVC 仍 nil，下一轮只建立 root content；
+只有 root commit/context slot 出现后，才进入 CA present 与 IOMFB。
