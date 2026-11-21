@@ -20927,3 +20927,49 @@ boot.json SHA-256      63af347513071267e0f2cc5e4986fbf93f75673caf219217457553195
 owner trust 为 65 个 own CDHash；payload 从 H515 baseline 只替换
 trustcache/gpuaddon。observer gate、arm64、strict codesign 与 readback
 均 PASS。状态：`boot-built-static-verified-not-device-ready`。
+
+### §182 H516 真机：无周期探针时 SpringBoard 仍未进入 UIKit 生命周期（2026-11-21）
+
+H516 在 boot ID `2179248d` 上完成 live 采集，并通过 TWRP 拉取
+256-slot 持久环。`build H516` 在 286.576770 秒确认，observer 没有
+`dispatch_after`、pthread sample 5 或事件后 sample 6。
+
+整个 900 秒窗口及持久环中：
+
+```text
+h515_shared_application_enter     0
+h515_shared_application_return    0
+h515_application_notification     0
+uiwindow_set_hidden window=status 0
+ca_context_remote_create          0
+ca_host_context_bind/visible      0
+event_context_slot/display_surface 0
+```
+
+这排除了周期采样器、后台 `sharedApplication` 轮询和观察日志调用导致
+SpringBoard 不进入 UIKit 的主要可能。当前干净对照仍没有 SpringBoard
+自身调用 `sharedApplication`，也没有 didFinishLaunching/foreground/active
+通知。分类：
+`H516-no-periodic-probes/SpringBoard-before-UIKit-lifecycle`。
+
+显示门在 1170.228996 秒仍为
+`dpy=4/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0`。H469 持续完成，最后 live
+行为 `seq=218124 done=218124 timeout=0 ocs_err=0 dbto=0 recover=0
+recovered=0 lock_timeout=0`，未显示 OCS、doorbell timeout 或 recovery。
+
+live capture 为 `frames=6272 payload_bytes=806437 crc_errors=0
+sequence_gaps=0 truncated_frames=0 boot_switches=0`。持久环完整读取到
+`merged_slots=256`，与 live 对照无新的 SpringBoard UIKit 事件。
+
+证据：
+
+```text
+H516-live.log                 3ee6aa5d065b486bc5b114fb9a1cef6ba6774d787e0ec508b9fa05520895a39a
+H516-live.frames.bin          9fb985d1e500ae7ae6b28dfedf9a7b6c6d26aa7ab5b43b4e92e503e179bd60c7
+H516-h103.txt                 d1500facb654d49542be5663ad8a4dd995505bc28b9d25d10e599d1868aca3c2
+H516-tail32.bin               bd616963fcb4e460e5bdacb01fdd374f9807cd560869f1495337396cc5bb710a
+H516-reboot.log               98404d38d288e73ed2e24186d8f67ad2a5a287e67d513f3b6b5f27c49387d9a1
+```
+
+下一步转向 SpringBoard 到达 UIKit 主入口之前的前台 scene/activation 输入，
+不再修改 root window、sharedApplication 观测或 run loop。
