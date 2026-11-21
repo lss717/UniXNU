@@ -38,9 +38,9 @@ fi
 if [ "${XNU_SKIP_PATCH_LOOP:-0}" != 1 ]; then
 # The optional observation hooks overlap existing root/exec patch context.
 # Remove them first so earlier independent patches retain their idempotent checks.
-# The same holds for the boot-time GPU addon mount and the staged system apps copy (zzy), which edit the owner Data mount function
-# inside the systemos patch. Reverse newest first; the series then re-applies
-# them in its recorded order.
+# The same holds for the boot-time GPU addon mount and the staged system apps
+# copy, which edit the owner Data mount function inside the systemos patch.
+# Reverse newest first; the series then re-applies them in its recorded order.
 for LATE_PATCH in "$ROOT/patches/xnu/log-root-union.patch" \
     "$ROOT/patches/xnu/log-process-snapshot.patch" \
     "$ROOT/patches/xnu/log-data-snapshot.patch" \

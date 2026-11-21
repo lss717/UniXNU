@@ -68,7 +68,7 @@ apply`; the H467 script requires an already-patched tree. A backup was kept at
 
 Two build-chain repairs were needed:
 
-- `zzzzzzzz...h437-late-springboard-union.patch` was re-anchored to the current
+- `springboard-late-union.patch` was re-anchored to the current
   late union function and now applies without fuzz.
 - The retired GPU addon counter patch restored the two zero-initialized
   observation symbols `native_gpu_addon_calls` and

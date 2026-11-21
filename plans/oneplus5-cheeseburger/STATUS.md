@@ -3313,8 +3313,8 @@ H103ea boot      a07fe2567b43edcf7cbd58a86a8d4474cae49ac84e79b667e074205e1b4e2f5
 - 本次只并入上游 `native-sandbox-grant-set-properties.patch`：把
   `NativeSandboxGrantProcess` 授权扩展到 `setProperties`（backboardd 的
   `FadePeriod` 会被沙箱拒绝）。已在 `xnu-10063.141.1` 的原始
-  `iokit/Kernel/IOUserClient.cpp` 上按名字顺序验证可应用（`zzw` 之后
-  `offset -12`）。
+  `iokit/Kernel/IOUserClient.cpp` 上按 series 顺序验证可应用
+  （`native-adreno-sandbox-grant.patch` 之后 `offset -12`）。
 - 未并入：`native-work-interval-instance`、`native-union-lower-directory`、
   `native-lookup-trace`、`zzyb-native-cryptex-os-view`、
   `zzyc-owner-skip-launch-constraints`，以及 GopFramebuffer 的 13 个
@@ -9192,7 +9192,7 @@ H212 boot:    e16725f483fdb76473a9b4b0dec95caf84ff655fca563d91ae6b6281d515de9c
 
 ### H213：精简诊断 + CPU 频率格不再误报红（2026-11-08）
 
-投送诊断（`zzzz…h213-addon-diff-report.patch`）：
+投送诊断（`addon-diff-report.patch`）：
 
 - 先打印 `diff=`（副本 vs 交接块首个不同字节）和两侧 16 字节；
 - 只打印 9 行 1 MiB 校验和 + 16 行 64 KiB（`0x700000..0x800000`），
@@ -10417,7 +10417,7 @@ H236u 之后连续踩了两个构建/打包问题，先把它们记下来：
   内核在 `kern_trustcache.c:1051` 报 `property lookup failed -1`。**以后必须从
   H236t 的 payload 复制后只替换 kernel/toml，或显式传三个输入。**
 - **H236u(u2) panic**：最早一次 `./unixnu build kernel` 跑 patch loop 时在
-  `KernelConfigTables.cpp:61` 失败；失败前 loop 已把 10 个 `zzz*/zzy*` 后置
+  `KernelConfigTables.cpp:61` 失败；失败前 loop 已把 10 个 late-series
   patch 反向卸掉，随后一直用 `XNU_SKIP_PATCH_LOOP=1` 构建，导致
   `NATIVE_ROOT_AUTH_BYPASS` 不存在，在 `bsd_init.c:1103` panic。修法：删掉
   `.cache/xnu-work`，从干净 XNU 重新 clone 并完整应用 patch，再全量编译。
@@ -10554,9 +10554,10 @@ H236an boot    736eabecafbd132201d5c1c192bbb1b9f4f13f9a5ec19ad414558895f736ed5a
 仍挂，再把 `reset → SMMU → configure → CP/GPMU` 移到 UEFI，或先查 secure/XPU。
 
 **Mac 构建注意（H236an 起固定）**：`build-xnu-4k-baseline.sh` 的 patch 循环对
-已打补丁的 `.cache/xnu-work` 不是幂等的，会在 `iokit/KernelConfigTables.cpp`
-上失败；失败时它可能已经反向卸掉 `zzz*` 后置 patch（H236v/H236an 都踩过）。
-因此：
+已打补丁的 `.cache/xnu-work` 曾因字典序和反向检查组合在
+`iokit/KernelConfigTables.cpp` 上失败；失败时它可能已经反向卸掉 late-series
+patch（H236v/H236an 都踩过）。当前版本改为显式 series 清单，并以
+`--reverse --check` 只跳过已经存在的条目。
 
 ```sh
 # 正常重建（xnu-work 已经是完整 patch 状态）
