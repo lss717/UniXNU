@@ -18337,3 +18337,29 @@ layout 均 PASS。状态：`boot-built-static-verified-not-device-tested`。
 若 probe 也 abort，结论是 owner-signed `SpringBoard.real` 的 pre-main
 dependency 路径本身不可用；若 probe 成功而 observer dependency 失败，结论
 是 observer 的 earliest-init 行为需要移到延后加载，而不是继续改 scene API。
+
+真机结果属于第一种。H485 boot SHA `92d1ea8a...438e5` 的 H103 中，
+14 次 real exec 都出现
+`SpringBoard.real deny ... SpringBoardInjectionProbe.dylib` 与既有 MACF
+bypass，0 次 `H485_LCPROBE`、0 次 real observer load、0 次 scene sample；
+14 次 real 都以 `status=0x6 ns=2 code=0x6` SIGABRT。wrapper 内 observer
+control 仍成功 14 次。因此失败与 observer、Foundation、IOKit、A540 或
+constructor 行为无关；owner-signed `SpringBoard.real` 在当前 dyld/AMFI
+组合下不能消费新增的 pre-main `LC_LOAD_DYLIB`。
+
+分类：
+`H485-any-added-real-dylib-aborts/minimal-probe-confirms-dyld-path-unusable`。
+停止该 injection 分支。下一候选回到 H475 已出现 observer load 的原始
+`SpringBoard` 路径，只把 H475 的 observer 二进制从 build H457 更新为当前
+可接受 `SpringBoard*` 的 H482 observer；保持 H475 的七文件 addon、launchd
+cache、kernel、Data 和 bootargs 作为正对照，不再加入 wrapper/real。
+
+证据目录：
+`display-first-frame/logs/H485/device/20261121-103746/`。
+
+```text
+H485-live.log      10b3752e81a2f521d20347b28fd442edc7e0ba537b3381c2de56e8abc945f298
+H485-tail32.bin    38da7663bbf8fcd2a8f84e5826b4f1a032824c254261695242cb6638d55bc818
+H485-h103.txt      dfb7dc349ab5c46614c4c14ad57910ddc4321e4d983bde4051ba40b2818d1fc6
+H485-device-state  46bfe5ef4180152796cb5d9f0f1497c20552f060c0998816552beaef781c4e82
+```
