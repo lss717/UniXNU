@@ -19775,3 +19775,72 @@ bootargs 均 PASS。状态：`boot-built-static-verified-not-device-tested`。
 context options 与 activationState。若 sample 5 再次缺失，下轮只替换
 `dispatch_after` 为独立等待线程；若 sample 5 出现但 scene 仍未激活，则按已
 记录的 activationState 进入 scene activation 分支。
+
+### §157 H503 真机：正确调度组合下 sample 5 仍缺失（2026-11-21）
+
+H503 在 serial `16149951`、boot ID `21272c54` 上运行。sample 4 正常输出：
+
+```text
+527.410 秒  sample=4 workspace=1 scenes=0
+527.411 秒  app=1 delegate=SpringBoard scenes=0 windows=1
+527.411 秒  appState=0 hasAppState=1
+527.413 秒  windowScene=_UIScreenBasedWindowScene
+            activationState=0 interfaceOrientation=1
+```
+
+sample 5 仍未出现。H503 已经只保留 sample 0 singleton 探针并把深 walk
+放回 sample 5，因此重复 singleton 与 sample 4 深 walk 都被排除，剩下的
+可信问题是最初 `dispatch_after(480 s)` 项没有执行。分类：
+`H503-sample5-dispatch-after-not-fired`。
+
+显示门在 1129.822085 秒仍为
+`dpy=4/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0`。采集共收到 6855 个 live
+frame、914642 payload bytes；CRC error、sequence gap、boot switch 和
+truncated frame 均为 0。H103 最后可见 H469 行为
+`seq=229427 done=229426 flight=1 lock_timeout=0 lock_waiters=0`，没有
+OCS、doorbell 或 recovery。UXC1 `424505` 收到 ACK、armed，并执行 normal
+reboot；Android 与 TWRP 正常返回。
+
+证据目录：
+`display-first-frame/logs/H503/device/20261121-163617/`。
+
+```text
+H503-live.log              5623203ab8ce05676c4ffa4f2c2088a59adaabd81763ce307f17c566b0d89259
+H503-live.frames.bin       ca192c3935ad62e9c79d0f35e2d5f40ef450545245b71dd65f8234ee3b03eef7
+H503-live.capture.stdout   b4401822a7c3997449c65867a86d7ec42bec06e7c8feab3afa330cec39451cf0
+H503-tail32.bin            e26c2aff7b468195ff3ad8fc2d94dd7f72c099b2415b77f1271c52c3efc404f6
+H503-h103.txt              da73331b5d41afe28c86979e06ba2ddfafc19865103a5678277489aabb2f9921
+H503-device-state.txt      aaae71119be8a98958f0d195b78fb52ec1062e224b6166cad6d19334b3c8d39d
+H503-reboot.log            3f6510af98c60a39f9c07f0ad28bb96bbe0d81db0505f7c8f89a430efa60eb5c
+```
+
+### §158 H504：用 one-shot dispatch timer 取代第 6 个 delayed block（2026-11-21）
+
+H504 保留 H503 的 kernel、ADT、Data、bootargs、A540Trace、scene/context
+字段和 sample 0/4/5 分工。`dispatch_after` 只负责 sample 0..4；sample 5
+改由独立 `DISPATCH_SOURCE_TYPE_TIMER` one-shot 在 480 秒触发，event handler
+调用原有 `snapshot("springboard", 5)` 后立即 cancel。没有 setter、context
+绑定，不修改 scene/window/layer、Metal、IOMFB、surface 或 scanout。
+NativeMetal `fded54312ea8603c9a6042dc877953833f2bd950`，superproject
+`868be6b`。
+
+产物：
+
+```text
+dylib SHA-256   3afd13b1d4199eb2eb8b1070b90e76d3322e48c32f9ec05f3b699af0281e2eea
+dylib CDHash    d995330af41b96fafd8e1a5d936044bc04e1274c
+addon SHA-256   d4742fcfa57dec00ed8fc5542cbb38b86f48b2216ee5a6278289980b2b696a42
+trust SHA-256   3f66accf0f9e59bd22516b326550613885fb71433b4dfe2132a75a874469773e
+payload SHA-256 ded832be2fa3d887c9f27fe6248ab81267da9c25c90e9fe0a16ae7a4e081ab56
+boot SHA-256    5ca140281b56cf1ce9fc2f29c60976150d305e64d8602d8f536190a8818c0bf7
+boot.json SHA-256 e22e6f5c482ff1f1a6f115eadc240e304675a5ec27396dccc119b380ebe5dc39
+```
+
+owner trust 为 42 项。addon 的 7 项中只有 observer dylib 改变。payload
+逐文件回读确认 kernel、ADT、Data seed、`unixnu.toml` 与 H503 相同，UEFI
+不变。observer/A540Trace/CCS gate、arm64 4 KiB 签名、Android boot 结构和
+bootargs 均 PASS。状态：`boot-built-static-verified-not-device-tested`。
+
+设备门只要求 H504 sample 5 实际出现，并保留 H502 已确认的 sample 4 结果。
+若 timer 也不触发，下一轮改为普通 POSIX 等待线程；若 sample 5 出现，则直接
+按 hostprops、context options 和 activationState 的结果选择首帧分支。
