@@ -20901,3 +20901,29 @@ H515-reboot-recovery-state    75968321da6b0eac4325664165f6a81b452395f49978eb28cb
 所有 `dispatch_after` SpringBoard 全树快照和 pthread 定时采样，仅保留被动
 方法 hook 与 UIKit 通知，建立无周期探针的干净对照；否则无法排除采样器本身
 对用户态全局队列和日志路径的影响。
+
+### §181 H516 候选：移除全部 SpringBoard 定时采样（2026-11-21）
+
+H516 删除五个 `dispatch_after` 全树快照、sample-5 pthread 和 root-visible
+后的 sample 6，只保留进程入口、CA/UIKit 方法 hooks 与 UIKit 三通知。
+这样可建立无周期探针的干净对照，观察 SpringBoard 是否自然进入
+`sharedApplication` / didFinishLaunching 生命周期。
+
+源码：NativeMetal `5972872e6c2e3e2f40833b94e33fa219aa785b46`，
+superproject `aead1bb`。
+
+```text
+observer SHA-256       c194b1b6eef77cfd2d85b07b0a5aa8c3dd0327abed388b4b8315026cf4767584
+observer CDHash        c755ea66dd6674269ad4573a29cfd9f1f6da86c5
+A540Trace SHA-256      fc4c3d85e1f7bf78ad40cc5a33a002f2f8c2d7a9e390c623c01e2d2d00da0833
+A540Trace CDHash       7ad51ceac59e08af3f3bf8bad4b174806adee917
+addon SHA-256          1d1d3eb653219cfc51f72149cf1f48ee68132b37d8bfd8fc2beb3f211c9aa39a
+trust SHA-256          c3799b2b7b99a2030953e36f34469144050707ce640067458666991df245853a
+payload SHA-256        94d597842234f264c5f4f6f0660d6a06d1957f9e8476799f9b55b93d7f713384
+boot SHA-256           1ab7d663237ee6158813c391753a4561e6afb76f9a20987da6f2403c22cb1399
+boot.json SHA-256      63af347513071267e0f2cc5e4986fbf93f75673caf219217457553195cc6b4a7
+```
+
+owner trust 为 65 个 own CDHash；payload 从 H515 baseline 只替换
+trustcache/gpuaddon。observer gate、arm64、strict codesign 与 readback
+均 PASS。状态：`boot-built-static-verified-not-device-ready`。
