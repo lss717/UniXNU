@@ -22177,7 +22177,23 @@ NATIVE_SIG: pid=... sig=... comm=... sender=.../...
 - 没有 `NATIVE_SIG`：说明当前记录的交付路径仍未覆盖，再用 exit path 的原始
   reason payload 补测。
 
-当前状态：`H527-patch-static-apply-pass-build-pending`。
+Mac clean build 与 prelink 已通过，kernel 同时含新的
+`NATIVE_SIG: ... sender=... flags=...`、`NATIVE_TARGETPORT` 和
+`NATIVE_TARGETWAIT` 字符串。payload 仍从 H522 模板复制，只替换 kernel；
+bootargs 988 字符且 `check-bootargs-fit.py` PASS，boot JSON `problems=[]`。
+
+产物：
+
+```text
+kernel SHA-256         4a28b765df9efae1506e9806e3e51c927c7d04da9194d4fcc5f6c4c2bc0942c6
+payload SHA-256        c468de8306abe8914808446985d1b5a8c7786a511379b092c3a214025acfea2d
+boot SHA-256           e959bd51e9551338415530e9b0d87a35b111e405b14794efe2dc9eeb3376d19d
+boot.json SHA-256      a6edb5e63a9b57631233a2f9bc3de84f7b43a3d8f726cc46f798644fca3c2e3e
+unixnu.toml SHA-256    dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e065f01e81
+```
+
+状态：`H527-built-static-verified-device-pending`。设备只需看 SIGABRT 的
+sender、ns/code/flags 和 caller，以及其是否与 target-port 生命周期对应。
 
 同日曾尝试用 H473 历史 glob 顺序重建 target-port 控制，并为让新补丁排到末尾
 临时引入 `zz…` 文件名。该分支没有成功构建，也没有产生 boot 镜像，已删除。
