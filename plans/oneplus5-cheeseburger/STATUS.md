@@ -18363,3 +18363,39 @@ H485-tail32.bin    38da7663bbf8fcd2a8f84e5826b4f1a032824c254261695242cb6638d55bc
 H485-h103.txt      dfb7dc349ab5c46614c4c14ad57910ddc4321e4d983bde4051ba40b2818d1fc6
 H485-device-state  46bfe5ef4180152796cb5d9f0f1497c20552f060c0998816552beaef781c4e82
 ```
+
+### §129 H486：复用 H475 七文件注入，只更新 observer（2026-11-21）
+
+H485 证明 `SpringBoard.real + LC_LOAD_DYLIB` 路径不能使用。H486 回到 H475
+已经出现 observer load 的七文件 addon，并只替换
+`lib/SpringBoardSceneObserver.dylib`：
+
+```text
+H475 observer H457  c6eb103dccefa7f5cdb845f0a35cb23d7449291f
+H486 observer H482  71a8804f53a304c7574cdcb07d77b09016eb7085
+```
+
+其余七文件中的 A540Trace bundle、scene marker、118,192 B
+`springboard/SpringBoard`（SHA `187871d0...b3fbc28`）、修改后的 launchd
+cache 均逐字节复用 H475。owner trust 从 H475 base 增加当前 observer CDHash，
+共 26 项。kernel、Data、bootargs 和 H475 ADT 保持不变；bootargs 为 H475
+原值 988 B，实际 1008/1024，worst 1016/1024。
+
+H486 回读：
+
+```text
+GPU addon   0ab8d9ced8a68443d965263294d62b4f356a2f2dd6f88bc41400e0ace7497c47
+trust cache 4d87d189c798115e326f47cc94575dd1d01cca115ac814af63548ac754e173f3
+payload     35127853fb76bdb5e80daedab0602cd8360c8ba55dcb22a140ea8834546cf294
+boot        6dd01e381ad9608e4256e5956e846d9c9c0b26249adf56fdf93a047c024fa998
+```
+
+addon round-trip、H475 bootargs equality、ADT、bootargs fit、`OP5ESP` 和
+boot layout 均 PASS。状态：
+`boot-built-static-verified-not-device-tested`。
+
+这一轮不引入 `SpringBoard.real`、wrapper H483、injection probe 或新 bootargs。
+设备门先要求 H475 路径再次出现 observer load，再要求 sampler 给出真实
+scenes/windows 与 layer contents。若 observer 再次加载但 scenes=0，下一步才
+进入 scene API；若完全不加载，则 H475 单次成功不是稳定的 launchd-cache
+投递，需要重新审计那次 boot 的状态来源。
