@@ -18523,3 +18523,72 @@ PASS。状态：`boot-built-static-verified-not-device-tested`。
 对象非空，下一轮从该对象的真实 methods 读 scenes/windowScenes；若全部
 为空，则直接检查 SpringBoard 主线程为何尚未完成 UIApplication/scene
 manager 初始化。
+
+H488 真机 H103 显示：
+
+```text
+SBMainWorkspace exists=1
+SBMainWorkspace selector=sharedInstance value=0
+SBMainWorkspace selector=mainWorkspace value=0
+SBSceneManagerCoordinator exists=1
+```
+
+打印最后一行后，该 sample 的 `SBSceneManagerCoordinator` shared call 没有
+返回，`SBMainDisplaySceneManager` 等后续 class 和 CADisplay/UIApplication
+字段都不再出现。多个 queued sample 在同一 accessor 上重复停住，但
+SpringBoard 本身仍存活。分类：
+`H488-scene-class-exists/shared-accessor-call-blocks`。
+
+这是本轮的明确坑：类和 selector 存在不代表 accessor 可安全调用；
+`+[SBSceneManagerCoordinator sharedInstance]` 在该启动状态下会阻塞。下一轮
+只能枚举 `class_copyMethodList`，不得调用未验证 shared accessor。
+
+证据目录：
+`display-first-frame/logs/H488/device/20261121-113605/`。
+
+```text
+H488-live.log      0da89d57a2bbf344c4e959de679003a8110ac34a8049f71270571bbe5cb826c7
+H488-tail32.bin    db50afdf5082d6d0721a64f6221ae1af8a2e6917321fda2fb204168719c5cb33
+H488-h103.txt      0f7d8d9434f8e12143a835ec567e8d9f48a22114973ef39b04f6508a6d7e891d
+H488-device-state  a39351f4411121aeec206b56aed95527258bd18dc5f80070025bd01cf8a2b320
+```
+
+### §132 H489：只读枚举 SpringBoard class methods（2026-11-21）
+
+H489 删除全部 shared accessor 调用，改为对以下类安全读取
+`class_copyMethodList(object_getClass(cls))`：
+
+```text
+SBMainWorkspace
+SBSceneManagerCoordinator
+SBMainDisplaySceneManager
+SBWindowSceneManager
+SBApplicationController
+FBSceneManager
+SpringBoard
+```
+
+只打印 selector 名中包含 shared/main/scene/workspace/window/display 的
+class methods，每个类至多 32 个，并保留 `sbinventory begin/end` 边界。
+该方法 inventory 只在 sample 0 执行一次；CADisplay 和 UIApplication
+字段继续执行。submodule `54e530e`，superproject `ceae8b8`。
+
+新 observer：
+
+```text
+SHA-256  0719b77d4bf7e40448b80777f49cb5554168125af46eb0c6b5d14b9a72d84930
+CDHash   ba3d3be36d07c4e1f1f21090ee9cc77e09748fb9
+```
+
+H489 回读：
+
+```text
+GPU addon   71d22675efecb113250e625d7b2eb692d4d8392ccc4145530c8e1efe44ff5be3
+trust cache 205fbb3c52078f36bf095920d25cf99e494ece6bd1ba75bdb20a62f95b5cc1d5
+payload     f5a1864effe9190340cb6ffae138623292ae0ab6280f1214190607ffdf3bc5b7
+boot        911e2ed6769dfb658b8a238e8372d6dd883a909d30d724729fa7915d3895c249
+```
+
+owner trust 为 29 项。payload、ADT、bootargs 和 boot layout 均 PASS。状态：
+`boot-built-static-verified-not-device-tested`。设备门要求
+`sbinventory begin/end` 都出现且不再停在任何 accessor。
