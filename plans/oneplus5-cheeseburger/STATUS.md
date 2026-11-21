@@ -18869,4 +18869,86 @@ boot        bb0c9903b219eb128018c5409845b58aef26b2ace0bd6bc83cf01cc54eead46e
 ```
 
 owner trust 为 31 项。合并 dylib 签名、payload、ADT、bootargs 和 boot
-layout 均 PASS。状态：`boot-built-static-verified-not-device-tested`。
+layout 均 PASS。原始打包状态：
+`boot-built-static-verified-not-device-tested`。
+
+### §137 H493 真机：SpringBoard 跨过 LaunchServices 同步门，显示仍无产品帧（2026-11-21）
+
+H493 在唯一设备 serial `16149951` 上完成一次有界运行，boot ID
+`4a6d64a9`。设备记录与 live log 共同确认了单个合并 dylib 的两部分都生效：
+CCS 路径不再把 SpringBoard 主线程永久挡在同步 LaunchServices 查询之后，
+scene observer 随后拿到了工作区和应用对象。
+
+时间线如下：
+
+```text
+342.884 秒  sample=2 workspace=0 app=0 delegate=nil scenes=0 windows=0
+432.998 秒  sample=3 workspace=1 class=FBSWorkspace
+555.055 秒  sample=4 app=1 delegate=SpringBoard scenes=0 windows=1
+763~768 秒  sample=5 workspace=1 scenes=1 windows=3
+766.542 秒  scene=0 class=FBSScene id=com.apple.springboard
+767.988 秒  scene=0 delegate=SBWindowScene
+768.097 秒  app=1 delegate=SpringBoard scenes=1 windows=3
+```
+
+这关闭了 `LaunchServices synchronous filter blocks SpringBoard` 这一门。
+但不能据此宣布首帧。sample 5 时 scene 的 `context`、`layer` 和
+`layerManager` 仍分别为 `present=0`；最后显示门在 1020.285730 秒仍为
+`s345=0/1/1 val=1 xf=1 fr=0`。更早的 H455 synthetic present/transfer/
+retirement 继续 `fr=0`，没有 SpringBoard 产品内容完成 scanout。分类：
+`H493-launchservices-gate-closed/product-frame-absent`。
+
+H103 尾环在启动后约 1048 秒拉取，最终 H469 状态为
+`seq=211118 done=211118 timeout=0 ocs_err=0 dbto=0 recover=0 recovered=0
+flight=0 lock_timeout=0 lock_waiters=0`。本轮没有 OCS、doorbell 或锁超时；
+这同样不证明 watchdog recovery。累计等待值只是观测累计量，不能当作单请求
+完成证明。
+
+证据目录：
+`display-first-frame/logs/H493/device/20261121-124043/`。
+
+```text
+H493-live.log       1b934017a1c9ef9b22665091aaff8c6c11169e6df87ed21457b25008466e19dc
+H493-tail32.bin     338a2506d80be2d22e5bd86d5980dde11fa35b141d32bbd54e6f6b10f749163a
+H493-h103.txt       a6127ee57c5ef7717904393b6f56423e258d72ee99ea9bd1b811dfb41cec99b7
+H493-device-state   087f363be6beaa549199ff5fd366e17acd738dade6967e09e98377ee7e3b2d41
+H493-live.capture  2454fbb050715064debb6a339755fbbd5b5a54671a3033c3983b78e08dcfc9e6
+```
+
+### §138 H494：只读检查 SpringBoard 窗口、图层与 scene delegate（2026-11-21）
+
+H494 只改变 scene observer。它保留 H493 的内核、Data、bootargs、CCS
+bypass、单一 `DYLD_INSERT_LIBRARIES` 路径和显示逻辑，在 sample 5 时增加：
+
+```text
+UIApplication.windows
+SBWindowScene.windows
+UIWindow.isHidden / windowLevel
+UIWindow.layer / layer.contents
+UIWindow.rootViewController
+UIWindow.windowScene
+```
+
+每个窗口最多检查 8 个。observer build marker 从 H490 改为 H494。没有创建
+scene、调用 UIApplication、修改窗口层级、图层内容、Metal、IOMFB、surface
+或 scanout。NativeMetal `07b9175`，superproject `c9c606b`。
+
+打包产物：
+
+```text
+合并 dylib  SHA-256  6a112b9aeb789406dcbad16a1ad5f3756cb07b1dd32c64c38f76dba8080b0f3c
+合并 dylib  CDHash   fe55c552289279aee69148d3ec7994dc67808f86
+GPU addon            7848cab4ffa18d1adadb5abf99258c373ee8b8b4a0311a16c563afad5b6f280c
+trust cache          352f3b874dd0abd86ac876086b35638776b0961b76d5d04553e1f2bb6549d883
+payload              309279e8a411df539a3ca89adc775c87f22cb91478cf135c7ee4252110d4d419
+boot                 0d02dc427e67ffedb1009d4d4f5f6f5205459d9fbb74afb4a1a91bd129485231
+```
+
+合并 dylib 签名、bundle gate、payload、ADT、bootargs 和 boot layout 均
+PASS，owner trust 为 31 项。状态：
+`boot-built-static-verified-not-device-tested`。
+
+设备门只接受 H103/live log 中出现 H494 observer load，以及 application/scene
+窗口的 `layer`、`contents`、`rootViewController`、`windowScene` 实测值。
+若窗口层和 contents 已存在，下一轮才沿 CA scene activation、draw、commit、
+present、IOMFB transfer/copy/scanout 单向推进。窗口对象存在本身不是首帧。
