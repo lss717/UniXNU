@@ -22783,3 +22783,88 @@ bootargs 仍为 988 字符，`1008/1024`，最坏 `1016/1024`。boot JSON
 3. 再检查 `SBMainWorkspace start` 是否完成、根窗口是否出现真实 contents、
    context/host 是否绑定，以及是否出现 present 和 `fr=1`；
 4. 没有 observer 标记时不得把后续结果归因于 addObserver 旁路。
+
+#### H533 真机结果：根窗口出现，但 LaunchServices request 仍滞留
+
+H533 boot ID `21171be8` 在 serial `16149951` 上完成一次
+`fastboot boot`。CDC 在约 280 秒接入，因此缺失了 SpringBoard
+constructor 的最早输出。live log 没有出现 `H533_LS`，不能据此证明
+或否定方法替换已经安装。
+
+本轮确实加载了 SpringBoard observer。以下 CA 事件由 observer 产生：
+
+```text
+580.240890 event=uiwindow_scene_visible window=root delegate=SBRootSceneWindow
+585.566899 event=ca_host_context_bind host=0x2cc280b1
+585.872845 event=ca_host_visible window=root
+```
+
+根窗口比 H532 的 608.920001 秒提前约 28.7 秒，主线程在样本 6090
+位于 `libobjc.A.dylib +0x2c08`，不再位于 H530/H532 的
+`_ulock_wait2` 顶层。可是样本 6150、6180 和 6210 又停在
+`libsystem_kernel.dylib +0x1970`。同一轮从 471 秒持续到 1126 秒的
+`NATIVE_SBCHAIN` 始终为：
+
+```text
+req=23815/96/lsd.real q=1 sr=1 so=2 ld_reply=0
+```
+
+对应 lsd receive `0x571f` 一直是 `seen=1 q=1 match=1`，没有
+`NATIVE_TARGETWAIT`。根窗口和 host 的 `contents` 仍为零，没有 content
+setter、commit wait、context slot、present 或 `fr=1`。因此 H533
+最多证明启动略微前进，不能证明 `addObserver` 已被旁路，也未关闭
+LaunchServices 门。
+
+本轮在 `1185.882318 s` 由 UXC1 request `424533` 正常重启，Android
+boot complete 后进入 TWRP。证据：
+
+```text
+logs/H533/device/20261122-071920/
+H533-live.log
+  d1adacac898497f52dec176340ebedc92319879eacd6d9c8b90beda3a3b1c219
+H533-tail32.bin
+  3efad8afa65f5600b3e645ce70be5b7a7eb460545ab89cd65361fe6b9e1fd1e3
+H533-h103.txt
+  a8397ad0536ee6575c43c9925cfd2bab0aa8125ac81136100b92f782f35bebf7
+```
+
+分类为 `H533-observer-loaded/LS-request-still-queued/window-empty`。
+live 和尾环都没有保留 constructor 标记，因此下一版必须提供在 CDC
+可用之后仍能证明方法替换状态的观测。
+
+### §204 H534：显式加载 CoreServices 并验证 LaunchServices 方法替换
+
+H533 的 constructor 通过 `NSClassFromString(@"LSApplicationWorkspace")`
+查找类。该构造器比用户的第一段 CDC 更早执行，同时没有证据表明
+CoreServices 在该时点已经注册到 Objective-C runtime。H534 只改这一
+个安装动作：
+
+- 显式 `dlopen("/System/Library/Frameworks/CoreServices.framework/CoreServices",
+  RTLD_NOW | RTLD_GLOBAL)`；
+- 用 `objc_getClass("LSApplicationWorkspace")` 取得类；
+- 日志记录 CoreServices handle、class、method、旧 IMP 和新 IMP；
+- 120、240、360、480、600 秒后各检查一次当前 IMP，形成 CDC 接入后
+  仍可见的自检证据。
+
+observer 的 CA/scene 行为、lsd recovery shim、A540Trace、kernel、ADT、
+Data seed、TOML 和 boot arguments 均保持 H533。H534 addon 从 H533 的
+10-entry addon 原样复制，只替换 observer entry；其余 9 项逐字节相同。
+
+源码与产物：
+
+```text
+NativeMetal commit       5e3a74c
+superproject commit      39d577c5
+observer SHA-256         91a1f80c33a16b65d044af79aeacaea1b70262d0b2ac24573c6fc52cdd0ab928
+observer CDHash          9635770fa67b6d9a5fb27b4a7f2d6dbe14a9e0d1
+GPU addon SHA-256        dcf9be25b0bb4d08391f5f23e81aeca7b3f64cc73a420d72e76149c61b2955ac
+owner trust SHA-256      bc3fe43d7fb40da1a9aff98856185ebc01788de3c97853dac201116575cd8fe9
+payload SHA-256          d225f0e0a6d4e91629fb068505870b55e213c9c254af3fc3423c0d190bd1757c
+boot SHA-256             92532a092d2dfab4378912931d7134e002d97020a41a96714f0b1c5614a19fd3
+boot.json SHA-256        42db2aaa612216fb5d5ede8abc44710cbbb613f19aee29c3e29edd41bed24cd4
+```
+
+H534 payload 与 H533 的 kernel、ADT、scratch Data 和 `unixnu.toml`
+逐字节相同，只有 GPU addon 与 owner trust 不同。owner trust 从 85 项
+扩为 86 项。bootargs 仍为 `1008/1024`，最坏 `1016/1024`，boot JSON
+`problems=[]`。状态为 `H534-built-static-verified-device-pending`。
