@@ -18293,3 +18293,47 @@ H484-tail32.bin    00c5417b02c748d45c85a8848b7c34bd20d8c8e2a47f989a92628d1a2c385
 H484-h103.txt      a801503a7aea93f698b62036cb859ae33d2b5b4930a48865a4b6fa485697a525
 H484-device-state  4b5e2064ceeb3254dec2c676ebdb858e762332d082bf8cf9282f439cd3ca221a
 ```
+
+### §128 H485：最小 LC_LOAD_DYLIB /dev/console 探针（2026-11-21）
+
+H484 已证明 dyld 消费依赖但对 observer 在 constructor 前 SIGABRT。H485
+只把被 real 依赖的对象从一个完整 observer 换成一个 68,368 B 的最小
+`SpringBoardInjectionProbe.dylib`。该 dylib 不链接 Foundation、IOKit、
+Objective-C、dispatch 或 A540，constructor 只写一行：
+
+```text
+H485_LCPROBE: load process=%s pid=%d build=H485
+```
+
+real 仍由 H483 原始 120,864 B 二进制生成，插入
+`LC_LOAD_DYLIB /private/var/ngpu/lib/SpringBoardInjectionProbe.dylib`
+后按 4 KiB ad-hoc sign。submodule `d8afa48`，superproject `22ec4e8`。
+Observer、H483 wrapper、A540Trace、launchd cache、kernel、Data、bootargs
+和 ADT 均未改变。
+
+H485 输入与产物：
+
+```text
+probe           d16470a4c7f6a85766867e71de018b7fbefef10c6a62c36ecaf426b31a7362da
+probe CDHash    1aefbb97a9601ff44d0bf98da106edf909becc9b
+real            655382b3511884a1743e3d9fc588ba8397403dafc7bea593ec8bde6eee15c988
+real CDHash     a22b00ce5509c06097c23db72eb1b2adc5ab2ea0
+GPU addon       1f5f7a54327b9d478edb81ff8f6329d3814d0787ec3afff6e5e05c02ee7d3e6e
+trust cache     c48513c1b35e8d39818ece7f7a90a7d4295369ab192785acf043d54b4022fb26
+payload         0c6b1246eab327c0cee49b00a51197b2e2cc2125914ce3e7c8cb8e673bfca0db
+boot            92d1ea8a3b282efa014e0a8cc352873e12b60bf253a4a6bd1524c0eded4438e5
+```
+
+addon 为 9 项，owner trust 为 33 项。probe/real 的 code signing、
+Mach-O insertion、payload round-trip、ADT、bootargs、`OP5ESP` 和 boot
+layout 均 PASS。状态：`boot-built-static-verified-not-device-tested`。
+
+设备判据只有三点：
+
+1. `H485_LCPROBE` 在 `SpringBoard.real` 中出现；
+2. real 不再因 `LC_LOAD_DYLIB` 立即 SIGABRT；
+3. wrapper 内 observer control 仍可见，但 H485 不评价 scene。
+
+若 probe 也 abort，结论是 owner-signed `SpringBoard.real` 的 pre-main
+dependency 路径本身不可用；若 probe 成功而 observer dependency 失败，结论
+是 observer 的 earliest-init 行为需要移到延后加载，而不是继续改 scene API。
