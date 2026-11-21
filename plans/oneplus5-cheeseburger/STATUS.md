@@ -20626,3 +20626,26 @@ strict codesign、arm64 与 readback 均 PASS。状态：
 `boot-built-static-verified-not-device-ready`。设备门先判
 `h512_app_ready` 是否出现；若只出现 `app_wait app=0`，转查 UIApplication
 实例化，不在窗口可见性上循环。
+
+### §174 H512 日志复核：observer 已在 SpringBoard 加载，缺口在 sample 4（2026-11-21）
+
+H512 的 `observer load process=SpringBoard pid=27 build=H512` 文本行未进入
+日志，但不能据此判定 observer 未加载。同一日志中：
+
+```text
+313.342195 s  sample=2 phase=springboard pid=27
+408.128547 s  sample=3 phase=springboard pid=27
+```
+
+这两行由 observer 自身代码发出，已经证明 H512 observer 位于 SpringBoard
+pid 27，进程名过滤通过。`builder#2 build H512` 多次出现，但那些行来自
+backboardd/mediaserverd，只能证明 addon 加载，不能代替 SpringBoard pinning。
+
+全轮没有 `sample=4 phase=springboard`，因此也没有
+`h512_app_monitor_start/app_wait/app_ready`、run-loop 入队或主块进入。
+`.300` 秒的 sample 4 投递在 sample 2/3 已成功执行后仍未出现。
+分类：`H512-SpringBoard-observer-loaded/sample4-not-dispatched`。
+
+下一步不检查 `UIApplication` 实例化，也不构建 H513。先解释同一组
+`dispatch_after` 中 sample 2/3 到达、sample 4 未到达的原因；恢复
+sample 4 的可达性后，才轮到应用就绪与 run-loop 判据。
