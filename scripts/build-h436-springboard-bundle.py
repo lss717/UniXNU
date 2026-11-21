@@ -2,7 +2,7 @@
 """Build H436's SpringBoard app-bundle wrapper addon.
 
 Usage:
-  build-h436-springboard-bundle.py LAUNCHD-CACHE.plist SPRINGBOARD OUTPUT
+  build-h436-springboard-bundle.py LAUNCHD-CACHE.plist SPRINGBOARD OUTPUT [LSD]
 
 The input is /System/Library/xpc/launchd.plist, the binary job cache consumed by
 launchd_cache_loader. The cached job keeps its original standard executable
@@ -29,11 +29,15 @@ OUT = ROOT / "build/h436-springboard-bundle"
 BUNDLE = OUT / "A540Trace.bundle"
 OBSERVER = OUT / "SpringBoardSceneObserver.dylib"
 BOOTSTRAP = OUT / "scenebootstrap"
+LSD_BOOTSTRAP = OUT / "lsdwrap"
+LSD_SHIM = OUT / "LsdRecoveryAsync.dylib"
+LSD_BINARY = OUT / "lsd.real"
 XPC = OUT / "xpc"
 SPRINGBOARD_DIR = OUT / "springboard"
 SPRINGBOARD_JOB = (
     "/System/Library/LaunchDaemons/com.apple.SpringBoard.plist"
 )
+LSD_JOB = "/System/Library/LaunchDaemons/com.apple.lsd.plist"
 
 
 def pad(data: bytes) -> bytes:
@@ -76,11 +80,12 @@ def require_binary_markers(path: Path, markers: tuple[bytes, ...]) -> None:
 
 
 def main() -> int:
-    if len(sys.argv) != 4:
+    if len(sys.argv) not in (4, 5):
         raise SystemExit(__doc__)
     cache_source = Path(sys.argv[1]).resolve()
     springboard_source = Path(sys.argv[2]).resolve()
     output = Path(sys.argv[3]).resolve()
+    lsd_source = Path(sys.argv[4]).resolve() if len(sys.argv) == 5 else None
     if output.exists():
         raise SystemExit("Refuse to overwrite " + str(output))
 
@@ -134,7 +139,7 @@ def main() -> int:
         OBSERVER,
         (
             b"observer load process=",
-            b"build=H517",
+            b"build=H518",
             b"H492_CCS",
             b"filter bypass installed",
             b"filter bypass pid",
@@ -159,6 +164,78 @@ def main() -> int:
     bootstrap_cdhash = compact_signed_bundle(
         BOOTSTRAP, "org.blu-sharky.H435SpringBoardWrapper", entitlements
     )
+
+    lsd_report = None
+    if lsd_source is not None:
+        expected_lsd_sha256 = (
+            "43ee16e03145f3ad6b84fc7dac63ee767ec8182b51bc9cb5bd8bf8650baa4e5b"
+        )
+        actual_lsd_sha256 = hashlib.sha256(lsd_source.read_bytes()).hexdigest()
+        if actual_lsd_sha256 != expected_lsd_sha256:
+            raise SystemExit(
+                f"lsd input SHA-256 {actual_lsd_sha256} "
+                f"does not match 21H461 {expected_lsd_sha256}"
+            )
+        subprocess.run(
+            [*common, "-std=c++17", "-fobjc-arc",
+             "-framework", "Foundation", "-framework", "IOKit",
+             str(ROOT / "drivers/NativeMetal/LsdBootstrap.mm"),
+             "-o", str(LSD_BOOTSTRAP)],
+            check=True,
+        )
+        subprocess.run(["strip", "-x", str(LSD_BOOTSTRAP)], check=True)
+        require_binary_markers(
+            LSD_BOOTSTRAP,
+            (
+                b"H518_LSDWRAP",
+                b"/private/var/ngpu/bin/lsd.real",
+                b"/private/var/ngpu/lib/LsdRecoveryAsync.dylib",
+            ),
+        )
+        lsd_bootstrap_cdhash = compact_signed_bundle(
+            LSD_BOOTSTRAP,
+            "org.blu-sharky.H518LsdWrapper",
+            entitlements,
+        )
+
+        subprocess.run(
+            [*common, "-std=c++17", "-fobjc-arc", "-fblocks",
+             "-dynamiclib", "-framework", "Foundation",
+             str(ROOT / "drivers/NativeMetal/LsdRecoveryAsync.mm"),
+             "-o", str(LSD_SHIM)],
+            check=True,
+        )
+        subprocess.run(["strip", "-x", str(LSD_SHIM)], check=True)
+        require_binary_markers(
+            LSD_SHIM,
+            (
+                b"H491_LSD",
+                b"recovery async installed",
+                b"recovery queued",
+            ),
+        )
+        lsd_shim_cdhash = compact_signed_bundle(
+            LSD_SHIM,
+            "org.blu-sharky.H491LsdRecoveryAsync",
+        )
+        lsd_binary_cdhash = subprocess.run(
+            ["codesign", "--display", "--verbose=4", str(lsd_source)],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stderr
+        match = re.search(r"^CDHash=([a-f0-9]{40})$", lsd_binary_cdhash, re.MULTILINE)
+        if not match:
+            raise SystemExit("No CDHash in codesign output for lsd input")
+        lsd_binary_cdhash = match.group(1)
+        LSD_BINARY.write_bytes(lsd_source.read_bytes())
+        os.chmod(LSD_BINARY, 0o755)
+        lsd_report = {
+            "lsd_binary_sha256": actual_lsd_sha256,
+            "lsd_binary_cdhash": lsd_binary_cdhash,
+            "lsd_bootstrap_cdhash": lsd_bootstrap_cdhash,
+            "lsd_recovery_cdhash": lsd_shim_cdhash,
+        }
 
     original = cache_source.read_bytes()
     cache = plistlib.loads(original)
@@ -186,6 +263,24 @@ def main() -> int:
             raise SystemExit("launchd cache changed unrelated job " + key)
     if modified_cache["LaunchDaemons"][SPRINGBOARD_JOB] != job:
         raise SystemExit("launchd cache SpringBoard job did not round-trip")
+    if lsd_source is not None:
+        lsd_job = daemons.get(LSD_JOB)
+        if not isinstance(lsd_job, dict):
+            raise SystemExit("launchd cache has no mobile lsd job")
+        before_lsd = copy.deepcopy(lsd_job)
+        if lsd_job.get("ProgramArguments") != ["/usr/libexec/lsd"]:
+            raise SystemExit("cached lsd job has an unexpected executable")
+        lsd_job["ProgramArguments"] = ["/private/var/ngpu/bin/lsdwrap"]
+        lsd_report["lsd_job_before_program_arguments"] = before_lsd["ProgramArguments"]
+        lsd_report["lsd_job_after_program_arguments"] = lsd_job["ProgramArguments"]
+        modified = plistlib.dumps(cache, fmt=plistlib.FMT_BINARY, sort_keys=False)
+        modified_cache = plistlib.loads(modified)
+        if modified_cache["LaunchDaemons"][LSD_JOB] != lsd_job:
+            raise SystemExit("launchd cache lsd job did not round-trip")
+        for key, value in daemons.items():
+            if key not in (SPRINGBOARD_JOB, LSD_JOB) and \
+                    modified_cache["LaunchDaemons"].get(key) != value:
+                raise SystemExit("launchd cache changed unrelated job " + key)
     (XPC / "launchd.plist").write_bytes(modified)
     if not springboard_source.is_file():
         raise SystemExit("SpringBoard input is missing")
@@ -210,6 +305,10 @@ def main() -> int:
                   (SPRINGBOARD_DIR / "SpringBoard").read_bytes()))
     files.append(("springboard/SpringBoard.real", 0o755,
                   (SPRINGBOARD_DIR / "SpringBoard.real").read_bytes()))
+    if lsd_source is not None:
+        files.append(("bin/lsdwrap", 0o755, LSD_BOOTSTRAP.read_bytes()))
+        files.append(("bin/lsd.real", 0o755, LSD_BINARY.read_bytes()))
+        files.append(("lib/LsdRecoveryAsync.dylib", 0o755, LSD_SHIM.read_bytes()))
 
     body = b""
     for name, mode, data in files:
@@ -244,6 +343,7 @@ def main() -> int:
             "DYLD_FORCE_FLAT_NAMESPACE": environment["DYLD_FORCE_FLAT_NAMESPACE"],
         },
         "springboard_program_arguments": job["ProgramArguments"],
+        "lsd": lsd_report,
         "files": [name for name, _, _ in files],
     }
     (OUT / "trust.json").write_text(json.dumps(report, indent=2) + "\n")

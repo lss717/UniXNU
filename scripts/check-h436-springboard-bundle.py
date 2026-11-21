@@ -18,6 +18,7 @@ def main():
     for marker in (
         "cache.get(\"LaunchDaemons\")",
         '"/System/Library/LaunchDaemons/com.apple.SpringBoard.plist"',
+        '"/System/Library/LaunchDaemons/com.apple.lsd.plist"',
         '"/System/Library/CoreServices/SpringBoard.app/SpringBoard"',
         'environment["DYLD_INSERT_LIBRARIES"]',
         '"/private/var/ngpu/lib/SpringBoardSceneObserver.dylib"',
@@ -27,8 +28,15 @@ def main():
         "launchd cache changed unrelated job",
         '("springboard/SpringBoard"',
         '("springboard/SpringBoard.real"',
+        '("bin/lsdwrap"',
+        '("bin/lsd.real"',
+        '("lib/LsdRecoveryAsync.dylib"',
+        '"/private/var/ngpu/bin/lsdwrap"',
+        'b"build=H518"',
         '"observer_cdhash"',
         '"bootstrap_cdhash"',
+        '"lsd_bootstrap_cdhash"',
+        '"lsd_recovery_cdhash"',
     ):
         require(marker in text, f"H436 addon builder missing: {marker}")
     require('("daemons/' not in text,
