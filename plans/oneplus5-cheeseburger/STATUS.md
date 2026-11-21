@@ -17898,4 +17898,22 @@ SpringBoard.real     8c139abc7a69cfc5dd1cef94f092035731b5e237
 生成，Apple 的两个原始 trust modules 保持逐字节不变。设备门首先要求越过上述
 userspace panic，再分别记录 wrapper main、observer load、真实 scene 和产品帧。
 
-当前状态：`packaging`。
+H480 回读：
+
+```text
+source commit 50e7ef1
+kernel        4577d3bc93a48dec1c910e76d4262e8ceda64869f6b370a2ee3ff42556364b00
+trust cache   605dfe56bfd065e83a5ac477b686a32ffe36cef68b81d516b0098ce54e0ec4b3
+GPU addon     92a52628f1becad4b63f881d74b9bc179e0afe15d4b9cc67e9f220bca9e530dc
+Data seed     7522c2b803bac371190e5f316bacc825d1dd3c964ef3a3ab6ffd75bf0f9bae79
+ADT           66f45495590e659184bb9bd22eef13810bf89cfdb4222921cc5c0fc8598601c4
+unixnu.toml   80a6086e774d3d997a2fee1184d6cffdd5cf3b5f80c7da701c3ff574c47e3803
+payload       5c43f98cae59ded17a9b094745fc1093317649664f6714f8f94246f6061ac55c
+boot          41ef9088462ac7e4040bd875406a8e4c2c9c5db4477663365a638b6f008dbdd1
+```
+
+owner module 由 24 项增至 27 项，三个新 CDHash 均存在；Apple 的两个原始
+modules 未改动。kernel/addon/Data/bootargs 均与 H479 相同；bootargs 980 B，
+实际 1000/1024，worst 1008/1024。ADT placeholders、boot layout 和
+`OP5ESP` 检查 PASS。状态：
+`boot-built-static-verified-not-device-tested`。
