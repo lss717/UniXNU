@@ -20780,3 +20780,52 @@ payload 从 H513 baseline 只替换 trustcache/gpuaddon。状态：
 `boot-built-static-verified-not-device-ready`。设备判据：
 `h514_shared_application_enter` 后是否有 return、monitor poll 是否持续推进、
 以及 UIKit 三通知是否出现。
+
+### §178 H514 真机：sharedApplication 在 poll 15 内阻塞（2026-11-21）
+
+H514 在 serial `16149951`、boot ID `362837b9` 上完成 900 秒采集。
+sample 4 在 535.809058 秒进入并正常完成，535.812193 秒启动 app monitor。
+poll 0–14 每约 5 秒进入一次，`+[UIApplication sharedApplication]`
+每次都返回 `app=0x0 class=nil`。
+
+623.778880 秒进入 poll 15：
+
+```text
+event=h514_app_poll_enter pid=27 poll=15 thread=0x16f869000 main=0
+event=h514_shared_application_enter receiver=UIApplication thread=0x16f869000 main=0
+```
+
+此后到 900 秒没有对应 return，也没有后续 poll。全轮计数为
+`shared_application_enter=21`、`return=20`、`app_poll_enter=16`，正好
+缺少 poll 15 的一个 return。没有 `app_ready`、UIKit 三通知、status
+window、client CA context 或任何 root/content/present 事件。
+
+结论：worker 没有停住，也没有调用卡在 hook；它在第 16 次调用时进入了
+UIKit 内部的 shared application 创建/同步路径，此后才阻塞。分类：
+`H514-sharedApplication-blocks-at-poll-15`。
+
+显示门在 1042.896555 秒仍为
+`dpy=4/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0`。持久 H469 行为
+`seq=222455 done=222455 timeout=0 ocs_err=0 dbto=0 recover=0
+recovered=0 lock_timeout=0`；`lock_wait_ms=9595425 lock_ok=630194`，
+平均约 15.23 ms。请求完成且无 OCS、doorbell timeout 或 recovery。
+
+live capture 为 `frames=5854 payload_bytes=796833 crc_errors=0
+sequence_gaps=0 truncated_frames=0 boot_switches=0`。UXC1 `424516`
+ACK 后正常重启，Android 完成并返回 TWRP。
+
+证据：
+
+```text
+H514-live.log                 e9322552e19209e093f6c3cbe06aaf2a13b126dd1c0716f2a569848598e9355b
+H514-live.frames.bin          42b6651a351142a897c65c332911f95c914fa93d3cf9382f45e82eca90184c41
+H514-cdc-replay.txt           4afbc1ae70e7bf9b0a4b33877ce9a1aa90e927db02de30ab19b3b795ab606259
+H514-h103.txt                 050c5e3b6db6e7d3bd25e56d9332bc3b4f246835e725513dec98b8beafd96985
+H514-tail32.bin               8a2a79213c410c6b6da98d1a3644dcf2fcb41a02e51458c3880bed45a55316f9
+H514-reboot.log               6f853ae68859729bb71df829a45c4b5940c6a92a13c2d02df5b10fa4d643a720
+H514-reboot.frames.bin        94da4ba47c14dd24b6e3a68ce2431a12a7dd05a31ee618a7cd361d133acff5d6
+H514-reboot-recovery-state    77d4ddc7c15f0e698e4a33df76fcbe3e6f02ef302c0c5654f6bb7e21a2e6b0b9
+```
+
+下一步应观测 `sharedApplication` 创建路径的主线程等待关系，优先确认它是否
+同步投递到 SpringBoard main queue/run loop；而不是继续扫描应用是否稍后出现。
