@@ -9,7 +9,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  static int
  native_gpu_addon_inflate(const uint8_t *packed, uint64_t packed_size, uint8_t *data, uint64_t size)
  {
-@@ -7590,19 +7591,22 @@ native_gpu_addon_install(proc_t p, user_addr_t scratch)
+@@ -7590,21 +7591,23 @@ native_gpu_addon_install(proc_t p, user_addr_t scratch)
  	/* Validate the whole addon before writing anything. */
  	uint64_t at = 24;
  	for (uint32_t i = 0; i < count; ++i) {
@@ -37,7 +37,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  			native_gpu_addon_error = EINVAL;
  			return;
  		}
-@@ -7627,35 +7631,60 @@ native_gpu_addon_install(proc_t p, user_addr_t scratch)
+@@ -7627,28 +7631,54 @@ native_gpu_addon_install(proc_t p, user_addr_t scratch)
  	char path[192];
  	at = 24;
  	for (uint32_t i = 0; i < count; ++i) {
