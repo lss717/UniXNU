@@ -22192,8 +22192,146 @@ boot.json SHA-256      a6edb5e63a9b57631233a2f9bc3de84f7b43a3d8f726cc46f798644fc
 unixnu.toml SHA-256    dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e065f01e81
 ```
 
-状态：`H527-built-static-verified-device-pending`。设备只需看 SIGABRT 的
-sender、ns/code/flags 和 caller，以及其是否与 target-port 生命周期对应。
+状态：`H527-device-no-probe-signal`。设备结果见下。
+
+#### H527 真机结果：SIGABRT 仍绕过两个已装载的包装入口
+
+H527 在 serial `16149951` 上以 boot ID `303b0e0c` 启动，CDC 于启动后约
+273 秒出现。SpringBoard PID 27 的最早目标端口记录为 `636.874944 s`：
+
+```text
+NATIVE_TARGETPORT: sample=6150 set sender=27/SpringBoard
+  sname=0x4707 rname=0x4c0f sport=0xfffffff6485e7ac0
+```
+
+从 `641.968765 s` 到 `1519.831807 s` 共 13 次 lsd 样本均保持：
+
+```text
+seen=1 match=1 q=1 cnt=1 qlim=6 peer=95/lsd.real
+NATIVE_TARGETWAIT seen=0 count=0
+```
+
+同期的 13 个 SpringBoard 样本持续为
+`req=18183/95/lsd.real q=1 sr=1 so=2`，主线程停在同一
+`mach_msg` 点。整轮没有 `SBRootSceneWindow`、`CALayerHost`、content、slot、
+commit wait、present 或 `fr=1` 证据。
+
+SpringBoard PID 27 在 `1549.411972 s` 以
+`status=0x6 ns=2 code=0x6` 退出，新 PID 213 又在 `1579.072520 s` 以相同
+状态退出。两处 `NATIVE_EXIT` 前后都没有任何
+`NATIVE_SIG: ... comm=SpringBoard`。这不是“没有发送者”，而是证明 H527
+只挂在 `psignal` / `psignal_with_reason` 的覆盖仍不足。源码核对确认
+`abort_with_payload_internal()` 调用的是
+`psignal_try_thread_with_reason()`，H527 没有在该入口记录。
+
+设备在内核时间约 1579 秒后从 CDC 切换到 Android ADB，live 采集停止。live
+日志没有给出对应 panic 文本，因此只能记录本次 boot 在第二次 SpringBoard
+重开后结束，不能补写不存在的 watchdog 或 panic 触发原因。
+
+UFS 在截至 `1537.233146 s` 的采样中仍完成请求：
+
+```text
+seq=262808 done=262808 timeout=0 ocs_err=0 dbto=0
+recover=0 recovered=0 flight=0 lock_timeout=0
+lock_waiters=0 lock_wait_max_ms=36325
+```
+
+中间样本出现过最多 30 个 `lock_waiters`。这是请求完成但锁竞争仍存在的对照，
+不是锁等待改善，也没有验证 watchdog recovery。
+
+TWRP 中 `userdata_ios` 的 512-byte sector 数为 `103204312`，对应 4 KiB
+blocks `12900539`；按最后一个 32 MiB 拉取时 `skip=12892347`、`count=8192`。
+持久环中属于 boot `303b0e0c` 的有效尾部停在 `1546.631304 s`，没有包含
+PID 27 的退出，说明本轮退出前的最后记录只在 live 通道中。拉取和解析全程只读。
+
+产物与证据：
+
+```text
+kernel SHA-256         4a28b765df9efae1506e9806e3e51c927c7d04da9194d4fcc5f6c4c2bc0942c6
+payload SHA-256        c468de8306abe8914808446985d1b5a8c7786a511379b092c3a214025acfea2d
+boot SHA-256           e959bd51e9551338415530e9b0d87a35b111e405b14794efe2dc9eeb3376d19d
+boot.json SHA-256      a6edb5e63a9b57631233a2f9bc3de84f7b43a3d8f726cc46f798644fca3c2e3e
+unixnu.toml SHA-256    dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e065f01e81
+```
+
+```text
+logs/H527/device/20261122-042842/
+H527-live.log
+  9b41d66ce6a3ac304e997b672cd1044c7ca2f6b6e0b3624b4336ab3a1d91fd57
+H527-live.capture.stdout.txt
+  e829f434025a607b5588994f910e67d6a22523fa5f6cee4db1a7ecca6856e832
+H527-tail32.bin
+  58ae7c156627b0d1249dca0665e1e43f90cff40c040b89700dfe88a9cd06d0ca
+H527-h103.txt
+  3cdd2eb3f7029e384bfcef63e41952c0fcad37bee277f685eb07fc3693c46381
+```
+
+本轮分类为
+`H527-target-port-still-queued/no-receiver/SIGABRT-path-not-covered`。
+`H527-live.frames.bin` 为 0 字节，不能声称本轮的帧流 CRC 已验证。
+
+### §198 H528：覆盖全部 psignal 包装入口（2026-11-22）
+
+H527 已实测排除“SpringBoard SIGABRT 一定经过 `psignal` 或
+`psignal_with_reason`”。H528 只修改只读信号探针，同一 kernel 同时覆盖：
+
+- `psignal`
+- `psignal_with_reason`
+- `psignal_sigkill_with_reason`
+- `psignal_locked`
+- `psignal_vfork_with_reason`
+- `psignal_vfork`
+- `psignal_try_thread`
+- `psignal_try_thread_with_reason`
+- `psignal_thread_with_reason`
+
+`psignal_uthread()` 以 `PROC_NULL` 调用，不能把空 proc 送入当前记录器，因此
+没有伪装成可按进程过滤的样本。记录过滤器改为捕获 SpringBoard 的任意 signum；
+launchd 的 SIGCHLD 与全部 SIGBUS 仍按旧规则保留。探针继续只读取 sender、
+signal、OS reason 和 caller，不改变信号投递或进程退出行为。
+
+补丁在干净 XNU feed 上先通过 `git apply --check`。Mac clean build 的 bootstrap
+pass 按脚本预期在首次链接结束，随后最终链接成功；不能把 bootstrap 的链接失败
+误记为最终产品失败。最终源码包含 1 个记录器和 9 个包装入口调用。构建：
+
+```text
+superproject commit     8e02b602
+NativePrelink           84aa36d00a29e22a39b4eb2465fbbf6a4b693126
+kernel build log        /Users/lss/h468-build/h528-all-signals-build.log
+  5f6b7fa3a568fa4153cc5694b41261b1688a0c5f9ad7e865d75f1483b8f557bb
+prelink log             /Users/lss/h468-build/h528-all-signals-prelink.log
+  20633c6ebe59df6100241f5f2fe7534354fb7dfedf3d7617e26b88ee58d2a480
+```
+
+payload 从 H527 复制，只替换 `Payloads/kernel.macho`。其余五项逐字节一致：
+
+```text
+ADT                   9fa9e5ba88b84546ef89f79b26bbd9a9cea5e881b8efebf2c2149d09259eb74d
+Data seed             7522c2b803bac371190e5f316bacc825d1dd3c964ef3a3ab6ffd75bf0f9bae79
+GPU addon             dc2dc3a157f1498ce5d0fa1ec5b0bb5383e6fb6b6d914fd505c59e6936250026
+owner trust           fde42382e4cfe41e3407c0f2f50854c8a3ac2f9042f142ddcaa1b1582bd9ab69
+unixnu.toml           dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e065f01e81
+```
+
+payload 内 kernel 回读与构建产物一致。bootargs 仍为 988 字符，
+`check-bootargs-fit.py` 为 `1008/1024`、最坏 `1016/1024`，PASS；
+boot JSON `problems=[]`。
+
+产物：
+
+```text
+kernel SHA-256         548d323ba5fc4d555c94974c4304da9e63cffca772bfaf3340bd469fb971cc83
+payload SHA-256        5e3457325c25bac57717abfb1f190af8ed2c6ef701398282f489c6a2306de192
+boot SHA-256           9bc7100e5afd11ed1f56eaec24a43a39d49e3369c4c31fd66bd4582d42700995
+boot.json SHA-256      dde0cb75f253ab194146522a9d75c6d887ed9baba440c407ffe731aa165e5902
+unixnu.toml SHA-256    dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e065f01e81
+payload kernel         548d323ba5fc4d555c94974c4304da9e63cffca772bfaf3340bd469fb971cc83
+```
+
+状态为 `H528-built-static-verified-device-pending`。设备判定先看 SpringBoard
+退出前是否出现新的 `NATIVE_SIG`。若出现，按 sender、signum、ns/code/flags
+和 caller 决定是自身 abort、外部终止还是 XNU 路径。若仍没有记录，下一轮必须
+从 exit path 的原始 reason payload 继续，不能把阴性探针写成“没有信号”。
 
 同日曾尝试用 H473 历史 glob 顺序重建 target-port 控制，并为让新补丁排到末尾
 临时引入 `zz…` 文件名。该分支没有成功构建，也没有产生 boot 镜像，已删除。
