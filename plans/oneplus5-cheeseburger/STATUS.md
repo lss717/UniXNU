@@ -18114,3 +18114,60 @@ H482-tail32.bin    346c6f43b38a92147205fffc288a0c2e44293c6da640be2d6bbd95fb020e8
 H482-h103.txt      66bbdeb6130e14bc3ec952359522db5025a505646771e3e6368d06ee5216304a
 H482-device-state  7a99a087e786386bd813d3d35b9e6f59b005c6204d7d512eb7e79d5ecca8c5cf
 ```
+
+### §126 H483：在 wrapper exec 前诊断 observer 注入（2026-11-21）
+
+H482 已经证明 wrapper 能把 pid 27 成功 exec 成 `SpringBoard.real`，但没有
+observer load 或拒绝证据。H475 又证明同一 observer 可由 launchd 直接启动
+路径加载。因此 H483 只修改 wrapper 的启动前诊断：
+
+1. 原样设置 `DYLD_INSERT_LIBRARIES` 与 `DYLD_FORCE_FLAT_NAMESPACE`；
+2. 用 `getenv` 回读两者并打印；
+3. 对 `/private/var/ngpu/lib/SpringBoardSceneObserver.dylib` 执行
+   `dlopen(..., RTLD_NOW | RTLD_LOCAL)`，记录成功或 `dlerror()`；
+4. 仍 exec 完全相同的 `SpringBoard.real`。
+
+SpringBoardSceneObserver、SpringBoard.real、sampler、A540Trace、launchd
+cache、kernel、Data seed 和 bootargs 均不变。submodule 提交 `ff448bc`，
+superproject 提交 `01813c1`。wrapper 静态检查为 PASS。
+
+H483 输入与产物：
+
+```text
+kernel         4577d3bc93a48dec1c910e76d4262e8ceda64869f6b370a2ee3ff42556364b00
+wrapper        3d3f3184e611251f00bc3c6b35318a4f379a97347c7bf234d11c5d11a432874a
+wrapper CDHash a1d2954f66aa7c56b85c7c072c837d29251e3ec6
+observer       3c53d822c042a138bd3bd03c4827bfa373dad5e19e50fc55517fb26074dce6af
+SpringBoard.real
+               62929b2b3c9080c83c43ee348bfc6abe2e1e27136dc4a34a633f5f42c8cbb24b
+GPU addon      fb33e7e9fef1ee372f97221444c5a7eed60434e6939c2c3229aba0dc6f7145b1
+trust cache    9914d116dd4097780680546e43cbc1b61926daed13c41ad8811a551de5f17946
+Data seed      7522c2b803bac371190e5f316bacc825d1dd3c964ef3a3ab6ffd75bf0f9bae79
+ADT            5d25de26c8940c3d9493676ab4a4796f268c784ec22578b855d32fcbebf764d4
+unixnu.toml    80a6086e774d3d997a2fee1184d6cffdd5cf3b5f80c7da701c3ff574c47e3803
+payload        4a7193844ece2cb61d99e521ce5ede59ec231af20dc154b176c4e5e7398276be
+boot           ac253a15f780984e1309e67388759837e579281af7fab8bf2602305948c4ea83
+UEFI           9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6
+```
+
+addon 为 `NGPUADD2 count=8 total=348432`；owner trust 为 30 项且包含新
+wrapper CDHash。payload kernel/addon/trust/Data/toml 逐字节回读一致；ADT、
+bootargs、`OP5ESP`、Android boot magic 和布局检查 PASS。bootargs 仍 980 B，
+实际 1000/1024，worst 1008/1024。
+
+构建中确认两个坑：
+
+- 拉取后的 board 默认参数不等同于 H482。第一次 payload 回读出现
+  `offline-accelerator=0`、`sheng-gpu-addon=0` 和额外 trace 参数；必须用
+  H482 的 `unixnu.toml` 逐项覆盖并删除 extras，最终 `kernel_args_equal=True`。
+- ADT 生成器每次会写新的 `random-seed` 与 Wi-Fi MAC。即使其他输入相同，
+  H482/H483 连续生成的 ADT 也不同。为保持单变量，H483 build 的根文件已
+  从 H482 boot 回读覆盖，最终 ADT SHA 仍为
+  `5d25de26...f764d4`。不要把这种重新随机化的 ADT 当成无变化。
+
+状态：`boot-built-static-verified-not-device-tested`。设备门要求出现
+`wrapper env insert=/private/var/ngpu/lib/SpringBoardSceneObserver.dylib`、
+`wrapper env flat=1` 和 `wrapper dlopen observer ok`，随后记录真实
+`SpringBoard.real` 是否能产生第二次 observer load 与 scene sampler。若
+wrapper 内 `dlopen` 失败，记录完整 `dlerror()` 并停止 scene 方向，不再用
+无异常短跑解释。
