@@ -18212,3 +18212,55 @@ H483-tail32.bin    acc0fe820f2a93fdc53bbc28cfd7f85b7128d2d7974b49d000d497765beb7
 H483-h103.txt      bf0220368c7d06351de9cf1cd47a433ef199937bbd7fc65f9fd9df987329323f
 H483-device-state  b8c66b1f2c2048a8f1d6a23e6fa831662d348913a35cc46e2fee40ada34115f7
 ```
+
+### §127 H484：把 observer 固化为 SpringBoard.real 的 LC_LOAD_DYLIB（2026-11-21）
+
+H483 证明 wrapper 的两个 DYLD 值和 observer `dlopen` 都成功，但 exec 后的
+`SpringBoard.real` 不消费继承注入。H484 只改 real 的 Mach-O load command：
+在 `LC_CODE_SIGNATURE` 前插入
+
+```text
+LC_LOAD_DYLIB /private/var/ngpu/lib/SpringBoardSceneObserver.dylib
+```
+
+新增通用工具 `scripts/add-macho-dylib-load.py`，它只接受 thin 64-bit
+little-endian `MH_EXECUTE`，拒绝已有同名 dylib、超出 header padding、非零
+padding 和覆盖输出，只修改 load-command 区。对 H483 real 的结果：
+
+```text
+ncmds       21 -> 22
+sizeofcmds  0x538 -> 0x588
+header end  0x558 -> 0x5a8
+first sect  0x3fa8
+```
+
+随后执行 4 KiB ad-hoc sign；`codesign --verify --strict` PASS，
+`Page size=4096`。新 real：
+
+```text
+SHA-256  2c68a8974d14ab40b1a0b2c3b89231ea2ab06f16deab73950c0c4f9fa157e96f
+CDHash   1ab5fe93904a763bf880ef13a4cf6670b14bbca1
+```
+
+`otool -l` 确认 `LC_LOAD_DYLIB` 指向 observer，real 大小由 120,864 B 变为
+51,552 B，符合重新 ad-hoc 签名后的 CodeDirectory 替换。wrapper、observer、
+A540Trace、launchd cache、kernel、Data、bootargs 与 ADT 均保持 H483/H482。
+
+H484 回读：
+
+```text
+GPU addon      9a6344b42b54e30a6b1e87f0a2c2a90981648ed743aafa891972c61990530fee
+trust cache    471296dff01110f2481643ff274d49f8c9ef13610bf167155ef8e36bfddcebd5
+payload        a4b413225533651dff119c86261c0a7a632fb22579fc7d994a4a1956ef1f7141
+boot           465f309d22e24bde364c86cd441ab209fc08020729d45223bbdac76812cb9021
+```
+
+owner trust 为 31 项且包含新 real CDHash。payload kernel/addon/trust/Data/ADT/
+toml 回读一致；machine-code 插入检查、wrapper 检查、ADT、bootargs、
+`OP5ESP` 和 boot layout 全部 PASS。状态：
+`boot-built-static-verified-not-device-tested`。
+
+设备门要求 wrapper 内 observer 仍成功加载一次，同时 exec real 后出现第二个
+`NATIVE_MTL: observer load process=SpringBoard.real`。只有第二次加载之后才
+接受 5/30/90/180/300/480 秒 scene sampler。若 real 在 dyld 初始化阶段失败，
+必须记录 dyld 错误与 exit，不能把 wrapper 内的一次成功当成首帧探针已运行。
