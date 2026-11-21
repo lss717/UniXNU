@@ -19446,3 +19446,89 @@ observer/CCS gate、Android boot 结构、UEFI 不变和 bootargs 均 PASS。状
 `contextlist`。若 server 为 nil，只说明 SpringBoard 侧没有可用代理；若端口
 映射成功，则记录 owning pid/comm。下一轮只跟随该 owner 的 renderer producer、
 surface 或 transaction，不回到 UIView 或 layer-depth 猜测。
+
+### §149 H499 真机：SpringBoard 内 CAWindowServer 代理调用阻塞（2026-11-21）
+
+H499 在 serial `16149951`、boot ID `211d2f9c` 上运行。sample 5 记录到
+`CALayerHost.contextId=0xd106473a`、`CAContext.contextId=0x6908e091` 后，
+`hierarchy=contextfields` 正常输出，但预期的 `hierarchy=contextserver` 从未
+出现。直到 900 秒采集结束，`contextmap` 与 `contextlist` 也都没有产出。
+
+同一时间 SpringBoard 仍在运行并继续发起 NativeLegacyDisplay、IOMFB、
+keyboard/UI 与 launchd 活动，没有 SIGABRT、SIGBUS、exit 或 panic。因此不是
+对象树崩溃，而是 observer 的 utility queue 卡在
+`CAWindowServer.serverIfRunning` 或后续 `server` 代理调用中。分类：
+`H499-springboard-cawindowserver-proxy-not-returning`。这条路径不再复用；
+host context 映射改由 backboardd 内已经持有 server 的 A540Trace 完成。
+
+这一轮没有产品首帧。显示状态后期曾从
+`s345=0/1/1 val=1 xf=1` 变为 `dpy=5/31 s345=0/2/2 val=2 xf=2`，
+但最后 heartbeat 仍是 `fr=0`，仍只有 synthetic transfer/retirement。
+
+采集共收到 6729 个 live frame、876701 payload bytes；CRC error、sequence
+gap、boot switch 和 truncated frame 均为 0。最后 H469 状态为
+`seq=226109 done=226109 timeout=0 ocs_err=0 dbto=0 recover=0 recovered=0
+flight=0 lock_timeout=0 lock_waiters=0`，累计最大 lock wait 为 31613 ms。
+UXC1 `424500` 收到 ACK、armed，并执行 normal reboot；Android 和 TWRP 正常
+返回。该恢复不证明 watchdog。
+
+证据目录：
+`display-first-frame/logs/H499/device/20261121-150043/`。
+
+```text
+H499-live.log              1d18d146ea3f3b18e1dca495e8d3e73d1a27c136f6acc68608758a1863ef8874
+H499-live.frames.bin       59a0fb7680e0f3cef30e2bc21033c85d4e19b9e253a76ba104eb2871db1333e8
+H499-live.capture.stdout   6ed6f545ab56e6ab5eab7e306c4f405ea9fd0f8e0b069a77e9131a401de37108
+H499-tail32.bin            f2810fe08b7f7640190268235653434396b6f8632359f721d749cb5f505d4bff
+H499-h103.txt              84c872d3bd0de90d26c271b745a006f44c515b450dd677f91cd5ba349865b5a7
+H499-device-state.txt      801634c16e163b29a2c6d5058b807bb6fb54c96c1ee6b7a2536d9ea3173f8bac
+H499-reboot.log            c6aaa2ca519e4f8f5e4d4e1f62d1876f577c296f93e904e183c5f448d8cd8b25
+```
+
+### §150 H500：在 backboardd context 表内解析 owner pid/comm（2026-11-21）
+
+H500 保留 H499 的 kernel、ADT、Data、bootargs、observer、launchd cache、
+SpringBoard 映射和显示路径。只修改 A540Trace 已有的
+`observer_context_state`。新建 context 时，对已经取得的
+`taskNamePortOfContextId:` 调用：
+
+```text
+pid_for_task
+proc_name
+mach_port_deallocate
+```
+
+`ctxchange` 行增加 owner pid、pid 状态和 comm，用来识别 backboardd
+`CAWindowServer` 内两个 1080×1920 context 的真实客户端。A540Trace build
+marker 从 H436 改为 H500，便于确认新 bundle 实际加载。动作仍为只读，没有
+绑定、替换 context 或修改 display。
+
+第一次 Mac 编译前，observer 中已有 H499 布尔表达式被 `-Werror`
+`-Wlogical-op-parentheses` 拒绝；已以独立提交 `ce4b9cf` 加括号修复。A540
+owner probe 提交为 `a08f3281030ff9e3e25df5e67a154fd6d26464f2`，
+superproject `69381f2`。
+
+产物：
+
+```text
+A540Trace executable SHA-256 1cf93d66824814c9fec03e34671d8f0323cdfe53eb86667ce11504338d6a6b76
+CodeResources SHA-256        e4277d57ee36023e631a4cdfcadbc0bc87fa759bae8ca186e69c7cd6c75acf43
+A540Trace CDHash             b0db4cd25b2f5dbf73e79fc93db58425a272761e
+observer SHA-256             98177ddb72d1de87b450a4341f80dfdc2eaa375cfef5b947dc69078f80671292
+addon SHA-256                c39c87eab77e92b0bf98f8cb0792b107cb0d43d5366825895a6bcdff3e280849
+trust SHA-256                4226d04d363dcf9ebab744206e723a4b170e1c7aca9085b7bcbed2b610214274
+payload SHA-256              7b54a4a4085aaaff46997efdbfb34f951bb700b3bf54cb74fdc22986505f370a
+boot SHA-256                 a62d581bbacf0d16285610f06bead947e14880d7d661d239e8f5301f647b4c9f
+boot.json SHA-256            9fa1a2ab1b34b80e96f68f81535acf6fef102488ab5e32227fa09c677a3714c2
+```
+
+owner trust 为 38 项。addon 仍为 7 项；相对 H499，只更新 A540Trace
+bundle 的 executable、Info.plist 和 CodeResources。payload 回读确认
+kernel、ADT、Data seed 与 `unixnu.toml` 不变，UEFI 与 H499 相同。
+A540Trace/observer/CCS gate、arm64 4 KiB 签名、Android boot 结构、bootargs
+均 PASS。状态：`boot-built-static-verified-not-device-tested`。
+
+设备门要求 H103 出现 A540Trace `builder#...build H500`，并且两个
+`srv#... ctxchange ... state=new ... owner=<pid>/<status>/<comm>` 给出实际
+owner。下一轮必须跟随该 owner 的 producer/surface 路径；SpringBoard 内的
+`CAWindowServer.server*` 代理不再调用。
