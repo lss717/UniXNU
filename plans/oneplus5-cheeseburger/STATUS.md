@@ -20860,3 +20860,44 @@ trustcache/gpuaddon。observer gate、arm64、strict codesign 与 readback
 `sharedApplication` 并收到 didFinishLaunching/外设通知，则 H514 的 poll 15
 属于探针诱发停点；若整轮仍无自然调用和通知，下一步转查
 `UIApplicationMain` 之前的前台 scene/activation 输入。
+
+### §180 H515 真机：移除主动轮询后仍无自然 UIApplication 事件（2026-11-21）
+
+H515 在 boot ID `21868e94` 上完成 900 秒采集。`build H515` 在 283.419893
+秒确认。sample 2/3 的 closure、snapshot 入口和退出均正常；sample 4 在
+529.017270 秒出现 `h513_dispatch_closure_enter`，但没有随后
+`h513_snapshot_enter sample=4`，也没有任何
+`h515_shared_application_enter/return` 或 UIKit 通知。
+
+因此 H514 的后台 poll 15 停点没有被复现，但 H515 仍不能证明 SpringBoard
+自然进入 UIApplication 生命周期：全轮 status window、CA client context、
+root visible 和 display slot 均为 0。H515 自身也暴露了另一个观测问题：
+sample 4 closure 的第一条后续日志没有到达，周期 SpringBoard 采样器仍可能
+阻塞用户态全局队列。
+
+显示门在 1110.079154 秒仍为
+`dpy=4/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0`。最后 H469 行为
+`seq=224771 done=224771 timeout=0 ocs_err=0 dbto=0 recover=0
+recovered=0 lock_timeout=0`；`lock_wait_ms=10095948 lock_ok=637930`，
+平均约 15.83 ms。
+
+live capture 为 `frames=5908 payload_bytes=796021 crc_errors=0
+sequence_gaps=0 truncated_frames=0 boot_switches=0`。UXC1 `424517`
+ACK 后正常重启，Android 完成并返回 TWRP。
+
+证据：
+
+```text
+H515-live.log                 689e6cc111888a542a55f7c313283ceebcbebeb37ae98e7e6155e135d63a523f
+H515-live.frames.bin          e24c24f2714da1a0866794ccbe47d911083a4e781093233933face4f945bd52c
+H515-h103.txt                 93c850e4cae634032c5d6efbbf153c3b5694e9d5848103d1029a1616fd4b2f5a
+H515-tail32.bin               2e6a96ebd1036d8f14c31b6c7aaa7b8bcc42f78b80c78b09cfc009c776700836
+H515-reboot.log               f5ad14a78c4bfeacf9f158a9f9ba3558c87d9878ecf654c4e8367eafcb7fd921
+H515-reboot.frames.bin        119af652e75dff67f790e0789067607679da65a5752d5af8a8b9e78c544b1c4a
+H515-reboot-recovery-state    75968321da6b0eac4325664165f6a81b452395f49978eb28cb42ec5d75fc8bd2
+```
+
+分类：`H515-no-active-app-poll/no-natural-UIApplication-events`。下一步先移除
+所有 `dispatch_after` SpringBoard 全树快照和 pthread 定时采样，仅保留被动
+方法 hook 与 UIKit 通知，建立无周期探针的干净对照；否则无法排除采样器本身
+对用户态全局队列和日志路径的影响。
