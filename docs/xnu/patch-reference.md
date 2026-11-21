@@ -1,6 +1,8 @@
 # Patch reference
 
-Patches apply in name order from `patches/xnu/*.patch` and `kits/NativePrelink/patches/*.patch`. The late patches `zzw-*`, `zzy-*` and `zzz-*` apply last.
+Patches apply in the order recorded by `patches/xnu/series` and
+`kits/NativePrelink/patches/series`. Filenames describe function and do not
+control order.
 
 ## Build and toolchain
 
@@ -34,7 +36,7 @@ Patches apply in name order from `patches/xnu/*.patch` and `kits/NativePrelink/p
 | `native-4k-user-abi` | Sets the 4 KiB page shift for user maps, commpage and shared region |
 | `native-4k-signature-hash-cache` | Derives 4 KiB code signing hashes from verified 16 KiB blocks |
 | `pgz-aligned-validation` | Decodes the PGZ address before the alignment check |
-| `zzx-pmap-sync-64bit-pa` | Uses `ptoa()` to keep physical addresses above 4 GiB |
+| `pmap-sync-64bit-pa` | Uses `ptoa()` to keep physical addresses above 4 GiB |
 | `non-apple-pmap-field` | Matches the non-PAC pmap field layout |
 | `non-apple-iommu-bootstrap` | Guards UAT and SART bootstrap and PPL code |
 | `non-apple-cache-monitor` | Guards the monitor enable and exports the cache clean symbol |
@@ -63,9 +65,9 @@ Patches apply in name order from `patches/xnu/*.patch` and `kits/NativePrelink/p
 | Patch | Purpose |
 | --- | --- |
 | `offline-native-gpu-broker` | Starts the offline GPU broker |
-| `zzy-native-gpu-addon-mount` | Mounts read-only union views for GPU addon content and launch jobs |
-| `zzw-native-adreno-sandbox-grant` | Lets NativeAdreno name the render server in `NativeSandboxGrantProcess` and open its user client past the sandbox |
-| `zzwb-native-sandbox-grant-set-properties` | Extends that grant to `setProperties`, which the render server's profile refuses (`FadePeriod` on a panel backlight) |
+| `native-gpu-addon-mount` | Mounts read-only union views for GPU addon content and launch jobs |
+| `native-adreno-sandbox-grant` | Lets NativeAdreno name the render server in `NativeSandboxGrantProcess` and open its user client past the sandbox |
+| `native-sandbox-grant-set-properties` | Extends that grant to `setProperties`, which the render server's profile refuses (`FadePeriod` on a panel backlight) |
 | `native-aes-personality` | Registers the storage and console personalities |
 
 ## Diagnostics
@@ -75,7 +77,7 @@ Patches apply in name order from `patches/xnu/*.patch` and `kits/NativePrelink/p
 | `offline-pgz-alignment-probe` | Adds the PGZ allocation probe and checkpoints |
 | `native-work-interval-trace` | Records the last work interval results for the boot progress page |
 | `native-quiet-managed-page-report` | Stops the DEVELOPMENT managed-page report on GPU buffer and scanout mappings |
-| `zzz-boot-progress` | Adds boot progress checkpoints across the kernel startup path |
+| `boot-progress` | Adds boot progress checkpoints across the kernel startup path |
 
 ## Behavior fixes
 
@@ -110,10 +112,12 @@ Patches apply in name order from `patches/xnu/*.patch` and `kits/NativePrelink/p
 
 1. Edit `.cache/xnu-work`.
 2. Generate the diff with `git diff`.
-3. Place it in `patches/xnu/` with a name that orders it correctly.
-4. Rebuild the kernel.
+3. Place it in `patches/xnu/` with a functional name.
+4. Add it at the required position in `patches/xnu/series`.
+5. Rebuild the kernel.
 
-A patch that depends on another patch applies after it. A patch that changes a region touched by `zzy` or `zzz` applies before them.
+An unlisted `.patch` is an error, as are duplicate and missing series entries.
+Ordering dependencies are documented in `patches/xnu/README.md`.
 
 ## Next steps
 

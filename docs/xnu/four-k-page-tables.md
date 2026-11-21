@@ -122,7 +122,7 @@ The check then uses the decoded element address for the metadata lookup.
 flush_dcache((vm_offset_t)(pp << PAGE_SHIFT), PAGE_SIZE, TRUE);
 ```
 
-The patch `zzx-pmap-sync-64bit-pa` uses `ptoa()`:
+The patch `pmap-sync-64bit-pa` uses `ptoa()`:
 
 ```c
 flush_dcache((vm_offset_t)ptoa(pp), PAGE_SIZE, TRUE);

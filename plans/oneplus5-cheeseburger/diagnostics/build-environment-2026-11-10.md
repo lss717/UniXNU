@@ -1671,7 +1671,7 @@ display 侧暂停，转回 **GPU 前端**：内核可见信号已用尽，而 GP
   Metal 设备（metal2vulkan → Turnip）。
 
 `pack-adreno-addon.py` 增加 `addons/NativeAdrenoMetal.publish`（`addons/` 由
-`zzy-native-gpu-addon-mount` 挂到 `/System/Library/Extensions`），重打 addon
+`native-gpu-addon-mount` 挂到 `/System/Library/Extensions`），重打 addon
 （12,125,860 B），payload 只换 `Payloads/kernel.macho.gpuaddon` 与插件名
 （`NativeAdreno`），内核不变（`0c578859…`）。boot `07205fb6…`。
 
@@ -2946,7 +2946,7 @@ LaunchAgent（用户会话）和一个小探针程序，由它打印
   cdhash `8fded1a6…` 已写进 owner 信任缓存）；
 - 由 `scripts/add-gpu-plugin-data.py` 一起送入 Data seed：`ngpu/bin/cadprobe` +
   `ngpu/daemons/com.unixnu.cadprobe.plist`（`RunAtLoad`）。`ngpu/daemons` 由
-  `zzy-native-gpu-addon-mount` 联合挂载到 `/System/Library/LaunchDaemons`，所以它是一个
+  `native-gpu-addon-mount` 联合挂载到 `/System/Library/LaunchDaemons`，所以它是一个
   **系统会话的 LaunchDaemon**；
 - 输出走 A540 ABI 的 Log 方法（`NATIVE_MTL: cad …`），因为 Data 卷是 APFS，恢复环境读不到文件。
 
@@ -3372,7 +3372,7 @@ Mach receive” 一致。新增 `scripts/symbolicate-pc.py`：读 `LC_FUNCTION_S
 **第 1 步（一次上机）**：内核按名采样 SpringBoard 的等待线程：
 
 - 实现位置 `osfmk/kern/task.c: native_sb_pc_sample(name, sample)`，patch 见
-  `patches/xnu/zzzzzzzzzzz-h103-proc-state.patch`（已按 xnu-work 的实际 diff 重新生成）；
+  `patches/xnu/log-process-state.patch`（已按 xnu-work 的实际 diff 重新生成）；
 - **不用 `task_threads()`**（MIG 会把 task 引用语义带进内核），用 `task_lock_try()` +
   `queue_iterate(&t->threads, …)`；锁在就保证线程不会被摘链；
 - **只采 `TH_WAIT` 线程**，并要求 `get_user_regs()` 非空、`is_saved_state64()` 为真、

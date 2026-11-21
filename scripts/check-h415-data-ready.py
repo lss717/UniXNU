@@ -2,14 +2,12 @@
 """Validate the H415 bounded Data mountpoint readiness patch."""
 
 from pathlib import Path
+import subprocess
+import sys
 
 
 ROOT = Path(__file__).resolve().parent.parent
-PATCH = ROOT / (
-    "patches/xnu/"
-    "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-"
-    "h415-data-ready.patch"
-)
+PATCH = ROOT / "patches/xnu/data-mount-ready.patch"
 
 
 def require(condition, message):
@@ -52,10 +50,12 @@ def main():
         "mountpoint lookup is not before original mount preparation",
     )
 
-    tree_text = "\n".join(
-        path.read_text(errors="ignore")
-        for path in sorted((ROOT / "patches/xnu").glob("*.patch"))
-    )
+    series = subprocess.check_output(
+        [sys.executable, ROOT / "scripts/apply-patch-series.py",
+         "--root", ROOT / "patches/xnu", "list"],
+        text=True,
+    ).splitlines()
+    tree_text = "\n".join(Path(path).read_text(errors="ignore") for path in series)
     for forbidden in (
         "NATIVE_IPC_PORT_RING",
         "NATIVE_IPC_DELEGATE_RING",

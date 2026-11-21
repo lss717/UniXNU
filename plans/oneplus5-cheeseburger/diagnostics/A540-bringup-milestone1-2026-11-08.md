@@ -65,7 +65,7 @@ Intel Mac 上改为降级构建（`TurnipReplay.h` 本来就是可选的）。
   - `GetStatus` / `GetTimestamp` / `SetMetadata`（`SetMetadata` 文本直接进内核日志）；
   - `BoAlloc` 及之后返回 `kIOReturnUnsupported`；
 - 沙箱授权：服务设置 `NativeSandboxGrantProcess=backboardd`（配合仓库已有的
-  `zzw-native-adreno-sandbox-grant.patch`），UFS 注入点也设置同一属性。
+  `native-adreno-sandbox-grant.patch`），UFS 注入点也设置同一属性。
 
 ### 3.4 关键调试经验（可复用）
 
@@ -127,5 +127,5 @@ NATIVE_A540_ABI: method= : 0                                                    
 - 用户态：`drivers/NativeMetal/NativeAdrenoMetalPlugin.mm`、`NativeAdrenoUserTest.h`
 - 构建：`scripts/build-adreno-metal-plugin.py`、`scripts/build-turnip-darwin.py`、
   `scripts/pack-adreno-addon.py`、`scripts/add-owner-trust-hash.py`
-- 沙箱授权：`patches/xnu/zzw-native-adreno-sandbox-grant.patch`
+- 沙箱授权：`patches/xnu/native-adreno-sandbox-grant.patch`
 - 诊断：`scripts/h103-log-pull.py`（按 boot id 过滤 slot）

@@ -1,7 +1,7 @@
 # H473 GPU addon v2 parser repair (2026-11-21)
 
 > Series note (2026-11-22): this interim parser change is now supplied by
-> `patches/xnu/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-h208-addon-crc-stored.patch`.
+> `patches/xnu/addon-crc-stored.patch`.
 > The duplicate H473 patch was removed from the active series so a clean XNU
 > checkout can apply the remaining patches without `--recount` or fuzz.
 
@@ -54,8 +54,8 @@ It preserves:
 - the H472 Data seed, trust cache and GPU addon;
 - display and scanout behavior.
 
-Patch:
-`patches/xnu/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-h473-addon-v2-parser.patch`.
+Patch: the interim H473 parser patch was removed from the active series after
+its behavior was consolidated into `addon-crc-stored.patch`.
 
 ## Build
 

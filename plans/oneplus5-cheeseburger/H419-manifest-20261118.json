@@ -33,7 +33,7 @@
   },
   "changes": {
     "kernel": {
-      "patch": "patches/xnu/zzzzzzzzzzzzzz-h419-bks-focus.patch",
+      "patch": "patches/xnu/springboard-bks-focus.patch",
       "behavior": "read-only IPC observation",
       "ring_entries": 512,
       "message_id": "0x5b9173",

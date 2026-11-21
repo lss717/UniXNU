@@ -7,9 +7,9 @@
 - 实现：`drivers/NativeMobileDisplay/NativeLegacyDisplay.cpp` 的 `drawTestPattern()` 与
   `drawHeartbeatCell()`；
 - 重绘调度：`drivers/NativeUfsProbe/NativeUfsProbe.cpp`；
-- 标志位：`patches/xnu/zzzzzzzz-h103-boot-flags.patch`、
-  `patches/xnu/zzzzzzzzz-h103-exit-flags.patch`、
-  `patches/xnu/zzzzzzzzzz-h103-iokit-trace.patch`。
+- 标志位：`patches/xnu/log-boot-flags.patch`、
+  `patches/xnu/log-exit-flags.patch`、
+  `patches/xnu/log-iokit-trace.patch`。
 
 > USB CDC 实时串口日志、UXL1 解码和普通重启命令见
 > [USB CDC 串口日志与普通重启使用说明](usb-com-log-guide.md)。

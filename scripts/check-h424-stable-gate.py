@@ -8,8 +8,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = ROOT / "drivers/NativeUfsProbe/NativeUfsProbe.cpp"
-PATCH = next((ROOT / "patches/xnu").glob("*-h424-stable-gate.patch"))
-H423_PATCH = next((ROOT / "patches/xnu").glob("*-h423-ls-lifecycle.patch"))
+PATCH = ROOT / "patches/xnu/launchservices-stable-gate.patch"
+H423_PATCH = ROOT / "patches/xnu/launchservices-lifecycle.patch"
 H423_CHECKER = ROOT / "scripts/check-h423-ls-lifecycle.py"
 METAL = ROOT / "drivers/NativeMetal/A540TracePlugin.mm"
 
@@ -23,9 +23,14 @@ def main():
     driver = DRIVER.read_text(encoding="utf-8")
     patch = PATCH.read_text(encoding="utf-8")
     metal = METAL.read_text(encoding="utf-8")
+    series = subprocess.check_output(
+        [sys.executable, str(ROOT / "scripts/apply-patch-series.py"),
+         "--root", str(ROOT / "patches/xnu"), "list"],
+        text=True,
+    ).splitlines()
 
-    require(PATCH.name > H423_PATCH.name,
-            "H424 patch must sort after H423 in the apply series")
+    require(series.index(str(PATCH)) > series.index(str(H423_PATCH)),
+            "H424 patch must follow H423 in the apply series")
     require('#define H103_BUILD "H424"' in driver,
             "H424 kernel build tag missing")
 

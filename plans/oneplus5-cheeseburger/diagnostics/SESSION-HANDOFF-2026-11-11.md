@@ -48,7 +48,7 @@
 **读 SpringBoard 那条同步消息的 `msgh_id`。** 它直接是 MIG/XPC 的例程编号，可指认对端。
 
 落点：`osfmk/kern/task.c: native_sb_pc_sample()`（已有，见
-`patches/xnu/zzzzzzzzzzz-h103-proc-state.patch`）。改动很小：
+`patches/xnu/log-process-state.patch`）。改动很小：
 
 ```c
 /* 只对 pc 落在 mach_msg2_trap 的线程做：x[0] 是 mach_msg2 头指针，x[1] 是选项 */
@@ -140,7 +140,7 @@ SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)" python3 scripts/build-arm-driv
 |---|---|
 | `drivers/NativeMetal/A540TracePlugin.mm` | Metal 插件：device/queue/cmdbuffer 桩、显示探针、服务探测、SpringBoard 重启、persona 尝试 |
 | `drivers/NativeUfsProbe/NativeUfsProbe.cpp` | 内核驱动：心跳、加速器服务注入、采样线程（调用 `native_sb_pc_sample`） |
-| `osfmk/kern/task.c`（经 `patches/xnu/zzzzzzzzzzz-h103-proc-state.patch`） | `native_sb_pc_sample()`：按名采样等待线程的 pc/lr |
+| `osfmk/kern/task.c`（经 `patches/xnu/log-process-state.patch`） | `native_sb_pc_sample()`：按名采样等待线程的 pc/lr |
 | `drivers/NativeMobileDisplay/NativeLegacyDisplay.cpp` | Legacy 显示驱动（`/chosen/display-scale`、swap 校验、client interposer） |
 | `drivers/NativeMobileDisplay/LegacyDisplayProbe.cpp` | 客户端 selector 追踪（`client io/sel/fixup`） |
 | `scripts/add-gpu-plugin-data.py` | 打包 seed（插件 bundle、cadprobe、`--persona`） |

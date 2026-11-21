@@ -39,16 +39,17 @@ if [ "${XNU_SKIP_PATCH_LOOP:-0}" != 1 ]; then
 # The optional observation hooks overlap existing root/exec patch context.
 # Remove them first so earlier independent patches retain their idempotent checks.
 # The same holds for the boot-time GPU addon mount and the staged system apps copy (zzy), which edit the owner Data mount function
-# inside the systemos patch. Reverse newest first; the loop below re-applies them in name order.
-for LATE_PATCH in "$ROOT/patches/xnu/zzzzzzzz-h103-root-union.patch" \
-    "$ROOT/patches/xnu/zzzzzz-h103-proc-diag.patch" \
-    "$ROOT/patches/xnu/zzzzz-h103-data-diag.patch" \
-    "$ROOT/patches/xnu/zzzz-owner-preboot-layout.patch" \
-    "$ROOT/patches/xnu/zzz-shared-region-cache-bypass.patch" \
-    "$ROOT/patches/xnu/zzz-root-auth-bypass.patch" \
-    "$ROOT/patches/xnu/zzz-native-exec-bypass.patch" \
-    "$ROOT/patches/xnu/zzz-boot-progress.patch" "$ROOT/patches/xnu/zzy-staged-system-apps.patch" \
-    "$ROOT/patches/xnu/zzy-native-gpu-addon-mount.patch"; do
+# inside the systemos patch. Reverse newest first; the series then re-applies
+# them in its recorded order.
+for LATE_PATCH in "$ROOT/patches/xnu/log-root-union.patch" \
+    "$ROOT/patches/xnu/log-process-snapshot.patch" \
+    "$ROOT/patches/xnu/log-data-snapshot.patch" \
+    "$ROOT/patches/xnu/owner-preboot-layout.patch" \
+    "$ROOT/patches/xnu/shared-region-cache-bypass.patch" \
+    "$ROOT/patches/xnu/root-auth-bypass.patch" \
+    "$ROOT/patches/xnu/native-exec-bypass.patch" \
+    "$ROOT/patches/xnu/boot-progress.patch" "$ROOT/patches/xnu/staged-system-apps.patch" \
+    "$ROOT/patches/xnu/native-gpu-addon-mount.patch"; do
   if git -C .cache/xnu-work apply --reverse --check "$LATE_PATCH" >/dev/null 2>&1; then
     git -C .cache/xnu-work apply --reverse "$LATE_PATCH"
   fi

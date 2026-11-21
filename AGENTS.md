@@ -55,9 +55,9 @@ Known traps on a fresh tree, in the order they bite:
    `refer/`.
 6. A patch that was generated from an already-patched tree applies with fuzz and
    silently duplicates declarations. The series must apply with plain `git apply`
-   and no `-F`; check after adding a patch. `patches/xnu/experimental/` holds the
-   H251-H254 probe patches until they are rebased onto the current line, with
-   `zzzz…-h25x-probe-stubs.patch` keeping the UFS probe's symbols linkable.
+   and no `-F`; check after adding a patch. The H251-H254 probes are historical
+   and absent from the active series; `probe-stubs.patch` keeps the UFS probe's
+   symbols linkable.
 7. `unixnu build payload` without `--trust-cache` writes a payload with no
    `kernel.macho.trustcache`. DarwinBoot then publishes no `chosen/memory-map:TrustCache`
    property and the kernel panics at `NATIVE_TRUSTCACHE: property lookup failed -1`
@@ -167,9 +167,9 @@ git clone https://github.com/lss717/UniXNU-cheeseburger
   the superproject pointing at a commit the remote does not have.
 - Kernel patches live in `patches/xnu/`. Edit the applied source in
   `out/<board>/tree/.cache/xnu-work` after a first kernel build, generate the
-  diff, add it to `patches/xnu/`, then rebuild kernel + prelink. Patch names
-  encode apply order; late patches use `zzy-`/`zzz-` prefixes. Do not reorder
-  or rename unrelated patches.
+  diff, add it to `patches/xnu/`, add its filename at the required position in
+  `patches/xnu/series`, then rebuild kernel + prelink. The series is
+  authoritative; duplicate, missing, and unlisted patch entries are errors.
 - **Edit source with a text editor (`edit`) or `sed`, never with a script that
   rewrites files in bulk.** A Python heredoc doing multi-line replacements is
   what produced two "corrupt patch at line N" failures and one duplicated
@@ -178,8 +178,8 @@ git clone https://github.com/lss717/UniXNU-cheeseburger
   .cache/xnu-work diff`, as above) over editing its hunks by hand; when a
   one-line `sed -i` really is the change, re-run
   `git apply --check <patch>` on a clean series before committing.
-- Bring-up diagnostics are boot-argument-gated and often live in
-  `zzzz...h103...` patches. Do not turn them into default behavior or add more
+- Bring-up diagnostics are boot-argument-gated and often live in the
+  `log-*.patch` entries. Do not turn them into default behavior or add more
   boot arguments without reading the current STATUS gate.
 - Submodules intentionally point at `lss717` forks under renamed repositories
   (`NativeMobileDisplay` → `GopFramebuffer`, `NativeAES` → `SoftwareAES`,

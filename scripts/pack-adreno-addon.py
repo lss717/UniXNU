@@ -38,7 +38,7 @@ def main() -> int:
         files.append(('bin/adrenoprobed', 0o755, (PLUGIN / 'adrenoprobed').read_bytes()))
     # H236ft: the plugin returns the native Metal device only when this marker
     # sits beside the bundle in /System/Library/Extensions (the addons/ tree is
-    # mounted there by zzy-native-gpu-addon-mount). Without it the principal
+    # mounted there by native-gpu-addon-mount). Without it the principal
     # class runs the ABI test and returns nil, so CoreAnimation never gets a
     # device.
     if '--publish' in flags:

@@ -62,14 +62,14 @@ A	patches/xnu/native-union-lower-directory.patch
 A	patches/xnu/native-work-interval-instance.patch
 M	patches/xnu/offline-component-load-probes.patch
 M	patches/xnu/offline-owner-systemos-mount.patch
-M	patches/xnu/zzw-native-adreno-sandbox-grant.patch
-A	patches/xnu/zzwb-native-sandbox-grant-set-properties.patch
-M	patches/xnu/zzy-native-gpu-addon-mount.patch
+M	patches/xnu/native-adreno-sandbox-grant.patch
+A	patches/xnu/native-sandbox-grant-set-properties.patch
+M	patches/xnu/native-gpu-addon-mount.patch
 A	patches/xnu/zzyb-native-cryptex-os-view.patch
 A	patches/xnu/zzyc-owner-skip-launch-constraints.patch
 ```
 
-本轮只采纳 `zzwb-native-sandbox-grant-set-properties.patch`：
+本轮只采纳 `native-sandbox-grant-set-properties.patch`：
 
 - 它把 `NativeSandboxGrantProcess` 的授权从“打开 user client”扩展到 `setProperties`。
 - 触发场景是 backboardd 的配置拒绝 `FadePeriod`（CoreBrightness 每次调亮度都会发），属于后续背光/显示链路必经点。
@@ -79,22 +79,22 @@ A	patches/xnu/zzyc-owner-skip-launch-constraints.patch
 
 | 补丁 | 原因 |
 | --- | --- |
-| `native-work-interval-instance` | 只影响音频 workgroup interval 的 6/7/8 操作，与当前 gate 无关 |
-| `native-union-lower-directory` | 与 `zzzzzzzz-h103-root-union.patch` 的本地 root union 实现重叠，需单独适配 |
-| `native-lookup-trace` | 纯观测，且与本轮 gate 无关 |
-| `zzyb-native-cryptex-os-view` | Safari/WebKit 扩展，当前用不到 |
-| `zzyc-owner-skip-launch-constraints` | 新增 `sheng-no-lc` boot arg；当前 gate 不涉及 launch constraint，先不引入 |
+| `native-work-interval-instance`（已停用的历史补丁） | 只影响音频 workgroup interval 的 6/7/8 操作，与当前 gate 无关 |
+| `native-union-lower-directory`（已停用的历史补丁） | 与 `log-root-union.patch` 的本地 root union 实现重叠，需单独适配 |
+| `native-lookup-trace`（已停用的历史补丁） | 纯观测，且与本轮 gate 无关 |
+| `zzyb-native-cryptex-os-view`（已停用的历史补丁） | Safari/WebKit 扩展，当前用不到 |
+| `zzyc-owner-skip-launch-constraints`（已停用的历史补丁） | 新增 `sheng-no-lc` boot arg；当前 gate 不涉及 launch constraint，先不引入 |
 | GopFramebuffer `c031d88..e47c1b8`（13 个提交） | direct scanout / GPU fence / half-float / event ring，属 GPU/DPU 路径；CPU 路径修复（`72cebda`、`eb9c949`、`c031d88`）我们基座已含 |
 
 ## 5. 应用性验证
 
-`zzwb` 的 hunk 与我们现有的 `zzw` 及 `zzzzzzzzzz-h103-iokit-trace` 不冲突。用 xnu `xnu-10063.141.1`（`d8b8029`）的原始 `iokit/Kernel/IOUserClient.cpp` 逐补丁验证：
+`zzwb` 的 hunk 与我们现有的 `zzw` 及 `log-iokit-trace` 不冲突。用 xnu `xnu-10063.141.1`（`d8b8029`）的原始 `iokit/Kernel/IOUserClient.cpp` 逐补丁验证：
 
 ```text
 OK   offline-component-load-probes.patch
-OK   zzw-native-adreno-sandbox-grant.patch
-OK   zzwb-native-sandbox-grant-set-properties.patch
-OK   zzzzzzzzzz-h103-iokit-trace.patch
+OK   native-adreno-sandbox-grant.patch
+OK   native-sandbox-grant-set-properties.patch
+OK   log-iokit-trace.patch
 ```
 
 `zzwb` 在 `zzw` 之后应用时会带 `offset -12`（`zzw` 在自己的 hunk 之后增加了行），`git apply` 能按上下文定位，构建脚本 `scripts/build-xnu-4k-baseline.sh` 的幂等循环（`--reverse --check` 后跳过）同样成立。

@@ -270,7 +270,7 @@ PATCH_MARKER="H82_DATA_WAIT"   # offline-owner-systemos-mount.patch 才有
 ```
 
 marker 在 → `export XNU_SKIP_PATCH_LOOP=1` → 补丁循环整段跳过。如果树其实是**部分打补丁**
-（比如 `zzz-root-auth-bypass.patch` 没打上），内核就会缺 `native-skip-root-auth` 这个后门，
+（比如 `root-auth-bypass.patch` 没打上），内核就会缺 `native-skip-root-auth` 这个后门，
 于是 `bsd_init` 在 root hash 认证失败时直接 panic。
 
 **排查（10 秒）**：构建后立刻确认关键补丁的标记：
@@ -286,11 +286,11 @@ grep -c "rootvp not authenticated after mounting" …/bsd_init.c                
 
 顺带一条：`--clean` 会丢掉 `.cache/xnu-work` 里的手工编辑，所以任何在 xnu-work 里改的代码
 都必须先落成 `patches/xnu/*.patch`（本轮 `native_sb_pc_sample` 已先重新生成到
-`zzzzzzzzzzz-h103-proc-state.patch`）。
+`log-process-state.patch`）。
 
 ## P16 构建/打包前必须先把仓库同步到 Mac（否则用的是旧源码/旧补丁）
 
-**症状（本轮真实发生）**：在 Linux 侧改好 `patches/xnu/zzzzzzzzzzz-h103-proc-state.patch` 并提交，
+**症状（本轮真实发生）**：在 Linux 侧改好 `patches/xnu/log-process-state.patch` 并提交，
 直接在 Mac 上 `macos-build-kernel.sh --clean` 重建 → 链接报
 
 ```

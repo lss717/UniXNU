@@ -1,6 +1,7 @@
 # Source and patches
 
-UniXNU builds XNU from the pinned Apple source and applies its patches in name order.
+UniXNU builds XNU from the pinned Apple source and applies patches in the
+explicit order recorded in each series file.
 
 ## Source
 
@@ -33,20 +34,23 @@ trustcache_tag = "xnu-8796.101.5"
 `scripts/build-xnu-4k-baseline.sh` applies patches to `.cache/xnu-work`:
 
 1. Reverse the patches that overlap earlier contexts, when they are present:
-   - `patches/xnu/zzz-boot-progress.patch`
-   - `patches/xnu/zzy-native-gpu-addon-mount.patch`
-2. Apply every `patches/xnu/*.patch` and `kits/NativePrelink/patches/*.patch` in name order.
-3. Skip a patch that is already applied.
-4. Run `prepare-xnu-source.py` to restore omitted headers.
+   - `patches/xnu/boot-progress.patch`
+   - `patches/xnu/native-gpu-addon-mount.patch`
+2. Validate and apply every entry in `patches/xnu/series`.
+3. Validate and apply every entry in `kits/NativePrelink/patches/series`.
+4. Skip a patch that is already applied.
+5. Run `prepare-xnu-source.py` to restore omitted headers.
 
-The late patches carry the `zzw`, `zzy` and `zzz` prefixes so they apply last. The reverse step lets a new build start from a clean context for the two regions that earlier patches also edit.
+The series files are authoritative. They reject duplicate entries, listed
+patches that are missing, and `.patch` files that were not listed. Filenames
+describe the change and do not control order. The cross-patch ordering reasons
+are recorded in `patches/xnu/README.md`.
 
-A patch is idempotent:
+A patch is idempotent through the shared series checker:
 
 ```sh
-git -C .cache/xnu-work apply --reverse --check "$PATCH" && skip
-git -C .cache/xnu-work apply --check "$PATCH"
-git -C .cache/xnu-work apply "$PATCH"
+python3 scripts/apply-patch-series.py --root patches/xnu apply \
+  --worktree .cache/xnu-work --skip-applied
 ```
 
 `--check` stops the build before a partial application.
@@ -60,7 +64,9 @@ git -C .cache/xnu-work apply "$PATCH"
 | `patches/mesa/` | Turnip and Mesa build patches |
 | `kits/NativePrelink/patches/` | Prelink ABI patches |
 
-A device repository can add `patches/` modules. The build tree links them under `tree/patches/`, and the kernel script reads `$ROOT/patches/xnu/*.patch`, which includes device patches.
+A device repository can add `patches/` modules. The build tree links them
+under `tree/patches/`, and every added `.patch` must be listed in that module's
+series file.
 
 ## Add a patch
 
@@ -72,7 +78,9 @@ A device repository can add `patches/` modules. The build tree links them under 
 git -C .cache/xnu-work diff -- <paths> > patches/xnu/my-change.patch
 ```
 
-4. Run `unixnu build kernel` again.
+4. Add `my-change.patch` at the required position in `patches/xnu/series`.
+5. Run `unixnu build kernel` again. The series checker rejects the unlisted
+   file until step 4 is complete.
 
 A patch that adds a build option follows the pattern in `native-aes-personality.patch`:
 

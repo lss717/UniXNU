@@ -6,8 +6,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = ROOT / "drivers/NativeUfsProbe/NativeUfsProbe.cpp"
-BASE_PATCH = ROOT / "patches/xnu/zzzzzzzzzzz-h103-proc-state.patch"
-EVENT_PATCH = ROOT / "patches/xnu/zzzzzzzzzzzzz-h413-ipc-events.patch"
+BASE_PATCH = ROOT / "patches/xnu/log-process-state.patch"
+EVENT_PATCH = ROOT / "patches/xnu/ipc-event-ring.patch"
 
 
 def require(condition, message):

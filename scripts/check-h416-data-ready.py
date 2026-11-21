@@ -5,11 +5,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
-PATCH = ROOT / (
-    "patches/xnu/"
-    "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-"
-    "h415-data-ready.patch"
-)
+PATCH = ROOT / "patches/xnu/data-mount-ready.patch"
 
 
 def require(condition, message):

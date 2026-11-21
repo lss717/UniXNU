@@ -122,7 +122,7 @@ if (from_zone_map(elem, 1)) {
 flush_dcache((vm_offset_t)(pp << PAGE_SHIFT), PAGE_SIZE, TRUE);
 ```
 
-补丁 `zzx-pmap-sync-64bit-pa` 改用 `ptoa()`：
+补丁 `pmap-sync-64bit-pa` 改用 `ptoa()`：
 
 ```c
 flush_dcache((vm_offset_t)ptoa(pp), PAGE_SIZE, TRUE);

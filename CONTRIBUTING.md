@@ -58,11 +58,13 @@ The message describes the change. The documentation describes the resulting stat
 
 1. Edit `.cache/xnu-work` after a first kernel build.
 2. Generate the patch with `git diff`.
-3. Name it so the apply order is correct.
-4. Rebuild the kernel and the prelink.
-5. Record the kernelcache pin if the ABI changed.
+3. Give it a functional filename.
+4. Add it at the required position in `patches/xnu/series`.
+5. Rebuild the kernel and the prelink.
+6. Record the kernelcache pin if the ABI changed.
 
-Late patches use the `zzy-` and `zzz-` prefixes.
+The series is authoritative. Missing, duplicate, and unlisted patch entries
+are build errors.
 
 ## Drivers
 

@@ -8,8 +8,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = ROOT / "drivers/NativeUfsProbe/NativeUfsProbe.cpp"
-PATCH = ROOT / "patches/xnu/zzzzzzzzzzz-h103-proc-state.patch"
-TARGET_PATCH = ROOT / "patches/xnu/zzzzzzzzzzzzzzzzzzzz-h523-target-port.patch"
+PATCH = ROOT / "patches/xnu/log-process-state.patch"
+TARGET_PATCH = ROOT / "patches/xnu/springboard-lsd-target-port.patch"
 
 
 def require(condition, message):

@@ -7,9 +7,9 @@ are visible without user space. This page records what every colour in every cel
 - Implementation: `drawTestPattern()` and `drawHeartbeatCell()` in
   `drivers/NativeMobileDisplay/NativeLegacyDisplay.cpp`;
 - Repaint scheduling: `drivers/NativeUfsProbe/NativeUfsProbe.cpp`;
-- Flag bits: `patches/xnu/zzzzzzzz-h103-boot-flags.patch`,
-  `patches/xnu/zzzzzzzzz-h103-exit-flags.patch` and
-  `patches/xnu/zzzzzzzzzz-h103-iokit-trace.patch`.
+- Flag bits: `patches/xnu/log-boot-flags.patch`,
+  `patches/xnu/log-exit-flags.patch` and
+  `patches/xnu/log-iokit-trace.patch`.
 
 > USB CDC live serial logging, UXL1 decoding and the normal-reboot command are in
 > [USB CDC log and normal-reboot console](usb-com-log-guide.md).

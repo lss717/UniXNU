@@ -32,7 +32,8 @@ TrustCache、激活状态、UFS/启动链均未触碰），只做三件事：
 | `osfmk/kern/task.c` | `native_exc_probe()`（新增） | mobileactivation 的陷落 `pc/lr/tid/exc` |
 | `osfmk/kern/exception.c` | `exception_deliver()` 入口 | 调用 `native_exc_probe()`（只读，不改投递行为） |
 
-补丁：`patches/xnu/zzzzzzzzzzzz-h254-scene-probe.patch`（317 行，含 `task.c` 与 `exception.c`）。
+补丁：H254 历史 scene probe（317 行，含 `task.c` 与 `exception.c`）已从活动 series
+移除；当前只保留 `probe-stubs.patch` 供链接兼容。
 
 ## 3. 探针修复前后的验证结果
 
@@ -215,7 +216,7 @@ rendering:       not_executed
 | 镜像 | `/tmp/opencode/boot-H254.img` |
 | 镜像 SHA-256（前 16） | `24b02fb048b6254f` |
 | 内核 SHA-256（前 16） | `e40856402c3452a5` |
-| 补丁 | `patches/xnu/zzzzzzzzzzzz-h254-scene-probe.patch` |
+| 补丁 | H254 历史 scene probe，已从活动 series 移除 |
 | 内核构建命令 | `bash scripts/macos-build-kernel.sh` |
 | prelink 命令 | `~/.local/bin/python3.12 ./unixnu build prelink -D ../UniXNU-cheeseburger` |
 | 打包命令 | `python3 scripts/make-bootimg.py --edk2 ../edk2-msm8998 --kernel ../edk2-msm8998/workspace/uefi-cheeseburger.img.gz-dtb --payload payload-H254.img --out boot-H254.img` |

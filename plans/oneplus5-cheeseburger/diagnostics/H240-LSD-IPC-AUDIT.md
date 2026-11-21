@@ -494,7 +494,7 @@ NATIVE_SBSEQ: burst=2 tid=301 n=80 runs=4 seq=1eb3888c0*37,1b5915a20*2,1a7a8500c
 ```
 
 - 镜像 `boot-H251.img` = `46d78eef…`，内核 `b6a5e674…`，插件与信任缓存不变（6 项）。
-- 补丁：`patches/xnu/zzzzzzzzzzzz-h251-sbseq.patch`（**同时包含** H248 放宽后的
+- 补丁：H251 历史 sbseq probe，已从活动 series 移除（**同时包含** H248 放宽后的
   bootstrap 捕获代码，使补丁集重新自洽；已验证：pinned xnu + h103 + h251 应用后
   与构建树 `osfmk/kern/task.c` 完全一致）。
 - 判读：某 tid 的 RLE 序列在 5 轮之间**变长/出现新 pc** → 路径在推进；每轮都是
@@ -543,7 +543,7 @@ NATIVE_SBSEQ: burst=2 tid=301 n=80 runs=4 seq=1eb3888c0*37,1b5915a20*2,1a7a8500c
 - 突发期间不再输出 `NATIVE_XPC3` 计数行（原来每 50 ms 一行）。
 
 镜像 `boot-H252.img` = `34dd7c4f…`，内核 `398b7fbf…`；
-补丁 `patches/xnu/zzzzzzzzzzzz-h252-sb-sends.patch`（已验证：pinned + h103 + h251 + h252
+补丁 H252 历史 sb-sends probe（已从活动 series 移除；已验证：pinned + h103 + h251 + h252
 应用后与构建树 `task.c` 一致）。
 
 ### 11.10 H252 结果：SpringBoard 在"慢速心跳"，对端全是没有名字的 pid（已证实）
@@ -596,7 +596,7 @@ NATIVE_SBSEND: burst=2 seq=300 tid=289 id=0x10000000 to=136/mediaserverd loc=0x0
 ```
 
 镜像 `boot-H253.img` = `6d3ec3e4…`，内核 `bcf6e0a2…`；
-补丁 `patches/xnu/zzzzzzzzzzzz-h253-sb-send-ports.patch`。
+补丁 H253 历史 sb-send-ports probe，已从活动 series 移除。
 
 ### 11.12 H253 结果：**"主线程卡在同步调用"这个前提不再成立**（已证实）
 

@@ -1,6 +1,6 @@
 # 源码与补丁
 
-UniXNU 从固定版本的 Apple 源码构建 XNU，并按名称顺序应用补丁。
+UniXNU 从固定版本的 Apple 源码构建 XNU，并按各 series 文件记录的显式顺序应用补丁。
 
 ## 源码
 
@@ -33,20 +33,22 @@ trustcache_tag = "xnu-8796.101.5"
 `scripts/build-xnu-4k-baseline.sh` 对 `.cache/xnu-work` 应用补丁：
 
 1. 存在时反向应用与更早上下文重叠的补丁：
-   - `patches/xnu/zzz-boot-progress.patch`
-   - `patches/xnu/zzy-native-gpu-addon-mount.patch`
-2. 按名称顺序应用 `patches/xnu/*.patch` 和 `kits/NativePrelink/patches/*.patch`。
-3. 已应用的补丁跳过。
-4. 运行 `prepare-xnu-source.py` 恢复缺失头文件。
+   - `patches/xnu/boot-progress.patch`
+   - `patches/xnu/native-gpu-addon-mount.patch`
+2. 校验并应用 `patches/xnu/series` 中的每一项。
+3. 校验并应用 `kits/NativePrelink/patches/series` 中的每一项。
+4. 已应用的补丁跳过。
+5. 运行 `prepare-xnu-source.py` 恢复缺失头文件。
 
-后置补丁带有 `zzw`、`zzy` 和 `zzz` 前缀，因此最后应用。反向步骤让新构建从这些被更早补丁同时修改的区域的干净上下文开始。
+series 文件是唯一顺序来源。重复项、列出的缺失补丁和未列入 series 的 `.patch`
+都会使构建失败。文件名描述功能，不再控制顺序；补丁之间的顺序依赖记录在
+`patches/xnu/README.md`。
 
-补丁是幂等的：
+补丁通过统一 series 检查器实现幂等应用：
 
 ```sh
-git -C .cache/xnu-work apply --reverse --check "$PATCH" && skip
-git -C .cache/xnu-work apply --check "$PATCH"
-git -C .cache/xnu-work apply "$PATCH"
+python3 scripts/apply-patch-series.py --root patches/xnu apply \
+  --worktree .cache/xnu-work --skip-applied
 ```
 
 `--check` 在部分应用前停止构建。
@@ -60,7 +62,8 @@ git -C .cache/xnu-work apply "$PATCH"
 | `patches/mesa/` | Turnip 和 Mesa 构建补丁 |
 | `kits/NativePrelink/patches/` | 预链接 ABI 补丁 |
 
-设备仓库可以加入 `patches/` 模块，构建树把它链接到 `tree/patches/`，内核脚本读取 `$ROOT/patches/xnu/*.patch`，其中包含设备补丁。
+设备仓库可以加入 `patches/` 模块，构建树把它链接到 `tree/patches/`。模块中每个
+新增的 `.patch` 都必须列入该模块的 series 文件。
 
 ## 新增补丁
 
@@ -72,7 +75,8 @@ git -C .cache/xnu-work apply "$PATCH"
 git -C .cache/xnu-work diff -- <paths> > patches/xnu/my-change.patch
 ```
 
-4. 再次运行 `unixnu build kernel`。
+4. 在 `patches/xnu/series` 的正确位置加入 `my-change.patch`。
+5. 再次运行 `unixnu build kernel`。未列入 series 的文件会被检查器拒绝。
 
 新增构建选项的补丁参考 `native-aes-personality.patch`：
 

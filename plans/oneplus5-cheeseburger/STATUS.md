@@ -90,8 +90,8 @@
   unavailable）、`NATIVE_SBPEER`（SpringBoard 全部进出消息，双向、带 comm 名）、
   bootstrap 扫描改为"SpringBoard→launchd 全部消息"、`NATIVE_EXC`（mobileactivation 陷落 pc/lr）、
   IPC ring 的 `produced/consumed/pending` 统计。**只构建未刷机**；
-  镜像 `boot-H254.img` = `24b02fb0…`，内核 `e4085640…`，补丁
-  `patches/xnu/zzzzzzzzzzzz-h254-scene-probe.patch`。报告：
+  镜像 `boot-H254.img` = `24b02fb0…`，内核 `e4085640…`。H254 历史探针补丁已从
+  活动 series 移除，`probe-stubs.patch` 只保留符号链接兼容。报告：
   `diagnostics/H254_SpringBoard_Scene_Activation_诊断报告.md`（观测项全部标 `not_executed`）。
 - **H253 已证实（推翻旧前提）**：**主线程从不发送**，所有 XPC 都来自 workqueue 线程
   （tid 930/973/1235/1514），内容是常规后台服务（mediaserverd / wifid / notifyd / launchd）。
@@ -125,8 +125,8 @@
   无显示/GPU 设备打开。见 `diagnostics/H240-LSD-IPC-AUDIT.md` §11.6。
 - **H251（已构建，待上机）**：突发改为 **5 次 × 4 秒、间隔 60 秒**（150–410 s），
   并保存**同一 tid 的有序 pc 序列**（RLE 打印 `NATIVE_SBSEQ`），用于区分"推进"与"打转"。
-  镜像 `boot-H251.img` = `46d78eef…`，内核 `b6a5e674…`；补丁
-  `patches/xnu/zzzzzzzzzzzz-h251-sbseq.patch`（已把 H248 的 bootstrap 捕获一并纳入补丁集）。
+  镜像 `boot-H251.img` = `46d78eef…`，内核 `b6a5e674…`。H251 历史探针补丁已从活动
+  series 移除。
 - **H248（放宽 bootstrap 捕获）**：仍然 **0 行** `NATIVE_BOOTSTRAP`；SpringBoard 连续两次自然启动
   （H247/H248，各约 10 分钟）都保持 4–5 线程、pc 恒定 4 个内核 stub、从未打开显示/GPU。
   取证路径判定：**服务名不在内联消息体里**，不再沿此路线投入。下一步改为 20 ms 高频 pc 采样
@@ -514,7 +514,7 @@ prng_random.c:267 Assertion failed: !prng_ready
 
 PRNG 修复分两步：
 
-- `patches/xnu/zzz-prng-idempotent.patch`（`29e4e88`）：重复调用
+- `patches/xnu/prng-idempotent.patch`（`29e4e88`）：重复调用
   `register_and_init_prng()` 时直接返回，避免断言。
 - source bootstrap 增加 `prng_ready` 早退保护，并合并进
   `source-corecrypto14-bootstrap.patch`（`8c30e45`），避免第二次初始化
@@ -536,7 +536,7 @@ Waiting on <dict ... IOProviderClass IOMedia ...
 即 **B5：没有 UFS 块设备/IOMedia，APFS 等不到 root**。
 `NativeUfs` 目前是 sheng SM8550 版本，`CONFIG_XNU_NATIVE_UFS` 仍未打开；
 下一步是 MSM8998 UFS host/PHY/GCC/SMMU 与 root publication 移植。
-当前构建还带临时 `zzz-kext-debug.patch`，验证后删除。
+当前构建还带临时 `kext-debug.patch`，验证后删除。
 
 ### B5 只读 UFS 探针（2026-10-24）
 
@@ -1165,7 +1165,7 @@ Linux x86_64 / Ubuntu 24.04：
 - `dyld_flags=0x0000008A`（testMode + skipIgnition + disablePageInLinking）。
 - `DYLD_SHARED_REGION=system`（H79 起；H77/H78 是 private）。
 - `DYLD_AMFI_FAKE=0x7f`；`amfi_get_out_of_my_way=1`、`amfi=0x94`、`amfi_allow_any_signature=1`、`cs_enforcement_disable=1`、`native-skip-root-auth=1`、`native-skip-exec-signature=1`、`launchd_unsecure_cache=1`。
-- 临时签名/mmap bypass：`zzz-cache-signature-bypass.patch` 忽略 MACF signature/mmap，设置 `CS_VALID|CS_SIGNED|CS_PLATFORM_BINARY`；最终必须移除。
+- 临时签名/mmap bypass：`cache-signature-bypass.patch` 忽略 MACF signature/mmap，设置 `CS_VALID|CS_SIGNED|CS_PLATFORM_BINARY`；最终必须移除。
 - `panic_screen=false`：新增诊断代码占用了 `patch-xnu-entry-probe.py` 的固定 panic cave；H77–H79 用普通内核控制台输出。最终要恢复。
 - CI 临时改用 `macos-15-intel` + Xcode 26.3 + `-Wno-unknown-warning-option`，因为 macOS 26 runner 容量长期排队；最终要恢复 `macos-latest`/Xcode 26.6。
 
@@ -1201,7 +1201,7 @@ Linux x86_64 / Ubuntu 24.04：
 - 改回 `DYLD_SHARED_REGION=system`。
 - `vm_shared_region_start_address()` 的 “failed” 只是共享区为空时的正常提示；
   真正失败点是 `shared_region_map_and_slide_np()` 的 AMFI/CS 检查。
-- 新增 `zzz-shared-region-cache-bypass.patch`：
+- 新增 `shared-region-cache-bypass.patch`：
   - 在 `bsd/vm/vm_unix.c` 的 `mac_file_check_mmap()` 上临时忽略 AMFI；
   - 对共享区映射的 `ubc_cs_is_range_codesigned()` 检查临时放过；
   - 打印 `NATIVE_H81_SR: setup/root check/preboot/map_file` 诊断。
@@ -1264,7 +1264,7 @@ Linux x86_64 / Ubuntu 24.04：
   `upstream` 指 `UniXNU/RamBlock`。
 - `XNU_OWNER_BOOT_MANIFEST=0`：**当前 Data 未经过 authenticated owner boot manifest**。
 - `max_task_pmem=0`：全局 task footprint 上限临时移除。
-- `zzz-cache-signature-bypass.patch` + `zzz-shared-region-cache-bypass.patch`：
+- `cache-signature-bypass.patch` + `shared-region-cache-bypass.patch`：
   AMFI/cache/CS/mmap 的临时 bring-up bypass；最终必须移除。
 - `panic_screen=false`：固定 panic cave 被诊断代码占用；最终恢复。
 - CI 仍为 `macos-15-intel` + Xcode 26.3；最终恢复 macOS 26 / 正常 runner。
@@ -1440,8 +1440,8 @@ H85g 的 `KernelConfigTables` 已经显示 `IOClass = NativeUfs`，但 `nm kerne
 - H85h 另外把 `XNU_BOOTSTRAP=1` 带进了最终 pass，导致最终链接仍跳过 archive。
 
 修复（H85i 起点）：先执行 `./unixnu defconfig cheeseburger_defconfig` 重新生成
-`.config`，再清 `build/xnu` 与 `KernelConfigTables.cpo` 做干净构建。已删除临时
-`zzz-force-native-ufs.patch`，personality 回到由配置驱动。
+`.config`，再清 `build/xnu` 与 `KernelConfigTables.cpo` 做干净构建。临时 UFS
+personality 补丁已删除，personality 回到由配置驱动。
 
 ### H85i：完整 NativeUfs 不是 bring-up 捷径，而是 VerifiedRoot 终态
 
@@ -1791,7 +1791,7 @@ FileSet KC 的真实 owner IM4M/AMFI-trustcache，当前输入无法生成。完
   `HCS & 3 == 0` 表示 `DEVICE_PRESENT` 与
   `UTP_TRANSFER_REQ_LIST_READY` 都未置位；不是 idle/live 编码差异。
   放宽 `(HCS & 3) == 3` 不解决问题，H96u 需先清 error/重建队列。
-- 新增诊断补丁 `patches/xnu/zzzz-trustcache-amfi-trace.patch`：
+- 新增诊断补丁 `patches/xnu/trustcache-amfi-trace.patch`：
   - `native-trace-amfi-syscall=1`：在 `__mac_syscall()` 记录 AMFI
     selector `0x5a..0x66` 的 pid/comm/csflags/blob/platform/entitled/
     cdhash；selector `0x5f` 限 64 次。
@@ -2124,7 +2124,7 @@ FileSet KC 的真实 owner IM4M/AMFI-trustcache，当前输入无法生成。完
 - 已准备默认关闭的 H103 实验：
   - `scripts/prepare-preboot-overlay.py`；
   - `scripts/prepare-owner-data-fixture.py --preboot-overlay`；
-  - `patches/xnu/zzzz-owner-preboot-layout.patch`（`XNU_OWNER_PREBOOT_LAYOUT=1`）；
+  - `patches/xnu/owner-preboot-layout.patch`（`XNU_OWNER_PREBOOT_LAYOUT=1`）；
   - workflow input `preboot_layout`。
 - H103 实验路径：Data mount → bindfs `/private/var/preboot` 到 `/private/preboot` → SystemOS 挂到 `/private/preboot/Cryptexes/OS` → `DYLD_SHARED_CACHE_DIR=/System/Cryptexes/OS/System/Library/Caches/com.apple.dyld`。
 - 已在远程 macOS 构建 `XNU_OWNER_PREBOOT_LAYOUT=1` 镜像；尚未上机：
@@ -3310,7 +3310,7 @@ H103ea boot      a07fe2567b43edcf7cbd58a86a8d4474cae49ac84e79b667e074205e1b4e2f5
   ioaccelerator-base-abi.json` 的 `candidate_sha256` 是 `12d7513a…`，
   与 H104j kernel `7e85bc44…` 不符，这解释了 H103fp/fq/fr 的
   `OSMetaClass::addInstance` abort。
-- 本次只并入上游 `zzwb-native-sandbox-grant-set-properties.patch`：把
+- 本次只并入上游 `native-sandbox-grant-set-properties.patch`：把
   `NativeSandboxGrantProcess` 授权扩展到 `setProperties`（backboardd 的
   `FadePeriod` 会被沙箱拒绝）。已在 `xnu-10063.141.1` 的原始
   `iokit/Kernel/IOUserClient.cpp` 上按名字顺序验证可应用（`zzw` 之后
@@ -3483,7 +3483,7 @@ H106 上机两次，两份日志的来源不同：
 196–230 s 没有完成事件，而 flush 又可能先于 dump 拷贝。
 
 H107 的改动（`drivers/NativeUfsProbe/NativeUfsProbe.cpp`、
-`patches/xnu/zzzzzzzzzzz-h103-proc-state.patch`）：
+`patches/xnu/log-process-state.patch`）：
 
 - dump 触发移进读路径的 `h103SlotTick()`（完成路径保留），不再依赖 64 条
   命令；
@@ -3826,7 +3826,7 @@ H114 上机到 backboardd 查询 `IOMobileFramebuffer` 之后直接黑屏，拉�
 
 H115 改动：
 
-- `zzzzzzzzzz-h103-iokit-trace.patch`：backboardd 成功匹配 `IOMobile*` 时置
+- `log-iokit-trace.patch`：backboardd 成功匹配 `IOMobile*` 时置
   `native_boot_flags |= 0x1000`；
 - `NativeUfsProbe` 增加**事件驱动 flush**：首次出现
   `flags&4`（backboardd exec）、`flags&0x1000`（显示匹配成功）、
@@ -3907,7 +3907,7 @@ H116 的 `boot_id` 仍然不变。检查过符号链：`native_log_flush_hook` �
 H117 加两件事：
 
 1. **panic 路径落盘**
-   新增 `patches/xnu/zzzzzzzzzzzz-h103-panic-flush.patch`：在
+   新增 `patches/xnu/log-panic-flush.patch`：在
    `panic_trap_to_debugger()` 入口调用 `native_panic_flush()`；后者先打印
    `NATIVE_PANIC: flags=.. client=.. xfer=.. frames=..`，再做一次强制 flush。
    panic 文本在 `ml_panic_trap_to_debugger()` 里才打印，所以这份记录至少能
@@ -4133,7 +4133,7 @@ H122 已确认 PPI 27/30 被安全世界固定为 Group 0、非安全态改不�
 内核侧不再加 GIC 采样。本轮把主线拉回"绿不变白"：不再碰 GIC，改为在停滞瞬间
 dump **全进程等待图**，定位 H107 看到的 `IPC_MQUEUE_FULL` 接收方。
 
-改动只在 `patches/xnu/zzzzzzzzzzz-h103-proc-state.patch`（`osfmk/kern/task.c`）：
+改动只在 `patches/xnu/log-process-state.patch`（`osfmk/kern/task.c`）：
 
 - 保留原有 5 个进程（loader/backboardd/driverkitd/SpringBoard/launchd）的逐线程明细；
 - 新增 `native_proc_wait_graph()`，用 `proc_iterate(PROC_ALLPROCLIST|PROC_NOWAITTRANS)`
@@ -4218,7 +4218,7 @@ backboardd 其实早已 exec。**
 
 H124（本轮）：
 
-1. 扩展 `zzzzzzzzzz-h103-iokit-trace.patch`：记录前 24 次
+1. 扩展 `log-iokit-trace.patch`：记录前 24 次
    `op=match/open/deny`，带 `comm`、`IOClass`、`IOProviderClass`，
    并把 `main_port != main_device_port` 单独记成 `d=badmaster`，第一次把
    "没调用"与"调用没到内核（master port/sandbox）"区分开；
@@ -5235,7 +5235,7 @@ H129 把数据锁上限改为 **6 s**（略大于 5.2 s）。
    2 s → **6 s**（115200000）。原来数据锁上限（2 s）比 `UFS_TIMEOUT_TICKS`
    （5.2 s）还短，命令仍在合法执行期内锁就判死；H128 残留的 5 次 2 秒超时
    全部命中同一 LBA `0x5b17b0`，正是这个顺序问题。
-2. `patches/xnu/zzzzzzzzzzzzz-h129-diag.patch`：`native_trace_process_exit()`
+2. `patches/xnu/springboard-exit-diagnostics.patch`：`native_trace_process_exit()`
    把 `SpringBoard` 加入过滤列表，打印 `status/ns/code`（信号 = `rv & 0x7f`）。
    同时顺手去掉了 H103 补丁里多出来的行首 `+`（一元加号，能编译但没意义）。
 3. 同一补丁：`native_iokit_log()` 对 `backboardd` / `SpringBoard` **取消 24 条上限**，
@@ -5299,7 +5299,7 @@ open  comm=backboardd cls=IOPMrootDomain
 
 ### H130：打印异常描述串（2026-11-07）
 
-`patches/xnu/zzzzzzzzzzzzzz-h130-exit-desc.patch`：
+`patches/xnu/process-exit-description.patch`：
 
 - `native_trace_process_exit()` 先取 `ns/code`，再决定是否过滤，因此**任何
   `ns != 0` 的退出都会被记录**（ObjC 异常、dyld abort、jetsam、exec 失败）；
@@ -5354,7 +5354,7 @@ imagent 3、mobiletimerd 1，全部 `ns=8`（`OS_REASON_OBJC`）、`status=0x6`
 
 ### H131：只 union `/usr/lib`（2026-11-07）
 
-`patches/xnu/zzzzzzzzzzzzzzz-h131-usrlib-union.patch`：
+`patches/xnu/user-library-union.patch`：
 
 - 在 `native_owner_cache_prepare()`（SystemOS 挂载）之后新增
   `native_cryptex_usrlib_prepare()`；
@@ -5403,7 +5403,7 @@ XPC 的 `xpc_api_misuse` 或 dyld 的 `halt()`。
 
 ### H132：记录 Mach 异常与 union 状态（2026-11-07）
 
-`patches/xnu/zzzzzzzzzzzzzzzz-h132-trap-diag.patch`：
+`patches/xnu/trap-diagnostics.patch`：
 
 1. `handle_ux_exception()` 增加一行
    `NATIVE_TRAP: pid=… comm=… exc=… code=… sub=… sig=…`；对
@@ -5449,7 +5449,7 @@ H132 的干净窗口里 ObjC 已正常。
 
 ### H133：报出异常地址所属镜像（2026-11-07）
 
-`patches/xnu/zzzzzzzzzzzzzzzzz-h133-trap-image.patch`：
+`patches/xnu/trap-image.patch`：
 
 - `handle_ux_exception()` 在 `exception == EXC_BREAKPOINT` 时调用
   `native_report_trap_image(p, subcode)`；
@@ -5493,7 +5493,7 @@ NATIVE_TRAP_IMAGE: pid=91 comm=liveactivitiesd addr=0x1df6624f8 no-match count=4
 
 ### H134：让镜像列表自证（2026-11-07）
 
-`patches/xnu/zzzzzzzzzzzzzzzzzz-h134-image-attest.patch`：`native_report_trap_image()`
+`patches/xnu/image-attestation.patch`：`native_report_trap_image()`
 追加 `version`、成功 `copyin` 的行数、`min_base`/`max_base`，并在无匹配时打印最近
 的两个“低于 addr”候选和一个“高于 addr”候选：
 
@@ -5535,7 +5535,7 @@ NATIVE_TRAP_IMAGE: pid=26 comm=SpringBoard addr=0x1b001b2ec version=17 rows=1235
 
 ### H135：修正 infoArray 偏移（2026-11-07）
 
-`patches/xnu/zzzzzzzzzzzzzzzzzzz-h135-image-offset.patch`：
+`patches/xnu/image-offset.patch`：
 
 ```c
 copyin((user_addr_t)infos + 2 * sizeof(uint32_t), &array, sizeof(array))
@@ -5571,7 +5571,7 @@ liveactivitiesd addr=0x1c51164f8 base=0x1c50f9000 off=0x1d4f8
 
 ### H136：抓 BRK 寄存器并读出断言字符串（2026-11-07）
 
-`patches/xnu/zzzzzzzzzzzzzzzzzzzz-h136-brk-strings.patch`：
+`patches/xnu/breakpoint-strings.patch`：
 
 1. `osfmk/arm64/sleh.c`：`ESR_EC_BRK_AARCH64` 的用户分支先
    `native_record_user_brk(state)`，把 `pc/lr/x0..x7` 存进全局并打印
@@ -5618,7 +5618,7 @@ H136 只改了 `sleh.c` 与 `ux_exception.c`，与本路径无关，属于**概�
 而且原注释写的是“不要初始化锁，让查询干净地失败”，代码却直接 panic；后半段的
 `trust_cache_ready` 保护已经写好，所以去掉 panic 是安全的。
 
-`patches/xnu/zzzzzzzzzzzzzzzzzzzzz-h137-trustcache-race.patch`：
+`patches/xnu/trustcache-race.patch`：
 
 ```c
 	if (img4if == NULL || amfi == NULL) {
@@ -5688,7 +5688,7 @@ NATIVE_IOMFB_PROBE: name=IOMobileFramebufferLegacy match=… service=… class=�
    找到说明注册表正常、问题在 backboardd 侧；找不到说明服务没有以可匹配的
    类/属性发布，需要改发布方式。
 
-2. `patches/xnu/zzzzzzzzzzzzzzzzzzzzzz-h138-iokit-dict.patch`：
+2. `patches/xnu/iokit-dictionary-serialization.patch`：
    `native_match_trace()` 对 `backboardd` / `SpringBoard` 打印完整匹配字典
    （最多 6 个键值）：`NATIVE_IOKIT_DICT: comm=… count=… key=value`。
 
@@ -5727,7 +5727,7 @@ NATIVE_IOKIT_DICT: comm=backboardd count=2 IOProviderClass=IOAccessoryManager
    - `0x20000` = `serviceMatching("IOMobileFramebuffer")` 能找到服务
    - `0x40000` = `serviceMatching("IOMobileFramebufferLegacy")` 能找到服务
 
-2. `patches/xnu/zzzzzzzzzzzzzzzzzzzzzzz-h139-nested-dict.patch`：对
+2. `patches/xnu/iokit-nested-dictionary.patch`：对
    `backboardd`/`SpringBoard` 的匹配字典，值是 `OSDictionary` 时再展开一层
    （最多 3 项），打印 `key.{inner}=value`。
 
@@ -5790,7 +5790,7 @@ NATIVE_IOKIT_DICT: comm=backboardd IOProviderClass=IOAccessoryManager
 2. `drivers/NativeUfsProbe/NativeUfsProbe.cpp` 探针增加对照组
    `"IOPlatformExpertDevice"`（backboardd 自己匹配 ok=1 的对象），结果置
    `native_boot_flags` 的 `0x80000`；
-3. `patches/xnu/zzzzzzzzzzzzzzzzzzzzzzzz-h140-typed-dict.patch`：字典打印追加
+3. `patches/xnu/iokit-typed-dictionary.patch`：字典打印追加
    值的类名（`OSBoolean`/`OSNumber`/`OSData`），类型不对时可立即修正。
 
 注意：修改 `NativeLegacyDisplay.cpp` 后必须重新生成 owned Legacy 归档
@@ -5892,7 +5892,7 @@ H141 的 `metaCast` 自检本来就通过（`init=1 … parent=1`），不是类
 
 #### 改动
 
-1. `patches/xnu/zzzzzzzzzzzzzzzzzzzzzzzzz-h142-display-personality.patch`：新增
+1. `patches/xnu/display-service-personality.patch`：新增
    personality
    `IOClass=NativeLegacyDisplay; IOProviderClass=IOPlatformDevice;
    IONameMatch='NativeGOPFramebuffer'; IOProbeScore=1000`。
@@ -6102,7 +6102,7 @@ bool IOKitDiagnostics::serialize(OSSerialize *s) const
 
 ### H147：去掉这条 retail 死路径（2026-11-07）
 
-`patches/xnu/zzzzzzzzzzzzzzzzzzzzzzzzzz-h147-iokitdiag.patch`：在
+`patches/xnu/iokit-diagnostics.patch`：在
 `IOKitDiagnostics::serialize()` 中移除 `OSMetaClass::serializeClassDictionary(dict)`
 调用，保留分配计数。只是不再输出类统计，不影响驱动行为。
 
@@ -6139,7 +6139,7 @@ registerService()` —— 本端口本来就有服务因父链不在 IOService p
 
 ### H148：把 OSMetaClass::serialize 桩改为记录并跳过 + 构建标记（2026-11-07）
 
-1. `patches/xnu/zzzzzzzzzzzzzzzzzzzzzzzzzzz-h148-meta-serialize.patch`：
+1. `patches/xnu/iokit-metadata-serialization.patch`：
    `OSMetaClass::serialize()` 不再 panic，改为最多 8 次
    `NATIVE_META: serialize skipped for <class>` 后返回 false，序列化继续；
 2. `drivers/NativeUfsProbe`：`start()` 打印 `NATIVE_BUILD: H148`，此后每份日志
@@ -6175,7 +6175,7 @@ panic(cpu 0 caller 0xfffffff0079dec44):
 
 ### H149：把这段日志延迟到线程上下文（2026-11-07）
 
-`patches/xnu/zzzzzzzzzzzzzzzzzzzzzzzzzzzz-h149-meta-deferred.patch`：
+`patches/xnu/iokit-metadata-deferred.patch`：
 
 - `OSMetaClass::serialize()` 只做无锁写：
   `native_meta_serialize_count++`，首次记录 `native_meta_serialize_class`；
@@ -6214,7 +6214,7 @@ panic(cpu 0 caller …): Kernel data abort. at pc 0x…739554
 
 ### H150：给 load_static_trust_cache 补同样的保护（2026-11-07）
 
-`patches/xnu/zzzzzzzzzzzzzzzzzzzzzzzzzzzzz-h150-trustcache-null.patch`：
+`patches/xnu/trustcache-null.patch`：
 
 ```c
 	if (amfi == NULL || !trust_cache_ready) {
@@ -6260,7 +6260,7 @@ panic 原文没有进持久日志：`native_panic_flush()` 在 panic 文本打�
 
 ### H151：把 panic 原文写进持久日志（2026-11-07）
 
-`patches/xnu/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-h151-panic-string.patch`：
+`patches/xnu/panic-string.patch`：
 `panic_trap_to_debugger()` 入口在调用 `native_panic_flush()` 之前，用
 `va_copy` + `vsnprintf` 把 panic 文本格式化成
 `NATIVE_PANIC_STR: <原文>` 写入 msgbuf 再刷盘（`vsnprintf` 在 debug.c:132 已声明，
@@ -6376,7 +6376,7 @@ flush 也永远写不出去 —— 与“屏幕只见 mutex panic、磁盘日志
 
 ### H154：panic 钩子先检查抢占级别（2026-11-07）
 
-`patches/xnu/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-h154-panic-guard.patch`：
+`patches/xnu/panic-guard.patch`：
 
 ```c
 	{
@@ -6552,7 +6552,7 @@ IOPlatformDevice` 的 personality 去试配 GOP nub，其中包含 force-load �
 
 ### H158：移除 display personality，恢复手工启动（因果验证，2026-11-07）
 
-1. `patches/xnu/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-h158-drop-personality.patch`：
+1. `patches/xnu/drop-personality.patch`：
    把 H142 加入的 `NativeLegacyDisplay` personality 用 `#if 0` 关掉；
 2. `drivers/NativeMobileDisplay/LegacyDisplayProbe.cpp`：恢复 H141 的手工路径
    （`display->probe/attach/start`，并保留 `activeLegacyDisplay`），不再
@@ -6608,7 +6608,7 @@ NATIVE_LEGACY: self-match name=NativeLegacyDisplay       -> 0 same=0
    `native_volume_lookup_once()`，外层最多 10 次 × 200 ms 重试，每次打印
    `NATIVE_SYSTEMOS_WAIT: attempt=N matches=M`，命中时打印
    `NATIVE_SYSTEMOS_WAIT: found after N attempts`；UUID/BSD name/唯一匹配校验不变。
-2. `patches/xnu/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-h159-owner-mount-diag.patch`：
+2. `patches/xnu/owner-mount-diagnostics.patch`：
    `native_owner_cache_prepare()` 的两处失败点打印具体原因
    （`NATIVE_OWNER_MOUNT: root not authorized …` /
    `NATIVE_OWNER_MOUNT: SystemOS media not found stage=…`）。
@@ -6929,7 +6929,7 @@ panic(cpu 0 …): P11 PMGR: original dependency not loaded @CheeseburgerPlatform
 
 ### H165：预链接引导路径打点（2026-11-07，诊断版）
 
-1. `patches/xnu/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-h165-prelink-diag.patch`
+1. `patches/xnu/prelink-diagnostics.patch`
    （只加全局变量与赋值，不改行为）：
 
    - `iokit/Kernel/IOStartIOKit.cpp` 定义四个持久段全局
@@ -7846,7 +7846,7 @@ Mac `~/h103/boot-H181.img`、仓库 `out/cheeseburger/boot/boot-H181.img`。
 - 若插件按预期返回 nil → CA 回退软件渲染，出现 `frames>0` / `selector=3/4/5`；
 - 若加载失败（AMFI/签名）→ 日志会出现对应拒绝；若仍无帧 → 软件渲染路径也不可用，
   转 Turnip 主线。
-- 注意：`zzy-native-gpu-addon-mount.patch` 只维护 `native_gpu_addon_*` 全局量，
+- 注意：`native-gpu-addon-mount.patch` 只维护 `native_gpu_addon_*` 全局量，
   **不打印任何日志**，所以日志里不会有 `NATIVE_GPU_ADDON*` 行；addon 是否落地只能
   间接判断（插件是否被 CA 加载）。
 
@@ -7924,13 +7924,13 @@ H181a 正常进入内核并跑到用户态（SpringBoard、runningboardd、conta
 `NilMetal.bundle` 这条路径对发现流程不可见：要么 addon 文件没写进 Data，
 要么 union mount 没成功。
 
-H181a 的 payload 里没有任何可用诊断（`zzy-native-gpu-addon-mount.patch` 只维护
+H181a 的 payload 里没有任何可用诊断（`native-gpu-addon-mount.patch` 只维护
 `native_gpu_addon_*` 全局量，不打印）。另外 298 s 有一次 SystemOS 读超时
 （`disk6 … err 60`），发生在发现流程（284 s）之后，不能解释这次失败。
 
 ### H181b：给 addon 安装/union mount 加启动日志（2026-11-08）
 
-新增 `patches/xnu/zzz-native-gpu-addon-log.patch`（在 `zzy-native-gpu-addon-mount`
+新增 `patches/xnu/native-gpu-addon-log.patch`（在 `native-gpu-addon-mount`
 之后应用，只加日志，不改行为）：
 
 - `native_gpu_addon_install()`：拿不到 loader 的 addon 时把 `native_gpu_addon_files`
@@ -8043,7 +8043,7 @@ addon 代码没跑。需要一条不依赖 mount 时 console 的通道。
 
 ### H183：用 UFS 心跳读取 addon 状态（2026-11-08）
 
-- 内核补丁 `zzz-native-gpu-addon-log.patch` 增加 `native_gpu_addon_calls`，
+- 内核补丁 `native-gpu-addon-log.patch` 增加 `native_gpu_addon_calls`，
   在 `native_gpu_addon_prepare()` 入口自增（其余诊断保留）；
 - UFS 驱动 `NativeUfsProbe` 的心跳行 `NATIVE_UFS_ALIVE` 追加：
 
@@ -8092,7 +8092,7 @@ NATIVE_UFS_ALIVE: ... addon=3/0/0/3/2/1 owner=4/0 ext=1/2 dm=1/2 wp=1/2
 
 ### H184：连同 /private/var/ngpu 一起创建（2026-11-08）
 
-`zzy-native-gpu-addon-mount.patch` 的父目录循环起点改为
+`native-gpu-addon-mount.patch` 的父目录循环起点改为
 `sizeof("/private/var/") - 1`，即把 `/private/var/ngpu` 也纳入创建；注释同步说明
 这次 H183 心跳的失败码。诊断（probe/汇总 printf、calls 计数、心跳字段）保留。
 
@@ -8601,7 +8601,7 @@ NATIVE_A540_ABI: method= : 0
 - 但 MACF `iokit-open-user-client` 仍然拒绝（14 次），用户态 open 返回失败，
   `externalMethod` 一次都没被调用。
 
-名字本身不是充分条件；仓库里已有 `patches/xnu/zzw-native-adreno-sandbox-grant.patch`：
+名字本身不是充分条件；仓库里已有 `patches/xnu/native-adreno-sandbox-grant.patch`：
 服务带 `NativeSandboxGrantProcess` 属性且进程名匹配时绕过该 MACF 判定。
 
 ### H197：accelerator 服务授予 backboardd 用户客户端（2026-11-08）
@@ -8695,8 +8695,8 @@ mark 打开成功、grant 匹配；但主连接的打开命中了**没有授权�
 
 ### H200：沙箱授权加服务类回退（2026-11-08）
 
-新增补丁 `zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-h200-sandbox-grant-class.patch`
-（在 `zzw-native-adreno-sandbox-grant.patch` 之后应用）：`native_sandbox_grant()`
+新增补丁 `sandbox-grant-class.patch`
+（在 `native-adreno-sandbox-grant.patch` 之后应用）：`native_sandbox_grant()`
 在属性缺失时，若服务类名是 `AGXAccelerator` 且调用进程是 `backboardd`，同样放行，
 并打印 `grant=class match=1`。只影响这一个类与这一个进程。
 
@@ -8836,7 +8836,7 @@ abi=0/0/0 rep=
 
 ### H204：记录 addon 安装失败的文件名（2026-11-08）
 
-新增补丁 `zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-h204-addon-fail-log.patch`：
+新增补丁 `addon-failure-log.patch`：
 在 `native_gpu_addon_install` 的失败分支打印
 `NATIVE_GPU_ADDON: failed <path> error=<errno> size=<size>`。
 
@@ -8896,7 +8896,7 @@ H204 boot:    1dc626feab3665f5230c2c7a47a50c6e7fa010f4f9d585569a4f336166a59e5e
 
 ### H205：addon 分块写入 + 分步错误日志（C0，2026-11-08）
 
-新增补丁 `zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-h205-addon-chunked-write.patch`：
+新增补丁 `addon-chunked-write.patch`：
 
 - `native_gpu_addon_write` 改为 **1 MiB 分块写入**，去掉 `IO_UNIT`
   （H204 的 21.7 MB 插件可执行文件在整块写入路径返回 `EINVAL`）；
@@ -8937,7 +8937,7 @@ addon=8/7/0/1/22/1
 
 ### H206：流式解压 + 分块写，去掉整文件分配（C0，2026-11-08）
 
-新增补丁 `zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-h206-addon-stream-write.patch`：
+新增补丁 `addon-stream-write.patch`：
 
 - `native_gpu_addon_store`：固定 1 MiB 缓冲，`inflate(..., Z_NO_FLUSH)` 流式解压，
   每块用 `vn_rdwr` 按偏移写入，**不再分配整个文件的输出缓冲**；
@@ -8980,7 +8980,7 @@ VM 不会分配这块物理内存，因此需要直接确认运行时的字节�
 
 ### H207：addon 源数据校验和诊断（C0，2026-11-08）
 
-新增补丁 `zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-h207-addon-source-fnv.patch`：
+新增补丁 `addon-source-fnv.patch`：
 对 `packed >= 1 MiB` 的条目打印源数据的 FNV-1a、首尾 4 字节，并对插件按 1 MiB
 分块打印 9 个校验和。主机端同一文件的期望值：
 
@@ -10135,7 +10135,7 @@ boot 头/地址/固件基线与上一轮完全相同。
 据此修正 mode 4：FTS426 走 `pm8005Voltage()`（16 位 mV）与 MODE=7(HPM)；
 若已存电压在 500–1100 mV 内就**保留 752 mV**，只补 MODE/ENABLE，不再写电压。
 
-根卷验证：干净重建漏掉了 `zzz-root-auth-bypass.patch`（`native-skip-root-auth`
+根卷验证：干净重建漏掉了 `root-auth-bypass.patch`（`native-skip-root-auth`
 不生效，`bsd_init.c:1103` panic）。补上该 patch 后重建得到 H236b
 （kernel `1d452686…`），启动日志出现
 `NATIVE_ROOT_AUTH_BYPASS: autherr=80`，不再提前 panic；H236b boot
@@ -13672,7 +13672,7 @@ IOUC AGXDeviceUserClient failed MACF in process pid 163, mediaserverd
 | MACF 用户客户端准入 | `iokit/Kernel/IOUserClient.cpp` `native_sandbox_grant()` | **只放行 `NativeSandboxGrantProcess` 里的单个进程名**（backboardd），mediaserverd 因此被拒并崩溃循环 → 已放行（本条） |
 | 第二处 MACF 检查 | 同文件 `io_service_open_ndr` 与 `is_io_service_open_extended` | 两处都调用同一个 `native_sandbox_grant()`，**一处修改即全部生效** |
 | 属性缺失时的兜底 | 同文件 H200 分支 | 硬编码 `backboardd` + 类名 `AGXAccelerator`；当前属性始终存在，兜底不参与 |
-| addon 覆盖系统目录 | `native_gpu_addon_mount()`（`zzy-native-gpu-addon-mount.patch`） | 用 `MNT_RDONLY | MNT_UNION` 且校验"sealed 下层仍可见 + owner 条目可见"（stage 3/4/5），**是叠加不是替换**，不会隐藏 LaunchDaemons |
+| addon 覆盖系统目录 | `native_gpu_addon_mount()`（`native-gpu-addon-mount.patch`） | 用 `MNT_RDONLY | MNT_UNION` 且校验"sealed 下层仍可见 + owner 条目可见"（stage 3/4/5），**是叠加不是替换**，不会隐藏 LaunchDaemons |
 | 我们自己的驱动是否按进程拒绝 | `drivers/NativeMobileDisplay`、`drivers/NativeUfsProbe` | 无 `kIOReturnNotPermitted`/`NotPrivileged` 返回，未发现额外闸门 |
 | `drivers/NativeAdreno`（未启用，`XNU_NATIVE_ADRENO=0`） | `NativeAdrenoPublish.cpp` | 有一套自己的 grant/cap 逻辑（每进程限 8 次），当前构建不参与 |
 
@@ -13995,7 +13995,7 @@ Protobox: lsd(92) deny(1) syscall-mig 139
 `task_get_mach_trap_filter_mask`、`task_get_mach_kobj_filter_mask` 返回 **0 掩码**（= 未过滤任务），
 其余 sandbox 规则（文件、mach-lookup、IOKit）不动。
 
-H321 即按此实现（`patches/xnu/…-h321-sandbox-mask-off.patch`）。
+H321 即按此实现（当前文件为 `patches/xnu/sandbox-mask-off.patch`）。
 
 **另外记录**：h280b 是历史日志里 SpringBoard 状态最好的一轮（n=4~5），但它同样
 `val=0 xf=0 fr=0` ——**80 份日志里没有任何一轮真正出过帧**。
@@ -14603,7 +14603,7 @@ AppleKeyStore 发布有效、容器链正常、`ufsRecover()` 的 `UCRDY` 判定
 
 #### H370–H372：lsd 路径探针就位；失败全是"启动没走到位"（2026-11-15）
 
-新增 `patches/xnu/zzzzzzzzzzzz-h370-vnopen-probe.patch`：在 `vn_open()` 入口按**进程名**
+新增 `patches/xnu/vnode-open-probe.patch`：在 `vn_open()` 入口按**进程名**
 匹配 lsd，`copyinstr(ndp->ni_dirp, …)` 打印前 48 个路径。已验证它进了内核（`strings` 计数 1）。
 
 | 轮次 | lsd | 探针输出 | 结论 |
@@ -15378,7 +15378,7 @@ staged apps 顺序。
 **源码范围**：
 
 - `drivers/NativeUfsProbe/NativeUfsProbe.cpp`：build tag H415；
-- `patches/xnu/zzzz...h415-data-ready.patch`：仅 `bsd/kern/kern_exec.c`；
+- `patches/xnu/data-mount-ready.patch`：仅 `bsd/kern/kern_exec.c`；
 - `scripts/check-display-first-frame-probe.py`：期望 H415 build tag；
 - `scripts/check-h415-data-ready.py`：有界等待/错误/单文件范围检查；
 - 本 STATUS 与 H415 diagnostic 文档。
@@ -17378,8 +17378,8 @@ recovery、窗口锁超时或 panic；`offline-accelerator=0` 下 `NATIVE_MTL=0`
 H473 只修复 addon version-2 entry 解析，保留 H472 的
 `sheng-gpu-addon=1` 与 `offline-accelerator=0`。当前 parser 的每项 header
 从 24 bytes 改为 32 bytes，读取并验证 CRC-32 与 stored flag；stored entry
-直接写入，compressed entry 继续走现有 inflate。补丁：
-`diagnostics` 外的 `patches/xnu/zzzz...-h473-addon-v2-parser.patch`。
+直接写入，compressed entry 继续走现有 inflate。该 interim 补丁已从活动
+series 移除；相同行为由 `addon-crc-stored.patch` 提供。
 
 真机 H472 已先证明 addon 开启、错误路径以及 `ext=4/2` 可观测；H473 不再混入
 accelerator 注入。因此本轮的验收是 `addon=7/7/...` 和

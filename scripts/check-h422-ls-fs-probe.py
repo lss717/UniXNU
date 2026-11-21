@@ -8,8 +8,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = ROOT / "drivers/NativeUfsProbe/NativeUfsProbe.cpp"
-H422_PATCH = next((ROOT / "patches/xnu").glob("*-h422-ls-fs-probe.patch"))
-H421_PATCH = next((ROOT / "patches/xnu").glob("*-h421-ls-gate.patch"))
+H422_PATCH = ROOT / "patches/xnu/launchservices-fs-probe.patch"
+H421_PATCH = ROOT / "patches/xnu/launchservices-gate.patch"
 H421_CHECKER = ROOT / "scripts/check-h421-launchservices-gate.py"
 DISPLAY_CHECKER = ROOT / "scripts/check-display-first-frame-probe.py"
 
@@ -22,9 +22,14 @@ def require(condition, message):
 def main():
     driver = DRIVER.read_text(encoding="utf-8")
     patch = H422_PATCH.read_text(encoding="utf-8")
+    series = subprocess.check_output(
+        [sys.executable, str(ROOT / "scripts/apply-patch-series.py"),
+         "--root", str(ROOT / "patches/xnu"), "list"],
+        text=True,
+    ).splitlines()
 
-    require(H422_PATCH.name > H421_PATCH.name,
-            "H422 patch must sort after H421 in the apply series")
+    require(series.index(str(H422_PATCH)) > series.index(str(H421_PATCH)),
+            "H422 patch must follow H421 in the apply series")
     require('#define H103_BUILD "H422"' in driver or
             '#define H103_BUILD "H423"' in driver or
             '#define H103_BUILD "H424"' in driver,

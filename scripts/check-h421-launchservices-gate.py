@@ -9,10 +9,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = ROOT / "drivers/NativeUfsProbe/NativeUfsProbe.cpp"
-H420_PATCH = ROOT / "patches/xnu/zzzzzzzzzzzzzz-h420-bks-timestamp.patch"
-H421_PATCH = next(
-    (ROOT / "patches/xnu").glob("*-h421-ls-gate.patch")
-)
+H420_PATCH = ROOT / "patches/xnu/springboard-bks-timestamp.patch"
+H421_PATCH = ROOT / "patches/xnu/launchservices-gate.patch"
 NATIVE_CHECKER = ROOT / "drivers/NativeMetal/tools/check-h420-main-scene.py"
 
 

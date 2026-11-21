@@ -1,6 +1,7 @@
 # 补丁参考
 
-补丁按名称顺序应用 `patches/xnu/*.patch` 和 `kits/NativePrelink/patches/*.patch`。后置补丁 `zzw-*`、`zzy-*` 和 `zzz-*` 最后应用。
+补丁按 `patches/xnu/series` 和 `kits/NativePrelink/patches/series` 记录的显式顺序
+应用。文件名描述功能，不再控制顺序。
 
 ## 构建与工具链
 
@@ -34,7 +35,7 @@
 | `native-4k-user-abi` | 为用户 map、commpage 和 shared region 设置 4 KiB shift |
 | `native-4k-signature-hash-cache` | 从已验证 16 KiB 块派生 4 KiB 代码签名哈希 |
 | `pgz-aligned-validation` | 对齐检查前解码 PGZ 地址 |
-| `zzx-pmap-sync-64bit-pa` | 用 `ptoa()` 保留 4 GiB 以上物理地址 |
+| `pmap-sync-64bit-pa` | 用 `ptoa()` 保留 4 GiB 以上物理地址 |
 | `non-apple-pmap-field` | 匹配非 PAC pmap 字段布局 |
 | `non-apple-iommu-bootstrap` | 保护 UAT 和 SART bootstrap 及 PPL 代码 |
 | `non-apple-cache-monitor` | 保护 monitor enable 并导出 cache clean 符号 |
@@ -63,9 +64,9 @@
 | 补丁 | 作用 |
 | --- | --- |
 | `offline-native-gpu-broker` | 启动离线 GPU broker |
-| `zzy-native-gpu-addon-mount` | 为 GPU addon 内容和启动任务挂载只读 union 视图 |
-| `zzw-native-adreno-sandbox-grant` | 让 NativeAdreno 在 `NativeSandboxGrantProcess` 中指定 render server，并使其 user client 通过沙箱打开 |
-| `zzwb-native-sandbox-grant-set-properties` | 把同一授权扩展到 `setProperties`，使 render server 的配置（如面板背光的 `FadePeriod`）不再被沙箱拒绝 |
+| `native-gpu-addon-mount` | 为 GPU addon 内容和启动任务挂载只读 union 视图 |
+| `native-adreno-sandbox-grant` | 让 NativeAdreno 在 `NativeSandboxGrantProcess` 中指定 render server，并使其 user client 通过沙箱打开 |
+| `native-sandbox-grant-set-properties` | 把同一授权扩展到 `setProperties`，使 render server 的配置（如面板背光的 `FadePeriod`）不再被沙箱拒绝 |
 | `native-aes-personality` | 注册存储和控制台 personality |
 
 ## 诊断
@@ -75,7 +76,7 @@
 | `offline-pgz-alignment-probe` | 加入 PGZ 分配探针和检查点 |
 | `native-work-interval-trace` | 记录最近的 work interval 结果供启动进度页显示 |
 | `native-quiet-managed-page-report` | 关闭 GPU buffer 和 scanout mapping 上的 DEVELOPMENT managed page 报告 |
-| `zzz-boot-progress` | 在内核启动路径加入启动进度检查点 |
+| `boot-progress` | 在内核启动路径加入启动进度检查点 |
 
 ## 行为修复
 
@@ -110,10 +111,12 @@
 
 1. 编辑 `.cache/xnu-work`。
 2. 用 `git diff` 生成补丁。
-3. 以正确的顺序命名并放入 `patches/xnu/`。
-4. 重新构建内核。
+3. 以功能名放入 `patches/xnu/`。
+4. 在 `patches/xnu/series` 的正确位置加入该文件。
+5. 重新构建内核。
 
-依赖其他补丁的补丁排在其后。修改 `zzy` 或 `zzz` 区域的补丁排在其前。
+未列入 series 的 `.patch`、重复项和缺失项都会使构建失败。顺序依赖记录在
+`patches/xnu/README.md`。
 
 ## 下一步
 

@@ -50,7 +50,7 @@ The kernel patches `offline-owner-root-*` add the owner root checks used by the 
 
 ## GPU client grant
 
-NativeAdreno publishes `NativeSandboxGrantProcess` on its accelerator service. The patch `zzw-native-adreno-sandbox-grant` compares the opening process name with that property. The named process opens the user client past `mac_iokit_check_open_service` and `mac_iokit_check_open`. The render server is the named process.
+NativeAdreno publishes `NativeSandboxGrantProcess` on its accelerator service. The patch `native-adreno-sandbox-grant` compares the opening process name with that property. The named process opens the user client past `mac_iokit_check_open_service` and `mac_iokit_check_open`. The render server is the named process.
 
 ## Verified root
 

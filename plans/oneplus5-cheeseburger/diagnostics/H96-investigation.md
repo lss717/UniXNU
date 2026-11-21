@@ -222,7 +222,7 @@ SystemOS/Cryptex1 有独立的 `Cryptex1,SystemTrustCache`。即使 H1/H2 的
 
 ### 6.1 补丁
 
-`patches/xnu/zzzz-trustcache-amfi-trace.patch`
+`patches/xnu/trustcache-amfi-trace.patch`
 
 修改两个文件，全部由 boot arg 控制，默认关闭：
 
@@ -252,7 +252,7 @@ AMFI 策略、签名校验、root auth 或 VerifiedRoot。默认 boot arg 缺失
 `xnu-10063.141.1` 源树执行：
 
 ```text
-git apply --check patches/xnu/zzzz-trustcache-amfi-trace.patch  -> PASS
+git apply --check patches/xnu/trustcache-amfi-trace.patch  -> PASS
 ```
 
 本机没有 macOS/Xcode 内核工具链，**尚未完成实际 XNU 编译**；这属于
@@ -1561,7 +1561,7 @@ PID/comm、`entitled`、`csflags`、`blob`、`platform` 和 cdhash，并确认
 
 1. 使用与 H91 相同的构建配置，确认补丁已应用：
    ```sh
-   git -C .cache/xnu-work apply --check patches/xnu/zzzz-trustcache-amfi-trace.patch
+   git -C .cache/xnu-work apply --check patches/xnu/trustcache-amfi-trace.patch
    ```
 2. 构建 H96a kernel/payload，payload 参数只追加：
    ```text

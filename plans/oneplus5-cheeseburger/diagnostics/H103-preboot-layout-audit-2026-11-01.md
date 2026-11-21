@@ -184,7 +184,7 @@ python3 scripts/prepare-preboot-overlay.py \
   - 不复制 3.3 GiB SystemOS。
 - `scripts/prepare-owner-data-fixture.py --preboot-overlay DIR`
   - 把 overlay 放到 Data seed 的 `/private/preboot` 对应位置（Data 根即 `/private/var`，目录名为 `preboot`）。
-- `patches/xnu/zzzz-owner-preboot-layout.patch`
+- `patches/xnu/owner-preboot-layout.patch`
   - 新增 `XNU_OWNER_PREBOOT_LAYOUT=1`；
   - 在 Data mount 之后、SystemOS mount 之前，用 bindfs 把 `/private/var/preboot` union 到 `/private/preboot`；
   - SystemOS 挂到 `/private/preboot/Cryptexes/OS`；
@@ -331,7 +331,7 @@ dyld[1]: Library not loaded: /usr/lib/libSystem.B.dylib
 
 - `vm_unix.o` 增加 `-DXNU_OWNER_PREBOOT_LAYOUT`；
 - `vm_unix.o` 的 stamp 包含 preboot layout，切换时强制重编；
-- `zzzz-owner-preboot-layout.patch` 加入 `LATE_PATCH` 反应用列表，避免先反 `zzz-shared-region-cache-bypass` 后破坏本补丁上下文。
+- `owner-preboot-layout.patch` 加入 `LATE_PATCH` 反应用列表，避免先反 `shared-region-cache-bypass` 后破坏本补丁上下文。
 
 H103b 产物：
 
@@ -500,7 +500,7 @@ db/timezone/localtime -> /var/db/timezone/zoneinfo/US/Pacific
 
 H103e 只增加诊断，不改变行为：
 
-- `zzzzz-h103-data-diag.patch`；
+- `log-data-snapshot.patch`；
 - 在 `tzinit` 退出时打印：
   ```text
   NATIVE_H103_DATA: status=... ro=... dev=...
@@ -601,7 +601,7 @@ H103f 产物：
 
 ## 21. H103g：进程/退出观测（2026-11-01）
 
-新增 `zzzzzz-h103-proc-diag.patch`：
+新增 `log-process-snapshot.patch`：
 
 - `NATIVE_EXEC: pid=... ppid=... comm=... argv0=... argv1=...`
 - 对 `cryptexd`/`eligibilityd`/`launchd`/`xpcproxy`/`driverkitd`/`backboardd` 记录：
@@ -4264,7 +4264,7 @@ externalMethod selector**；selector 日志不是当前阻塞点。
   已经开始做 IOKit matching，只是匹配的类不含 `IOMobile`。
 
 H104c 之前 IOKit trace 只设置 bit 128，不打印匹配内容。H104d 在
-`patches/xnu/zzzzzzzzzz-h103-iokit-trace.patch` 里增加前 32 次日志：
+`patches/xnu/log-iokit-trace.patch` 里增加前 32 次日志：
 
 ```text
 NATIVE_IOKIT_MATCH: class=<IOClass> provider=<IOProviderClass>

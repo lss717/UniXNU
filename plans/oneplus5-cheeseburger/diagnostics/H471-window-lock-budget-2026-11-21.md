@@ -70,7 +70,7 @@ Two build-chain repairs were needed:
 
 - `zzzzzzzz...h437-late-springboard-union.patch` was re-anchored to the current
   late union function and now applies without fuzz.
-- `zzz-native-gpu-addon-counters.patch` restores the two zero-initialized
+- The retired GPU addon counter patch restored the two zero-initialized
   observation symbols `native_gpu_addon_calls` and
   `native_gpu_addon_crc_bad` referenced by `NativeUfsProbe`.
 

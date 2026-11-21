@@ -9,9 +9,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = ROOT / "drivers/NativeUfsProbe/NativeUfsProbe.cpp"
-EVENT_PATCH = ROOT / "patches/xnu/zzzzzzzzzzzzz-h413-ipc-events.patch"
-RING_PATCH = ROOT / "patches/xnu/zzzzzzzzzzzzzz-h419-bks-focus.patch"
-FIX_PATCH = ROOT / "patches/xnu/zzzzzzzzzzzzzz-h420-bks-timestamp.patch"
+EVENT_PATCH = ROOT / "patches/xnu/ipc-event-ring.patch"
+RING_PATCH = ROOT / "patches/xnu/springboard-bks-focus.patch"
+FIX_PATCH = ROOT / "patches/xnu/springboard-bks-timestamp.patch"
 NATIVE_DEFAULT = ROOT / "drivers/NativeMetal/A540TracePlugin.mm"
 NATIVE_CHECKER = ROOT / "drivers/NativeMetal/tools/check-h420-main-scene.py"
 
