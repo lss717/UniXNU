@@ -22328,10 +22328,126 @@ unixnu.toml SHA-256    dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e06
 payload kernel         548d323ba5fc4d555c94974c4304da9e63cffca772bfaf3340bd469fb971cc83
 ```
 
-状态为 `H528-built-static-verified-device-pending`。设备判定先看 SpringBoard
-退出前是否出现新的 `NATIVE_SIG`。若出现，按 sender、signum、ns/code/flags
-和 caller 决定是自身 abort、外部终止还是 XNU 路径。若仍没有记录，下一轮必须
-从 exit path 的原始 reason payload 继续，不能把阴性探针写成“没有信号”。
+状态为 `H528-public-wrappers-no-signal`。设备结果见下。
+
+#### H528 真机结果：五个公开 psignal 包装入口均未记录 SpringBoard
+
+H528 在 serial `16149951` 上以 boot ID `433c78c9` 启动，CDC 于启动后约
+249 秒出现。SpringBoard PID 27 的最早目标端口记录为 `650.057610 s`：
+
+```text
+sender=27/SpringBoard sname=0xf003 rname=0x5c03
+sport=0xfffffff2b8a3d7a0
+```
+
+从 `655.498238 s` 到 `1523.896057 s` 的 13 次 live lsd 样本均保持：
+
+```text
+seen=1 match=1 q=1 cnt=1 qlim=6 peer=101/lsd.real
+NATIVE_TARGETWAIT seen=0 count=0
+```
+
+SpringBoard 的同一 `req=61443/101/lsd.real q=1` 持续到退出前。整轮仍没有
+`SBRootSceneWindow`、`CALayerHost`、content、slot、commit wait、present
+或 `fr=1` 证据。
+
+live 中连续记录到四个 SpringBoard 进程退出：
+
+```text
+1552.763382 pid 27
+1580.762316 pid 210
+1625.872459 pid 216
+1689.893718 pid 223
+```
+
+UXC1 正常重启前又记录到 PID 231 在 `1718.142082 s` 退出。五次全部为
+`status=0x6 ns=2 code=0x6`，而整个 H528 live 中没有任何
+`NATIVE_SIG: ... comm=SpringBoard`。`NATIVE_EXIT_DESC` 仍只得到
+`SpringBoard`。因此 H528 排除了所有公开 `psignal*` 包装入口，但尚未解析
+退出 reason 的发送进程或 flags。
+
+UFS 在 `1710.689445 s` 仍为：
+
+```text
+seq=293132 done=293131 timeout=0 ocs_err=0 dbto=0
+recover=0 recovered=0 flight=1 lock_timeout=0 lock_wait_max_ms=34650
+```
+
+多个样本的 `lock_waiters=0xffffffff` 是无效/未初始化观测值，不能用于比较
+锁竞争。请求仍完成，OCS/doorbell/recovery 仍为零；没有 watchdog 触发证据。
+
+UXC1 request `424522` 得到 ACK 并执行 normal reboot。TWRP 中同一
+`userdata_ios` 的 sector 数仍为 `103204312`，只读拉取
+`skip=12892347 count=8192`。拉取后按既有要求清零同一尾部 32 MiB，回读
+SHA-256 为 `83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+
+证据：
+
+```text
+logs/H528/device/20261122-050616/
+H528-live.log
+  6baf3e342701ed8064d155a24e5a7a904d4a609bd2a10b98d6ff7b2ada3e0077
+H528-live.capture.stdout.txt
+  cfb743aa30ee4ba9643e483d14c602641ecbe8ea45810b671b9f5f0b75806489
+H528-tail32.bin
+  f943e1d75b69d5fd48da298b2d54a0407f01fb5312307f5566dd3db48c8f48d1
+H528-h103.txt
+  b57e3756d178e7c69a33002c25b39140f35ab2c739eddc45fabbff3a1f5c16f1
+H528-reboot.log
+  78d2b663dd239d4b1cfbfe7307311e0e58df7c55097da7deeb962628f30cb8ae
+H528-reboot.frames.bin
+  cff96acd2095aca608981b85059a19114c31ef886d5e7f8ee4c70fb0e489a7df
+```
+
+`H528-live.frames.bin` 仍为 0 字节；只有 UXC1 重启段捕获 4 帧且 CRC error、
+sequence gap、boot switch 均为零。不能声称整轮 live 帧流已校验。
+
+分类为
+`H528-target-port-queued/all-public-psignal-wrappers-no-capture/exit-reason-needed`。
+
+### §199 H529：从 exit reason KCDATA 恢复信号发送者（2026-11-22）
+
+H529 只增加退出原因观测。新补丁 `exit-reason-signal-source.patch` 在现有
+`native_trace_process_exit()` 中只读解析 reason 的
+`KCDATA_TYPE_PID` 和 `KCDATA_TYPE_PROCNAME`，并在 `NATIVE_EXIT` 增加：
+
+- `reason->osr_flags`；
+- 生成 signal reason 的 sender PID 与进程名；
+- 原有 status、reason namespace/code 保持不变。
+
+这能区分 SpringBoard 自报 abort、launchd/RunningBoard 外部终止和没有
+KCDATA sender 的其他 XNU exit path。补丁不改信号、退出或调度行为。它已在
+H528 最终源码树上通过 `git apply --check`，clean build 实际应用
+`sigbus-ring.patch` 后应用 `exit-reason-signal-source.patch`；最终 kernel
+含新的 `flags=... sender=...` 格式，最终链接和 prelink 成功。
+
+源码与构建：
+
+```text
+superproject commit     f1ade842
+kernel build log        /Users/lss/h468-build/h529-exit-source-build.log
+  9f6719004e41aa73810a6cd20588b2077568ab86aeedf59d42af0fa8325ce9b6
+prelink log             /Users/lss/h468-build/h529-exit-source-prelink.log
+  b4e6980bc4572043cf10b027cbcdb011033ae25871c0975f664405564cb393c3
+```
+
+payload 从 H528 复制，只替换 `Payloads/kernel.macho`；ADT、Data seed、
+GPU addon、owner trust 和 `unixnu.toml` 五项逐字节一致。payload 内 kernel
+回读一致，bootargs 和 boot JSON 检查仍 PASS。
+
+产物：
+
+```text
+kernel SHA-256         9ee8f2b5e69bdfe5a0e4b74b8a499be04fd76916ae90073f7bef1f8b989ccbd3
+payload SHA-256        856d0bf6c4ea63f32b088fb37c59ef6fc1b7b23823c30adde3edb8bf9a101189
+boot SHA-256           5fdfa7679eaea6a00dc8c52800b013afc065bed434962e19832d6c2a2b89fbda
+boot.json SHA-256      3f8e1a1ed89bf4f0ac4956b34f177c726a59af178276b2424841496fef910c11
+unixnu.toml SHA-256    dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e065f01e81
+payload kernel         9ee8f2b5e69bdfe5a0e4b74b8a499be04fd76916ae90073f7bef1f8b989ccbd3
+```
+
+状态为 `H529-built-static-verified-device-pending`。设备先等同一个 target-port
+断点，再在 SpringBoard 第一次退出时读取新增的 `flags` 与 `sender`。
 
 同日曾尝试用 H473 历史 glob 顺序重建 target-port 控制，并为让新补丁排到末尾
 临时引入 `zz…` 文件名。该分支没有成功构建，也没有产生 boot 镜像，已删除。
