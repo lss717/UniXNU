@@ -21797,3 +21797,48 @@ archive 构建再次应用 XNU series 后写入 marker，最终链接入口就�
 但 prelink 以 `Native kernel lacks sparse-prelink index ABI` 拒绝。修复是把
 NativePrelink series 的应用移到 `XNU_SKIP_PATCH_LOOP` 分支之外，使每次最终
 链接都先运行 `--skip-applied` 的两项检查和补充应用。
+
+### §194 H524：将 target-port 观察移出 trap 热路径（2026-11-22）
+
+H524 的来源是 H523 两次在 dyld cache 尚未完成时复位，而 H522 在同一设备、
+同一 Data seed、ADT、trust、addon 和启动方式下持续运行超过 1500 秒并进入
+SpringBoard。补丁现在只在以下两个采样分支执行目标端口逻辑：
+
+- SpringBoard 样本已经观察到 queued `lsd` 请求时，保存 receive name 和
+  send-right port；
+- 后续 lsd 样本复用 `native_sb_rows[]`，按 x16 Mach trap `-47` 和 x5 高 32 位
+  receive name 查找 waiter；
+
+`native_sb_collect()` 的等待线程遍历不再增加任何 target-port 分支。生产代码
+仍只读，不修改端口、队列、消息或 scene 状态。
+
+源码与构建：
+
+```text
+superproject                          dbb87b3
+NativePrelink                         84aa36d00a29e22a39b4eb2465fbbf6a4b693126
+device repository                     0e97aed
+build log                             /Users/lss/h468-build/h524-series-build-fixed.log
+prelink log                           /Users/lss/h468-build/h524-prelink-fixed.log
+```
+
+Mac 正常入口先应用 134 个 XNU patch，再应用 2 个 NativePrelink patch；修复后的
+输出明确包含 `== apply NativePrelink patch series`。最终 kernel 含
+`NATIVE_TARGETPORT` 和带 `count=` 的 `NATIVE_TARGETWAIT` 字符串，prelink
+成功。H524 payload 从 H522 payload 复制，只替换 `Payloads/kernel.macho`；
+其余五个文件逐字节相同。`check-bootargs-fit.py` 为 988 字符、
+`1008/1024`、最坏 `1016/1024`，PASS。
+
+产物：
+
+```text
+kernel SHA-256         949b46fdd5a6af9d05bc14cba1042c25ad0edb5ad87afca66d72b620835b0b56
+payload SHA-256        a6b845a58cde6d4c56eb1225b3de1d8656ad8f375a11af2434f79a4f2904c4cf
+boot SHA-256           8c2753bb5996ce655b94a30236a9c80522980d97ac5d1a6bb7fc0c50aade1c97
+boot.json SHA-256      abc2dcdaad56911405a6ac2d73e7c188897ce92a8ef46d3e7687fda9884aa73b
+unixnu.toml SHA-256    dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e065f01e81
+payload kernel        949b46fdd5a6af9d05bc14cba1042c25ad0edb5ad87afca66d72b620835b0b56
+```
+
+boot JSON 的 input/output hash 与上表一致，`problems=[]`。状态为
+`H524-built-static-verified-device-pending`。
