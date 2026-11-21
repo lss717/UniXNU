@@ -19172,3 +19172,98 @@ Android boot 结构、UEFI 不变及 bootargs 均 PASS；最坏 bootargs 为
 context；非零值则可与 A540Trace 的两个 CA context 做对应，下一轮只检查该
 context 的无内容原因、事务或 present 路径。窗口存在和 host layer 存在仍不是
 产品首帧。
+
+### §143 H496 真机：CALayerHost 已有非零 CAContext，但 context 内容仍为空（2026-11-21）
+
+H496 在 serial `16149951`、boot ID `21353df8` 上完成 900 秒运行。sample 5
+中六个受检 `CALayerHost` 全部返回同一信息：
+
+```text
+class=CALayerHost
+contextId=0xbca810c4
+hasContextId=1
+context=CAContext
+contents=0
+```
+
+因此 scene presentation view 已经从 UIKit 得到有效 host context，而不是
+停留在 `contextId=0`。同一个 boot 的 A540Trace 在 backboardd
+`CAWindowServer` 侧列出两个 context：
+
+```text
+ctx[0] id=0x967ac3a1 display=0x1 mask=0xffffffff host=0x0 client=0x9957
+       root subs=2 nodes=4 contents=0
+ctx[1] id=0xe91061c7 display=0x1 mask=0xffffffff host=0x0 client=0xc10f
+       root subs=2 nodes=4 contents=0
+```
+
+SpringBoard 的 `CALayerHost.contextId=0xbca810c4` 与这两个 ID 都不同。
+这说明必须在 SpringBoard 侧读取 `CALayerHost.context` 返回的 CAContext
+对象本身，不能用 backboardd 的 `CAWindowServer.allContexts` 列表替代映射。
+display 0 自身仍没有 context/layer。最后显示门在 1161.663476 秒仍为
+`s345=0/1/1 val=1 xf=1 fr=0`。SpringBoard 在整个采集期没有 exit。分类：
+`H496-host-context-nonzero/render-content-absent`。
+
+采集共收到 6165 个 live frame、805525 payload bytes；CRC error、sequence
+gap、boot switch 和 truncated frame 均为 0。H103 当前 boot 的最后可见 H469
+状态为 `seq=225183 done=225182 flight=1 lock_timeout=0` 且有 1 个
+`lock_waiters`；没有 timeout、OCS、doorbell 或 recovery。UXC1 request
+`424497` 收到 ACK，并执行 normal reboot；Android 正常出现后一次
+recovery reboot 返回 TWRP。该恢复不证明 watchdog。
+
+证据目录：
+`display-first-frame/logs/H496/device/20261121-135046/`。
+
+```text
+H496-live.log              f04374a795bb4a840588bf7fdb03bc7bbe84b5530f35de9954c73ae3610bdf77
+H496-live.frames.bin       bd99dbefc65c0f18667af4dd69181df74922da95acc04bcdee010ea74c8c6bf3
+H496-live.capture.stdout   8ec4c6be8aa2f0ef1bbbfa7cc62e6c43212657c7007ec8507616f2f341be15db
+H496-tail32.bin            58071ec647bd71a43fdcdb6846001dadde8fa81bd133672e461cdfb2b793ee7d
+H496-h103.txt              485c699ce96ea50d0e4d0b67aeb21f0c8aee002b311aaa40556acf4778c57e22
+H496-device-state.txt      6c95fb683ecd1acad8b01c6ea33dd8cfa9767092d32f4857ac7bf4ac9a3a9b12
+H496-reboot.log            6343acbac893e52471b259004e9cf4349e546a09ab4568cb6ae06f640da0c3eb
+```
+
+### §144 H497：读取 CALayerHost 所持有 CAContext 的根层与渲染字段（2026-11-21）
+
+H497 保留 H496 的 kernel、ADT、Data、bootargs、addon 文件集、trust 基线和
+显示路径。observer 对每个首次出现的非零 host context 只读追加：
+
+```text
+CAContext.contextId
+CAContext.displayId
+CAContext.displayMask
+CAContext.isValid
+CAContext.isFrozen
+CAContext.layer
+CAContext.renderContext
+CAContext.options
+```
+
+并遍历 `CAContext.layer` 的边界与 `contents`。相同 contextId 在一个 sample
+中只记录一次；最多 8 个 context。没有绑定、替换或创建 context，没有 setter，
+也不修改 scene/window/layer/display/Metal/IOMFB/surface/scanout。NativeMetal
+`ca907a76ef81079e43de3e2f7e5d3b9dc9b260b4`，superproject `f347dd8`。
+
+产物：
+
+```text
+dylib SHA-256    c8f95026217304344fd2343efab3a59d866c12c19f4fbd6417c7bad931ad4323
+dylib CDHash     df026e9c5c3fac1fa1afc5b780d5d2d3a7adda7b
+addon SHA-256    09c7fa38fab948e9c4531eaa7e796c0c95320c481def17e250e08bab96bec0a9
+trust SHA-256    d4a0cfaa8bc07deb0828b4ebbef8d8b7ec3b91747836533f15cc136ff0b17703
+payload SHA-256  21eab1d630aed2747bad9c0ab7e9cfb6e2035ce36d1845fec202fa19e6414a3e
+boot SHA-256     82c6b2e6655b7e71b653f9ba514cc7a34b8f50b6e3f95e3569fa32747a5bb2fb
+boot.json SHA-256 550a7bf0a2c9aa23464bd28f270c2a86542c9686b9de337de3982d11e2aa000e
+```
+
+owner trust 为 35 项。addon 仍为 7 项且只有 observer dylib 改变。payload
+逐文件回读确认 kernel、ADT、Data seed 和 `unixnu.toml` 与 H496 相同。
+observer/CCS gate、arm64 4 KiB 签名、Android boot 结构、UEFI 不变和
+bootargs 均 PASS。状态：`boot-built-static-verified-not-device-tested`。
+
+设备门要求 sample 5 出现 H497 `hierarchy=context` 与
+`hierarchy=contextfields`，并明确 host context 的 `layer`、
+`renderContext`、有效/冻结状态和根层 contents。若 context layer 有内容，
+下一轮只追 CA transaction/present；若仍为空，只检查该 context 的 surface
+或 renderer producer，不回到 UIView 猜测。
