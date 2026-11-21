@@ -18171,3 +18171,44 @@ bootargs、`OP5ESP`、Android boot magic 和布局检查 PASS。bootargs 仍 980
 `SpringBoard.real` 是否能产生第二次 observer load 与 scene sampler。若
 wrapper 内 `dlopen` 失败，记录完整 `dlerror()` 并停止 scene 方向，不再用
 无异常短跑解释。
+
+真机已按 H483 SHA `ac253a15...c4ea83` 启动，CDC 在约 273 秒 boot uptime
+出现，采集在约 455 秒停止。H103 完整记录：
+
+```text
+181.649203 s  NATIVE_MTL: bootstrap enter uid=501 euid=501 pid=27
+181.872028 s  wrapper env insert=/private/var/ngpu/lib/SpringBoardSceneObserver.dylib
+181.974081 s  wrapper env flat=1
+182.240670 s  System Policy ... file-map-executable ...SpringBoardSceneObserver.dylib
+182.240670 s  NATIVE_MMAP: ignore MACF check 1
+182.922413 s  NATIVE_MTL: observer load process=SpringBoard pid=27 build=H481
+183.020025 s  NATIVE_MTL: wrapper dlopen observer ok
+183.132137 s  wrapper exec target=.../SpringBoard.real
+183.171844 s  NATIVE_EXEC: pid=27 ppid=1 comm=SpringBoard.real
+183.227857 s  NATIVE_LAUNCH_CONSTRAINT_BYPASS: pid=27 comm=SpringBoard.real
+```
+
+这闭合了 H482 的歧义：两个 DYLD 值确实跨入 wrapper，observer 本体可以在
+该进程映射并成功执行 constructor，`dlopen` 返回成功。可是 `execv` 之后
+registry 名称已经是 `SpringBoard.real`，却没有第二次
+`NATIVE_MTL: observer load`，`H436_SBSCENE`、scene sampler 和
+`NATIVE_EXIT: pid=27` 也都为 0。因此失败点是 exec 后的平台二进制没有消费
+继承的 `DYLD_INSERT_LIBRARIES`，不是路径缺失、签名、MACF 或 observer
+constructor。
+
+分类：
+`H483-wrapper-env-and-dlopen-pass/exec-consumes-neither-injection`。
+下一步 H484 必须只改一个变量，把 observer 固化成
+`SpringBoard.real` 的 `LC_LOAD_DYLIB`，然后重新做 4 KiB ad-hoc sign，并把
+新 real CDHash加入 owner trust。wrapper 的 DYLD 设置可保留为无副作用对照，
+scene observer 与 sampler 不变。
+
+证据目录：
+`display-first-frame/logs/H483/device/20261121-101216/`。
+
+```text
+H483-live.log      eb657a3434f98b2f868f315a50f5384cb3e4a5cccbd33abcb5d447466691b893
+H483-tail32.bin    acc0fe820f2a93fdc53bbc28cfd7f85b7128d2d7974b49d000d497765beb724b
+H483-h103.txt      bf0220368c7d06351de9cf1cd47a433ef199937bbd7fc65f9fd9df987329323f
+H483-device-state  b8c66b1f2c2048a8f1d6a23e6fa831662d348913a35cc46e2fee40ada34115f7
+```
