@@ -20547,3 +20547,52 @@ kernel `4577d3bc…`、ADT `9fa9e5ba…`、Data seed `7522c2b8…`、
 - 出现 context slot 后才进入 CA commit/present/IOMFB。
 
 本轮不以 sample 5 或单个日志 marker 的缺失作为产品首帧结论。
+
+### §172 H511 真机：run-loop 入队成功，但主块未执行（2026-11-21）
+
+H511 在 serial `16149951`、boot ID `21791e90` 上完成 900 秒采集。
+`NATIVE_MTL builder#2 build H511` 在 286.642040 秒确认。sample 4 在
+531.090721 秒开始，但这一轮 SpringBoard 尚未建立 `UIApplication`：
+`app=0 delegate=nil windows=0`，workspace 和 scenes 也都为 0。
+
+532.234323 秒出现 `h511_runloop_enqueue_begin`，532.303280 秒出现
+`h511_runloop_enqueued main=0x303170180 wakeupSent=1`。到 900 秒结束，
+`h511_main_block_enter`、`h511_before/request/after`、
+`h511_main_block_exit` 全部为 0。全轮也没有
+`uiwindow_set_hidden window=status`、`ca_context_remote_create`、root
+visible、`ca_host_*`、sample 6、context slot 或 display-surface 事件。
+分类：`H511-runloop-enqueued/pre-UIApplication-main-block-not-run`。
+
+这不是盲目等待失败：H511 已证明调用线程执行到了 `CFRunLoopPerformBlock`
+并发送 wake，但主 run loop 当时没有服务该块。本轮没有把它误记为
+`makeKeyAndVisible` 失败；窗口 API 根本没有执行。
+
+显示门在 1177.435934 秒仍为
+`dpy=4/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0`。最后 H469 行为
+`seq=222536 done=222536 timeout=0 ocs_err=0 dbto=0 recover=0
+recovered=0 lock_timeout=0`；`lock_wait_ms=10000664
+lock_ok=632543`，平均约 15.81 ms，比 H510 的 19.74 ms 下降。
+请求完成且无 OCS、doorbell timeout 或 recovery；仍不验证 watchdog。
+
+live capture 为 `frames=6226 payload_bytes=809283 crc_errors=0
+sequence_gaps=0 truncated_frames=0 boot_switches=0`。UXC1 `424513`
+在 1205.441556 秒 ACK，Android `boot_completed=1` 后返回 TWRP。
+尾环记录 `NATIVE_UFS_LOG_FAIL errors=224`，但 live transport 完整。
+
+证据：
+
+```text
+H511-live.log                 333b907ad61052f580f9bb4449e860170e11e378ce90efa47492eae908c66a78
+H511-live.frames.bin          59c88209a941f782c676d6d111e37dde3e3789f4568ecda15880546b31741d14
+H511-cdc-replay.txt           4bec86c812086a13b6fb13429e20faab318d19a277d93cb2955aef0ea2aa0d4b
+H511-h103.txt                 7501201f0f38c90f3c11452c23e858b2bc8d7f4933b8bfb3078274e8c7dda4f9
+H511-tail32.bin               6da11eb94d74c79fb50d4a47a1863814a3768f597369946e5b08f89a2ef04d1b
+H511-reboot.log               ff9e5f6f1eb8e5d832afe85c6cb7b30a849d0416e9fb987aa62f1e4241cdaa85
+H511-reboot.frames.bin        389254b67a98918825148a1776eb7828bb34b0f6fd66b0b9c6f36f8083fc8af5
+H511-reboot-recovery-state    d4c81c358b8d33daad8958e7f25a72ec6ef97bcd3bc09b7a2f0380b565e88f25
+```
+
+下一轮保持 H511 的 run-loop 投递，只改变触发时机：sample 4 启动后台
+应用就绪监视器，只有观察到 `UIApplication` 和至少一个 window 后才执行
+同一次 `CFRunLoopPerformBlock + WakeUp`。若监视器长期只看到 `app=0`，
+下一步转向 UIApplication 实例化/主线程入口，不再重复窗口写请求。
