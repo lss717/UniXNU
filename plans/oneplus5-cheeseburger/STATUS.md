@@ -22101,6 +22101,84 @@ H526-live-cont1.frames.bin
 仍需补齐 SpringBoard SIGABRT 的用户态原因，并确认新 PID 是否有一个能够覆盖
 目标端口的 run-loop/port-set receiver。
 
+H526 的两段 live 采集最终分别完成 7,230 和 16,159 帧，CRC error、
+sequence gap、boot switch 均为零。完整持久环最后到 `2200.345376 s`；
+在 UXC1 普通重启前，最后的 UFS 状态为：
+
+```text
+2174.142500
+seq=335744 done=335743 timeout=0 ocs_err=0 dbto=0
+recover=0 recovered=0 flight=1
+lock_timeout=2 lock_waiters=2 lock_wait_ms=20197550
+lock_wait_max_ms=49988
+```
+
+SpringBoard PID 27、209、215、217、224、232、240、242、254、262、266
+在持久环或 live 段中重复以 `status=0x6 ns=2 code=0x6` 退出。
+`ns=2` 是 `OS_REASON_SIGNAL`，`code=6` 是 SIGABRT；当前没有捕获发送者、
+用户态 abort 字符串或可用的 crash report。显示门直到约 2068 秒仍为
+`dpy=4/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0`。
+
+最终证据：
+
+```text
+logs/H526/device/20261122-034509/
+H526-live.log
+  7aee72d8fafeb5088354c1de07405cb93462042ce0713a7d03d1c36e54e0756e
+H526-live.frames.bin
+  f71db8d13db33cfd75c3e09f304a91f69bcbab83ea619f0b641afe05693af854
+H526-live-cont1.log
+  bd152f2d099a41fbe1daa30c22893a536a0fad60882d2dbe765043e73656538a
+H526-live-cont1.frames.bin
+  7a54ef76a85cb0a798f8d96fc9374c31f5bddb2b4a4f8d08ddbafa6c12c3360d
+H526-reboot.log
+  ac4273614b382182c354fd099b1c9ef733c44465406903a50b3c71ddddfa76a9
+H526-reboot.frames.bin
+  ca2b7e312d06d1897d7cfceb10b35f481c0fedf7203bf0d864d79cafdf86d6ca
+H526-tail32.bin
+  1a68c5f76e4adcdccf4d56ace0f314a92090184994dbc453d216e389c745e096
+H526-h103.txt
+  7bdd4eefd0d4ea7881efb5e4b940f35f8ade3f074240e4a13881bf22bbd8fed1
+```
+
+H526 最终分类为
+`H526-target-port-queued-no-receiver/sender-SIGABRT-before-reply/SpringBoard-respawn-loop`。
+UXC1 request `424520` 得到 ACK 并执行 normal reboot，没有分区写入。
+
+### §197 H527：记录 SpringBoard SIGABRT 的发送者和 OS reason（2026-11-22）
+
+H526 已证明 target-port 消息在原始 SpringBoard PID 27 存活期间持续排队，
+lsd 中没有匹配 waiter。PID 27 随后以
+`status=0x6 ns=2 code=0x6` 退出；`ns=2` 是 `OS_REASON_SIGNAL`，`code=6`
+是 SIGABRT，但现有记录没有发送者、reason flags 或调用点。H527 只修改
+`sigbus-ring.patch`，增加只读信号观测，不改变 target-port probe、信号处理或
+进程终止行为。
+
+新记录对 SpringBoard 的 SIGABRT（以及原有 SIGBUS/launchd 事件）保存：
+
+- signal target PID/comm 和 signal；
+- `current_proc()` 的 sender PID/comm；
+- `psignal*` 的 kernel caller return address；
+- `os_reason` 的 namespace、code 和 flags。
+
+输出格式为：
+
+```text
+NATIVE_SIG: pid=... sig=... comm=... sender=.../...
+            caller=0x... ns=... code=0x... flags=0x...
+```
+
+设备判定：
+
+- `sender` 为 SpringBoard 自身且 `flags` 含 `OS_REASON_FLAG_ABORT`：查它的
+  abort/assert 来源；
+- sender 为 launchd/RunningBoard/watchdog 等另一进程：转查对应 kill policy；
+- sender 为 kernel/unknown 且 caller 可符号化：沿该调用点继续；
+- 没有 `NATIVE_SIG`：说明当前记录的交付路径仍未覆盖，再用 exit path 的原始
+  reason payload 补测。
+
+当前状态：`H527-patch-static-apply-pass-build-pending`。
+
 同日曾尝试用 H473 历史 glob 顺序重建 target-port 控制，并为让新补丁排到末尾
 临时引入 `zz…` 文件名。该分支没有成功构建，也没有产生 boot 镜像，已删除。
 这个命名方式自此明确禁止：补丁必须使用功能名，顺序只由
