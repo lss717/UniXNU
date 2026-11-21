@@ -132,3 +132,4 @@ launchservices-fs-probe.patch
 launchservices-lifecycle.patch
 launchservices-stable-gate.patch
 springboard-late-union.patch
+exit-reason-signal-source.patch

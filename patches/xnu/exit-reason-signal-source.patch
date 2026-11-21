@@ -1,0 +1,86 @@
+diff --git a/bsd/kern/kern_exit.c b/bsd/kern/kern_exit.c
+--- a/bsd/kern/kern_exit.c
++++ b/bsd/kern/kern_exit.c
+@@ -1511,11 +1511,62 @@
+ /*
+  * H103 diagnostic only: record selected process exits. This does not alter
+  * exit status, signals, launchd behavior or any verification path.
+  */
++static void
++native_exit_reason_source(os_reason_t reason, uint32_t *flags,
++    pid_t *sender_pid, char *sender_name, unsigned name_size)
++{
++	kcdata_iter_t iter;
++	kcdata_iter_t item;
++	char *desc;
++	void *data;
++	uint32_t size;
++
++	*flags = reason != OS_REASON_NULL ? reason->osr_flags : 0;
++	*sender_pid = -1;
++	if (name_size != 0) {
++		sender_name[0] = 0;
++	}
++	if (reason == OS_REASON_NULL || reason->osr_kcd_buf == NULL ||
++	    reason->osr_bufsize == 0) {
++		return;
++	}
++	iter = kcdata_iter(reason->osr_kcd_buf, reason->osr_bufsize);
++	if (!kcdata_iter_valid(iter) ||
++	    kcdata_iter_type(iter) != KCDATA_BUFFER_BEGIN_OS_REASON) {
++		return;
++	}
++	item = kcdata_iter_find_type(iter, KCDATA_TYPE_PID);
++	if (kcdata_iter_valid(item) &&
++	    kcdata_iter_size(item) >= KCDATA_DESC_MAXLEN + sizeof(*sender_pid)) {
++		kcdata_iter_get_data_with_desc(item, &desc, &data, &size);
++		if (size >= sizeof(*sender_pid)) {
++			memcpy(sender_pid, data, sizeof(*sender_pid));
++		}
++	}
++	item = kcdata_iter_find_type(iter, KCDATA_TYPE_PROCNAME);
++	if (kcdata_iter_valid(item) && name_size != 0 &&
++	    kcdata_iter_size(item) > KCDATA_DESC_MAXLEN) {
++		kcdata_iter_get_data_with_desc(item, &desc, &data, &size);
++		unsigned limit = size < name_size - 1 ? size : name_size - 1;
++		for (unsigned i = 0; i < limit; i++) {
++			char c = ((const char *)data)[i];
++			if (c == 0) {
++				break;
++			}
++			sender_name[i] = c;
++		}
++		sender_name[limit] = 0;
++	}
++}
++
+ extern volatile uint32_t native_boot_flags;
+ static void
+ native_trace_process_exit(proc_t p, int rv, struct os_reason *reason)
+ {
++	uint32_t flags = 0;
++	pid_t sender_pid = -1;
++	char sender_name[33] = "-";
+ 	const char *comm = p->p_comm;
+ 	if (!strcmp(comm, "SpringBoard")) native_boot_flags |= 32;
+ 	if (!strcmp(comm, "backboardd")) native_boot_flags |= 64;
+@@ -1528,6 +1579,8 @@
+ 		ns = reason->osr_namespace;
+ 		code = reason->osr_code;
+ 	}
++	native_exit_reason_source(reason, &flags, &sender_pid,
++	    sender_name, sizeof(sender_name));
+ 	/* H129: SpringBoard's exit status is the evidence for the missing UI.
+ 	 * H130: every exit that carries an os_reason is traced too (ObjC
+ 	 * exception, dyld abort, jetsam, exec failure), together with the
+@@ -1544,7 +1597,8 @@
+ 		return;
+ 	}
+-	printf("NATIVE_EXIT: pid=%d ppid=%d comm=%s status=0x%x ns=%u code=0x%llx\n",
+-	    proc_getpid(p), p->p_ppid, comm, rv, ns, (unsigned long long)code);
++	printf("NATIVE_EXIT: pid=%d ppid=%d comm=%s status=0x%x ns=%u code=0x%llx flags=0x%x sender=%d/%s\n",
++	    proc_getpid(p), p->p_ppid, comm, rv, ns, (unsigned long long)code,
++	    flags, sender_pid, sender_name);
+ 	if (ns != 0 && reason != OS_REASON_NULL) {
+ 		const char *desc = exit_reason_get_string_desc(reason);
+ 		char text[321];

@@ -11,6 +11,7 @@ DRIVER = ROOT / "drivers/NativeUfsProbe/NativeUfsProbe.cpp"
 PATCH = ROOT / "patches/xnu/log-process-state.patch"
 TARGET_PATCH = ROOT / "patches/xnu/springboard-lsd-target-port.patch"
 SIGNAL_PATCH = ROOT / "patches/xnu/sigbus-ring.patch"
+EXIT_REASON_PATCH = ROOT / "patches/xnu/exit-reason-signal-source.patch"
 
 
 def require(condition, message):
@@ -23,6 +24,7 @@ def main():
     patch = PATCH.read_text()
     target_patch = TARGET_PATCH.read_text()
     signal_patch = SIGNAL_PATCH.read_text()
+    exit_reason_patch = EXIT_REASON_PATCH.read_text()
 
     build = re.search(r'#define H103_BUILD "(H[0-9]+)"', driver)
     require(build and int(build.group(1)[1:]) >= 420,
@@ -61,6 +63,12 @@ def main():
     for marker in signal_sites:
         require(marker in signal_patch,
                 f"signal wrapper coverage missing: {marker}")
+    require("KCDATA_TYPE_PID" in exit_reason_patch,
+            "exit reason PID is not decoded")
+    require("KCDATA_TYPE_PROCNAME" in exit_reason_patch,
+            "exit reason sender name is not decoded")
+    require("flags=0x%x sender=%d/%s" in exit_reason_patch,
+            "exit reason flags/source are not printed")
 
     # The probe must remain observation-only: these files are the behavioral
     # boundary and are deliberately untouched from H420 onward.
