@@ -17786,3 +17786,57 @@ kernel round-trip 一致；addon SHA 与 H477 完全相同。bootargs 980 B，�
 `OP5ESP` 检查 PASS。`sheng-restart-sb=1` 是唯一新增行为参数；删除的另外两个
 参数仍是 tracing-only/旧零值。状态：
 `boot-built-static-verified-not-device-tested`。
+
+真机 boot ID `2155abed`。addon/mount 和 restart 机制分别通过：
+
+```text
+addon=6/4/2/0/0/0
+owner=4/0 ext=4/2 dm=5/0 wp=1/2
+NATIVE_RESTART: gate=1
+NATIVE_RESTART: display client seen
+NATIVE_RESTART: SpringBoard pid=27 sigterm
+NATIVE_RESTART: sent
+NATIVE_EXIT: pid=27 ... comm=SpringBoard status=0xf ns=2 code=0xf
+```
+
+`status=0xf` 是预期的 SIGTERM。launchd 随后启动新 SpringBoard `pid=90`，但
+live log 从 uptime 273.745655 秒采集到 554 秒仍没有
+`NATIVE_MTL: observer load`；`pid=90` 也没有重新采用 H477 已挂入的 launchd
+cache 环境。因此 H478 的变量本身生效，但 observer 投递仍失败。本轮在约
+554 秒有界停止，不用于 scene 阴性或长时 UFS 结论。
+
+分类：
+`H478-springboard-restart-trigger-pass/observer-still-not-delivered`。证据：
+
+```text
+H478-live.log     96467d765f4819c32d7511eeb4587839078fe624d2273649b00bd210f1cd3611
+H478-tail32.bin   7537b6a3442ffe2cd6f49a3c31cee2b415c9f28133adde888f92d2680aa23acb
+H478-h103.txt     74ca44e7857124448f1b499922b3a9392a639a4b4bb2c97c8ca7c2379000bd02
+```
+
+### §122 H479：恢复带 real binary 的 SpringBoard wrapper（2026-11-21）
+
+H478 证明 SIGTERM/restart 生效，但 launchd cache 的环境项没有进入新进程。
+H479 保持 H478 的 kernel、Data seed、trust cache、bootargs 和 restart trigger，
+只把 addon 从 H477/H478 的六文件扩为八文件，增加 H436 已签名 wrapper 与真实
+SpringBoard 二进制：
+
+```text
+springboard/SpringBoard       H436-SpringBoard
+springboard/SpringBoard.real  H436-SpringBoard.real
+```
+
+不再假设 overlay 下存在隐式的 `SpringBoard.real`。wrapper 在 launchd 因 H478
+trigger 重启它时设置：
+
+```text
+DYLD_INSERT_LIBRARIES=/private/var/ngpu/lib/SpringBoardSceneObserver.dylib
+DYLD_FORCE_FLAT_NAMESPACE=1
+```
+
+然后 exec payload 自带的 `SpringBoard.real`。设备门要求 restart 后新进程出现
+`H436_SBWRAP` 或至少 `NATIVE_MTL: observer load ... build=H457`，随后才要求
+真实 scene/window。若 wrapper 再出现 exit 0x9，说明新的确定点是 wrapper
+签名/launch constraint，而不是 cache 投递。
+
+当前状态：`packaging`。
