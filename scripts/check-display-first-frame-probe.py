@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DRIVER = ROOT / "drivers/NativeUfsProbe/NativeUfsProbe.cpp"
 PATCH = ROOT / "patches/xnu/log-process-state.patch"
 TARGET_PATCH = ROOT / "patches/xnu/springboard-lsd-target-port.patch"
+SIGNAL_PATCH = ROOT / "patches/xnu/sigbus-ring.patch"
 
 
 def require(condition, message):
@@ -21,6 +22,7 @@ def main():
     driver = DRIVER.read_text()
     patch = PATCH.read_text()
     target_patch = TARGET_PATCH.read_text()
+    signal_patch = SIGNAL_PATCH.read_text()
 
     build = re.search(r'#define H103_BUILD "(H[0-9]+)"', driver)
     require(build and int(build.group(1)[1:]) >= 420,
@@ -49,6 +51,16 @@ def main():
             "target receive-waiter record missing")
     require("target.port == native_sb_target_port" in target_patch,
             "target send/receive port identity comparison missing")
+    require('strncmp(p->p_comm, "SpringBoard", 11) != 0' in signal_patch,
+            "SpringBoard signal filter still excludes signals other than SIGABRT")
+    signal_sites = (
+        "native_sigbus_probe(p, signum, OS_REASON_NULL",
+        "native_sigbus_probe(p, signum, signal_reason",
+        "native_sigbus_probe(p, SIGKILL, signal_reason",
+    )
+    for marker in signal_sites:
+        require(marker in signal_patch,
+                f"signal wrapper coverage missing: {marker}")
 
     # The probe must remain observation-only: these files are the behavioral
     # boundary and are deliberately untouched from H420 onward.
