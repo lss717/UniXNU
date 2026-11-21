@@ -18458,3 +18458,68 @@ owner trust 为 27 项。H475 的七文件结构、kernel、Data、bootargs 和 
 下一步应从 `UIApplication` 的实际 window/layer 继续，而不是等待
 `FBSWorkspace sharedWorkspace`；若两者都为空，下一轮才定位 SpringBoard
 scene manager 初始化。
+
+H487 真机 sample 0–5 均成功到达 fallthrough。每个 sample 都是：
+
+```text
+cadisplay=1 list=6 main=1
+workspace=0 class=nil
+app=0 delegate=nil scenes=0 windows=0
+```
+
+最后 sample 5 在 766.571178 秒，CADisplay 仍为 6 个且 main=1。
+SpringBoard 没有 exit，也没有 product frame。分类：
+`H487-fallthrough-cadisplay-pass/uiapplication-and-workspace-absent`。
+这排除了“observer 只因 FBSWorkspace early return 而没看到现有 UI”：
+真正没有的是 SpringBoard scene/application 初始化，而 CADisplay 一直存在。
+
+证据目录：
+`display-first-frame/logs/H487/device/20261121-111840/`。
+
+```text
+H487-live.log      07595a057c644b41db4b4ecce81d44e6d2a31465278935ed2b9c40e0fa30d928
+H487-tail32.bin    e1b0cd8b1f5a7827fb80aaddb830fa0dd796d2440bf93d3136dec9b3ffbdd9f1
+H487-h103.txt      12cc57fbe12c9d3fc2ae8ff7641909e44184a15b082e3a66a7c0498a8832ff6e
+H487-device-state  58319d932bc407445fca176c9ec01f783538fbb5e0b11618cd94d0fc71c4817e
+```
+
+### §131 H488：探测 SpringBoard 自己的 scene/workspace owner（2026-11-21）
+
+目标镜像里的 SpringBoard framework 包含 `SBMainWorkspace`、
+`SBSceneManagerCoordinator`、`SBMainDisplaySceneManager`、
+`SBWindowSceneManager`、`SBApplicationController` 和 `FBSceneManager`。
+H488 只增加这些类及常见 shared accessor 的运行时探测，不创建 scene、
+不调用 open/activate、不改 renderer：
+
+```text
+_sharedInstance sharedInstance mainWorkspace _mainWorkspace
+mainDisplaySceneManager _mainDisplaySceneManager
+activeDisplayWindowScene _activeDisplayWindowScene
+mainDisplayWindowScene _mainDisplayWindowScene
+```
+
+`probe_springboard_classes()` 在每次既有 sample 前运行；CADisplay 和
+UIApplication 观测保持。submodule `0d2f473`，superproject `100428d`。
+新 observer：
+
+```text
+SHA-256  252a1cfd6659ee1dac5560833d78578748978efe1a510e6f7f14acffc23237f9
+CDHash   e411fcc7c1f192209d68c27470d37161cb1327d2
+```
+
+H488 回读：
+
+```text
+GPU addon   bd7d3291a29c691a214826905ce8e5a826d70f438d7a35858cccd6b95b5e7e84
+trust cache 912ce6421d153c575272262d4ef6767be2534cd987a2856410d2954ef72973a6
+payload     639650690e90e36a7a6e25c324f6567a2fe54c76bc8404fdf7820adbbaa559db
+boot        5e7a95f9eaa5b05d5ae41282254accc8745976d86d04b60ad69a6ff122e84a08
+```
+
+owner trust 为 28 项；observer、payload、ADT、bootargs 和 boot layout 均
+PASS。状态：`boot-built-static-verified-not-device-tested`。
+
+设备门先接受 class/selector 存在性，不接受 accessor 猜测成功。若 shared
+对象非空，下一轮从该对象的真实 methods 读 scenes/windowScenes；若全部
+为空，则直接检查 SpringBoard 主线程为何尚未完成 UIApplication/scene
+manager 初始化。
