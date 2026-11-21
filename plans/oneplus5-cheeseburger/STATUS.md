@@ -19961,6 +19961,17 @@ H505-live.frames.bin      92613f50159f7980ec47ef3b946e6526895022077d17228b6b8e2f
 H505-live.capture.stdout  97535f81f0c612fdecbe9547e6b802a0c02a9bd594ef3f499e6f69c7d7340361
 ```
 
+UXC1 request `424507` 只发送一次，在 1645.255114 秒 ACK、armed 并执行 normal
+reboot。Android `sys.boot_completed=1` 后一次 recovery reboot 返回 TWRP，
+serial、product 与版本均复核。追加证据：
+
+```text
+H505-h103.txt                 628ec3616b6637a5ae4d58a0aefb0b10b02caa7b402915d423ba9f3ccd59a1f5
+H505-tail32.bin               ab8611d0c545d1d7d664df274dd46b193c4571d08f789ed7c2808afa48515c28
+H505-reboot.log               e4758e9af5c0d573d66590e7c23ef5c8a7a3536bbd42da83285f1de0e2d0b165
+H505-reboot-recovery-state    04d870becb7d7c8e4d9e63c7db2f7d4ddcb4a310767929a9f7cf201d53029711
+```
+
 ### §161 H506：跟踪桌面 root/status window 到 CA 提交与 backboardd context（2026-11-21）
 
 H505 证明继续押注第 5 次定时快照不能缩小首帧故障。H506 改为事件驱动，
@@ -20037,3 +20048,109 @@ bootargs 仍为 988 B，实际 1008/1024，worst case 1016/1024。状态：
 - root 有提交但 host/context 不匹配：查 SpringBoard 到 backboardd 的托管绑定；
 - root 提交与 host/context 对齐但 `fr=0`：再追合成、present 和 IOMFB；
 - 两个 window 都没有事件：只判观测覆盖不足，不判 SpringBoard 未绘制。
+
+### §162 H506 真机：backboardd context 有 layer commit，SpringBoard window 无 contents（2026-11-21）
+
+H506 在 serial `16149951`、boot ID `29778379` 上运行。A540Trace build
+`H506` 两次在 296.293 与 332.614 秒加载，
+`event_hooks contextLayer=1 contextSlot=1 commitWait=1 layerCommit=1
+displaySurface=1`，说明五个 server hook 都安装成功。
+
+380.786904 秒，backboardd 为 context `0x2b1bbd1e`（display `0x1`）设置根
+`CALayer`，contents 为空且 sublayers=0。381.766 到 381.873 秒之间，该 context
+产生 4 条 `event_layer_commit`，每个节点 contents 仍为空。382.107334 秒，
+第二个 context `0x444d74c8` 以 display `0x0` 设置根 layer；到 382.265280
+秒同样产生 4 条空 layer commit，随后 `ctxchange` 将 display 更新到 `0x1`。
+
+426.670078 与 427.586907 秒的 context state 是：
+
+```text
+ctx=0x2b1bbd1e display=0x1 owner=56/backboardd
+  1080x1920 root=CALayer subs=2 nodes=4 contents=0
+ctx=0x444d74c8 display=0x1 owner=56/backboardd
+  1080x1920 root=CALayer subs=2 nodes=4 contents=0
+```
+
+SpringBoard 侧在 476.119765 与 476.149804 秒记录到 client context
+`0x1bc9a47c` 的两次 `CAContext.setLayer:`。第一次 layer=nil，第二次为
+已 committed 的 `UIWindowLayer`，contents 为空。setter 发生时 delegate 仍为
+nil，因此不能从该时刻直接归类为 root/status。全轮没有
+`ca_host_context_bind`、`ca_host_visible`、`ca_layer_set_contents`、
+`ca_transaction_flush`、`event_context_slot`、`event_context_commit_wait`
+或 `event_display_surface`，sample 5 也仍未出现。
+
+结论：backboardd 已经接到两个真实、1080x1920 的 CA context，并在其上提交了
+空 layer 树；SpringBoard 也把 `UIWindowLayer` 绑定到一个 client context。
+没有证据表明桌面内容被写入 context slot 或送到
+`CAWindowServerDisplay.presentSurface:`。分类：
+`H506-backboardd-context-layer-commits/client-window-no-content`。
+
+显示门在 1130.988470 秒仍为
+`dpy=4/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0`。采集健康为
+`frames=6626 payload_bytes=867157 crc_errors=0 sequence_gaps=0
+boot_switches=0`，frame 文件为 1,079,189 bytes。最后 H469 live 行为在
+1170.005530 秒为 `seq=231570 done=231570 flight=0 lock_timeout=0`；
+`lock_wait_ms=12543728 lock_ok=661138`，平均约 18.97 ms，
+`lock_wait_max_ms=30686`。请求完成，锁等待没有下降，也没有 OCS、
+doorbell timeout 或 recovery；无异常仍不验证 watchdog。
+
+UXC1 `424508` 只发送一次，在 1208.482115 秒 ACK 并 normal reboot；
+Android boot_completed 后一次 recovery reboot 返回 TWRP。
+
+证据：
+
+```text
+H506-live.log                 102a592b448f5d1820c81ee90653410ce90200b3ebf6a83eed98e29d90e32dd0
+H506-live.frames.bin          b586ec9383615c3b66519fb51c7d6752b705c2215d72240081a272ecb58b9018
+H506-live.capture.stdout      40428eaf28fd97c0e582a015c0f23414b7ea71c5fd001de57755360034ab3914
+H506-h103.txt                 e2565582cdb447cd4713317a4a6e2996cdebad3535209792e00c8a9798f8cce3
+H506-tail32.bin               9c7dcaf25cfa9b7fec94055ba9c3f51f356368a475c6ab05a0693b1ee68efe15
+H506-reboot-recovery-state    b7beb311cc789549e38a5de6278450f67a33d61131d9e24c3927c2ef02f2ad4b
+```
+
+### §163 H507：加入 UIKit window visibility，并把深树移回 sample 4（2026-11-21）
+
+H506 的事件链已经把故障夹到 “真实 context + 空 layer commit +
+无 content slot/present”；缺的是 root/status window 到 context 的命名关系。
+H507 保持 kernel、ADT、Data seed、bootargs、显示驱动和 H506 的 CA/server
+事件不变，只增加可见性事件并避开不可靠的 sample 5：
+
+```text
+UIWindow._setHidden:forced:
+UIWindow.makeKeyAndVisible
+UIWindowScene._delegate_windowDidBecomeVisible:
+CAContext.remoteContextWithOptions:
+```
+
+`snapshot_window_views` 和 view/layer budget 现在在 sample 4 与 sample 5 都
+可用。sample 4 已在 H502 证明能完成，因此首帧观测不再依赖第 5 次调度。
+A540Trace 的 `event_layer_commit` 额外记录 server layer 的 depth、root 指针和
+root contents，以便把一次 commit 串到 context 根。
+
+NativeMetal `1b967add167e9e0c362e9add051902d4711f67e4`，superproject
+`e4f2aa3`。H507 observer/CCS gate、arm64 4 KiB 签名和 server trace build
+均 PASS。
+
+产物：
+
+```text
+observer SHA-256       13d5081740cf67ceea40f3d55c4a623b8f2c6cd08219fee89136a60227f9497a
+observer CDHash        b4921cb0dea587bcc4566f530cd20788223ba66b
+A540Trace SHA-256      52fc9bc215586df1529241a12492387dc6a7c471a6d0c60f66aea6a296dec8b3
+A540Trace CDHash       6176bb1ae6ef7cc455ddf7531f29e54024410923
+addon SHA-256          4ee1d8682c201a2337b5f903ea8782269b3666e79e30b837f89f489e9a9d5aaa
+trust SHA-256          c0cab2b655c55a333aed50c1236dd05bb419fcd3c418ee40e0685873604e3bda
+payload SHA-256        1ca71fa6d55ae70274d77884152813cbd1b21183828bb61bafcf0ed8552c46e9
+boot SHA-256           bbb9d818d9fd38bd20de918d241e66583e410c5a79cd9b1729d16089fed5fad3
+boot.json SHA-256      d96b1cfeef2562aa1fa754d255237f2914418cf125d0cb9942613cae0e4333a1
+```
+
+owner trust 为 47 项。payload 以 H506 为 FAT 基线，kernel、ADT、Data seed 和
+`unixnu.toml` 逐字节相同；addon/trust 回读匹配输入。bootargs 最坏
+1016/1024 bytes。状态：`boot-built-static-verified-not-device-tested`。
+
+设备门要求本次出现 `ca_event_hooks` 的 window 三项、至少一个
+`uiwindow_set_hidden/make_key_visible/scene_visible`，
+sample 4 的 window/view/layer 树，以及 preceding CA/server context 事件。
+若仍只有 server 空树而没有 root/status 可见或提交事件，下一轮只增加
+window→layer→CAContext 的关联字段，不进入 Metal/IOMFB 分支。
