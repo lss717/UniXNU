@@ -22446,8 +22446,48 @@ unixnu.toml SHA-256    dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e06
 payload kernel         9ee8f2b5e69bdfe5a0e4b74b8a499be04fd76916ae90073f7bef1f8b989ccbd3
 ```
 
-状态为 `H529-built-static-verified-device-pending`。设备先等同一个 target-port
-断点，再在 SpringBoard 第一次退出时读取新增的 `flags` 与 `sender`。
+状态为 `H529-flags0/sender-parser-error`。设备结果见下。
+
+#### H529 真机结果：ABORT flag 为 0，sender 解析用了错误偏移
+
+H529 在 serial `16149951` 上以 boot ID `38451b03` 启动，CDC 于约 247 秒
+出现。该轮没有复现 H527/H528 的 `q=1`：从 `648.659779 s` 起，
+SpringBoard PID 27 的请求持续为
+`req=32779/95/lsd.real q=0 sr=1 so=1 ld_reply=0`，因此没有产生
+`NATIVE_TARGETPORT check`。这只是本轮的端口时序不同，不能用来推翻前两轮
+已证实的 queued/no-receiver 结果。
+
+SpringBoard PID 27 在 `1652.723994 s` 以
+`status=0x6 ns=2 code=0x6 flags=0x0 sender=-1/` 退出。`flags=0` 明确排除了
+`OS_REASON_FLAG_ABORT`。`sender=-1/` 不是阴性发送者结果：H529 错误地把
+无 descriptor 的 `KCDATA_TYPE_PID`/`KCDATA_TYPE_PROCNAME` 当成
+`..._WITH_DESC` 类型读取。
+
+本轮仍无 root window/content、commit/present 或 `fr=1` 证据。UXC1 request
+`424523` 得到 ACK 并执行 normal reboot；TWRP 拉取后清零同一尾部，回读
+SHA-256 仍为 `83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+
+证据：
+
+```text
+logs/H529/device/20261122-054447/
+H529-live.log
+  2cc818846b4371174d63ebab97f98daf6db3c78765aa618b2c6d50db06191998
+H529-live.capture.stdout.txt
+  3c20c394fc651b5cbad8a71ab4d0a1ca45ce32c8f24f94f03ca86f407a1a074e
+H529-tail32.bin
+  57cde96904a310443325652c4d879d7719eb308d3889434ebe0ce236a86d0787
+H529-h103.txt
+  a41c4d461e04cb07d4dddff3d1db7ba3697a7a7078258bb77bd8a0d61883d0a8
+H529-reboot.log
+  ec4e435db9ff68227d1695f0cd442d78cdec06160226f82b7e09eb2840987e8b
+H529-reboot.frames.bin
+  e14196bed8559ac45156eb62a19d27306601c5174dc18dec89c0b8423ae80780
+```
+
+H529 live frame 文件仍为 0 字节；UXC1 重启段为 4 帧、零 CRC error、零
+sequence gap、零 boot switch。分类为
+`H529-q1-not-reproduced/SIGABRT-flags0/KCDATA-sender-parser-error`。
 
 ### §200 H530：修正 KCDATA 通用类型的 payload 读取（2026-11-22）
 
