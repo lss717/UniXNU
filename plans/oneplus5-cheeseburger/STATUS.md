@@ -18990,7 +18990,30 @@ H494 在唯一设备 serial `16149951` 上启动，boot ID `212fad8b`。这一�
 `H494-window-tree-present/no-layer-content`。
 
 窗口数量、hidden 状态或 root view controller 本身都不是产品首帧。完整
-900 秒采集、H103 尾环和最终文件哈希在采集结束后补录。
+900 秒采集在 uptime 约 1173 秒结束，共收到 6617 个 live frame、
+849787 payload bytes；CRC error、sequence gap、boot switch 和 truncated
+frame 均为 0。最后显示门在 1122.533297 秒仍为
+`s345=0/1/1 val=1 xf=1 fr=0`，后续 accelerator heartbeat 直到
+1159.499274 秒也保持 `fr=0`。SpringBoard 在整个观察期没有 exit。
+
+H103 尾环确认当前 boot ID，最后 H469 状态为
+`seq=226864 done=226864 timeout=0 ocs_err=0 dbto=0 recover=0 recovered=0
+flight=0 lock_timeout=0 lock_waiters=0`。累计 lock wait 最大值为 22231 ms。
+本轮没有锁超时或请求恢复，但仍不能把累计非零等待解释成一个已知 UFS 请求
+已完成，也不构成 watchdog recovery 验证。
+
+证据目录：
+`display-first-frame/logs/H494/device/20261121-132500/`。
+
+```text
+H494-live.log              f10e71298d6f60e8f2946f952a923173aeae3fcf9f5d6ba8ac7b5f24321ae168
+H494-live.frames.bin       ea9e44afe7b10cec2d0814a4b3b6fa8d7d8ca7ad37646b1b29bf726ce5460b73
+H494-live.capture.stdout   60bc0e439c3d59eccd57e33c9ecfc162a7a6a728dae4791559a59d4e071037ba
+H494-tail32.bin            1c9358421f22e72725726d1391e4a8436b99bc6a43b9408ce49e976dafa49ca0
+H494-h103.txt              077ff76931a1ac905ec220563438bc8bb7f2ccfbe06a91625e7771cec4f7a492
+H494-device-state.txt      28975dc218b747b57283f7ee8974a17474c35cd18c94aae93e8bb49690265e25
+H494-reboot.log            acc77756e87f55b52eb681720d6143f98206bb2ab5c30bfb7a9709f091f160a9
+```
 
 ### §140 H495：只读下钻 UIView/CALayer 层级（2026-11-21）
 
