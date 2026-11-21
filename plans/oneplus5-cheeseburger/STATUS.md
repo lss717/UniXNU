@@ -21869,3 +21869,44 @@ H524-h103.txt
 H524-tail32.bin
   8343d8aa43acc8cc2d11ff5ff3002a8364c23887931a43773605931a15059e063
 ```
+
+### §195 H525：移除 target-port 探针的同环境对照（2026-11-22）
+
+H525 是单变量对照。`patches/xnu/series` 保留原位置和条目，但
+`springboard-lsd-target-port.patch` 在该轮只给 `task.c` 增加一条注释，编译器
+不生成任何 target-port 代码或全局变量。其余 133 个 XNU patch、2 个
+NativePrelink patch、device modules、A540Trace addon、Data seed、ADT、trust
+cache 和 bootargs 与 H524 相同。
+
+源码与构建：
+
+```text
+superproject                  546802c
+control build source          same tree except target-port patch is comment-only
+NativePrelink                 84aa36d00a29e22a39b4eb2465fbbf6a4b693126
+build log                     /Users/lss/h468-build/h525-control-build.log
+prelink log                   /Users/lss/h468-build/h525-control-prelink.log
+```
+
+`strings` 在 H525 kernel 中匹配 `NATIVE_TARGETPORT|NATIVE_TARGETWAIT` 的结果为
+0。NativePrelink 两项补丁在修复后的普通入口中再次明确应用。payload 从 H522
+复制后只替换 `Payloads/kernel.macho`，其余五个文件逐字节相同；bootargs 仍为
+988 字符并通过 `1008/1024`、最坏 `1016/1024` 检查。
+
+产物：
+
+```text
+kernel SHA-256         0c37fa4a16f6c20b502dd3cbc8c6540883833257606eb29a4d39a1d3bb69726e
+payload SHA-256        c13551ceb4c7cbae823a5ea90fe42e8ef1d53df027fdc3351d5563d8d077414b
+boot SHA-256           26992b1cbf09a6d160eec8d986788cca72be3eba8d787b62c57afba28183690a
+boot.json SHA-256      0742c55cdd23008996ba86be76d8dd0dade476631add4299dc12f51479882e2f
+unixnu.toml SHA-256    dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e065f01e81
+```
+
+boot JSON 的 input/output hash 与上表一致，`problems=[]`。状态为
+`H525-control-built-static-verified-device-pending`。设备判定：
+
+- H525 越过 H524 的 `65.302317 s` 并继续到 SpringBoard：target-port patch
+  的存在或它造成的二进制布局是早复位因素，需重新设计观察点；
+- H525 仍在相似早期点复位：问题来自当前 series/build 的其它共同变化，不能
+  继续归因于 target-port patch。
