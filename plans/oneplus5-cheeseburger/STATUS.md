@@ -22016,6 +22016,91 @@ unixnu.toml SHA-256    dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e06
 H525 的 `105.442120 s` Data panic 和 H523/H524 的两个 early reset 点；若进入
 SpringBoard，再按 `NATIVE_TARGETPORT` / `NATIVE_TARGETWAIT` 结果继续。
 
+#### H526 真机结果：target port 在请求期间排队，lsd 无 waiter
+
+H526 在 serial `16149951` 上以 boot ID `2aeeecc6` 启动，CDC 于启动后约
+274 秒出现。SpringBoard PID 27 在约 594 秒创建并显示
+`SBRootSceneWindow`；该窗口与 `CALayerHost` 的 `contents=0`。此后
+`CALayerHost` 绑定到 contextId `0xb2332970`，但日志中没有
+`CALayer.setContents:`、context slot、`waitForCommitId`、
+`presentSurface` 或 scanout 事件。
+
+同一 boot 的目标请求从 415 秒持续到 1517 秒：
+
+```text
+415.410004 sender=27/SpringBoard rname=0x380f
+           sport=0xfffffff275754520
+420.131339 lsd rname=0x380f seen=1 q=1 cnt=1 match=1 peer=94
+           NATIVE_TARGETWAIT seen=0 count=0
+493.646018 lsd q=1 cnt=1 match=1; wait seen=0
+567.164817 lsd q=1 cnt=1 match=1; wait seen=0
+640.573488 lsd q=1 cnt=1 match=1; wait seen=0
+714.049538 lsd q=1 cnt=1 match=1; wait seen=0
+786.536555 lsd q=1 cnt=1 match=1; wait seen=0
+858.555659 lsd q=1 cnt=1 match=1; wait seen=0
+931.552198 lsd q=1 cnt=1 match=1; wait seen=0
+1005.856571 lsd q=1 cnt=1 match=1; wait seen=0
+1078.379492 lsd q=1 cnt=1 match=1; wait seen=0
+1152.251361 lsd q=1 cnt=1 match=1; wait seen=0
+1226.348156 lsd q=1 cnt=1 match=1; wait seen=0
+1298.205295 lsd q=1 cnt=1 match=1; wait seen=0
+1372.524874 lsd q=1 cnt=1 match=1; wait seen=0
+1445.526390 lsd q=1 cnt=1 match=1; wait seen=0
+1517.843004 lsd q=1 cnt=1 match=1; wait seen=0
+```
+
+每次采样的 SpringBoard 侧都保持
+`req=24835/94/lsd.real q=1` 且累计 `ld_reply=0`。lsd PID 94 保持存活；
+主线程停在 `CFRunLoop/kevent`，其他样本线程没有在 receive name `0x380f`
+上等待。因此这不是“lsd 某个线程正在等待该端口”的形态，而是端口在 lsd
+命名空间中有排队消息、但样本内没有对应 receiver。
+
+1591 秒前后的变化不能解释为 LaunchServices 已回复。原始发送者 PID 27 在
+`1561.684355 s` 以 `status=0x6 ns=2 code=0x6` 退出，即 SIGABRT 形态；中间
+没有 `ld_reply` 增加或新返回栈。lsd PID 94 随后仍在运行。到
+`1591.314751 s`，原 receive name 查询得到
+`seen=1 q=0 port=0 match=0 peer=-1`，说明旧 port object 已不再可达/已撤销。
+新 SpringBoard PID 209 在 `1589.166913 s` 的 chain 为
+`req=0/-1/-`，没有指向 0x380f 的新请求。结论是：端口状态变化与旧
+SpringBoard 进程退出同时发生，现有证据只能证明旧请求被终止，不能证明 lsd
+消费了消息或回复了 LaunchServices。
+
+首次崩溃后的 SpringBoard 仍在重启链中，日志继续记录 PID
+209、215、217、224、232、240、242、254 等进程，均以同一
+`status=0x6 ns=2 code=0x6` 退出。到约 2052 秒仍未出现 scene 内容提交、
+context slot、commit wait、display present 或 `fr=1`。
+
+同一 boot 的 UFS 也提供了独立结论。正常情况下 `seq` 与 `done` 继续增长，
+但长窗口中发生了至少两次软件锁超时：
+
+```text
+1766.469893 NATIVE_UFS_LOCK: readWindowBulk timeout
+           owner=32/routined held_ms=37915 waiters=53
+1777.263384 lock_timeout=1 lock_waiters=6
+2008.835810 NATIVE_UFS_LOCK: readWindowBulk timeout
+           owner=139/callservicesd held_ms=44268 waiters=6
+2021.762989 lock_timeout=2 lock_waiters=2
+2052.274311 seq=320101 done=320100 flight=1
+```
+
+这不是“锁等待下降”的证明，也不代表 watchdog 恢复；它证明锁饥饿实际发生，
+而请求仍可继续完成。OCS、doorbell timeout、UFS recovery 均为零。
+
+当前长采集证据：
+
+```text
+logs/H526/device/20261122-034509/
+H526-live.log
+H526-live.frames.bin
+H526-live-cont1.log
+H526-live-cont1.frames.bin
+```
+
+分类暂为
+`H526-target-port-queued-no-receiver/SpringBoard-SIGABRT-restart-loop-no-content`。
+仍需补齐 SpringBoard SIGABRT 的用户态原因，并确认新 PID 是否有一个能够覆盖
+目标端口的 run-loop/port-set receiver。
+
 同日曾尝试用 H473 历史 glob 顺序重建 target-port 控制，并为让新补丁排到末尾
 临时引入 `zz…` 文件名。该分支没有成功构建，也没有产生 boot 镜像，已删除。
 这个命名方式自此明确禁止：补丁必须使用功能名，顺序只由
