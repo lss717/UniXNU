@@ -20973,3 +20973,75 @@ H516-reboot.log               98404d38d288e73ed2e24186d8f67ad2a5a287e67d513f3b6b
 
 下一步转向 SpringBoard 到达 UIKit 主入口之前的前台 scene/activation 输入，
 不再修改 root window、sharedApplication 观测或 run loop。
+
+### §183 H517：修复 H511 起的 CCS bypass 打包回归（2026-11-21）
+
+H516 的离线复核发现一条比继续追 scene/activation 更早的构建链回归：
+
+```text
+H493-H510 dylib  含 H492_CCS、filter bypass installed、filter bypass pid
+H511-H516 dylib  上述三项全部缺失
+```
+
+这不是单条日志丢失；Windows 与 Mac 保留的实际观察器产物都在 H493、H510
+中匹配上述字符串，而 H511 起的实际产物不匹配。H510 仍在 391.382432 秒
+记录状态栏可见，并在 521.325870 秒记录 sample 4 `app=1`；H511 首次退化为
+sample 4 `app=0 windows=0` 且全轮没有状态栏事件。H512-H516 延续了缺失
+bypass 的产物，因此此前把 H516 归因为“SpringBoard 自然进入 UIKit 前”的
+记录应加上限定：该轮没有恢复 H493 已证有效的单个 CCS filter bypass。
+
+根因位于打包链，不在 `SpringBoardCCSBypass.mm` 本身。H516 使用的
+`scripts/build-h436-springboard-bundle.py` 只把
+`SpringBoardSceneObserver.mm` 链接进最终 dylib；独立的源文件检查仍会 PASS，
+所以当时没有发现产物已缺少 bypass。H517 修复该链接，并在签名前检查最终
+dylib 必须包含 `build=H517`、`H492_CCS`、`filter bypass installed` 和
+`filter bypass pid`。静态门禁同时要求构建脚本链接 CCS 源文件，避免只检查
+源码、不检查实际产物。
+
+源码：NativeMetal `1e0fbecb46f359384bd6a56aacb45cdb2946bd5b`，
+superproject `804b66f`。payload 以 H516 为字节基线，addon 只替换：
+
+```text
+addons/A540Trace.bundle/A540Trace
+addons/A540Trace.bundle/_CodeSignature/CodeResources
+lib/SpringBoardSceneObserver.dylib
+```
+
+其余四个 addon 条目保持不变。产物：
+
+```text
+observer SHA-256       f5453cdcb46c89a4d9c7b92e98a12109808fc1837960e638b99e7dc72260431c
+observer CDHash        14634db30ee1aa772c6e4af3ab9170f024e363bb
+A540Trace SHA-256      007598d24f9bf87d3cbecc11ab9a9c4d22dbdc2d82effae800abb4fb6e6c5a46
+A540Trace CDHash       843126820de3da488002dbc05b0e2c30b855b7a8
+addon SHA-256          5e81d40e6e2f8e77ea3c1bb55c001861237c7077b4cde5b319d229add7ceb45c
+trust SHA-256          5d6e023ecf172e368ed4053405ac09d2121784f420d8887d7b39e460a56a7ce5
+payload SHA-256        16c58c24bc7c8fb68a934a9e2dd4fab6d77b8af7771c95f43c34d331a9b62b4f
+boot SHA-256           6250087777c1c465c18eb6a1346b5b9186e03def90881d1473c2424512042556
+boot.json SHA-256      51217bc77e86fe7bb67ee4e3011cbc3c8b2a3ba15671bb40964f2c4c60f58c76
+```
+
+owner trust 为 67 个 own CDHash；两个新 CDHash 均从最终 trust bundle
+回读确认。H516/H517 payload 的 kernel、ADT 和 Data seed 字节一致：
+
+```text
+kernel       4577d3bc93a48dec1c910e76d4262e8ceda64869f6b370a2ee3ff42556364b00
+ADT          9fa9e5ba88b84546ef89f79b26bbd9a9cea5e881b8efebf2c2149d09259eb74d
+Data seed    7522c2b803bac371190e5f316bacc825d1dd3c964ef3a3ab6ffd75bf0f9bae79
+```
+
+boot header 与 H516 相同，bootargs 为 988 字符，当前 `1008/1024`、
+最坏 `1016/1024`。状态：`boot-built-static-verified-not-device-ready`。
+
+设备门按顺序判定：
+
+```text
+observer load process=SpringBoard pid=... build=H517
+H492_CCS: filter bypass installed method=... pid=27
+H492_CCS: filter bypass pid=27
+```
+
+若三个标记与 `h515_shared_application_*` 或 UIKit 通知恢复，则确认 H511-H516
+的 pre-UIKit 退化由 bypass 打包回归造成。若 bypass 已安装并命中，但
+SpringBoard 仍停在 UIKit 前，再沿实际 IPC 对端继续；不能把“无异常”当作
+watchdog recovery 已验证。
