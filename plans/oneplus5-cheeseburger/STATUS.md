@@ -20417,3 +20417,70 @@ owner trust 为 53 项。payload 以 H509 为 FAT 基线，kernel、ADT、Data s
 hidden=0 但 rootVC/view/layer contents 为空，只查 root content creation；
 只有出现内容或 context slot 后才进入 CA commit/present/IOMFB。sample 6
 缺失只说明 post-visible callback 调度失败，不能推断内容状态。
+
+### §170 H510 真机：sample 4 完成，但主队列可见性请求无执行证据（2026-11-21）
+
+H510 在 serial `16149951`、boot ID `21980cc9` 上完成一次 `fastboot boot`
+和 900 秒 live capture。实际候选由 279.646013 秒的
+`NATIVE_MTL builder#2 build H510` 确认。388.800401 秒创建 SpringBoard
+client context `0x12cb8f59`，389.193396 秒绑定空 `UIWindowLayer`，
+391.382432 秒状态栏可见，CA/UIKit 事件钩子有效。
+
+sample 4 在 521.325870 秒开始，522.319748 秒为
+`app=1 delegate=SpringBoard scenes=0 windows=1`。唯一的 application window
+仍为：
+
+```text
+class=SBRootSceneWindow hidden=1
+layer=UIWindowLayer rootVC=nil
+windowScene=_UIScreenBasedWindowScene activationState=0
+hierarchy=window rootVCView=0 subviews=1
+view[0] UIView hidden=0 -> CALayer contents=0
+window layer UIWindowLayer contents=0
+  -> CALayer contents=0
+```
+
+但全轮没有 `h510_before`、`h510_root_visibility_request`、`h510_after`，
+也没有 `uiwindow_scene_visible window=root`、`ca_host_context_bind`、
+`ca_host_visible`、sample 5 唤醒行、sample 6、`event_context_slot`、
+`event_context_commit_wait` 或 `event_display_surface`。因此 H510 没有取得
+“主队列块已执行”的证据；由于 UXL 在本轮记录到 15,717 dropped log bytes，
+不能把单个 marker 的缺失升级为逐行未执行证明。但 root 树本身仍显示
+hidden=1、activationState=0、rootVC=nil、contents=0，且没有后续可见或
+内容事件。分类：
+`H510-main-queue-request-no-execution-evidence/root-hidden-empty`。
+
+显示门在 1198.199221 秒仍为
+`dpy=4/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0`。最后持久 H469 行为
+`seq=232049 done=232049 timeout=0 ocs_err=0 dbto=0 recover=0
+recovered=0 lock_timeout=0`；`lock_wait_ms=13046411
+lock_ok=660919`，平均约 19.74 ms，软件锁等待仍未下降。请求完成，
+没有 OCS、doorbell timeout 或 recovery；稳定轮仍不验证 watchdog。
+
+CDC live stream 为 `frames=6835 payload_bytes=898012 crc_errors=0
+sequence_gaps=0 truncated_frames=0 boot_switches=0`。UXC1 `424512`
+只发送一次，在 1224.088361 秒 ACK，随后 PM halt。Android
+`boot_completed=1` 后一次 recovery reboot 返回 TWRP
+`3.4.0_9-10-mauronofrio`。持久环有 `NATIVE_UFS_LOG_FAIL errors=224`，
+但 live transport 本身完整。
+
+证据：
+
+```text
+H510-live.log                 62540268896bbf3c4c406f233becefbb8f06820ac31c32cf1f2c4941108728ea
+H510-live.frames.bin          9bbf0fa9393098831fd855e88482ce6c193d94e9b6d527688d421a844e941665
+H510-cdc-replay.txt           a0350ce25eea72722f7675ca73e9b4dc1a0b722f607c75cfbe5f371b6a3cfe89
+H510-h103.txt                 845af14a375eed7ffb33dc32d7747c05bed04d137dec51cd44f82c233211b7de
+H510-tail32.bin               08196bf7091e13cd5c335769116713af8dcc8bac347c8e1a6fb767c0b750e9c4
+H510-reboot.log               f2c7276a256abb32750022699ec719bde12029d8e2db204e114b70f42ca77c2f
+H510-reboot.frames.bin        ae9dd9e84282c2c6857e3512d18935af315d1d35d876104814590e0731687907
+H510-reboot-recovery-state    0118c84f7d162914d93c67e22ef1d598d15e45777360932188bea85e9f0df992
+```
+
+下一步只改变主线程投递原语：保留同一 root window、同一
+`makeKeyAndVisible`、同一前后日志和 sample 6 条件，但从 H510 的
+`dispatch_async(dispatch_get_main_queue())` 改为
+`CFRunLoopPerformBlock(kCFRunLoopCommonModes)` 后显式
+`CFRunLoopWakeUp(main)`。同时记录“已排入 run loop”的 worker-side
+marker，用主块进入/退出和可见性变化分别验证投递与执行。不进入 Metal、
+IOMFB 或内容注入分支。
