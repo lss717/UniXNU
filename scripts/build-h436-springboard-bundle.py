@@ -140,11 +140,11 @@ def main() -> int:
         OBSERVER,
         (
             b"observer load process=",
-            b"build=H533",
+            b"build=H534",
             b"H492_CCS",
             b"filter bypass installed",
             b"filter bypass pid",
-            b"H533_LS",
+            b"H534_LS",
             b"observer bypass installed",
             b"observer bypass pid=",
         ),
