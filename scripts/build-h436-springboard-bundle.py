@@ -139,7 +139,7 @@ def main() -> int:
         OBSERVER,
         (
             b"observer load process=",
-            b"build=H521",
+            b"build=H522",
             b"H492_CCS",
             b"filter bypass installed",
             b"filter bypass pid",
@@ -210,8 +210,8 @@ def main() -> int:
             LSD_SHIM,
             (
                 b"H491_LSD",
-                b"recovery async installed",
-                b"recovery queued",
+                b"recovery skip installed",
+                b"recovery skipped",
             ),
         )
         lsd_shim_cdhash = compact_signed_bundle(

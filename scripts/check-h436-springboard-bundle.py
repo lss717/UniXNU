@@ -32,7 +32,7 @@ def main():
         '("xpc/lsd.real"',
         '("lib/LsdRecoveryAsync.dylib"',
         '"/System/Library/xpc/lsdwrap"',
-        'b"build=H521"',
+        'b"build=H522"',
         '"scripts/add-macho-load-dylib.py"',
         '"/private/var/ngpu/lib/LsdRecoveryAsync.dylib"',
         '"lsd_source_sha256"',
