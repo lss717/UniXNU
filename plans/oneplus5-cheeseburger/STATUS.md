@@ -17721,4 +17721,50 @@ boot          67e0583a486040ecbeec50b8788175e06b5e507989cd920a7ce7e7d0345de03e
 kernel 与 prelink 逐字节一致，`unixnu.toml` 和 kernel_args 与 H475/H476 相同；
 bootargs 988 B，实际 1008/1024，worst 1016/1024。ADT placeholders、
 iPad7,1/MSM8998、boot header、地址重叠和 `OP5ESP` 静态检查 PASS。
-状态：`boot-built-static-verified-not-device-tested`。
+
+真机 boot ID `21575eb9`，CDC 约 258 秒出现。addon 和 mount 门通过：
+
+```text
+addon=6/4/2/0/0/0
+owner=4/0 ext=4/2 dm=5/0 wp=1/2
+```
+
+`dm=5/0` 证明修改后的 launchd cache union mount 已成功，A540Trace 也已到
+`accel=3/1/645/0`。但现有 SpringBoard `pid=27` 到 478.214067 秒仍是
+`sb=27 n=5`，全程没有 `NATIVE_MTL: observer load`。到 496 秒仍无
+SpringBoard `NATIVE_EXIT`。这说明 union mount 只改变后续 path lookup/cache
+消费，不会把新环境注入已经运行的 SpringBoard。
+
+本轮在约 496 秒有界停止，目的只是判定是否可只靠 cache mount 投递；没有足够的
+运行时长去重复 H476 的 2825 秒 UFS 测试，不能把“无 lock timeout”或“桌面
+首帧”写成阴性。分类：
+`H477-launchd-cache-mounted/observer-not-delivered-to-live-springboard`。
+证据：
+
+```text
+H477-live.log     047d930f6f5dffb9b5f26add81f30a59c22797e2f416885e2cfd2c6031950f1b
+H477-tail32.bin   63783f658bef37f8725ac7ae1d6975c276b5cc582f3521a2a30d9d430a614c3
+H477-h103.txt     961b0eecc10e47f1a20b7a2b8f62aafc2e2312fcd95918092a91ee789ff48938
+```
+
+### §121 H478：只增加 SpringBoard 重启触发（2026-11-21）
+
+H477 已证明 launchd cache mount 成功但当前进程不重读它。H478 保持 H477 的
+六文件 addon、kernel、Data seed、trust cache、A540Trace accelerator 和其余
+行为，只增加：
+
+```text
+sheng-restart-sb=1
+```
+
+现有内核代码在至少一个 display client 调用后等待三个 10 秒 beat，再对
+SpringBoard 发送 SIGTERM；launchd 重启时才会重新读取已挂入的 launchd cache，
+从而给原始 SpringBoard 注入 `SpringBoardSceneObserver.dylib`。
+
+为维持 1024-byte 上限，移除 tracing-only 的
+`native-trace-trust-cache=1`；信任缓存行为本身不变。设备门要求观察到
+`NATIVE_RESTART: sent`、旧 SpringBoard `NATIVE_EXIT`、新 SpringBoard
+`NATIVE_EXEC`、`NATIVE_MTL: observer load ... build=H457`，随后记录真实
+`scenes/windows`。没有 observer load 时不得把 scene 记录写成阴性。
+
+当前状态：`pending-package`。
