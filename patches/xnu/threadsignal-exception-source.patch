@@ -1,0 +1,119 @@
+diff --git a/bsd/kern/kern_sig.c b/bsd/kern/kern_sig.c
+--- a/bsd/kern/kern_sig.c
++++ b/bsd/kern/kern_sig.c
+@@ -1772,6 +1772,8 @@
+ /*
+  * Send a signal caused by a trap to a specific thread.
+  */
++static void native_threadsignal_probe(proc_t, thread_t, int,
++    mach_exception_code_t, boolean_t, void *);
+ void
+ threadsignal(thread_t sig_actthread, int signum, mach_exception_code_t code, boolean_t set_exitreason)
+ {
+@@ -1791,6 +1793,8 @@
+ 	sig_task = get_threadtask(sig_actthread);
+ 	p = (proc_t)(get_bsdtask_info(sig_task));
+ 
++	native_threadsignal_probe(p, sig_actthread, signum, code,
++	    set_exitreason, __builtin_return_address(0));
+ 	uth = get_bsdthread_info(sig_actthread);
+ 
+ 	proc_lock(p);
+@@ -2635,6 +2639,89 @@
+ 	r->sender_comm[15] = 0;
+ }
+ 
++#define NATIVE_TSEXC_N 16
++struct native_tsexc_rec {
++	uint32_t pid;
++	int signum;
++	uint64_t tid;
++	uint64_t code;
++	uint32_t set_exitreason;
++	uint32_t sender_pid;
++	uint64_t caller;
++	char comm[16];
++	char sender_comm[16];
++};
++static struct native_tsexc_rec native_tsexc_ring[NATIVE_TSEXC_N];
++static volatile uint32_t native_tsexc_head;
++static volatile uint32_t native_tsexc_tail;
++static volatile uint32_t native_tsexc_dropped;
++
++static void
++native_threadsignal_probe(proc_t p, thread_t thread, int signum,
++    mach_exception_code_t code, boolean_t set_exitreason, void *caller)
++{
++	struct native_tsexc_rec *r;
++	proc_t sender;
++	uint32_t slot;
++
++	if (p == PROC_NULL || strncmp(p->p_comm, "SpringBoard", 11) != 0) {
++		return;
++	}
++	slot = __atomic_fetch_add(&native_tsexc_head, 1, __ATOMIC_RELAXED);
++	if (slot - native_tsexc_tail >= NATIVE_TSEXC_N) {
++		__atomic_fetch_add(&native_tsexc_dropped, 1, __ATOMIC_RELAXED);
++		return;
++	}
++	r = &native_tsexc_ring[slot % NATIVE_TSEXC_N];
++	r->pid = (uint32_t)proc_getpid(p);
++	r->signum = signum;
++	r->tid = thread_tid(thread);
++	r->code = (uint64_t)code;
++	r->set_exitreason = set_exitreason ? 1 : 0;
++	r->caller = (uint64_t)(uintptr_t)caller;
++	sender = current_proc();
++	r->sender_pid = sender ? (uint32_t)proc_getpid(sender) : UINT32_MAX;
++	for (int i = 0; i < 15; i++) {
++		r->comm[i] = p->p_comm[i];
++		if (r->comm[i] == 0) {
++			break;
++		}
++	}
++	r->comm[15] = 0;
++	for (int i = 0; i < 15; i++) {
++		r->sender_comm[i] = sender ? sender->p_comm[i] : "kernel"[i];
++		if (r->sender_comm[i] == 0) {
++			break;
++		}
++	}
++	r->sender_comm[15] = 0;
++}
++
++static void
++native_threadsignal_drain(void)
++{
++	uint32_t tail = native_tsexc_tail;
++	uint32_t head = native_tsexc_head;
++	uint32_t dropped;
++
++	while (tail != head) {
++		struct native_tsexc_rec *r =
++		    &native_tsexc_ring[tail % NATIVE_TSEXC_N];
++		printf("NATIVE_THREADSIG: pid=%u sig=%d tid=%llu code=0x%llx setreason=%u sender=%u/%.15s caller=0x%llx\n",
++		    r->pid, r->signum, (unsigned long long)r->tid,
++		    (unsigned long long)r->code, r->set_exitreason,
++		    r->sender_pid, r->sender_comm,
++		    (unsigned long long)r->caller);
++		tail++;
++	}
++	native_tsexc_tail = tail;
++	dropped = native_tsexc_dropped;
++	if (dropped != 0) {
++		native_tsexc_dropped = 0;
++		printf("NATIVE_THREADSIG: dropped=%u\n", dropped);
++	}
++}
++
+ void
+ native_sigbus_drain(void)
+ {
+@@ -2656,6 +2743,7 @@
+ 		native_sig_dropped = 0;
+ 		printf("NATIVE_SIG: dropped=%u\n", dropped);
+ 	}
++	native_threadsignal_drain();
+ }
+ 
+ void

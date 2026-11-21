@@ -12,6 +12,7 @@ PATCH = ROOT / "patches/xnu/log-process-state.patch"
 TARGET_PATCH = ROOT / "patches/xnu/springboard-lsd-target-port.patch"
 SIGNAL_PATCH = ROOT / "patches/xnu/sigbus-ring.patch"
 EXIT_REASON_PATCH = ROOT / "patches/xnu/exit-reason-signal-source.patch"
+THREADSIGNAL_PATCH = ROOT / "patches/xnu/threadsignal-exception-source.patch"
 
 
 def require(condition, message):
@@ -25,6 +26,7 @@ def main():
     target_patch = TARGET_PATCH.read_text()
     signal_patch = SIGNAL_PATCH.read_text()
     exit_reason_patch = EXIT_REASON_PATCH.read_text()
+    threadsignal_patch = THREADSIGNAL_PATCH.read_text()
 
     build = re.search(r'#define H103_BUILD "(H[0-9]+)"', driver)
     require(build and int(build.group(1)[1:]) >= 420,
@@ -69,6 +71,10 @@ def main():
             "exit reason sender name is not decoded")
     require("flags=0x%x sender=%d/%s" in exit_reason_patch,
             "exit reason flags/source are not printed")
+    require("NATIVE_THREADSIG:" in threadsignal_patch,
+            "threadsignal exception source record missing")
+    require("native_threadsignal_probe(p, sig_actthread, signum, code" in threadsignal_patch,
+            "threadsignal caller arguments are not captured")
 
     # The probe must remain observation-only: these files are the behavioral
     # boundary and are deliberately untouched from H420 onward.
