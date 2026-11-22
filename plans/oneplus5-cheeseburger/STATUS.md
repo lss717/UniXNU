@@ -23444,3 +23444,100 @@ trust 从 91 项扩为 92 项。bootargs 为 `1008/1024`，最坏
 3. 对比 H539 的 sample 6150，确认主线程离开
    `_workQueue_currentProcessProxyWithOutURL:` 内的 LS context 调用；
 4. 继续追根窗口内容、context 绑定、content、commit、present 和 `fr=1`。
+
+#### H540 真机结果：LS 同步等待已解除，SpringBoard 随后在启动完成前 self-SIGABRT
+
+H540 的 boot ID 为 `2158ebc4`。H103 尾环保留了 observer 加载和安装位图：
+
+```text
+221.719579 observer load process=SpringBoard pid=27 build=H540
+253.321353 ls_installer sample=30 state=0xf87f
+283.389174 ls_installer sample=60 state=0xf87f
+313.467246 ls_installer sample=90 state=0xf87f
+343.533074 ls_installer sample=120 state=0xf87f
+373.597484 ls_installer sample=150 state=0xf87f
+404.216842 ls_installer sample=180 state=0xf87f
+434.303895 ls_installer sample=210 state=0xf87f
+556.144625 ls_installer sample=330 state=0xf87f
+```
+
+`0xf87f` 除 H539 的七个状态位外，还置位了 `LSApplicationProxy` class、
+两个 current-process proxy class method 的 found 和 installed 位。H540 的
+方法安装不再是推断。
+
+sample 6060 中，主线程已经离开 LaunchServices context 等待，进入应用启动
+后半段：
+
+```text
+SpringBoard applicationDidFinishLaunching:
+SpringBoard _prepareBacklightServices
+SBBacklightServicesPlatformProvider initWithBacklightEnvironmentSessionProvider:
+SBBacklightPlatformProvider initWithBacklightEnvironmentSessionProvider:
+SBMainDisplayRootWindowScenePresentationBinder sharedInstance
+UIRootSceneWindow initWithDisplayConfiguration:
+UIWindowScene initWithSession:connectionOptions:
+UIApplicationSceneSpecification initialActionHandlers
+```
+
+sample 6090 和 6120 的主线程已返回主 run loop 的 Mach receive，说明上一初始
+scene/window 构造没有持续卡住。可是 root/status layer 仍未变为可见，
+CA host/content 也没有出现。SpringBoard 在 `601.396893 s` 以
+`status=0x6 code=0x6 flags=0 sender=27/SpringBoard` 退出，
+`602.188477 s` 记录同一 PID 的 SIGABRT；PID 177 在 `623.467128 s`
+重启后 CDC 消失，随后 Android `boot_completed=1`。
+
+本轮证据：
+
+```text
+logs/H540/device/20261122-100954/
+H540-live.log
+  06b00bea96ebb3874161f5b54ca29a20be2d7bc9797c65867dbf3f7b4a98e224
+H540-live.frames.bin
+  e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+H540-tail32.bin
+  32801604e787834126ba920a0ead385eb44da9c4c8b7e0dd4d355913bc237857
+H540-h103.txt
+  3834fc951772350d083105c1780aa887b033a381763cba04b0eb134b78afd136
+```
+
+分类为
+`H540-LS-current-process-proxy-bypassed/application-finish-returned/no-root/self-SIGABRT`。
+这里可以确认 LS 同步等待已解除；不能把随后 SIGABRT 继续归因于 lsd。
+
+### §211 H541：在主队列记录应用与场景完成状态
+
+H540 的主线程已经进入 run loop，但从未发出 root visibility 或 content
+事件。H541 不改变 H540 的 LaunchServices 行为，只增加两处只读观测：
+
+- 包装 `-[SpringBoard applicationDidFinishLaunching:]`，分别记录进入与返回；
+- 从 constructor 和该回调返回后，在主队列上每 30 秒续排一个 probe；
+- probe 记录 `UIApplication` 的 `windows`、`connectedScenes`、窗口 class、
+  hidden/visible、layer、windowScene、activation state、scene identifier
+  和 delegate。
+
+这些 probe 不调用 `makeKeyAndVisible`，也不修改 scene 状态。它们用于回答
+T-1：H540 的 root window 是否已经存在但被隐藏，main scene 是否尚未激活，
+或者窗口根本没有创建。
+
+源码与产物：
+
+```text
+NativeMetal commit        c59058a
+superproject commit      efa034d4
+observer SHA-256         5e9a1897a9e0e166c68043c668451fbb685c9ff8a7d20781766742469af8e902
+observer CDHash          9a7d296b5e6182cdb445294338236497d141253c
+raw addon SHA-256        24eb95b4ad5ccc0dae4d7979142f4f3c9c48124b4b4855ae3ad9276ff3f648ab
+GPU addon SHA-256        b6546173d2a193aa6259c1ac34bfe701e28f9d8a2604b4f3bada8f216bff0ff4
+owner trust SHA-256      554adc0481802b9e8716408c8c82ec96242d99d57941ff1cfab75faf09fca91b
+payload SHA-256          4ca7cb12c0c09e4206e42da1170f19bbacc91cdfeae172a5ff1b854c4cb800fa
+boot SHA-256             9849132f0c730e4981b3a68116b9d251ad75eb2e43376ec4ab9132df2e071d1b
+boot.json SHA-256        ed1ff3f567cc564575e3d8447a776b2a15be0b3a903784607ec7fe22ff460024
+```
+
+payload 与 H540 的 kernel、ADT、scratch Data 和 `unixnu.toml` 相同，
+只有 GPU addon 与 owner trust 不同；10-entry addon 只有 observer 改变。
+trust 从 92 项扩为 93 项。bootargs 为 `1008/1024`，最坏
+`1016/1024`，boot JSON `problems=[]`。产物位于
+`display-first-frame/builds/H541/`，状态为
+`H541-built-static-verified-device-pending`。启动前将再次清零并回读
+`userdata_ios` 末尾 32 MiB。
