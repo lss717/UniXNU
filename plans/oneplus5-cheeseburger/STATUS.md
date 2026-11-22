@@ -24494,3 +24494,44 @@ observer 为 arm64，strict codesign 通过；生产 addon 保持稳定 10 项�
 trust 保持 93 项并保留 A540Trace。payload 从 H541 复制，只替换
 trustcache 与 gpuaddon；bootargs 最坏 `1016/1024`，boot JSON
 `problems=[]`。状态为 `H553-built-static-verified-device-pending`。
+
+#### H553 真机结果：SpringBoard 应用信息缺失导致 nil removal
+
+启动前只清零并回读 `userdata_ios` 最后 32 MiB，全零 SHA-256 仍为
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+唯一设备 `16149951` 只通过 `fastboot boot` 启动 H553。首个 PID 27：
+
+```text
+537.954217 h553_application_controller_init_enter
+538.111718 installed_application_enter bundle=com.apple.springboard
+538.111833 installed_applications_enter bundle=com.apple.springboard
+538.111917 installed_applications_return class=__NSArrayM
+538.112029 installed_application_return object=0x0 class=nil
+538.176151 all_installed_enter
+538.176267 all_installed_return class=__NSArrayI_Transfer
+538.387159 h550_uncaught_exception
+           reason=*** -[__NSSetM removeObject:]: object cannot be nil
+543.116537 NATIVE_EXIT pid=27 status=0x6
+```
+
+第二个 PID 149 以相同顺序复现：SpringBoard bundle 的 array 查询成功，
+单应用查询返回 nil，全量查询成功，随后同一 `removeObject:nil` 异常。
+这说明不是 LaunchServices 查询卡死，而是应用库当前没有 SpringBoard 的
+`FBSApplicationInfo`。
+
+21H461 的 SpringBoard 反汇编在
+`-[SBApplicationController _loadApplications:remove:] +0x70` 显示：
+
+```text
+ldr x2, [x21, #0x40]       ; self->_springBoardApplication
+bl  _objc_msgSend$removeObject:
+```
+
+该处没有 nil 检查。H552 第二轮之所以进入
+`SBMainWorkspace start` 后没有立即返回，是当时的应用库查询仍处于
+异常的前置状态；H553 把失败由“阻塞”收敛为一个确定的空对象崩溃。
+
+live log SHA-256 为
+`26278ce38903a0a4695cd752333887d9f1836e5e5c74a5ea6e573f4fc4dafe32`。
+UFS 继续为 `ocs_err=0`、`lock_timeout=0`、`seq=done`。状态更新为
+`H553-device-springboard-app-info-missing`。
