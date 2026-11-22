@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Add CDHashes to the owner module of an existing boot trust cache.
+"""Add or replace CDHashes in the owner module of an existing boot trust cache.
 
-  add-owner-trust-hash.py BASE.trustcache HASH[,HASH...] OUTPUT
+  add-owner-trust-hash.py [--replace OLD[,OLD...]] BASE.trustcache HASH[,HASH...] OUTPUT
 
 The boot image carries /EFI/UniXNU/Payloads/kernel.macho.trustcache: module 0 is
 the owner module built by make-owner-trust-bundle.py, then the two original Apple
@@ -58,15 +58,31 @@ def validate(data: bytes) -> None:
 
 
 def main() -> int:
-    if len(sys.argv) != 4:
+    args = sys.argv[1:]
+    replace = []
+    if "--replace" in args:
+        at = args.index("--replace")
+        if at + 1 >= len(args):
+            sys.exit("--replace takes comma-separated 20-byte CDHashes")
+        replace = [bytes.fromhex(h) for h in args[at + 1].split(",") if h]
+        del args[at:at + 2]
+    if len(args) != 3:
         sys.exit(__doc__)
-    base, output = Path(sys.argv[1]), Path(sys.argv[3])
-    new = [bytes.fromhex(h) for h in sys.argv[2].split(',') if h]
+    base, output = Path(args[0]), Path(args[2])
+    new = [bytes.fromhex(h) for h in args[1].split(',') if h]
+    if any(len(h) != 20 for h in replace):
+        raise SystemExit('CDHashes are 20 bytes (40 hex digits)')
     if any(len(h) != 20 for h in new):
         raise SystemExit('CDHashes are 20 bytes (40 hex digits)')
     modules = parse(base.read_bytes())
     version, identifier, items = entries(modules[0])
     hashes = {item[:20]: item[20:] for item in items}
+    missing = [h for h in replace if h not in hashes]
+    if missing:
+        raise SystemExit('replacement CDHash not present: ' +
+                         ','.join(h.hex() for h in missing))
+    for h in replace:
+        del hashes[h]
     for h in new:
         hashes.setdefault(h, bytes([2, 0, 0, 0]))
     ordered = [h + flags for h, flags in sorted(hashes.items())]
@@ -79,8 +95,9 @@ def main() -> int:
     blob = struct.pack('<%dI' % (1 + len(built)), len(built), *starts) + b''.join(built)
     validate(blob)
     output.write_bytes(blob)
-    print('added %d hash(es); owner module now %d entries; bundle %d bytes -> %s'
-          % (len(new), len(ordered), len(blob), output))
+    print('replaced %d, added %d hash(es); owner module now %d entries; '
+          'bundle %d bytes -> %s'
+          % (len(replace), len(new), len(ordered), len(blob), output))
     return 0
 
 
