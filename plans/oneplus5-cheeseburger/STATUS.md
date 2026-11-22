@@ -24844,3 +24844,57 @@ CAContext。若 didFinish 后 layer 仍无 contents，下一轮转向 SpringBoar
   `com.apple.springboard` 的 `FBSApplicationInfo` 缺失。当前 Data seed 的
   LaunchServices 缓存目录为空，H493 的 CCS filter bypass 也不替代该应用
   记录；后续若内容入口仍为空，必须回到这个数据就绪问题。
+
+### §226 H557：直接观测启动完成边界
+
+H556 的第一次完整运行证明 `__NSSetM` guard 仍生效、PID 27 在 530 秒越过
+application-controller 初始化，但实时采集直到约 2,063 秒仍未取得
+`h556_post_did_finish_snapshot_enter`。2233 秒的同 PID 用户栈仍在
+`SBHIconManager init -> CHSWidgetExtensionProvider -> CHSChronoServicesConnection`
+同步路径中。2062 秒的 display gate 为
+`val=188 xf=188 fr=0`，随后回读的四个采样点仍全零。覆盖窗口在
+1779 秒到 2062 秒中有丢字节，不能把缺失的 observer 文本当作负证据。
+
+同一轮 WidgetRenderer_Default PID 242 从 `2091.879` 左右反复发起
+`AGXAccelerator` type 0 open。内核驱动每次记录 `user client type=0 granted`，
+随后 IOKit 记录 `AGXDeviceUserClient failed MACF in process pid 242`。
+`NATIVE_DISPLAY_OPEN` 对 WidgetRenderer 始终为 `match=0`。这只能说明内核
+侧 open 路径到达授权分支而 IOKit user-client 校验被拒绝，不能证明调用方
+获得连接；PID 242 之后仍持续运行并反复重试，不能把这次 MACF 单独认定为
+桌面黑屏原因。
+
+H557 不增加权限或对象旁路，只增加边界观测：
+
+- `-[SpringBoard _completeStartupAfterMainSceneConnect:]`
+- `+[SBUIController sharedInstance]`
+- `-[SBIconController initWithMainDisplayWindowScene:]`
+- `-[CHSChronoServicesConnection _subscribeToExtensions]`
+- `-[UIApplication _run]`
+
+除 enter/return 标记外，`UIApplication _run` 入口会直接调度 `+1 s` 和
+`+30 s` 两个主线程窗口/layer/context 快照，不依赖
+`applicationDidFinishLaunching:` 的文本返回标记。这样下一轮可以直接区分：
+ChronoServices enter 无 return、启动完成方法已 return、`UIApplication _run`
+已进入，以及进入 run loop 后 layer contents/context 的实际状态。
+
+构建与包：
+
+```text
+NativeMetal commit        37653c7
+superproject source       3359f460
+observer SHA-256          b307828c7ef904e0b436cce61255e7a96abc9b224ec79474eb8495dbee68ae80
+observer CDHash           4ac77dbc45b84d34d49503f4574fac0dc485cdca
+raw addon SHA-256         e3e727348caae6450eae93eff0ccdcbf191a0ca39514f45fe61b04c22be37ee1
+GPU addon SHA-256         3929afd44d1e7cd755ee646c3e27413691550f451ebfc58fc97a2f7b41847c73
+owner trust SHA-256       9ce6e7c0b3f05f92178df444a7cccc7a853803c8fd032ab19d771569c9f61dce
+payload SHA-256           1a85a07a3472afcb0e58b03c246d35591c9c4e0143310cae5f6f4702ddd9a621
+boot SHA-256              ec6a5435fec2b3917aee0150bdf4afefa4e27579fa4b919ce0c8cc05d970b947
+boot.json SHA-256         2b688303bf37a18f34890ef8822cd7adb18d91053537e8780fa7b3d6aa9c9c99
+```
+
+observer 为 arm64 且 strict codesign 通过；生产 addon 仍为稳定 10 项，
+逐项比较只有 observer 改变。owner trust 仍为 93 项，替换 H556 observer
+hash 并保留 A540Trace。payload 从 H556 复制，只替换 trustcache 与 GPU
+addon；kernel、ADT、Data seed 和 TOML 不变。bootargs 为
+`1008/1024`，最坏 `1016/1024`，boot JSON `problems=[]`。状态为
+`H557-built-static-verified-device-pending`。
