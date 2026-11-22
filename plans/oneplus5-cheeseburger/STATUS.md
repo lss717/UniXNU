@@ -24627,3 +24627,67 @@ observer 为 arm64，strict codesign 通过；生产 addon 保持稳定 10 项�
 trust 保持 93 项并保留 A540Trace。payload 从 H541 复制，只替换
 trustcache 与 gpuaddon；bootargs 最坏 `1016/1024`，boot JSON
 `problems=[]`。状态为 `H555-built-static-verified-device-pending`。
+
+#### H555 真机结果：具体类 guard 命中，应用控制器初始化恢复
+
+H555 启动前只清零并回读 `userdata_ios` 最后 32 MiB，全零 SHA-256 为
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+唯一设备 `16149951` 只通过 `fastboot boot` 启动 H555。首个 SpringBoard
+PID 27 的实际结果为：
+
+```text
+396.567434 h541_did_finish_enter
+431.459944 h546_setup_manager_init_enter
+442.806149 h545_cloud_config_ui_bypass
+443.654599 h546_setup_manager_init_return
+445.897558 h552_telephony_shared_enter
+512.974377 h552_telephony_shared_creating_return
+517.796728 h550_setup_hud_return
+540.155188 h553_application_controller_init_enter
+540.284550 installed_application bundle=com.apple.springboard object=0x0
+540.349288 h554_mutable_set_remove_nil_ignored class=__NSSetM
+540.396235 h553_application_controller_init_return
+```
+
+这次不是“安装了基类 hook”就推断成功：运行时具体类 `__NSSetM` 上的 nil
+removal 标记确实出现，随后 `SBApplicationController init` 返回，原先的两条
+失败路径都已跨过。根窗口、状态栏和三个 `CALayerHost` 随后保持可见或完成
+绑定；两个早期 display-bound context 仍为 `contents=0`。
+
+`h541_did_finish_return` 在启动后约 1179 秒仍未出现，SpringBoard PID 27
+也没有退出。日志持续显示应用容器枚举，920 秒的同 boot 用户态栈把其中一个
+应用库工作线程符号化为：
+
+```text
+mach_msg2_trap
+  <- mach_msg_overwrite
+  <- _xpc_connection_send_message_with_reply_sync
+  <- NSXPCConnection synchronous reply
+  <- LSCopyServerStore
+  <- LaunchServices Database::Context::_get
+  <- _LSDBEnumeratorGetNextObject
+  <- FrontBoard
+     -[FBApplicationDataStoreRepositoryManager
+       clearExpiredUninstalledApplicationsFromStoreIfNecessary]
+```
+
+这不是已经确认的主线程自然阻塞。同一时刻 SpringBoard 主线程在正常 Mach
+接收路径，其他启动服务仍在创建，应用容器路径和 UFS 请求持续增长。565.8
+秒的 H549 主线程最后一个单线程样本也已用同 boot slide `0x1fa0c000`
+符号化为 `-[BluetoothManager _attach].cold.1`，返回地址位于
+`-[BluetoothManager _attach] +0x17c`；该冷路径是 BluetoothManager 记录
+初始化错误的日志分支，不能据此认定主线程卡在 Bluetooth。
+
+前 1179 秒的 UFS 观测没有出现该路线要求的故障特征。1163.004330 秒为
+`seq=229701 done=229701 timeout=0 ocs_err=0 dbto=0 recover=0
+recovered=0 lock_timeout=0`。软件锁等待总时间没有下降，1163 秒已累计
+`lock_wait_ms=13658659`，最大单次 `37024 ms`，但请求持续完成。
+`watchdog_seen=2220` 只是既有采样计数，本轮仍没有 watchdog 触发或恢复
+记录，不能声称 watchdog 已验证。
+
+显示门在同一窗口从 342 秒到 1144 秒均为 `s345=0/0/0 val=0 xf=0 fr=0`。
+因此 H555 的阶段性结论是
+`nil-removal-resolved-application-library-initialization-continues-no-first-frame`：
+H553/H554 的确定异常已修复，SpringBoard 继续执行启动链，但桌面内容提交仍
+未发生。本轮第一段采集在 1179 秒按有界窗口结束，随后另开采集继续观察同一
+boot；最终结果和下一断点在本节后续补充。
