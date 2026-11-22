@@ -25740,3 +25740,70 @@ display-first-frame/logs/H573/device/20261123-011325/H573-live.log
 
 本轮尚未结束时的持久环哈希和最终 SIGABRT 结果稍后补录。不要把进入图标控制器或
 ChronoServices 当成桌面首帧已经产生。
+
+### §245 H573 最终结果：ChronoServices 同步订阅持续到 SIGABRT
+
+H573 kernel boot `22740fde` 持续到 1620.670613 秒。从 581.304757 秒进入
+`CHSChronoServicesConnection _subscribeToExtensions` 后，631、707、779、1367、
+1439、1512、1584 秒的采样都保持 `req=12035/90/chronod`，没有 subscribe return。
+Display gate 到 1584.890069 秒仍为 `fr=0`。
+
+1619.803111 秒 PID 27 self-SIGABRT。PC/LR
+`0x1de766f74 / 0x1f0600fa4` 与本 boot 的共享缓存 slide 对应
+`__pthread_kill + 8 / pthread_kill + 208`，栈形状仍是 libc++abi 的
+demangling terminate-handler 路径。UFS 在 1615.611331 秒为
+`cmds=283681 winReq=477595`，没有 timeout、OCS、doorbell timeout、recovery 或
+lock timeout，继续排除 UFS。
+
+证据：
+
+```text
+H573-live.log
+  afde90d54bfa8ee57ce3213ee0ee573b776da5509702e1488664c1e7fb6cb882
+H573-tail32.bin
+  73a16f44103f262a26900bcf2e202ab491c1992a7d40be2f7ede8b3f3625d874
+H573-h103.txt
+  54a52b05efa791eee9e13c565839a7912e5a7b5134a2e8d4731a98b95c52717d
+```
+
+### §246 H574：跳过 ChronoServices 的建包与提前 abort 结果
+
+H574 的唯一功能改动是在 SpringBoard observer 中让
+`-[CHSChronoServicesConnection _subscribeToExtensions]` 不调用原实现而直接返回。
+全新 checkout、空 `out/`、全新 Data UUID
+`83AB48B8-033B-418C-9821-D868D7294BEB`，并重新执行 stub PMGR -> prelink ->
+real PMGR -> prelink 和全套打包。
+
+```text
+kernel                    e4ab72d94371405a21a96af168104d0d18b477f226a3d8d22c43b989a666aaca
+real PMGR archive         b4d7b629245dbbc35033ae6fb3ef6cef6ce664a8cc1d8ca0e0e04ff104b370de
+Data seed（encoded）      dfd18f6079eb13a998905365fc48c4e27ccaece0d07ca047aa7b2457335f4636
+GPU addon                 a60d59d5f8ad549624273377ef490c24522313e83c852a800789265c7003b318
+owner trust               b16f901fabddb9b191bcbf77beeeb0410ea20247ebf39cddfd306c1b53458802
+payload                   f4f21e7a9ffac90a1d163e3ace6548d74f148fd1e6fd75cbb288796f69613bd2
+boot                      27efad70dfe1821299296592fe9c0382a561ebbb4a06341f3ecf45a9b93b88ba
+static checks             70f4ec58ba365a1f32acaa861e3f8f2ba4fc4fc58a4f7270d4fd971e273263a4
+```
+
+真机 kernel boot 为 `212925f6`。Observer 在 PID 27 中启动并持续输出 alive；
+`UIApplication _run`、didFinish、SetupManager、HUD 和 sound controller 均到达。
+TelephonyManager 在 497.829737 秒进入共享实例创建，但到 551 秒仍未 return；
+625 秒又出现 `req=33543/100/lsd.real ld_reply=0`。
+
+632.001361 秒 PID 27 已 self-SIGABRT，632.453561 秒 PC/LR
+`0x1cc1b2f74 / 0x1de04cfa4` 再次映射到 pthread kill/abort。替换进程 PID 184、
+185 于 665 和 716 秒重复同一终止路径。`h574_chrono_subscribe_skip` 从未出现，
+因此本轮没有检验 ChronoServices 旁路是否有效；提前 abort 是不同停点。
+
+H574 暴露两个观测缺口：
+
+- `h572_observer_alive` 证明 observer 已在目标 PID，但 `std::set_terminate()`
+  安装的 `h572_cxx_terminate` 没有先行落日志；不能继续依赖该 handler 解释异常；
+- 新 Data/UUID 与重新签名会改变时序，H574 的 TelephonyManager 停点早于 H573 的
+  ChronoServices 停点，不能把两轮 abort 合并为同一因果链。
+
+H574 实时日志：
+
+```text
+display-first-frame/logs/H574/device/20261123-014737/H574-live.log
+```
