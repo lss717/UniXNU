@@ -23964,3 +23964,24 @@ H547 保留原 SetupManager init 和此前已经验证的观测/bypass，使用 
 H541 的旧 observer，保留 A540Trace 与其余项。若入口命中后 init 正常返回，
 再检查 `didFinishLaunching` 返回；若仍未返回，使用同一 PID 的新栈确认下一
 同步点，再从已成功的路径逐项移除多余 bypass。
+
+H547 构建与静态核验：
+
+```text
+NativeMetal commit        9b03687
+superproject source       0063a554
+observer SHA-256         a70612be2184e6c82057a9c28162b38198ca64ba8fe5319bac26eb3b8f1292b0
+observer CDHash          f0e05e642d87d5d5d3c8f7807ed93fa432cb6a03
+raw addon SHA-256        f117ee0339019edb1d6ab505b1561c9d6fbde5f8b90596addbad42a9eef28c4d
+GPU addon SHA-256        f35cabc6fef7cc5ebf6c170510f06841e612a28c0b80a20a826167b54c2ecedf
+owner trust SHA-256      d1444e008998099bff810810dbd744feebc502ac18b272c680a813568cc8f633
+payload SHA-256          d7811c41341bc1c9cceb2d9c0298f1ed56b567ea87547e15aef5af91636c0716
+boot SHA-256             1758f2ed083b751967c0308d717a8c7b8d52a51dec20065b4ae155e34a0bdcca
+boot.json SHA-256        3f281941ad860144cc761419798644d694b0128657a8116d321e98569480c4ba
+```
+
+observer 为 arm64 且 strict codesign 通过；`__DATA,__interpose` 已存在，
+external symbol 通过 `-undefined dynamic_lookup` 在 SpringBoard 注入环境中
+解析。稳定 addon 10 项中只有 observer 改变，trust owner 保持 93 项并保留
+A540Trace。payload 其它输入与 H541 一致，bootargs 最坏 `1016/1024`，boot
+JSON `problems=[]`。状态为 `H547-built-static-verified-device-pending`。
