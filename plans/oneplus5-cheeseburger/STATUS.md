@@ -26292,6 +26292,11 @@ SpringBoard codesign、boot 布局及 CDC 合同均 PASS。设备门要求本次
 completeStartup return、窗口内容提交和 `fr=1`。状态为
 `H583-built-static-verified-device-pending`。
 
+H583 的包装器在 catch 后仍会继续执行自己的
+`h557_complete_startup_return` 日志。因此若同次启动没有
+`h583_complete_startup_exception_caught`，该 return 才能证明原启动回调自然返回；
+若 catch 已命中，return 只能证明包装器结束，不能证明被吞掉异常的原调用正常完成。
+
 ### §262 H583 静态复核与旧 PMGR 截图排除
 
 H583 的本地产物已在 Windows 与 Mac 构建目录两端复核。Mac 源树为
