@@ -140,14 +140,15 @@ def main() -> int:
         OBSERVER,
         (
             b"observer load process=",
-            b"build=H537",
+            b"build=H538",
             b"H492_CCS",
             b"filter bypass installed",
             b"filter bypass pid",
-            b"H537_LS",
+            b"H538_LS",
             b"methods installed add=",
             b"observer bypass pid=",
             b"application enumeration skipped",
+            b"current process proxy skipped",
         ),
     )
     observer_cdhash = compact_signed_bundle(
