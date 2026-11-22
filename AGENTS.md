@@ -64,10 +64,25 @@ Known traps on a fresh tree, in the order they bite:
    (`kern_trustcache.c:1095`) before any kext loads. Take the 3-module bundle out of a
    known-good payload (`mcopy -i payload.img ::/EFI/UniXNU/Payloads/kernel.macho.trustcache`)
    and pass it as `--trust-cache`.
-8. The first build of a fresh tree can only use the sheng PMGR stub, because
-   `build-sheng-pmgr.py` reads the AON vtable from an already prelinked `kernel.macho`.
-   Build the kernel a second time once `out/<board>/kernel/kernel.macho` exists; the stub
-   leaves the boot stalled right after `NATIVE_UFS_HB: enter`.
+8. A completely fresh tree needs **two full kernel passes around two prelinks**:
+
+   ```sh
+   scripts/macos-build-kernel.sh --clean
+   ./unixnu build prelink
+   scripts/macos-build-kernel.sh
+   ./unixnu build prelink
+   ```
+
+   The first pass can only use the Sheng PMGR stub because
+   `build-sheng-pmgr.py` reads the AON vtable from an already prelinked
+   `kernel.macho`. It must log `scripts/build-sheng-pmgr-stub.py`. The
+   second pass must run **without `--clean`** and log
+   `scripts/build-sheng-pmgr.py`. Running `--clean` on the second pass
+   deletes the first prelinked kernel and silently links the stub again.
+   The stub can reach userspace and then panic with
+   `AMFI: No PMGR7 @ConfigurationSettings.cpp:235`; H566-H569 were
+   initially misclassified as silent resets for this reason. Record and
+   check the PMGR archive hash before packaging.
 
 The driver is `./unixnu`. Device modules override base modules with the same
 name; `./unixnu status` shows the resolved origin of every module.

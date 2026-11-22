@@ -25534,3 +25534,86 @@ payload 回读、ADT、kernel bases、observer codesign、988-byte 参数及 CDC
 首先要求 `AMFI: No PMGR7` 不再出现；随后才看 USB、SpringBoard abort 和
 `fr=1`。以后任何 fresh 树在首次 prelink 后都必须再跑一轮 full-PMGR kernel
 build，并检查 pass-2 日志不是 stub。
+
+### §242 H571 真机：真实 PMGR 越过 `No PMGR7`，SpringBoard 在 fatal C++ terminate 后循环 SIGABRT
+
+H571 是本轮唯一改变“首次 PMGR 自举完成后必须再跑一遍完整 kernel build”这一变量的
+候选。第二遍日志明确使用 `scripts/build-sheng-pmgr.py`，真实 PMGR archive SHA-256
+为 `211e8eb315aaae2f1bbea64847cd589311a5c59d61ab93d10bf3c6baf06041c2`。
+内核、ADT、Data seed、addon、trust、payload 和 boot 的完整哈希见 §241。
+
+唯一设备 `16149951` 上的一次 `fastboot boot` 返回 `Booting OKAY`。CDC 记录：
+
+```text
+transport boot  3418A582
+kernel boot     21acaabb
+live log        2026-11-22T23:17:12
+```
+
+本轮没有出现 `AMFI: No PMGR7`，说明 H566–H569 的最后一道早期 panic 已被真实 PMGR
+构建越过。Data、Preboot 和 12/12 addon 安装完成；GPU addon 的 launchd overlay 与
+SpringBoard overlay 均记录 `stage=5 status=0`，`NATIVE_EXEC` 到达
+`/System/Library/CoreServices/SpringBoard.app/SpringBoard`。
+
+SpringBoard PID 27 从约 407 秒起在目标端口中显示
+`req=24071/94/lsd.real ld_reply=0`。到 1478.900654 秒，同一 sampler 改为记录
+`svc=com.apple.telephonyutilities.callservicesdaemon.callstatecontroller` 和
+`req=2055/1/launchd q=1`。这只证明当时的采样端点发生变化，不能单独证明原来的
+`lsd.real` 请求已被消费或 SpringBoard 已收到回复。
+
+1498 秒附近 SpringBoard 再次查询并打开 AppleKeyStore。1501.489970 秒 PID 27
+以 `status=0x6 sender=27/SpringBoard` 退出，随后在本进程内收到 SIGABRT。PID 219、
+224、228 分别于 1523、1580、1617 秒重复相同形状：
+
+```text
+pc=0x1e9d06f74
+lr=0x1fbba0fa4
+x0=0x103 x1=0x6 x16=0x148
+```
+
+在同一 boot 中，lsd 的共享缓存 slide 为 `0x1e57c000`；用 21H461 解包后的
+dyld cache 验证，这组地址稳定映射为：
+
+```text
+pc  usr/lib/system/libsystem_kernel.dylib  __pthread_kill + 8
+lr  usr/lib/system/libsystem_pthread.dylib pthread_kill + 208
+    usr/lib/system/libsystem_c.dylib        abort + 104
+    usr/lib/libc++abi.dylib                 demangling_terminate_handler path
+```
+
+四次 abort 的部分栈字还重复落在 `libc++abi`、`libsystem_c` 和 CoreFoundation。
+`NATIVE_SBABORT_STACK` 是固定窗口的原始栈字，不是已经展开的完整 frame-pointer
+backtrace，因此只能把这里的结论限定为“进入 fatal C++ terminate/abort 路径”，
+不能从尚未命名的 CoreFoundation 地址直接判定具体异常来源。也没有 H550
+Objective-C uncaught handler 记录，所以不能把它写成 NSException 已被捕获。
+
+H571 的 UFS 请求路径在同一段持续前进：1618.955410 秒为
+`seq=292591 done=292591`，`timeout=0 ocs_err=0 dbto=0 recover=0
+lock_timeout=0 lock_waiters=0`。`lock_wait_ms` 是累计值，不是单次锁等待；
+`NATIVE_UFS_LOG_FAIL` 是持久环写盘失败，不是 UFS 请求完成失败。现有证据不支持把
+SpringBoard abort 归因于 UFS 软件锁、完成中断或恢复路径。
+
+observability 仍有缺口。H571 addon 的 A540 组件打印
+`builder#2 build H522`，但 live log 没有 `H436_SBWRAP` 或任何 `h557_*` 事件。
+wrapper/observer 理论上的最早构造日志发生在 CDC 开始采集前，因此仅凭“开头没有”
+不能证明没有注入；然而 400 秒以后也没有任何启动 hook 事件，本轮不能声称
+`UIApplicationMain`、`completeStartup`、图标初始化或 ChronoServices 内部路径已被
+观察。下一步若继续用户态，必须先证明 observer 在该 SpringBoard PID 中实际加载，
+同时只增加 fatal terminate 的诊断，不改变任何启动旁路。
+
+证据与 SHA-256：
+
+```text
+display-first-frame/logs/H571/device/20261122-231712/H571-live.log
+  95c0a60d76a7eab377714880ebbb3dc4f6d04a3a5160a4b343f0778bf6f47059
+
+display-first-frame/logs/H571/device/20261122-231712/H571-r1-tail32.bin
+  92bae8ebbe4f460bfcd15e322b9ae6db11d6ccd2f6543958500c6ee9010c1513
+
+display-first-frame/logs/H571/device/20261122-231712/H571-r1-h103.txt
+  459a5daa5df4899069947b9d57a1fc5634443e3e1fe3f022789fc76666fb9a4e
+```
+
+尾部 32 MiB 在 TWRP 3.4.0-1 中只读拉取。实时分区大小为
+`52,840,607,744` bytes，4 KiB 块 seek 为 `12,892,347`。解码报告的五个 slot
+标记全部属于 boot `21acaabb`，没有把旧 boot 的运行时长拼入本轮。
