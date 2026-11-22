@@ -141,7 +141,7 @@ def main() -> int:
         OBSERVER,
         (
             b"observer load process=",
-            b"build=H580",
+            b"build=H581",
             b"H492_CCS",
             b"filter bypass installed",
             b"filter bypass pid",
@@ -193,6 +193,7 @@ def main() -> int:
             b"h579_chrono_assertion_stub",
             b"h579_chrono_assertion_stub_installed",
             b"h580_objc_exception",
+            b"h581_nsexception",
             b"methods installed add=independent state=",
             b"observer bypass pid=",
             b"application enumeration skipped",
