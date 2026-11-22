@@ -24391,3 +24391,70 @@ observer 为 arm64，strict codesign 通过；生产 addon 保持稳定 10 项�
 trust 保持 93 项并保留 A540Trace。payload 其它输入与 H541 相同，
 bootargs 最坏 `1016/1024`，boot JSON `problems=[]`。状态为
 `H552-built-static-verified-device-pending`。
+
+#### H552 真机结果：telephony 恢复但 ApplicationController 查询阻塞
+
+启动前只清零并回读 `userdata_ios` 最后 32 MiB，全零 SHA-256 仍为
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+唯一设备 `16149951` 只通过 `fastboot boot` 启动 H552。首轮 PID 27：
+
+```text
+438.979298 h552_telephony_shared_enter
+439.015041 h552_telephony_shared_creating_enter create=1
+520.223621 h552_telephony_shared_creating_return object=0x303302cb0
+520.223709 h552_telephony_shared_return class=SBTelephonyManager
+520.851353 h550_setup_hud_return
+540.694659 h550_uncaught_exception name=NSInvalidArgumentException
+           reason=*** -[__NSSetM removeObject:]: object cannot be nil
+546.011829 NATIVE_EXIT pid=27 status=0x6
+```
+
+首轮 telephony 获取耗时约 `81.2 s`，随后 HUD 返回。新增异常说明冷启动
+初始化仍存在一个竞态，但异常栈没有落在 HUD/telephony hook 内。
+
+第二轮 PID 148 在状态服务已热后改变明显：
+
+```text
+563.859357 h541_did_finish_enter
+563.867800 h542_status_server_bypass_enter
+563.868060 h551_status_data_log_empty_init_enter
+563.868188 h551_status_data_log_empty_init_return
+563.959819 h542_status_server_bypass_return
+569.421026 h549_setup_return_sampler_start
+569.421171 h550_setup_hud_enter
+569.479658 h552_telephony_shared_enter
+569.479718 h552_telephony_shared_creating_enter
+569.536615 h552_telephony_shared_creating_return
+569.536769 h552_telephony_shared_return
+572.945441 h550_setup_hud_return
+```
+
+telephony 创建由约 81 秒缩短到 `56 ms`，HUD 正常返回。随后依次观察到：
+
+```text
+573.144924 ca_context_remote_create
+573.763851 uiwindow_scene_visible window=root
+577.255974 second CAContext
+577.771949 ca_host_context_bind
+578.128066 ca_host_visible
+579.362350 hidden status-bar reuse window
+```
+
+根窗口和状态栏窗口均可见，`CALayerHost` 已挂到根窗口，但所有观测到的
+`contents` 仍为 0，`fr=0`。进程此后没有退出，也没有
+`h541_did_finish_return`。
+
+同 boot 的 kernel sample `6150` 中主线程 TID 1418 同 PID 连续停在
+`libsystem_kernel +0x1b58`，调用栈包含 FrontBoardServices、Dispatch、
+SpringBoard `SBApplicationController init +0x1e4`、
+`+[SBApplicationController _sharedInstanceCreateIfNecessary:]`、
+`SBMainWorkspace start` 和
+`SpringBoard _completeStartupAfterMainSceneConnect:`。因此 HUD 后阻塞点
+已转移到 `SBApplicationController` 初始化中的
+`FBSApplicationLibrary installedApplicationWithBundleIdentifier:` /
+`installedApplicationsForBundleIdentifier:` 查询。用户态进程至少存活到
+uptime 约 833 秒，期间没有新的 SIGABRT。
+
+live log SHA-256 为
+`c38c5d699b83f4889264802cd4a723e743bb4810ac218ea603c69cc62c4a1026`。
+state 更新为 `H552-device-application-library-query-blocked`。
