@@ -24898,3 +24898,57 @@ hash 并保留 A540Trace。payload 从 H556 复制，只替换 trustcache 与 GP
 addon；kernel、ADT、Data seed 和 TOML 不变。bootargs 为
 `1008/1024`，最坏 `1016/1024`，boot JSON `problems=[]`。状态为
 `H557-built-static-verified-device-pending`。
+
+### §230 H562：全新源码与构建污染隔离
+
+H562 使用全新 checkout 和全新 `out/`，用于回答 H558/H559 中“源码等价
+但重建镜像不能通过真机启动”与“不能再复用旧产物”之间的边界。本轮只完成
+kernel 和 prelink，尚未生成 payload、addon、trust cache 或 boot image。
+
+`zzzzzzzzzzzz-h25*` 再次出现在 Mac 构建树上，不是新一轮创建了这些补丁，
+而是 clean checkout 固定到了历史提交 `f93a8046`。该提交仍包含四个旧实验
+补丁，而删除它们的 `5e040bd2` 只位于另一条分支，未进入该历史基线。第一次
+构建前虽然在 worktree 中手工删除了文件，但没有形成可复现提交，因此下一份
+clean clone 仍会重新带出它们。现已建立
+`codex/h562-clean-build`，以 `f93a8046` 为父提交并正式应用删除提交，分支
+head 为 `d36b820a872e761d11dcd98e5562c35674947dd4`。
+
+核验结果：
+
+```text
+UniXNU source              d36b820a872e761d11dcd98e5562c35674947dd4
+device source              0e97aed710a6aab04a8825ffde21c4bfd0cbd7f7
+NativeMetal                37653c703b49b4006f6c47c52c61bac8166a4fee
+Xcode                      26.3 / 17C529
+Python                     3.9.6
+tracked z-prefixed patches 0
+on-disk z-prefixed patches 0
+```
+
+`patches/` 和 `out/` 中仍能找到 `zalloc.c`、`zlib.h` 等 XNU 正常源码文件，
+它们不是补丁。`patches/xnu/series` 只使用功能名表达顺序，没有纯字典序
+前缀。
+
+两遍构建按全新树要求执行。第一遍为 PMGR 自举，prelink SHA-256 为
+`1b73f6a82022be076e8f2369d01b4c766e96b8faff69ae0fcff8a4c2da8d59c3`。
+第二遍在自举产物存在后使用真实 PMGR archive，最终
+`out/cheeseburger/kernel/kernel.macho` 与 prelink SHA-256 均为
+`bc16394be1ae5710e3b4e141b3b609b57117196771af897ec0ddf74f49010224`。
+构建机 prelink 日志位于
+`/Users/lss/h468-build/clean/UniXNU-H562/out/cheeseburger/logs/prelink.log`，
+日志 SHA-256 为
+`15142f4316fff7addd021be94bd4da31b305a2be7fa7501e8941fcc485f92dfc`。
+
+状态为 `H562-kernel-built-not-device-tested`。后续 payload、owner trust、
+raw addon、production addon 和 boot image 必须从该干净树重新生成，不得复制
+H557、H560、H561 或任何更早轮的对应产物。打包完成并写回本节之前，不得向
+设备发送镜像。
+
+新增硬门：
+
+- clean clone 只有“当前内容没有 `z*.patch`”还不够，删除必须已经进入该
+  clone 的提交历史或作为已提交改动存在；
+- 从历史提交固定基线时，必须同时应用功能命名迁移与旧实验删除提交，不能
+  依赖 build 前的临时删除；
+- 构建前同时检查 `git status --short`、`git ls-files 'patches/**'` 和
+  `find patches -type f -name 'z*.patch'`，结果不一致时不得开始编译。
