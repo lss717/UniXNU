@@ -23658,3 +23658,82 @@ unixnu.toml        dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e065f01
 bootargs 为 `1008/1024`，最坏 `1016/1024`；boot JSON `problems=[]`。
 产物位于 `display-first-frame/builds/H542/`，状态为
 `H542-built-static-verified-device-pending`。
+
+#### H542 真机结果：SystemStatus bypass 生效，下一处同步点位于 SetupAssistant
+
+首次 H542 包在 SpringBoard exec 时 panic，尾环明确记录：
+
+```text
+AMFI: '/System/Library/CoreServices/SpringBoard.app/SpringBoard' is adhoc signed.
+AMFI: unsuitable CT policy 0 for this platform/device, rejecting signature.
+userspace panic: unexpected exec of non-platform binary:
+  /System/Library/CoreServices/SpringBoard.app/SpringBoard: com.apple.SpringBoard [27]
+```
+
+该失败与 H542 用户态代码无关。复核发现生产 H541 GPU addon 不是由当轮
+raw builder 直接重选 10 项，而是长期稳定基线；H542 首次选择新 raw 时，
+顺带替换了 `springboard/SpringBoard` 与 `xpc/launchd.plist`。改用 H541
+已验收最终 addon，仅替换 `lib/SpringBoardSceneObserver.dylib` 后，H542d
+正常进入内核并出现 CDC。
+
+H542d 的 boot ID 为 `216d0124`。关键序列：
+
+```text
+349.653985 h541_did_finish_enter pid=27
+350.171519 h542_status_server_bypass_enter pid=27
+350.280973 h542_status_server_bypass_return pid=27
+354.871114 ca_context_remote_create contextId=0x71cc3435
+355.397   ca_context_set_layer layer=UIWindowLayer
+```
+
+SystemStatus server 已不再是主线程阻塞点，并继续创建 CA 远端 context 和
+UIWindowLayer。sample 6060 使用同 boot slide `0x10c64000` 符号化后，主线程
+新的同步等待链为：
+
+```text
+-[SBSetupAlwaysOnPolicy activateAlwaysOnPolicy]
++[SBSetupManager sharedInstance]
+-[SBSetupManager init]
+__SBPrepareLaunchSentinelIfNecessary_block_invoke
+BYSetupAssistantPrepareLaunchSentinel
+Internal_BYSetupAssistantNeedsToRun
+-[MCProfileConnection shouldShowCloudConfigurationUI]
+-[MCProfileConnection activationRecordIndicatesCloudConfigurationIsAvailableAndKeyExists:]
+-[MCProfileConnection waitForMigrationIncludingPostRestoreMigration:waitUntilCompleted:completion:]
+__NSXPCCONNECTION_IS_WAITING_FOR_A_SYNCHRONOUS_REPLY__
+xpc_connection_send_message_with_reply_sync
+```
+
+首个 SpringBoard 在 `449.848677 s` 再次以自身 SIGABRT 退出。后续实例重复
+到 `h542_status_server_bypass_return`，说明该诊断对照稳定。H542d 的 trust
+在诊断时误把 A540Trace CDHash `e874b48f...` 当作旧 observer 移除，日志因此
+同时出现 A540Trace AMFI 拒绝；它不影响本次 SystemStatus 结论，但必须在
+H543 修正。
+
+H542d 诊断产物：
+
+```text
+GPU addon SHA-256        3bef9f1d807b11e5c3f99ae249275f220475dabda147cc0aeaff658e06eb3bdd
+payload SHA-256          65ba766d8f4e5375c2085bd15c9b7d7a93a8560c06202c34fc64c9e51617bd58
+boot SHA-256             c2e2e6ed3dfb369476906ff343d77d8d8e3d780bda9018a9841f5e2340d730d7
+boot.json SHA-256        fe210005c68dc1eee012ae0341014b268b18f9fd9cb2c5915f38f4f3f1339c34
+trust（诊断，缺 trace）
+                         1926fe4384363c4a94757d2ca3f05a0109a0d122f8be70d044e492737f903375
+```
+
+### §213 H543：跳过 SetupAssistant migration 的同步等待
+
+H543 保留 H542 的 SystemStatus bypass，只额外替换
+`-[MCProfileConnection waitForMigrationIncludingPostRestoreMigration:waitUntilCompleted:completion:]`
+为空操作，并记录 include/wait/completion 参数。稳定 10 项 addon 仍以 H541
+最终包为基线，只替换 observer。trust 从 H541 包中把旧 observer
+`9a7d296b5e6182cdb445294338236497d141253c` 替换为 H543 observer，保留
+A540Trace `e874b48ff6795c4c7008a9d4fa022d794585680a` 以及其余模块。
+
+验收：
+
+1. 看到 `h542_status_server_bypass_return` 与
+   `h543_mc_wait_bypass_return`；
+2. 等待 `h541_did_finish_return` 与 `h542_after_did_finish`；
+3. 读取窗口 hidden、connectedScenes、activation 和 delegate；
+4. 继续追 content、CA host/context、commit、present 和 `fr=1`。
