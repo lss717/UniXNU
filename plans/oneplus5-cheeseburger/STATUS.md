@@ -24056,3 +24056,40 @@ A540Trace 的 `e874b48ff6795c4c7008a9d4fa022d794585680a`。payload 从
 H541 payload 复制，只替换 trustcache 与 gpuaddon；kernel、ADT、Data seed
 和 TOML 均未改变。bootargs 最坏 `1016/1024`，boot JSON
 `problems=[]`。状态为 `H548-built-static-verified-device-pending`。
+
+#### H548 真机结果：直接调用未经过 dyld interpose，SpringBoard 仍退出
+
+启动前只清零并回读 `userdata_ios` 最后 32 MiB，回读全零 SHA-256 为
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+首次清零尝试使用了 TWRP busybox 不支持的 `conv=fsync`，命令没有执行；
+失败回读和改正后的成功命令均保存在本轮日志目录：
+
+`E:\WindowsData\Project\ios\main-route\display-first-frame\logs\H548\device\20261122-124430`
+
+唯一设备 `16149951` 从 TWRP 进入 Fastboot 后，只执行了
+`fastboot -s 16149951 boot ...\H548-boot.img`，返回 `Booting` OKAY。
+CDC 在设备 uptime 约 277 秒接入 COM8。同一 PID 27 的观测为：
+
+```text
+424.486326 h541_did_finish_enter
+438.868244 h546_setup_manager_init_enter object=0x303ad9c80
+442.032858 h545_cloud_config_ui_bypass object=0x3006c5710
+442.186211 h546_setup_manager_init_return object=0x303ad9c80
+450.050952 NATIVE_EXIT pid=27 status=0x6 sender=27/SpringBoard
+```
+
+`h548_by_setup_prepare_launch_sentinel_bypass` 没有出现。
+`h545_cloud_config_ui_bypass` 证明
+`Internal_BYSetupAssistantNeedsToRun` 实际执行，但
+`BYSetupAssistantPrepareLaunchSentinel()` 到该函数的调用是同一
+SetupAssistant 映像内的直接调用，当前 dyld `__DATA,__interpose` 没有覆盖
+它。因此本轮只证明 interpose 未命中，不能声称 sentinel 被跳过。
+`SBSetupManager init` 本身仍正常返回，SpringBoard 在返回约 7.86 秒后
+自 SIGABRT。
+
+第二轮 SpringBoard PID 132 在 uptime 466.406037 再次出现
+`h541_did_finish_enter`，此后 CDC 没有继续输出；停止采集时 live log
+SHA-256 为 `878ef3b71ee1da34ee3a04f0da7fbe89ed5c2f17142970aa1a0993d9f344e419`。
+本轮 UFS 快照保持 `ocs_err=0`、`lock_timeout=0`、`seq=done`，
+没有用户态结论依赖 UFS 软锁或请求完成异常。状态更新为
+`H548-device-sentinel-interpose-missed`。
