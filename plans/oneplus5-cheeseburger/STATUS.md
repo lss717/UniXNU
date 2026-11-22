@@ -24766,3 +24766,50 @@ H555 最终分类为
 重复 ApplicationController、ChronoServices 或 `didFinish` 返回判定；直接观察
 didFinish 后的 scene/window/layer contents、CAContext 绑定和 backboardd
 接收，定位“UI 已进入 run loop 但没有内容进入产品 surface”的第一处缺失。
+
+### §225 H556：捕获 didFinish 返回后的内容与 context 状态
+
+H556 不改变 H555 的启动、LaunchServices、CA、GPU、IOMFB 或显示逻辑，只
+改变观测：
+
+- `applicationDidFinishLaunching:` 返回 5 秒后，在主队列执行一次有界
+  scene/window/view/layer 快照，预算为 48 个 view、160 个 layer；
+- 同时记录窗口层 `contents`、`CALayerHost.contextId` 和其已解析 context；
+- didFinish 返回后另行保留首批 16 个 `CALayer setContents:`、layer commit
+  和 transaction flush；此前 caps 继续限制启动前日志量；
+- build marker 更新为 `observer load ... build=H556`。
+
+H556 的 raw addon builder 成功生成 12 项，但生产 addon 仍以 H541 的稳定
+10 项为基础，只替换 `lib/SpringBoardSceneObserver.dylib`。逐项比较
+H541/H556 后，10 项顺序相同，只有 observer 改变。owner trust 以 H555 的
+93 项为基线，删除旧 H555 observer hash
+`e104976f558487b5ed3a2f0be4a3f52983949f59`，加入 H556 hash
+`2c366b31b1610b35a818cc971b2894974d47cec9`，仍为 93 项且排序有效。
+
+构建与包：
+
+```text
+NativeMetal commit        2485b8d
+superproject source       119c7dd8
+observer SHA-256          d2406d9cf4f0fcd57a9a1ea9bb2ddbbe55c14764c95c8537c1baed9261d291a8
+observer CDHash           2c366b31b1610b35a818cc971b2894974d47cec9
+raw addon SHA-256         3624c505c8b5762b822af31f1b43df5c370b159182d003e942747f289073e516
+GPU addon SHA-256         34a3e5a8e114847706dcbb90f2b2c4b3c729f7a51f792b2bf2653208303bc7bc
+owner trust SHA-256       fcb73f7ee76d5d6efb07d01fc0a276ae4c928ccc4c613dada8e4254a388bf50e
+payload SHA-256           7c47ad8819a23efb67c98ebf7b3eda5f3897b690a0ec454648db6d5fb7ad6ae5
+boot SHA-256              5dbfb03df0ed1df99a0da2085c4f9d570a4fcd8e06ac57e6299fba7fc968ac66
+boot.json SHA-256         6569f4daea453e78b11659f224ff232f15bb81dfa5126b3f9ec20a654129a23a
+```
+
+observer 为 arm64，`codesign --verify --strict` 通过。payload 从 H555
+复制，只替换 trustcache 与 GPU addon；kernel、ADT、Data seed 和
+`unixnu.toml` 保持相同。bootargs 为 `1008/1024`，最坏
+`1016/1024`，boot JSON `problems=[]`。状态为
+`H556-built-static-verified-device-pending`。
+
+设备门只把以下直接记录作为证据：`build=H556`、
+`h556_post_did_finish_snapshot_enter`、窗口的 `contents`/context 状态、
+post-return 的 `CA layer setContents/commit`，以及 backboardd 对应
+CAContext。若 didFinish 后 layer 仍无 contents，下一轮转向 SpringBoard view
+绘制入口；若 contents 存在但 host/context 不对，追场景托管；若两者均正确而
+没有产品帧，再追 backboardd 合成与 IOMFB。
