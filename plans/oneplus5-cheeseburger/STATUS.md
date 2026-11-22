@@ -23026,3 +23026,83 @@ payload 与 H535 的 kernel、ADT、scratch Data 和 `unixnu.toml` 相同，
 只有 GPU addon 与 owner trust 不同。trust 从 87 项扩为 88 项。bootargs
 仍为 `1008/1024`，最坏 `1016/1024`，boot JSON `problems=[]`。状态为
 `H536-built-static-verified-device-pending`。
+
+#### H536 真机结果：窗口最早出现，但应用枚举仍等待 lsd
+
+H536 的内核 boot ID 为 `210fbeb3`。H103 尾环保留 observer 加载：
+
+```text
+218.006742 NATIVE_MTL: observer load process=SpringBoard pid=27 build=H535
+```
+
+该轮在 `548.334865 s` 出现 system gesture window，在
+`555.008058 s` 出现 `SBRootSceneWindow`，在 `569.551341 s` 绑定
+`CALayerHost`，在 `570.068673 s` 出现状态栏窗口。这是目前最早的
+root/host 时间。
+
+Lsd recovery shim 的改动没有关闭后续 LaunchServices 请求。从
+`559.713609 s` 开始，请求
+`req=23311/95/lsd.real q=1 sr=1 so=2` 一直持续；
+`ld_reply=4` 没有继续增长。lsd receive `0x4007` 在
+`564.572558 s` 为 `seen=1 q=1 match=1`，且
+`NATIVE_TARGETWAIT seen=0`。到样本 6300、约 996 秒，SpringBoard 主线程
+仍在同一 `_LSContextInitCommon` 调用链。
+
+符号化后的调用者为
+`LaunchServices::DMFSupport::reloadAllPolicies`，
+`+[_LSQueryContext defaultContext]`，
+`-[_LSQueryContext enumerateResolvedResultsOfQuery:withBlock:]`，
+`-[LSApplicationWorkspace enumerateBundlesOfType:legacySPI:block:]`，
+再向上进入 FrontBoardServices 和 SpringBoard。root/status `contents`
+仍为零，没有 content setter、commit wait、context slot、present 或
+`fr=1`。
+
+本轮在 `1003.922217 s` 由 UXC1 request `424536` 正常重启。证据：
+
+```text
+logs/H536/device/20261122-082625/
+H536-live.log
+  9cc63792b3c046297a9fe428ec3f979400d88a8c612b12b41185bea784f382dc
+H536-tail32.bin
+  a46d40cd342faf9475c644b3a107f2d211113cf2e13718ea4a23b23cea6cd5bb
+H536-h103.txt
+  ec7882c2c0e36f6122f8af4814998982005e2ecd416d00aaa07a5574e4767223
+```
+
+分类为 `H536-earliest-root-window/application-enumeration-blocked`。
+lsd recovery 的安装时序不是唯一阻塞点。
+
+### §207 H537：旁路 SpringBoard 的同步应用枚举
+
+H536 的栈把下一处等待精确到
+`-[LSApplicationWorkspace enumerateBundlesOfType:legacySPI:block:]`。
+H537 在已有的 delayed installer 中同时替换两个方法：
+
+- `-[LSApplicationWorkspace addObserver:]` 仍立即返回；
+- `-[LSApplicationWorkspace enumerateBundlesOfType:legacySPI:block:]`
+  立即返回，不调用传入 block。
+
+该行为仅用于确认同步应用枚举是否是窗口内容之前的最后 Kernel/
+FrontBoardServices 等待。observer 的其他 CA/scene 观察、H536 lsd
+recovery shim、A540Trace、kernel、ADT、Data seed、TOML 和 boot
+arguments 均保持 H536。addon 从 H536 的 10-entry addon 复制，只替换
+`lib/SpringBoardSceneObserver.dylib`；其余 9 项逐字节相同。
+
+源码与产物：
+
+```text
+NativeMetal commit       5f1e897
+superproject commit      275efb2d
+observer SHA-256         f8cd4596ae9c58b4b458b86b18f4dbdacb13ebd063c7b5be5026f7d3efab822e
+observer CDHash          6118cea8dadbb53f188e34c5d7cc754c8dc14827
+GPU addon SHA-256        323dd59fd04364a5ab731776acd0587aa99e4435e35a192514e72a08d4f0cd42
+owner trust SHA-256      29d65cfe87fa3e47b7e57e7978018779cb6241aba76c98b9938d818fd6d3e25f
+payload SHA-256          3c43f99de123e9dc639e853cee6d572f5f1f4064cde03bbc193fb7c925287517
+boot SHA-256             e5e4c268fa1506be486ff69c7efa2567b35c4510c54a294998723f15b07cbc5e
+boot.json SHA-256        68ca270b607b0d418fac28425310be0a23df9f4c7e8ef8b6391815f44cd1c2ae
+```
+
+payload 与 H536 的 kernel、ADT、scratch Data 和 `unixnu.toml` 相同，
+只有 GPU addon 与 owner trust 不同。trust 从 88 项扩为 89 项。bootargs
+仍为 `1008/1024`，最坏 `1016/1024`，boot JSON `problems=[]`。状态为
+`H537-built-static-verified-device-pending`。
