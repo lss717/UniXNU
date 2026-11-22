@@ -26612,3 +26612,88 @@ bundle gate、boot 布局和 CDC 合同均 PASS，`problems=[]`。状态为
 `h585_activity_hooks` 列出各 hook 安装状态，并在 `req=83203` 前后出现
 `h585_bs_proxy_create` 和成对的 send enter/return。无 return 时只能说明该发送
 在采集结束时仍未完成。
+
+### §268 H585 真机：ActivityKit 同步 XPC 持续等待，随后 SpringBoard SIGSEGV
+
+H585 在同一 boot `22507b14` 取得完整的 live 记录：
+
+```text
+log       E:\WindowsData\Project\ios\main-route\display-first-frame\logs\H585\device\20261123-060927\H585-live.log
+SHA-256   89af045e452494a6649bf49021f4d152f34ce8e55bc4aac5dd81ff5833d054f4
+```
+
+本轮采集从约 296 秒开始，错过了早期 `h585_activity_hooks` 安装行，但完整保留了
+后续启动和停点。391.243 秒的首个
+`sendSynchronouslyWithError:` 在 396.284 秒返回，411.967 秒链显示对端为
+`com.apple.frontboard.systemappservices`，说明 BoardServices 路径本身不是永久
+不可用。
+
+564.279 秒进入 `completeStartup`，565.743 秒进入 ApplicationController init，
+567.078 秒返回。579.816 秒 H584 的 ChronoServices skip 正常返回 `nil`。
+584.414 秒进入 `ACActivityCenter init`，584.442 秒和 585.370 秒又发起同步 XPC，
+此后均无 return。637.212 秒起：
+
+```text
+NATIVE_SBCHAIN ... req=68867/-1/- q=1
+```
+
+该请求持续到约 1620 秒。主线程 `tid=291` 的稳定栈为
+`mach_msg2_trap -> libdispatch send-with-reply-sync -> libxpc
+xpc_connection_send_message_with_reply_sync -> BoardServices _sendSynchronously:
+-> sendSynchronouslyWithError: -> ActivityKit`。1718.558 秒 SpringBoard PID 27
+在主线程 `SIGSEGV` 后退出。之后 PID 239 也以 `SIGSEGV` 退出，并出现 corpse
+上限错误；`fr=0` 到本轮结束。
+
+UFS 不是本轮第一停点。1862–2075 秒仍有请求完成，`ocs_err=0`、`dbto=0`、
+`recover=0`、`recovered=0`，但软件锁累计等待从约 19.5 秒继续增至 23.1 秒，
+尾部出现 1 次 `lock_timeout=1`。不能把 UFS 写成改善或已消除。
+
+BoardServices 在 SystemCryptex 中的函数
+`-[BSXPCServiceConnectionMessage sendSynchronouslyWithError:]`
+位于 unslid `0x19f4964f4`。反汇编显示它最终从 `x0` 返回对象；H585 hook 却声明
+成 `BOOL`。因此 `result=17094112` 不能解释成布尔成功或失败，H585 的该 hook
+存在返回 ABI 风险。ActivityKit 未返回发生在原函数内部，故该 ABI 问题不能抹去
+“同步请求实际持续等待”的观察，但必须在新一轮修正。
+
+用户本次重新发送的 `AMFI: No PMGR7` 画面 SHA-256 为
+`6b064e62a93684a01430c9d771ff16f3a600a7cb463b78f359d1d45771569177`，
+文件时间 `2026-11-22 23:00:50 +08:00`。它与 §241/§262 的 H566–H569 首遍
+PMGR stub 照片逐字节相同，不是 H583、H584 或 H585 的当前故障证据。
+
+### §269 H586：修正 BoardServices 对象返回 ABI
+
+H586 只改变 `sendSynchronouslyWithError:` hook 的返回类型，从 `BOOL` 改为 `id`
+并原样透传 `x0`。同时记录方法 encoding、`selectorName`、`messageID` 和
+`expectsReply`，这些附加字段只用于解释同一同步请求，不增加权限或业务旁路。
+
+源码 head `d8ecbca58e6e2d12574c21c91932eb4b5766f2cb`，NativeMetal
+`1674c4b2639491849689f6723635c99a0a409a70`。没有重编内核，以下控制值逐字节
+沿用 H585：
+
+```text
+kernel                    7ffb0c1b2606cf4e9e46dfd36c55a2fe22a391ccfa1945164c8004272c6599e9
+Data seed                 0ef3db84e89bdca5c1ba02607182468b551174908f9a5562b74dcc85095ce24e
+bootargs TOML SHA-256     b24897892bc1167fb6e62a3ccb456ef5e5386f3fefc21502413f684a0c13ebd9
+
+GPU addon                 9d9c4595562f69406af1b3f955adce4d02329e657d6b1da3a7531e1170571b64
+owner trust               8d52ad0419a062386fdcf73685d21ebf3dd94b1e6d3a0d2520db512eb8927b9f
+payload                   54100696808568222cfd1f4cae74472596592aebcc264f38194c6eb42ba1d6a3
+boot                      93668a5652d392c360c1b52646a3bcf63b30460ca1ae5ed4405bec2adcf93a68
+boot.json                 d5a61c27dce3b643b7d2f82aee1d5a1e3c3906db4c08562b6172e977f5bbbf0d
+ADT                       909125301b90548c5c0814ec02fed77ec322e7fdeb3d1659b75857a3ffce1bc4
+observer CDHash           91e1fb4c1fe88ba6bf8749e6d246d7f96f5465d2
+SpringBoard CDHash        6d667a029eef784517158012af93bc61a0f4c200
+H407 UEFI                 9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6
+```
+
+初次打包发现 board 默认额外加入 `h114-icc=0`，会把参数从 988 字节变成 999
+字节并超过 `zap-base` 后的上限，因此该候选未发机并已删除此参数。最终
+payload 回读、本地/Mac hash、988-byte bootargs、owner trust 7 项、observer 与
+SpringBoard codesign、SpringBoard bundle gate、boot 布局和 CDC/UXC1 契约均
+PASS，`problems=[]`，计入 `zap-base=0xabe00000` 为 1008/1024，最坏
+1016/1024。状态为 `H586-built-static-verified-device-pending`。
+
+设备门要求同一次启动出现 `build=H586`、带 `encoding=... selector=... msgid=...`
+的同步请求行，并观察 583–585 秒同类 ActivityKit 请求是否返回。只有 return
+出现后才能判定 ABI 修正改变了投递行为；仍无 return 时继续追 selector 对应的
+服务端。
