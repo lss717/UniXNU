@@ -126,8 +126,9 @@ def main() -> int:
 
     subprocess.run(
         [*common, "-std=c++17", "-fobjc-arc", "-fblocks", "-dynamiclib",
+         "-Wl,-undefined,dynamic_lookup",
          "-framework", "Foundation", "-framework", "IOKit",
-         "-framework", "CoreGraphics", "-framework", "SetupAssistant",
+         "-framework", "CoreGraphics",
          "-I", str(ROOT / "drivers/NativeAdreno"),
          str(ROOT / "drivers/NativeMetal/SpringBoardSceneObserver.mm"),
          str(ROOT / "drivers/NativeMetal/SpringBoardCCSBypass.mm"),
