@@ -25999,3 +25999,74 @@ bootargs、owner trust、observer 和 SpringBoard codesign、boot 布局及 CDC
 得到至少一条 `h578_abort_signal` 或能替代它的确定终止原因。
 
 状态为 `H578-built-static-verified-device-pending`。
+
+### §252 H578 真机：已捕获跳过后的真实异常路径
+
+H578 CDC boot 为 `3A31D78B`。PID 27 在 564.101396 秒进入
+`_completeStartupAfterMainSceneConnect:`。581.115025 秒
+`h578_exception_reporters_rearmed terminate=1 abort_saved=1`，
+581.313394 秒执行 `h577_chrono_subscribe_skip`，581.418997 秒主线程返回。
+
+0.26 秒后捕获到 `h575_cxx_throw type=NSException`，随后
+`h572_cxx_terminate` 和 `h578_abort_signal number=6`，并记录 16 层
+frame return address。按该 boot 的 shared-cache slide `0x19bd000` 映射：
+
+```text
+libobjc objc_exception_throw          +0x112cc
+CoreFoundation forwarding/throw path  +0x17ba64 / +0x1e690 / +0x1e0bc
+ChronoServices                        +0x2a148 / +0x29b04 / +0x2970c
+ChronoServices                        +0x3800 / +0x10f70
+SpringBoardHome                      +0x106284
+```
+
+这组 frame 与 H576 记录的 `-[CHSChronoServicesConnection assertion]:
+unrecognized selector` 属于同一 ChronoServices 调用链。H577 的直接 skip
+并没有消除后续对缺失 `assertion` 方法的调用，只是把异常推迟到 subscribe
+返回之后。PID 27 在 584.240606 秒以 `status=0x6` 退出。
+
+后一 SpringBoard PID 159 在 618.678573 秒进入 completeStartup，直到约
+980 秒仍存活并继续运行其他用户态服务，但没有 `fr=1` 或真实内容提交。
+因此这一条不能作为桌面首帧证据。
+
+```text
+H578-live.log
+  ccf0149b61cc24353554bee688e204f824991c2f3435844421b40cb54684dd2f
+H578-tail32.bin
+  43169d05ac9b6b420f29bbfe3edde0c11cf8ee1fdce0893694549a2c7ae2a461
+H578-h103.txt
+  7a136a0eee82564cf2bfd9c650a23350f1f67df43b2d2ac86c4491278a3ab6a9
+```
+
+H578 通过 UXC1 `424579` 正常重启，Android `boot_completed=1` 后一次进入
+TWRP，持久环已拉取。
+
+### §253 H579：补上缺失的 ChronoServices assertion selector
+
+H579 在 H578 的诊断基础上只增加一个运行期方法：
+`-[CHSChronoServicesConnection assertion]` 返回 nil，并打印
+`h579_chrono_assertion_stub`。`class_addMethod` 的结果由
+`h579_chrono_assertion_stub_installed class=1 added=1` 验证。源码
+`d43338f8`，NativeMetal
+`ede6d49ef4cd0aa36d8bb32e254e03c5f24c36bc`，device
+`914038e725c353b581d516a6ca201cb50260103c`。
+
+kernel 与 Data seed 保持 H576/H577/H578 的显式控制输入。新建产物：
+
+```text
+GPU addon                 6a2ea36c0336ba3b33759f3176b129a4aec00863c0c8fb84865818474a1f9cd2
+owner trust               9d62c20c549a18d56f398637d4c01b55746e89d986db19cbfe138b9c9b7b01ec
+payload                   c701e12f0e0b5778d3a9b9820813790527b11769ed09aa88f9e1ba515f2b1e3c
+boot                      c875d610c1a72a74faef351e8bcd177491acf2dd263cdad2225dbfe22a1423df
+ADT                       ec02724e7de3a93978f1a5a41df21bd937c482c5ed194c04de576f8902a87f65
+observer                  32f65b33db336c3667eeab8adf0adcc785283e2e
+SpringBoard patched       6d667a029eef784517158012af93bc61a0f4c200
+H407 UEFI                 9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6
+```
+
+payload 内 kernel、trust、addon 和 Data seed 逐字节回读一致。ADT、988 字节
+bootargs、owner trust、observer 和 SpringBoard codesign、boot 布局及 CDC
+合同均 PASS。设备门先要求 `h579_chrono_assertion_stub_installed added=1`
+和至少一次 `assertion` stub 命中，再确认异常消失、completeStartup 返回、
+scene/context 绑定与真实首帧提交。
+
+状态为 `H579-built-static-verified-device-pending`。
