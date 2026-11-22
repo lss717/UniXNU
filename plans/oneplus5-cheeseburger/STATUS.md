@@ -25354,3 +25354,48 @@ codesign、boot 结构与 CDC 自检通过。boot 内固定 UEFI blob 为已验�
 `/Users/lss/h468-build/H566-clean-20261122/`。状态为
 `H566-built-static-verified-device-pending`。发送前要求先读取 STATUS（本段），
 设备门只接受同一轮出现真实 `NATIVE_SBABORT`。
+
+### §238 H566 两次真机：Data/Preboot 后约 54 秒静默复位，abort 探针未触发
+
+H566 boot SHA `3f4c6d85…a43eba` 在同一设备上做了两次有界
+`fastboot boot`。两次均返回 `OKAY`，CDC 都没有枚举，设备随后回 Android。
+第二次启动前后都重新清零并回读 `userdata_ios` 最后 32 MiB；第二次清零回读
+SHA-256 为 `83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+
+第一次 boot id 为 `2136b3cd`，持久环在 54.756400 秒附近停止：
+
+```text
+32.223876 NATIVE_H82_DATA_PATH: status=0 seed=0 mount=0 root=1
+33.532468 NATIVE_H82_DATA: status=0 stage=4 ro=0 dev=16777238 size=1073741824
+41.811518 UFS alive addon=12/12
+52.287165 TC query launchd ... cache_arm64.15 ret=0
+54.756400 TC query launchd ... cache_arm64.17 ret=0
+```
+
+第二次 boot id 为 `20ff638d`，同样通过 Data/Preboot、addon 12/12，并在
+53.250985 秒附近的 dyld cache 加载序列后停止。两次都没有
+`NATIVE_SBABORT`、`NATIVE_SIG`、`NATIVE_EXIT`、`NATIVE_PANIC` 或 watchdog
+记录。因此 H566 没有验证 abort 快照，不能把该轮算成观测失败以外的东西，也不能
+据此判定 UFS watchdog。
+
+```text
+H566-r1-tail32.bin
+  168F8010CB6EF39181F1FA0F28DFB954B724F110C6D1BB1F6B22AFCB46DA9966
+H566-r1-h103.txt
+  DBC1C1FA586FFBAFE9A115DF321364C8698753FF69DB126195DFACB5B79D2774
+H566-r2-tail32.bin
+  F23E5F5BB6C404AEDD6F3483569B348D9E9B96BCCFD482E93EF4A148068D0264
+H566-r2-h103.txt
+  132DACE63E6248C06CE254BF42809B835EC6FFBC5D35E2D11663C069C7DE9C30
+```
+
+静态包本身没有 boot SHA、kernel hash 或回读差异；这不是旧镜像被重新打包。
+但 fresh skeleton 在生成 H566 时没有可用的 OS mount，`prepare-owner-data-fixture.py`
+只能写入指向 `/usr/share/zoneinfo.default` 的 timezone symlink。只读展开比较
+显示 H566 Data 约 2.5 MiB 小于 H565 且缺少
+`db/timezone/tz/2023c/zoneinfo` 实际文件；该差异尚不能单独证明复位原因。
+
+H567 只把这一差异恢复为本轮 OS mount 的完整 timezone 数据：从当前 21H461
+OS DMG 重新创建正 1 GiB APFS skeleton、Preboot overlay、LaunchServices
+readiness、Setup/no-idle 和容器目录。UUID 改变，因此 kernel 必须按新 UUID
+重新完整编译；addon、trust、payload 和 boot 也重新生成。
