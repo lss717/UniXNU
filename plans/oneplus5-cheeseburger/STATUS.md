@@ -24813,3 +24813,34 @@ post-return 的 `CA layer setContents/commit`，以及 backboardd 对应
 CAContext。若 didFinish 后 layer 仍无 contents，下一轮转向 SpringBoard view
 绘制入口；若 contents 存在但 host/context 不对，追场景托管；若两者均正确而
 没有产品帧，再追 backboardd 合成与 IOMFB。
+
+#### 本轮新增操作坑
+
+- `__NSSetM` 这类 Foundation 类簇会在具体类上直接实现方法。在
+  `NSMutableSet` 抽象基类安装 replacement 不会覆盖运行时对象；必须检查
+  `object_getClass(set)`/实际异常类，并以实际执行标记证明替换命中。
+- 不能把“日志里没出现”直接当作事件未发生。H555 的 transport 帧 CRC 和
+  sequence 均正常，但设备端报告丢 payload 字节；应以正向标记、同一 boot
+  的内核调用栈和 TWRP 持久环交叉验证。特别是 H555 的
+  `h541_did_finish_return` 文本缺失，而同一 PID/TID 的
+  `UIApplicationMain -> UIApplication _run -> CFRunLoop` 栈直接证明回调
+  已经返回。
+- 后续 CDC 附着时的时间戳不能和 TWRP 持久环直接无缝拼接。每个采集段必须
+  记录首尾 uptime、transport boot ID 和 kernel boot ID，并显式标出断采
+  窗口与 device-dropped bytes。
+- 全局“系统还在运行”、单个工作线程等待 XPC、或主线程处于 Mach receive，
+  都不能单独证明启动被该调用阻塞。必须先确认同一 PID/TID 是否仍在同一
+  同步调用，再判因果。
+- `NATIVE_DISPLAY_GATE` 的 `val/xf` 可以由既有 display probe 增加。当前
+  probe 的 `selector=4/5` 缓冲回读全零且 `NATIVE_FRAME` 为
+  `xfer=1 frames=0`，不能当作产品首帧；验收仍要求真实 CA contents 和对
+  应 host context。
+- TWRP 工具中的 `dd` 可能禁用 `conv=notrunc`。H556 首次清零命令因此
+  未执行，随后把旧尾环误当成回读结果；必须删除 `conv=notrunc`，用
+  `seek=<last-8192>` 直接覆盖尾部，并重新回读确认为全零 SHA-256
+  `83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`
+  后才能 boot。
+- H553/H555 消除 nil removal 崩溃不等于解释或修复了
+  `com.apple.springboard` 的 `FBSApplicationInfo` 缺失。当前 Data seed 的
+  LaunchServices 缓存目录为空，H493 的 CCS filter bypass 也不替代该应用
+  记录；后续若内容入口仍为空，必须回到这个数据就绪问题。
