@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare rebuild bytes, excluding only UUID, N_OSO timestamps and derived KCID.
+"""Compare rebuild bytes, excluding only UUID, build timestamps and derived KCID.
 
 This does not qualify a replacement boot image. Keep the exact image that was
 executed; the check only explains nondeterminism in a source rebuild.
@@ -17,7 +17,8 @@ def normalized(data):
     if struct.unpack_from('<III', b) != (0xfeedfacf, 0x100000c, 0):
         raise ValueError('Expected ordinary ARM64 Mach-O')
     at = 32
-    counts = {'uuid': 0, 'oso_timestamps': 0, 'derived_kcid': 0}
+    counts = {'uuid': 0, 'oso_timestamps': 0, 'version_timestamp': 0,
+              'derived_kcid': 0}
     for _ in range(struct.unpack_from('<I', b, 16)[0]):
         command, size = struct.unpack_from('<II', b, at)
         if size < 8 or at + size > len(b):
@@ -38,7 +39,16 @@ def normalized(data):
             for m in re.finditer(rb'<key>_PrelinkKCID</key><data>([A-Za-z0-9+/]{22}==)</data>',b[offset:offset+length]):
                 lo, hi = m.span(1); b[offset+lo:offset+hi] = b'0'*(hi-lo); counts['derived_kcid'] += 1
         at += size
-    if counts['uuid'] != 1 or counts['derived_kcid'] != 1 or not counts['oso_timestamps']:
+    version_time = re.compile(
+        rb'(Darwin Kernel Version [^:\0]+: )'
+        rb'[A-Z][a-z]{2} [A-Z][a-z]{2} +\d+ \d\d:\d\d:\d\d [A-Z]+ \d{4}'
+    )
+    for match in version_time.finditer(b):
+        lo, hi = match.span(0)
+        b[lo:hi] = match.group(1) + b'0' * (hi - lo - len(match.group(1)))
+        counts['version_timestamp'] += 1
+    if (counts['uuid'] != 1 or counts['version_timestamp'] != 1 or
+            counts['derived_kcid'] != 1 or not counts['oso_timestamps']):
         raise ValueError('Unexpected identity/debug metadata')
     return bytes(b), counts
 
