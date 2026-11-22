@@ -26344,3 +26344,74 @@ H583 的 `fastboot boot` 返回 `Booting OKAY`，但随后 Windows 没有出现�
 记录更新：H582 静态 JSON 已从 `device-pending` 修正为
 `device-tested-target-boundary-not-reached`，保留两次真机日志哈希，并明确
 “未命中 catch 标记”不等于 catch 失败。
+
+### §263 H583 真机：完整启动边界已进入，selector fatal 绕过 Objective-C catch
+
+H583 在 CDC 重新枚举后取得同一次启动的 live 证据。实际内核 boot 为
+`28e83f0c`；CDC 连接请求标识为 `3ED946E3`，不是内核 boot id。采集从
+355–360 秒开始，错过了早期 observer 行，但完整捕获了目标链：
+
+```text
+404.598441 h557_ui_run_enter
+405.800263 h541_did_finish_enter
+418.797142 NATIVE_DISPLAY_GATE boot=28e83f0c ... fr=0
+423.546868 CA remote context 0x2657750b
+539.592139 root CALayerHost host=0x39cecf93
+543.441151 h557_complete_startup_enter main=1
+558.753187 h557_icon_controller_init_enter main=1
+560.325806 h557_chrono_subscribe_enter
+560.428633 h577_chrono_subscribe_skip
+560.533979 h557_chrono_subscribe_return skipped=1
+560.628666 h579_chrono_assertion_stub
+560.875264 h578_abort_signal number=6
+562.965102 NATIVE_EXIT pid=27 status=0x6
+```
+
+因此 H583 不是“没有进入 completeStartup”，而是完整启动边界已经进入后，
+在 icon controller 内的 ChronoServices 订阅路径直接 abort。没有
+`h583_complete_startup_exception_caught`，也没有
+`h557_complete_startup_return`：外层 `@try/@catch` 在这种失败上不会恢复。
+
+live 文件：
+
+```text
+logs/H583/device/20261123-051627/H583-live.log
+sha256 aee0e1f6d0bf6f35a6f25fd63600d31abbd073ee7eb8a68c2dff6ead0383f050
+size 271072 bytes, 2531 lines
+```
+
+使用该次 `slide=0x112b8000` 和同一 21H461 SystemOS dyld cache 符号化
+16 层 abort frame 后，主链为：
+
+```text
+libsystem_kernel abort
+libobjc objc_fatal / lookUpImpOrForward / objc_msgSend_uncached
+CoreFoundation forwarding
+ChronoServices -[CHSServerSubscription _lock_createServerSubscriptionIfNecessary:]
+ChronoServices subscribeWithResult:error: block
+ChronoServices -[CHSServerSubscription subscribeWithResult:error:]
+ChronoServices -[CHSWidgetExtensionProvider _lock_loadContentInitiallySynchronouslyIfNecessary]
+ChronoServices -[CHSWidgetExtensionProvider registerObserver:]
+SpringBoardHome -[SBHIconManager init]
+```
+
+关键反汇编位置是 `_lock_createServerSubscriptionIfNecessary:+0x168`。前一条调用为
+`objc_msgSend$value`，即代码对订阅 block 返回值发送 `value`。该消息查找失败后
+由 `objc_fatal` 直接终止，不是普通 `NSException`，所以继续扩大 catch 没有意义。
+与此同时，`_subscribeToExtensions` 的原生反汇编在返回时显式使用 `x0` 返回对象；
+H577-H583 的跳过 hook 却声明为 `void`，会让调用方继续使用残留的 `self`
+（`CHSChronoServicesConnection`），与该 selector-fatal 链吻合。H584 因此只修
+skip hook 的返回 ABI，返回 `nil`，不再添加新的系统旁路。
+
+同一 boot 的 UFS 检查持续有请求完成，但没有看到锁等待下降：
+
+```text
+376.651655 lock_ok=346237 lock_timeout=0 lock_wait_ms=5518307  lock_wait_max_ms=30162
+467.951893 lock_ok=432771 lock_timeout=0 lock_wait_ms=9154237  lock_wait_max_ms=30162
+559.587975 lock_ok=502570 lock_timeout=0 lock_wait_ms=11650401 lock_wait_max_ms=30875
+```
+
+`seq` 每次都完成到差 1 的 inflight 请求，`ocs_err=0`、`dbto=0`、
+`recover=0`。因此本窗口可确认“请求能完成”，但累计和最大软件锁等待均上升，
+不能据此声称 UFS 锁问题改善。归因仍需 TWRP 末尾环保留 H583 build 标识；
+当前 live 证据只到 `build=H473` 的固定控制内核标识和 boot `28e83f0c`。
