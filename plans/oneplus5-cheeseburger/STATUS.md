@@ -25064,6 +25064,56 @@ owner trust、production addon、observer 和 Data seed 分别保持 H562 的
 状态为 `H563-built-static-verified-device-pending`。设备门先确认 panic
 `offline scratch Data mount failed: 60` 消失，再等待 CDC 与后续启动阶段。
 
+### §233 H563 真机结果与 H564 Preboot overlay
+
+H563 在唯一设备 `16149951` 上通过一次 `fastboot boot` 启动。尾部环记录
+Data 已经成功挂载：
+
+```text
+32.292858 NATIVE_H82_DATA_PATH: status=0 seed=0 mount=0 root=1
+32.585117 disk5s1 vol-uuid: 3AAB21A7-0124-4EED-B5A4-872F17A7B998
+32.673984 disk5s1 mount-complete volume OwnerData
+33.565848 NATIVE_H82_DATA: status=0 stage=4 ro=0 dev=16777238 size=1073741824
+```
+
+这确认 `e7c66525` 的 Data UUID 修正有效，H562 的
+`offline scratch Data mount failed: 60` 没有复发。下一处失败为：
+
+```text
+33.661625 NATIVE_PANIC_STR: offline Preboot overlay mount failed: 2 @kern_exec.c:8847
+```
+
+```text
+H563-tail32.bin
+  574ca762892f3bc7fa796515bd18de3ea46c31218d8e699f4fa15f6164fb8e26
+H563-h103.txt
+  82afe0455c953f50a6c4936be5b003625888e83518192fd4794d2bd6f52f5d07
+```
+
+H564 只给现有 Data seed 增加当前 21H461 manifest 的 Preboot overlay，不改
+kernel、addon、owner trust、bootargs 或显示路径。overlay 包含 OS/App
+root hash、trust cache、`SystemOS.dmg`/`AppOS.dmg` 符号链接和
+`Cryptexes/{OS,App}`。新工具
+`scripts/seed-data-preboot-overlay.py` 解包 DBRDISK1、挂载原 seed 写入
+overlay 后重新打包，并验证 Data volume UUID 仍为
+`3AAB21A7-0124-4EED-B5A4-872F17A7B998`。
+
+```text
+source head               66c61e80
+Data seed SHA-256         cf9387fdf55f1d6952e92aea3dc267b27d6f9da46197353b076abef79bdf1d30
+Data verification SHA-256 66461c564513b78aaa5c03d748e402d13c66014ea4a33a281924840ba5ced3aa
+ADT SHA-256               ea2a9435956fc122c20eb85e640d3ec701415e90deec3823eb5784b3ac8fdda9
+payload SHA-256           66b1f944a4a873e5b9623b81fac48580ea987fb6f93a635e1ff5685804d1e50b
+boot SHA-256              f72de02d2de07295ad2980a9691a643a7697f517da39db7e4dcf1b2b5527917c
+boot.json SHA-256         e3deebceb4c76435bb90e6b97216444d41b9557822a789b21a7ecbfc48c49bbb
+static checks SHA-256     ec5f951fafd63936483c4562e8c49b990251bb9161f71c211a27691965651164
+```
+
+预启动检查、payload 逐文件回读、seed UUID/overlay 回读、boot 内 UEFI 与
+payload 回读均为 PASS。状态为
+`H564-built-static-verified-device-pending`。设备门首先要求
+`offline Preboot overlay mount failed: 2` 消失。
+
 新增硬门：
 
 - clean clone 只有“当前内容没有 `z*.patch`”还不够，删除必须已经进入该
