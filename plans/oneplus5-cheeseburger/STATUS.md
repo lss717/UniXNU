@@ -25458,3 +25458,26 @@ static checks SHA-256      6d6695fc054df028bb0c4ce41cad7ec332d931e47881f4b619ae1
 readback、ADT、kernel bases、988-byte 参数和 CDC 自检通过；kernel 中仍有正确
 Data UUID，但没有 `NATIVE_SBABORT` 字符串。状态为
 `H568-control-built-static-verified-device-pending`。
+
+### §240 H569：fresh 12 项 addon 与 10 项最小 addon 的对照
+
+H568 真机仍无 CDC，尾部环停在 launchd 读取 dyld cache 的早期阶段，因此 abort
+补丁不是唯一差异。H569 保持 H568 的 kernel、Data seed、UUID 和 owner trust
+不变，只从本轮刚生成的 12 项 addon 中裁出不参与启动的
+`springboard/SpringBoard.real` 与 `bin/scenebootstrap`，得到 H565 同样用途的
+10 项集合。
+
+这是短期因果控制，仍有意复用 H568 的 kernel/seed/trust；不能作为最终 fresh
+候选。若 10 项仍未恢复 CDC/后续启动，addon 文件数不再作为主假设。
+
+```text
+GPU addon SHA-256          5e32a8abd4e47ab2b087e6016b359c51077df6ca4f41037fa31a55bfe637c5f5
+owner trust SHA-256        d1f7c6ea31ddfc862ee22de7f2a4a569e669bc1aff5178a4d02d2604053390a3
+Data seed SHA-256          9fa1010ea4a6e43b71328c85554a679460cc4f413917e7fa64a83513d94426af
+payload SHA-256            4458e34ff79277d4f048953992137d2543a8e78c0d8ac819a7f202e98dcb4337
+payload JSON SHA-256       09a37bca290156b0f54b3a92c6e5caac62a54a3122fa8e86711787739713e3c9
+boot SHA-256               dd2305f619a10e1f152390dd0925ab07358ef6a444527589f53d4c912fa40828
+```
+
+参数仍为精确 988 bytes，加 `zap-base` 后最坏 `1016/1024`。状态为
+`H569-control-built-static-verified-device-pending`。
