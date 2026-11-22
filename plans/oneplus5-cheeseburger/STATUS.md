@@ -26241,3 +26241,101 @@ SpringBoard codesign、boot 布局及 CDC 合同均 PASS。设备门要求
 `h582_icon_init_exception_caught` 命中后 PID 仍存活，并继续观察
 completeStartup、desktop context 和真实 `fr=1`。状态为
 `H582-built-static-verified-device-pending`。
+
+### §260 H582 两次真机：异常边界未被命中
+
+H582 第一次 boot 采到约 588 秒后整机回到 Android，持久环没有
+`h582_icon_init_exception_caught`。第二次使用同一静态已验证镜像复测，CDC boot
+为 `3A60B621`。PID 27 和替换 PID 173 分别在 610.550256、675.696133 秒出现
+SIGABRT，仍没有 `h582_` 标记、`fr=1` 或 completeStartup return。两次都在
+到达目标 init 边界前终止，因此不能把 H582 写成 catch 成功或失败。
+
+复测证据：
+
+```text
+H582-live.log（retest）
+  197de99b1be4eee0bbc51e52cd613d1632f3af5609159ed4eb6ee8fdede570fe
+H582-retest-tail32.bin
+  9d09c07df2cd9739dc29230ededa1c51a2f667c41c30ed22bab99e156ed8b6a2
+H582-retest-h103.txt
+  f431788a5bf197dec3efdcfeea1c3fa39742d2c4e8e7d758fcac8f4e046a769a
+```
+
+第一次 boot 的 live、tail 和 ring 分别保留为同目录
+`20261123-044154/H582-live.log`、`H582-tail32.bin`、`H582-h103.txt`。
+复测通过 UXC1 `424583` 正常重启，Android 完成后进入 TWRP。
+
+### §261 H583：把 NSException 边界上移到 completeStartup
+
+H583 保留 H582 的 icon-controller catch，并把同一个 `@try/@catch` 扩展到
+`_completeStartupAfterMainSceneConnect:` 的整个原调用。捕获时记录
+`h583_complete_startup_exception_caught`。源码 `b59bb9b6`，NativeMetal
+`f607b0f8fb729bf5dada1cf4f53349715eb97b1e`，device
+`914038e725c353b581d516a6ca201cb50260103c`。
+
+kernel 和 Data seed 继续作为显式控制输入。新建产物：
+
+```text
+GPU addon                 2303f12fbd1f9e9876c5c5633956e5a5e709d0a07bb3e1fc0fc2bbe5488c3035
+owner trust               343c8e1a4b11ede752c6a1c9ccfd6bb20a549bc921a89a3ed304fb269efc2d7d
+payload                   016c76117da9bbf2e0c32a3b520d90b14aa341724d28455a786d5bebec6267bd
+boot                      d0327db160a8b7ed4cae75d7839daf858a0017cad0d653ef5256e73011d9f9c0
+ADT                       06848318d43f1eaedd7909d42b7b796594ccec47cfc3275bc9cc598ca09f056a
+observer                  de2048f483f07be35f0d108a4edc69970d9c608f
+SpringBoard patched       6d667a029eef784517158012af93bc61a0f4c200
+H407 UEFI                 9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6
+```
+
+payload 回读、ADT、988 字节 bootargs、owner trust、observer 和
+SpringBoard codesign、boot 布局及 CDC 合同均 PASS。设备门要求本次 boot
+真正进入 completeStartup；若捕获异常则必须记录 reason，若未捕获则必须取得
+completeStartup return、窗口内容提交和 `fr=1`。状态为
+`H583-built-static-verified-device-pending`。
+
+### §262 H583 静态复核与旧 PMGR 截图排除
+
+H583 的本地产物已在 Windows 与 Mac 构建目录两端复核。Mac 源树为
+`b59bb9b66280137f67c6ba37d968080669fd9c5e`，NativeMetal 为
+`f607b0f8fb729bf5dada1cf4f53349715eb97b1e`；源树和子模块均无未提交修改。
+observer 与 patched SpringBoard 均通过 `codesign --verify --strict`：
+
+```text
+observer CDHash        de2048f483f07be35f0d108a4edc69970d9c608f
+SpringBoard CDHash     6d667a029eef784517158012af93bc61a0f4c200
+```
+
+payload 回读的 kernel、ADT、trust、GPU addon 和 Data seed 与构建输入逐字节一致。
+kernel 为固定控制输入
+`7ffb0c1b2606cf4e9e46dfd36c55a2fe22a391ccfa1945164c8004272c6599e9`，
+与已在 H576/H582 完成同一早期启动阶段的真实 PMGR 内核相同；Data seed 为
+`0ef3db84e89bdca5c1ba02607182468b551174908f9a5562b74dcc85095ce24e`。
+bootargs 仍是 988 bytes，加 `zap-base=0xabe00000` 后为 1008/1024，最坏
+1016/1024。boot 报告为 `problems=[]`，payload label 为 `OP5ESP`，H407 UEFI
+为 `9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6`。
+
+完整静态证据：
+
+```text
+H583-static-verification.json
+  E:\WindowsData\Project\ios\main-route\display-first-frame\builds\H583\H583-static-verification.json
+H583-static-checks.log
+  E:\WindowsData\Project\ios\main-route\display-first-frame\builds\H583\H583-static-checks.log
+```
+
+H583 的 `fastboot boot` 返回 `Booting OKAY`，但随后 Windows 没有出现属于
+`16149951` 的 CDC、ADB 或 Fastboot 接口，也没有 H583 CDC/持久环记录。因此
+这只能记为“镜像已发送”，不能记为 H583 真机测试通过、catch 失败或 SpringBoard
+终止。满足归因的最小后续证据仍是同一 boot 中的 H583 build/boot 标识，后继
+`h583_complete_startup_exception_caught`、`h557_complete_startup_return` 或
+明确的终态故障。
+
+用户随后提供的 `AMFI: No PMGR7` 屏幕照片不是 H583 画面。照片文件时间为
+`2026-11-22 23:00:50 +08:00`，SHA-256 为
+`6b064e62a93684a01430c9d771ff16f3a600a7cb463b78f359d1d45771569177`，
+与 §241 已记录的 H566-H569 第一遍 PMGR stub 对照图相同，且比 H583 构建和启动
+早约六小时。H583 payload 内 kernel 又逐字节等于已运行过的真实 PMGR 控制内核，
+故不得把该 panic 归因到 H583。
+
+记录更新：H582 静态 JSON 已从 `device-pending` 修正为
+`device-tested-target-boundary-not-reached`，保留两次真机日志哈希，并明确
+“未命中 catch 标记”不等于 catch 失败。
