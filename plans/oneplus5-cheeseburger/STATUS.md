@@ -25166,6 +25166,36 @@ H564-h103.txt
 `scripts/seed-data-skip-setup.py` 给 H564 seed 合并上述 preferences 和目录，
 保持 UUID、kernel、Preboot overlay、addon 和 trust 不变。
 
+### §235 H565：补齐 fresh Data 的 Setup 与免休眠状态
+
+H565 只对 H564 seed 执行 `scripts/seed-data-skip-setup.py`。合并内容为：
+
+- PurpleBuddy `SetupDone`、`SetupFinishedAllSteps` 与 `SetupVersion=11`；
+- mini-buddy 全部关闭；
+- CloudConfiguration UI 关闭；
+- SpringBoard `BKNoWatchdogs`、禁自动变暗、禁 AC 锁屏与禁 idle sleep；
+- `containers/Bundle` 与 `containers/Temp`。
+
+Data UUID 保持 `3AAB21A7-0124-4EED-B5A4-872F17A7B998`，因此 kernel 不需要
+重建。Preboot overlay、owner trust、production addon、kernel 和 bootargs
+均沿用本轮 fresh H564 输入。新 seed 与产物：
+
+```text
+Data seed SHA-256         fc72a067cfb1b0c2b342f428ffb75d7f8131bc4af770f207803b426b8f90d803
+Data verification SHA-256 3307908e2770c9f322e8ae9cb26b60aa4772a36137efe07d6c20ab6637da2348
+ADT SHA-256               1f9fa300b15f65a8a3b93e86d9d3b119f2d7ce0dd9f11cdea89cea68d784afee
+payload SHA-256           29151fc11d10a4cd5c45e6c3be3a11aff77505cb8d97ec82e8126900208868a7
+boot SHA-256              9c86e1016e5b55625b0904c2cfb13ea2e8ee94f0b988338c87d4d3bfc4aae40f
+boot.json SHA-256         c8b3273ece52e22963c58edfdc31fe29a5bad88198b87de431c6f6a22ab5deb9
+static checks SHA-256     44c7d50897be019aed2e57616114978008fe64c89fe6256d695f313c9864e36b
+```
+
+seed 回读确认 UUID、Setup 完成标记、免休眠设置、LaunchServices disabled
+plists、Preboot overlay 和容器目录均存在。payload 回读、boot 内 UEFI 与
+payload、ADT、kernel bases 和 CDC 合同检查均 PASS。状态为
+`H565-built-static-verified-device-pending`。设备门观察 SpringBoard 是否越过
+此前约 1510 秒的 self-SIGABRT，以及是否出现产品首帧。
+
 新增硬门：
 
 - clean clone 只有“当前内容没有 `z*.patch`”还不够，删除必须已经进入该
