@@ -24989,6 +24989,53 @@ bootargs 为 988 bytes，加 `zap-base` 后当前 `1008/1024`，最坏
 状态为 `H562-built-static-verified-device-pending`。后续不得用 H557、H560、
 H561 或更早轮产物替换本节的任一新鲜组件。
 
+### §231 H562 真机结果：kernel 与 Data seed UUID 不匹配
+
+启动前再次只清零 `userdata_ios` 最后 32 MiB。设备实际分区大小为
+`52840607744` bytes，即 `12892347` 个 4 KiB block 后开始尾部窗口；本次没有
+沿用旧的 `29669563`。回读 SHA-256 为
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+
+唯一设备 `16149951` 位于 TWRP `3.4.0_9-10-mauronofrio`，且只有一次
+`fastboot boot`：
+
+```text
+Sending 'boot.img' (79314 KB)  OKAY
+Booting                       OKAY
+boot SHA-256                  627b2d9a6cba64a1731ebb7773ca1fe2cd0fe032e5fb757dd46643fc4d298e05
+```
+
+设备没有出现 CDC，随后返回 Android。再次进入 TWRP 后只读拉取尾部环，得到
+同一次内核运行的确定性证据：
+
+```text
+94.923454 NATIVE_H82_DATA: status=60 stage=0 ro=-1 dev=-1 size=0
+94.959812 NATIVE_PANIC_STR: offline scratch Data mount failed: 60 @kern_exec.c:8832
+```
+
+panic 前的 H469 状态为 `seq==done`、`timeout=0`、`ocs_err=0`、
+`recover=0`、`lock_timeout=0`、`flight=0`。因此本次不是 UFS 超时或显示
+路径，而是始终未成功选中/挂载 scratch Data seed。`NATIVE_BUILD` 中的
+`H473` 是既有诊断 kernel 的编译期标签，不是本轮候选名；本轮由 boot SHA、
+`slot_boot=212db4b9` 和上述 panic 关联。
+
+```text
+H562-tail32.bin
+  3f8ea44cb8a31b71b5eac2b9b1e11da8b796616529e6b6630ea720405db5eae3
+H562-h103.txt
+  dabc287097e13633b1b891da35e328e4824c32109f69e5606b71a4f164b9c21a
+```
+
+根因由源码确认：`scripts/macos-build-kernel.sh` 无条件导出旧 Data UUID
+`1A4CE9DF-34B6-4B52-9744-5052A9D20B23`，而且
+`build-xnu-4k-baseline.sh` 的增量 stamp 没有纳入 UUID。新的 scratch seed
+UUID 为 `3AAB21A7-0124-4EED-B5A4-872F17A7B998`，因此 clean kernel 仍按旧
+UUID 查找。提交 `e7c66525` 只修正构建入口和 stamp，使调用方可以提供当前
+seed UUID，并在 UUID 改变时强制重建 `kern_exec.o`。
+
+H563 的唯一变量是按该 seed UUID 重建 kernel/prelink；userspace 输入、
+addon、owner trust、payload 内容和 bootargs 保持 H562。
+
 新增硬门：
 
 - clean clone 只有“当前内容没有 `z*.patch`”还不够，删除必须已经进入该
