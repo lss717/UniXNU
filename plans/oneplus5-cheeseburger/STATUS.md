@@ -25059,3 +25059,68 @@ SHA-256
 - 不要只比较外层 prelinked kernel。先确认本轮 unlinked XNU 产物为
   `a9140a55…`，再让 prelink 生成新内核；这两层分别验证源码确已重编译和
   最终装载体确已替换。
+
+#### H558 真机结果：新内核在 NativeUfsProbe 前退出
+
+第一次 H558 `fastboot boot` 返回 `Booting OKAY`，但 CDC 未枚举，设备进入
+Android。只读尾环仍为启动前全零
+`83EE47245398ADEE79BD9C0A8BC57B821E92ABA10F5F9ADE8A5D1FAE4D8C4302`，
+说明 H558 没有到达 `SHLOG001` writer。
+
+为排除设备和旧镜像对照错误，重新清零尾部后使用唯一曾工作的 H557 boot
+`EC6A5435…` 启动。CDC 在约四分钟后出现，transport boot
+`3FE8E4B7`、kernel boot `26bb48ff`；341.946442 秒已有
+`NATIVE_DISPLAY_GATE build=H473 ... fr=0`。因此 Fastboot、TWRP、UEFI、
+清零尾部和 USB 采集链均正常。该 H557 对照日志 SHA-256 为
+`74CF5772E3E53A92E49E64383778AB2DE374EBA3B72FDBCFF70223DC688C4670`。
+
+再次清零尾部并同 SHA 重试 H558。第二次仍在 `26.7` 秒内出现 Android
+ADB，CDC 从未枚举。两轮 H558 都未产生 H103 header，问题稳定位于进入
+NativeUfsProbe 之前。
+
+不能把这次失败归因于旧缓存：
+
+- H557 payload 内 kernel 回读为 `7fb58f79…`；
+- H558 unlinked XNU 为 `a9140a55…`；
+- H558 prelinked kernel 为 `0d5fba55…`；
+- H558 payload 内重新 `mcopy` 的 kernel 仍为 `0d5fba55…`；
+- H558 boot 的 SHA-256 与 `fastboot` 发送前本地文件一致；
+- Mac 构建记录本轮 XNU worktree 因
+  `native-aes-personality.patch` 不兼容而重新从 feed 建立，并重新应用了完整
+  series。
+
+H557/H558 kernel 均为 arm64 Mach-O、`52,719,616` bytes，主要段
+`vmaddr` 相同。差异包括 `__TEXT,__cstring +0x8`、`__TEXT_EXEC,__text
++0x18` 和对应 section 偏移，符合新增 build string 与 `chronod` 调用的
+规模；单靠结构比较尚未解释为何在内核探针前复位。该问题必须先由干净的
+H559/H557-source control 复现排除，不能直接再打包更复杂改动。
+
+### §228 H559：从 H557 精确源码冷构建
+
+H559 不改变 H557 的内核源码。`NativeUfsProbe.cpp` 已逐字恢复到
+`f93a8046` 的 H473 版本，新增源码提交为 `78fe3c47`
+（`fix(display): restore H557 kernel baseline`）。为排除缓存因素，Mac 上
+先验证目标路径都位于 `out/cheeseburger/tree`，随后删除：
+
+```text
+out/cheeseburger/tree/.cache/xnu-work
+out/cheeseburger/tree/build/xnu/ios-obj
+out/cheeseburger/tree/build/xnu/ios-sym
+out/cheeseburger/tree/build/xnu/ios-dst
+```
+
+构建开始前把已知可启动的 H557 回读内核
+`7fb58f798b632696ccb72a54d78e818ba890db681621bf272553fb2d5f9cb8ce`
+放回 `out/cheeseburger/kernel/kernel.macho`，供真实 PMGR archive 使用。
+随后从 feed 重新 clone XNU、重新应用完整 series，并完成一至二遍构建。
+
+```text
+source commit              78fe3c47
+unlinked XNU SHA-256       8354769db2cde00e6d09a9e7738e4942d16811ef8f8a2140a6919a664fc3234d
+prelinked kernel SHA-256   1314fa983a1c5e2eab1e2fc994b79d35ae44b8bf2635b1da16e3d347a9386560
+```
+
+同一 H557 源码使用全新 XNU/build 目录后仍产生不同内核 SHA，说明这些产物
+至少包含每次构建变化的 UUID/布局信息，不能要求跨构建字节一致。H559 的
+验收只看：它是否重新到达 CDC/`SHLOG001`，而 H558 在同一流程下无法到达。
+当前状态为 `H559-built-device-package-pending`。
