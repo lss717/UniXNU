@@ -25305,3 +25305,52 @@ H566 源码提交为 `b17ac1b5`。
 
 设备门：同一 boot/PID/TID 内必须先看到一次真实 `SIGABRT` 对应的
 `NATIVE_SBABORT`，然后才能把首帧失败归因到该栈；若没有触发，这一轮只算观测失败。
+
+H566 已按全新源码、feed、`out/` 和用户态输入完成打包。源码 head 为
+`f552a24d946de72b2740462f35c53754c38a2dd5`，设备仓库 head 为
+`914038e725c353b581d516a6ca201cb50260103c`，NativeMetal 仍为
+`37653c703b49b4006f6c47c52c61bac8166a4fee`。fresh Data seed 的 UUID 为
+`1FF6626B-BB81-4117-A770-E18CDBB1CCB5`，kernel、payload、addon 和 trust
+均使用该轮新产物，没有复制 H565 的候选文件。
+
+```text
+kernel SHA-256             80ec03c6f8bf90d7a422ce502b7fabff28bbff86c57c9e7bd3c9add9f5c589fb
+ADT SHA-256                44ecc17be2e90cba8c2605aa0d190bc7aae0e8f03325eef3e9b08ba12e16cfe2
+Data seed SHA-256         372cfa2324a70fe6337af6740d954c8b73b6e398162f44c2e08274086ca8d5bf
+GPU addon SHA-256         6e093036281e1100d2ebe5979a441654082911fd4435629da02c6873567e41d6
+owner trust SHA-256       d1f7c6ea31ddfc862ee22de7f2a4a569e669bc1aff5178a4d02d2604053390a3
+payload SHA-256           b6d05a395a46ed33143ec771e79a2443c65cace263a5c83aa74baf762d46f214
+payload JSON SHA-256      64293a2ec106fd8ff410298b71978641464e9dd193e26a33783d36461ed841c5
+boot SHA-256              3f4c6d8552ff1f33c5850c3a7f9bfa0274f8c72844f487bc452aa24749a43eba
+boot JSON SHA-256         0de3cd0a198edc90a3818af26ce2af4bc13d270c37ff877f56978f1ce8a10f5e
+static checks SHA-256     3123adb449583cb7d92c398152d51f3147890b40c488441c703f7affbab3051a
+static verification        d0108558a9e757463ede450bd8f898072de371a6d2432b18e1ea34e78bb6841c
+```
+
+kernel 命令行精确恢复为 H565 的 988 bytes；加 `zap-base` 为
+`1008/1024`，最坏 `1016/1024`。`NATIVE_SBABORT`、`NATIVE_SBABORT_STACK`
+和 Data UUID 均在最终 kernel 中出现。payload 内的 kernel、trustcache、
+GPU addon 和 Data seed 逐字节回读一致；ADT、kernel bases、observer
+codesign、boot 结构与 CDC 自检通过。boot 内固定 UEFI blob 为已验证的
+`9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6`。
+
+本轮新增工具链坑：
+
+- 全新 `unixnu fetch` 在大仓库浅拉取时会多次遇到 HTTP partial/early EOF；
+  retry 可续传。Git 全局改 HTTP/1.1 并把 submodule fetchJobs 设为 1 后完成；
+- `macos-build-kernel.sh` 的 fresh bootstrap 在 archive 尚未生成时出现未解析
+  symbols 并报一次 `make: ***` 是预期流程，但脚本还要先取得
+  `out/ipsw/21H461/kernelcache.decompressed` 才会继续 archive 和最终 pass；
+- 只跑 `unixnu fetch` 不会取得该 kernelcache；必须另跑
+  `unixnu ipsw fetch`；
+- `unixnu build payload` 需要 `/opt/local/bin` 在 PATH 中，否则会误报
+  `mformat not found`；
+- 设备仓库曾有两个 `h103-log-secs=60`，会让精确恢复 H565 参数时超过 1000
+  bytes。提交 `914038e` 删除重复项，恢复后为 988 bytes；
+- `prepare-owner-data-fixture.py --skeleton` 在没有 OS mount 时创建 timezone
+  symlink 前没有创建父目录；提交 `96c8c564` 修正该 fresh skeleton 失败路径。
+
+产物目录：`display-first-frame/builds/H566/`；Mac 构建目录：
+`/Users/lss/h468-build/H566-clean-20261122/`。状态为
+`H566-built-static-verified-device-pending`。发送前要求先读取 STATUS（本段），
+设备门只接受同一轮出现真实 `NATIVE_SBABORT`。
