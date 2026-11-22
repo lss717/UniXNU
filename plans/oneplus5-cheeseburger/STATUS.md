@@ -24181,3 +24181,40 @@ HUD/声音调用链观测，不改 SetupAssistant 行为：记录
 `-[SBSoundController init]` 和 ringer-control 构造的 enter/return，
 并安装 ObjC 未捕获异常记录器；若 `SBSoundController init` 不返回，优先查
 其内部同步初始化；若它返回，则沿 `SBRingerControl` 之后的下一次调用继续。
+
+### §219 H550：观测 HUD 与声音控制器调用返回
+
+H550 不增加新的 setup 旁路，也不修改 H549 的主线程采样。它在 H549 已命中的
+路径上增加以下 only-observe hooks：
+
+- `-[SpringBoard _setUpHUDControllerAndFriends]`
+- `+[SBSoundController sharedInstance]`
+- `-[SBSoundController init]`
+- `-[SBRingerControl initWithBannerManager:soundController:]`
+- `NSSetUncaughtExceptionHandler` 记录异常名称、原因和前 24 个调用栈符号
+
+验收要求每条 hook 同时有 enter/return 才能判定该调用返回。若进入
+`SBSoundController init` 后没有 return，则下一轮集中查它内部的同步初始化；
+若它返回但 `_setUpHUDControllerAndFriends` 没有返回，继续追
+`SBRingerControl` 和 HUD 构造；若出现 `h550_uncaught_exception`，以同一
+PID 的异常栈决定下一处修复。
+
+H550 构建与静态核验：
+
+```text
+NativeMetal commit        8a2a397
+superproject source       f099cdb8
+observer SHA-256         c66da62425f1aaa6fafc2fc1de8f699981297034e61073979b7d11371b132a13
+observer CDHash          06d5c402da85b15374de9e229d2d903f9c4320a0
+raw addon SHA-256        56a41bcf31e299fb1be3958d8fc37ed4dcc7a1324a7ee840e30ecb26ad3a657d
+GPU addon SHA-256        e0b21afd3a64e76a6ee1166655e80e504e8d4a4aff50f3507035cb58f8c4a54c
+owner trust SHA-256      8ed81c582acb5f522a6da73d22373484e3dbdb48f39c5289e79a9e37217b4573
+payload SHA-256          32e702cabf59e1cd5c4e325e1132685b4d64428e324371c8061cef7d4f73e934
+boot SHA-256             f6474faf8d1b5a98ce1a6cc92259808cc5bdc0b124cac045e68d33ab47a24d44
+boot.json SHA-256        568988e083f41cf8c193f7c8f09bb38a95f60b69d5c75a7083546d647a623e5c
+```
+
+observer 为 arm64，strict codesign 通过。生产包保持稳定 10 项结构，只替换
+observer；owner trust 保持 93 项并保留 A540Trace。payload 从 H541 复制，
+只替换 trustcache 和 gpuaddon；bootargs 最坏 `1016/1024`，boot JSON
+`problems=[]`。状态为 `H550-built-static-verified-device-pending`。
