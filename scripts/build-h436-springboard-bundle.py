@@ -367,8 +367,11 @@ def main() -> int:
     files.append(("lib/SpringBoardSceneObserver.dylib", 0o755, OBSERVER.read_bytes()))
     files.append(("bin/scenebootstrap", 0o755, BOOTSTRAP.read_bytes()))
     files.append(("xpc/launchd.plist", 0o644, modified))
+    # Production addons must overlay the original signed SpringBoard at this
+    # path. The observer is loaded through the job environment. Installing the
+    # H435 wrapper here makes the kernel reject it as a non-platform binary.
     files.append(("springboard/SpringBoard", 0o755,
-                  (SPRINGBOARD_DIR / "SpringBoard").read_bytes()))
+                  springboard_source.read_bytes()))
     files.append(("springboard/SpringBoard.real", 0o755,
                   (SPRINGBOARD_DIR / "SpringBoard.real").read_bytes()))
     if lsd_source is not None:

@@ -28,6 +28,7 @@ def main():
         "launchd cache changed unrelated job",
         '("springboard/SpringBoard"',
         '("springboard/SpringBoard.real"',
+        "springboard_source.read_bytes()",
         '("xpc/lsdwrap"',
         '("xpc/lsd.real"',
         '("lib/LsdRecoveryAsync.dylib"',
