@@ -26127,3 +26127,64 @@ payload 回读、ADT、988 字节 bootargs、owner trust、observer 和
 SpringBoard codesign、boot 布局及 CDC 合同均 PASS。设备门要求先得到
 `h580_objc_exception` 的具体 name/reason，再定位该调用所属子系统。状态为
 `H580-built-static-verified-device-pending`。
+
+### §256 H580 真机：assertion 桩命中但后续 NSException 仍终止
+
+H580 CDC boot 为 `3A4F98F0`。587.244869 秒重新武装异常观测，
+587.353508 秒进入 ChronoServices，587.449497 秒执行 skip，587.554604 秒
+主线程返回。随后 587.749993 秒首次实际命中
+
+```text
+event=h579_chrono_assertion_stub pid=27 main=1 object=0x3004adff0
+```
+
+0.23 秒后仍出现 `h575_cxx_throw type=NSException`，随后
+`h572_cxx_terminate`、`h578_abort_signal` 和 SIGABRT。ABI 栈仍映射到
+libobjc `objc_exception_throw`、CoreFoundation、ChronoServices
+`+0x2a160/+0x29b04/+0x2970c/+0x3800/+0x10f70` 与
+SpringBoardHome `+0x106284`。说明第一个 `assertion` 调用已被兜底，但后续仍
+抛出一条 NSException。
+
+新增的 `objc_exception_throw` interpose 没有产生 `h580_objc_exception`。
+该机制在当前 `LC_LOAD_DYLIB` 注入方式下未生效，不能把 absence 当成没有异常。
+PID 27 在 590.240974 秒以 `status=0x6` 退出，替换 PID 161 仍可继续启动。
+全窗口没有 completeStartup return 或 `fr=1`。
+
+```text
+H580-live.log
+  69e0e0b5ff14792cb235977d5079023cddb654ad1e40a8040ddc46bfd4f69c54
+H580-tail32.bin
+  546d6c7714d673f3bb2aba22690943ab9dc88a9aeca5e793178a0f7f3e9cf5cc
+H580-h103.txt
+  1ad51d40e207ba85b4b5582f9984cb9b3d13ffcf381f130cd8f99f9da00e09e3
+```
+
+H580 通过 UXC1 `424581` 正常重启，并在 Android `boot_completed=1` 后进入
+TWRP。
+
+### §257 H581：在已命中的 __cxa_throw 路径解码 NSException
+
+H581 不依赖未生效的 `objc_exception_throw` interpose。当
+`h575_cxa_throw` 的 type 为 `NSException` 时，直接把 exception 指针作为
+Objective-C 对象，记录 class、name、reason 和 caller。源码 `a0676a79`，
+NativeMetal `f92d1953ed8d2b7361ee96b6c14f9738f240d189`，device
+`914038e725c353b581d516a6ca201cb50260103c`。
+
+kernel 和 Data seed 继续使用显式控制输入。新建产物：
+
+```text
+GPU addon                 fa3f291fabeb1b64ce789bf4a5bea99dd5b22e67602a19f9339a200aa15ab85a
+owner trust               5656307d5136c78c14480cb7f62436f9e70491419a82f826ecdc65a4a3642cfb
+payload                   6b8947d42080633d59aee20c0ca7c7efa9af37997324b1be0ababeca55432f48
+boot                      0b44870ac296541c51f1332f70c237e0c1b2d5e2b6ec68e1b90a08c4b8edf089
+ADT                       ef02164d42e09710f77fc6cafdff9536a3c78aa606d0920571a3cca168b72b78
+observer                  2a6548d2d38f9173f029141ce780f043c2198ee7
+SpringBoard patched       6d667a029eef784517158012af93bc61a0f4c200
+H407 UEFI                 9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6
+```
+
+payload 回读、ADT、988 字节 bootargs、owner trust、observer 和
+SpringBoard codesign、boot 布局及 CDC 合同均 PASS。设备门要求
+`h581_nsexception` 给出可读 name/reason，随后才能判断应从
+ChronoServices 内部状态、SpringBoardHome 调用还是前置 scene 注册修复。
+状态为 `H581-built-static-verified-device-pending`。
