@@ -23867,3 +23867,36 @@ observer strict codesign 和 arm64 检查通过；A540Trace 与 H545 observer �
 kernel、ADT、Data seed 和 TOML 与 H541 一致，bootargs 最坏
 `1016/1024`，boot JSON `problems=[]`。状态为
 `H545-built-static-verified-device-pending`。
+
+#### H545 真机结果：云配置 UI bypass 命中，但仍未等回应用回调
+
+H545 的 boot ID 为 `216fe5d8`，首个 SpringBoard PID 为 27：
+
+```text
+441.810961 h541_did_finish_enter pid=27
+442.246437 h542_status_server_bypass_enter pid=27
+442.313481 h542_status_server_bypass_return pid=27
+446.878867 ca_context_remote_create contextId=0x5d0abc61
+451.543292 uiwindow_set_hidden window=status visible=1
+459.252619 h545_cloud_config_ui_bypass pid=27 object=0x30152d710
+461.572187 NATIVE_EXIT pid=27 status=0x6 sender=27/SpringBoard
+```
+
+本轮没有 `h543_mc_wait_bypass_enter`，说明云配置判断返回 `NO` 后，
+`shouldShowCloudConfigurationUI` 没有继续调用 migration 同步查询。但
+`h541_did_finish_return` 和 `h542_after_did_finish` 都没有出现，进程在
+bypass 后约 2.3 秒退出。当前只能确认云配置 UI 入口命中；原始
+`SBSetupManager init` 是否返回、退出时主线程具体停在哪个调用尚未由标记证明。
+
+### §215 H546：只观测 SBSetupManager init 的进入和返回
+
+H546 完全保持 H545 的 SystemStatus、migration 后备和云配置 UI bypass，并
+调用原始 `-[SBSetupManager init]`。observer 只增加
+`h546_setup_manager_init_enter/return`。本轮不新增功能旁路：
+
+- 有 enter/return 且 didFinish 未返回：继续追 init 返回后的下一处栈；
+- 有 enter 无 return：记录同一时刻主线程栈和具体同步调用；
+- didFinish 返回：立即检查窗口/scene，再逐个撤销疑似多余 bypass。
+
+稳定 10 项 addon 仍只替换 observer；trust 会将 H541 的旧 observer 替换为
+H546 observer，A540Trace 与其余条目保持不变。
