@@ -81,7 +81,7 @@ $payloadBytes = 0
 $lastSequence = $null
 $lastDropped = 0
 $bootId = $null
-$markerPattern = 'build=H584|h584_|build=H583|h583_|build=H582|h582_|build=H581|h581_|build=H580|h580_|build=H579|h579_|build=H578|h578_|build=H577|h577_|build=H576|h576_|build=H575|h575_|build=H574|h574_|build=H572|h572_|build=H557|h557_|h556_|h541_did_finish|h541_application|h541_window|h541_scene|root_visibility|event=ca_|hierarchy=|NATIVE_DISPLAY_GATE|NATIVE_FRAME|NATIVE_PANIC|NATIVE_EXIT pid=27'
+$markerPattern = 'build=H585|h585_|build=H584|h584_|build=H583|h583_|build=H582|h582_|build=H581|h581_|build=H580|h580_|build=H579|h579_|build=H578|h578_|build=H577|h577_|build=H576|h576_|build=H575|h575_|build=H574|h574_|build=H572|h572_|build=H557|h557_|h556_|h541_did_finish|h541_application|h541_window|h541_scene|root_visibility|event=ca_|hierarchy=|NATIVE_DISPLAY_GATE|NATIVE_FRAME|NATIVE_PANIC|NATIVE_EXIT pid=27'
 
 try {
     Write-Output "CDC live receiver opened $devicePath -> $textPath"
