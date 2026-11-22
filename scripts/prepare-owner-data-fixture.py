@@ -70,6 +70,7 @@ if args.skeleton:
         if source_zoneinfo.is_dir():
             shutil.copytree(source_zoneinfo, dataset, symlinks=True)
         elif not dataset.exists():
+            dataset.parent.mkdir(parents=True, exist_ok=True)
             os.symlink('/usr/share/zoneinfo.default', dataset)
         for link, target_path in (
                 (timezone / 'tz_latest', 'tz/' + version),
