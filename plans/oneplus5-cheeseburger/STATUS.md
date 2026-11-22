@@ -25139,3 +25139,53 @@ payload 内 kernel 回读严格等于 `1314fa98…`；observer、GPU addon 和 t
 cache 与 H557 字节一致。bootargs 仍为 `992`，加 `zap-base` 后
 `1012/1024`，最坏 `1020/1024`，boot JSON `problems=[]`。状态为
 `H559-built-static-verified-device-pending`。
+
+#### H559 真机结果：同语义重建仍不能替换已通过镜像
+
+H559 在唯一设备 `16149951` 上只通过一次 `fastboot boot` 启动，boot 前
+32 MiB 尾窗再次回读为
+`83EE47245398ADEE79BD9C0A8BC57B821E92ABA10F5F9ADE8A5D1FAE4D8C4302`。
+`fastboot` 再次返回 `Booting OKAY`，但 CDC 未枚举，现场在不到一秒内开始
+打印后复位，约 31 秒时 Android ADB 已恢复。H559 没有写入 H103 header。
+
+用仓库已有的 `scripts/check-prelink-rebuild-equivalence.py` 比较
+H557/H559 kernel 后得到：
+
+```json
+{
+  "passed": true,
+  "qualified_sha256": "7fb58f798b632696ccb72a54d78e818ba890db681621bf272553fb2d5f9cb8ce",
+  "rebuilt_sha256": "1314fa983a1c5e2eab1e2fc994b79d35ae44b8bf2635b1da16e3d347a9386560",
+  "normalized_sha256": "8c4f3d37f64f0cffe841687d82b1e5cebfbae1fcb10fee196da1ea6e2c1f03c9",
+  "ignored_metadata_fields": {
+    "uuid": 1,
+    "oso_timestamps": 970,
+    "version_timestamp": 2,
+    "derived_kcid": 1
+  },
+  "replacement_image_qualified": false
+}
+```
+
+第一次运行该检查时版本字符串时间戳未归一化，因此误报
+`Rebuild differs beyond UUID/debug timestamps/derived KCID`。工具提交
+`e6e72f0d` 和 `6334d9fd` 增加了两个 build timestamp 的归一化；改后检查
+PASS。全文件只有 1,974 bytes 不同，主要分布为 `N_OSO` 时间戳、LC_UUID、
+Kernel Version 时间和 KCID；没有未解释的代码/数据差异。
+
+这个结果不能解释为“新内核功能不等价”，也不能把 H559 当作可替换镜像。
+它证明的是：当前构建可重建同语义 kernel，但没有重建一个已通过真机启动
+门槛的 kernel artifact。`replacement_image_qualified=false` 是硬门，
+后续再改 chronod 观测必须复用已验证的 H557 payload/kernel；不得把新
+H559 kernel 当成 H557 的等价替换继续叠加改法。
+
+新增操作坑：
+
+- 旧轮次只改 observer/addon 时，payload 内 kernel 一直沿用 H532 产物
+  `7fb58f79…`；H555–H557 的“内核不变”实际是这个已执行内核，而不是当前
+  源码环境中可无条件重建出同 boot 行为的证明。
+- `check-prelink-rebuild-equivalence.py` 只解释源码等价，不是设备资格。
+  即使 PASS，也必须保留已经实际启动过的精确 artifact，除非新 artifact
+  自己通过同设备启动门。
+- 内核版本字符串出现两次；归一化必须处理全部 build timestamp，不能假设
+  只有一处。
