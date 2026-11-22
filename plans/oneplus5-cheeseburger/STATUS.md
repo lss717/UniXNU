@@ -25036,6 +25036,34 @@ seed UUID，并在 UUID 改变时强制重建 `kern_exec.o`。
 H563 的唯一变量是按该 seed UUID 重建 kernel/prelink；userspace 输入、
 addon、owner trust、payload 内容和 bootargs 保持 H562。
 
+### §232 H563：用 fresh Data UUID 重建 kernel
+
+H563 只改变编译期 `XNU_OWNER_DATA_VOLUME_UUID`。源码 head 为
+`0f611b34`，设备仓库仍为 `0e97aed7`，NativeMetal 仍为 `37653c7`。
+构建入口实际收到的 UUID 为 `3AAB21A7-0124-4EED-B5A4-872F17A7B998`。
+最终 `kern_exec.o` 和 prelink kernel 都只出现该 UUID，旧
+`1A4CE9DF-34B6-4B52-9744-5052A9D20B23` 不再存在。
+
+```text
+kernel SHA-256            0e061a4e3f522d988b93b36e269e01cba1a9e66e2817994e153f3537dc646565
+ADT SHA-256               d6d3b19d801b92d1311b4ac349644f1a36420d70d991d74d1932656143be2208
+payload SHA-256           b9c272aa4812a0db19727eac2bd8856b436dffd12ff8216a251af5a4ad6f34c2
+boot SHA-256              b39fc7e1e2c6ec4355bf927c6fb21f8063e505635b706c5e1e2b988022282733
+boot.json SHA-256         ffa74b36354c3e7903d3ebdc57147efdfea759aa1ce54de074a339ca19735dc6
+kernel build log SHA-256  de39c34595aacf8e9fac4c133994047d5bfcd020e0041026b93facf8729e4556
+prelink log SHA-256       e04518a1a96dfe1b0d7f0150cd721a523e4518f9a0ef17bb164ffd8355d440bb
+static checks SHA-256     c991b188effd8160d6651da73bf0f7c00afe4e891a4560009c4d3cd646d0fe2c
+```
+
+owner trust、production addon、observer 和 Data seed 分别保持 H562 的
+`b277c991…`、`886dc9b5…`、`8b145de6…` 和 `9d3f0aac…`。payload 回读
+证明 kernel、ADT、trust、addon、Data seed 均与输入一致。bootargs 仍为
+988 bytes，最坏 `1016/1024`。完整报告位于
+`/Users/lss/h468-build/H563-clean-20261122/H563-static-verification.json`。
+
+状态为 `H563-built-static-verified-device-pending`。设备门先确认 panic
+`offline scratch Data mount failed: 60` 消失，再等待 CDC 与后续启动阶段。
+
 新增硬门：
 
 - clean clone 只有“当前内容没有 `z*.patch`”还不够，删除必须已经进入该
