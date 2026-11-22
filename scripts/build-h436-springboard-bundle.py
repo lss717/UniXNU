@@ -127,7 +127,7 @@ def main() -> int:
     subprocess.run(
         [*common, "-std=c++17", "-fobjc-arc", "-fblocks", "-dynamiclib",
          "-framework", "Foundation", "-framework", "IOKit",
-         "-framework", "CoreGraphics",
+         "-framework", "CoreGraphics", "-framework", "SetupAssistant",
          "-I", str(ROOT / "drivers/NativeAdreno"),
          str(ROOT / "drivers/NativeMetal/SpringBoardSceneObserver.mm"),
          str(ROOT / "drivers/NativeMetal/SpringBoardCCSBypass.mm"),
@@ -140,7 +140,7 @@ def main() -> int:
         OBSERVER,
         (
             b"observer load process=",
-            b"build=H546",
+            b"build=H547",
             b"H492_CCS",
             b"filter bypass installed",
             b"filter bypass pid",
@@ -152,6 +152,7 @@ def main() -> int:
             b"h543_mc_wait_bypass_enter",
             b"h545_cloud_config_ui_bypass",
             b"h546_setup_manager_init_enter",
+            b"h547_by_setup_assistant_needs_to_run_bypass",
             b"methods installed add=independent state=",
             b"observer bypass pid=",
             b"application enumeration skipped",

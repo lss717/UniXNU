@@ -23920,3 +23920,47 @@ observer strict codesign 和 arm64 检查通过；93 项 owner trust 同时保�
 A540Trace 与 H546 observer。稳定 addon 只有 observer 改变，payload 的其它
 输入与 H541 一致，bootargs 最坏 `1016/1024`，boot JSON `problems=[]`。
 状态为 `H546-built-static-verified-device-pending`。
+
+#### H546 真机结果：SetupManager init 正常返回，退出发生在返回之后
+
+H546 的 boot ID 为 `216f8961`。同一 PID 27、同一时间轴：
+
+```text
+467.791145 h541_did_finish_enter
+468.254813 h542_status_server_bypass_enter
+468.370047 h542_status_server_bypass_return
+490.764514 h546_setup_manager_init_enter object=0x302591fe0
+492.938372 h545_cloud_config_ui_bypass object=0x3019b5710
+494.381606 h546_setup_manager_init_return object=0x302591fe0
+496.493062 NATIVE_EXIT pid=27 status=0x6 sender=27/SpringBoard
+```
+
+原始 SetupManager init 确实返回，而且返回对象与进入对象一致。本轮没有
+`h543_mc_wait_bypass_enter`，但因云配置判断已在上一层返回 `NO`，这不能
+证明后备 hook 无效。`h541_did_finish_return`、`h542_after_did_finish` 和
+root visibility 仍没有出现。分类为“SetupManager init 返回后、应用回调
+返回前退出”，具体下一次调用或异常尚未由标记证明。
+
+H546 产物：
+
+```text
+observer SHA-256         dfbfaa0daa9383b1fd93b4224d97f3c7fe537ee0c5bf949d369a31fd244dc488
+observer CDHash          7d8ebee67b8773548ac248d25c6112cee1a52ddc
+GPU addon SHA-256        d31673d4173f36cc317c0e7c4567db4b524c7423f6f803aa9ccc68dae939379e
+owner trust SHA-256      fbcb20d9995cf86c39b12ccb04fcee2929d0755e64239ceccd395d40092cb58e
+payload SHA-256          29e76a7a5b855e9a4c7b7daa5fc0d2170accac73ff057cb3d235d547ae9eef6a
+boot SHA-256             6a4089a1297ab46c9c3845bd2457f66981d74f687329d493fba42c03f0381a94
+boot.json SHA-256        5c1d5fc74533d26278160d473d1928810913ce354db9bcced5afc62a6668eef0
+```
+
+### §216 H547：在 SetupAssistant 入口返回“不需要 Setup”
+
+H547 保留原 SetupManager init 和此前已经验证的观测/bypass，使用 dyld
+`__DATA,__interpose` 将导出的 `BYSetupAssistantNeedsToRun()` 替换为返回
+`NO`，并打印 `h547_by_setup_assistant_needs_to_run_bypass`。这里选择函数
+入口而不是再次替换对象 init，避免 H544 中未初始化对象改变后续状态。
+
+稳定 10 项 addon 仍只替换 observer；trust 用 H547 observer CDHash 替换
+H541 的旧 observer，保留 A540Trace 与其余项。若入口命中后 init 正常返回，
+再检查 `didFinishLaunching` 返回；若仍未返回，使用同一 PID 的新栈确认下一
+同步点，再从已成功的路径逐项移除多余 bypass。
