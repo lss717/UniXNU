@@ -23737,3 +23737,49 @@ A540Trace `e874b48ff6795c4c7008a9d4fa022d794585680a` 以及其余模块。
 2. 等待 `h541_did_finish_return` 与 `h542_after_did_finish`；
 3. 读取窗口 hidden、connectedScenes、activation 和 delegate；
 4. 继续追 content、CA host/context、commit、present 和 `fr=1`。
+
+#### H543 真机结果：migration wait 已返回，SetupManager 初始化随后结束进程
+
+H543 的 boot ID 为 `216d3370`。observer 和 A540Trace 都通过 AMFI，关键序列：
+
+```text
+446.922260 h541_did_finish_enter pid=27
+447.388587 h542_status_server_bypass_enter pid=27
+447.470850 h542_status_server_bypass_return pid=27
+450.450790 ca_context_remote_create contextId=0xd13da3b1
+450.969455 ca_context_set_layer layer=UIWindowLayer
+454.840482 uiwindow_set_hidden window=status visible=1
+467.431981 h543_mc_wait_bypass_enter include=0 wait=1 completion=0
+467.524393 h543_mc_wait_bypass_return
+469.877993 NATIVE_EXIT pid=27 status=0x6 sender=27/SpringBoard
+```
+
+`MCProfileConnection` 的同步 migration 调用已经返回；状态栏窗口也已变为可见。
+但应用回调仍在约 2.35 秒后终止，后续实例重复命中同样的两个 bypass，说明
+SetupAssistant 的 `SBSetupManager init` 路径仍未完成。本轮没有取得
+469 秒附近的额外主线程快照，因此不把后续退出猜测为 profiled 或 IPC 回复。
+
+H543 产物：
+
+```text
+observer SHA-256         12f121b35cf2d6e54c45763c9059c0661840626bdbca0d6cb6c4b54ca4cd4171
+observer CDHash          f856434b2bfa78eabe94db44ea6e8becac196246
+GPU addon SHA-256        364140a9222e0d2374293fa9ba6a4315a16026097c552e88670df35a7187ab32
+owner trust SHA-256      413a86835be8eb2b8683014515a75912d9b3fef6c58e599f72775007b51ff45c
+payload SHA-256          15845f7ef54bf5994b01ccd82dc1521f99d1077376ce1f852b063517b2f6f48a
+boot SHA-256             9c9a03776fdd73b74726c0afcfa459cb50df6563fa40dfb9edd6077c69f69318
+boot.json SHA-256        ab4d530c30bd47ccdbe9fc2b054ac2b208fb64b236d27f5a22d161a6dc398d20
+```
+
+### §214 H544：跳过 SpringBoard SetupManager 初始化
+
+H544 保留 H542/H543 两个已命中的 bypass，只额外把
+`-[SBSetupManager init]` 替换为返回当前 `self` 的实现，并打印对象地址。这样
+`+[SBSetupManager sharedInstance]` 不再执行 launch-sentinel、
+`BYSetupAssistantPrepareLaunchSentinel` 或 migration 查询。
+
+持续 10 项稳定 addon 仍以 H541 最终包为基线，只替换 observer。trust 从
+H541 包中把旧 observer `9a7d296b5e6182cdb445294338236497d141253c` 替换为
+H544 observer，保留 A540Trace `e874b48ff6795c4c7008a9d4fa022d794585680a`
+和其余模块。验收仍是 `h541_did_finish_return`、
+`h542_after_did_finish`、窗口/scene 状态及随后的 content/present 链。
