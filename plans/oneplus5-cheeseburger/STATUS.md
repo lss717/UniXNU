@@ -26572,3 +26572,43 @@ H584 通过 UXC1 `424585` 正常重启到 Android，再进入 TWRP。随后清�
 `83EE47245398ADEE79BD9C0A8BC57B821E92ABA10F5F9ADE8A5D1FAE4D8C4302`。
 下一轮只增加 BoardServices/ActivityKit 同步请求的 sender、service name 和
 selector 观测，不改变 ChronoServices 返回值或显示路径。
+
+### §267 H585：只观测 ActivityKit/BoardServices 同步请求
+
+H585 保留 H584 的 `_subscribeToExtensions` 返回 `nil` 修复以及全部已验证
+启动旁路，只增加观测 hook：
+
+- `+[BSXPCServiceConnectionProxy
+  createImplementationOfProtocol:forClass:withName:]` 记录协议、接口类和名称；
+- `-[BSXPCServiceConnectionMessage sendSynchronouslyWithError:]` 分别记录进入和
+  返回；
+- `ACActivityCenter` 的 init、descriptor/content/reduced-push 观察入口、
+  activity-active 和 enabled 查询；
+- `ACActivityAuthorization init`。
+
+源码 head `b1a5b01ee19f0b5a0ac1c9faf5182ccd51c5dc30`，NativeMetal
+`4a8cd7b1dbda45dc7fb46e70d5ead7bf9cb64ecc`。kernel、Data seed 和 988-byte
+bootargs 与 H584 字节级一致：
+
+```text
+kernel                    7ffb0c1b2606cf4e9e46dfd36c55a2fe22a391ccfa1945164c8004272c6599e9
+Data seed                 0ef3db84e89bdca5c1ba02607182468b551174908f9a5562b74dcc85095ce24e
+bootargs TOML SHA-256     b24897892bc1167fb6e62a3ccb456ef5e5386f3fefc21502413f684a0c13ebd9
+
+GPU addon                 738ee76ee135d4f012e632ad7beb80341ae4f9d580ad404e60f29f0fdc72f107
+owner trust               b99a0822f4fd6f6f36d7dc5c035014f3ccf733b06b88079d7bc70be2f31aa537
+payload                   3d5695ff81881dfa32406c8a28632feaba995f56fad214001291c071f1b21038
+boot                      c747204d622bdf39141f0191b175926fbc97ba32c180f3b9088e2fe9c8a0c99b
+boot.json                 31e8f5d9f6f3f5be3f8096c0687db2a3825238da46b26e4edddd3addba03d65a
+ADT                       b00c0a0793e53fcfa90af0c8b4a967b45b0a23c4c32ca2117a7afd7b2020c6e9
+observer CDHash           64286bad1b3bad66ea0bf97cd87484c3d52e1471
+SpringBoard CDHash        6d667a029eef784517158012af93bc61a0f4c200
+H407 UEFI                 9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6
+```
+
+payload 回读、bootargs、owner trust、observer/SpringBoard codesign、
+bundle gate、boot 布局和 CDC 合同均 PASS，`problems=[]`。状态为
+`H585-built-static-verified-device-pending`。设备门要求
+`h585_activity_hooks` 列出各 hook 安装状态，并在 `req=83203` 前后出现
+`h585_bs_proxy_create` 和成对的 send enter/return。无 return 时只能说明该发送
+在采集结束时仍未完成。
