@@ -23106,3 +23106,128 @@ payload 与 H536 的 kernel、ADT、scratch Data 和 `unixnu.toml` 相同，
 只有 GPU addon 与 owner trust 不同。trust 从 88 项扩为 89 项。bootargs
 仍为 `1008/1024`，最坏 `1016/1024`，boot JSON `problems=[]`。状态为
 `H537-built-static-verified-device-pending`。
+
+#### H537 真机结果：应用枚举被越过，但进程代理查询仍进入同一个 lsd store 等待
+
+H537 的内核 boot ID 为 `211b766a`。CDC 到约 280 秒才接入，live log 与
+32 MiB 尾环都没有保留 `H537_LS` 或 `observer load ... build=H537`，
+因此不能仅凭标记确认 delayed installer 已经执行。以下结论按可观察行为
+记录，并把安装证明列为未决，不把栈变化单独当作方法替换证明。
+
+本轮没有观察到 `SBRootSceneWindow`、根窗口 `CALayerHost` 绑定、
+content setter、commit wait、present 或 `fr=1`。可见的唯一 UIWindow
+事件是 `452.145471 s` 的 `SBStatusBarWindow` 隐藏；live 保留窗口到
+`1565.984865 s`，期间没有产品帧。
+
+H537 的第一个明确进展发生在应用启动链内。sample 6120 的主线程已经处于
+`UIApplication` 启动 delegate 与 `-[SpringBoard
+applicationDidFinishLaunching:]` 路径，而 H536 同阶段的 main thread
+仍停在 LaunchServices database enumerator。H537 随后又进入同步
+LaunchServices store 查询：
+
+```text
+_LSContextInitCommon
+LSApplicationProxy applicationProxyForBundleType:identifier:isCompanion:URL:itemID:bundleUnit:
+FBSApplicationLibrary _workQueue_currentProcessProxyWithOutURL:
+__30-[FBSApplicationLibrary _load]_block_invoke
+SBApplicationController init
+SBMainWorkspace _finishInitialization
+```
+
+sample 6180 中，主线程等待 `_os_unfair_lock_lock_slow`，而锁持有线程位于
+`_LSCopyServerStore`、`__LAUNCH_SERVICES_IS_RESEEDING_ITS_DATABASE_AND_MAY_BLOCK__`
+和 `NSXPCConnection` 的同步回复等待。`NATIVE_SBCHAIN` 从 sample 6150
+到 6510 一直为：
+
+```text
+req=45571/95/lsd.real q=0 sr=1 so=1 ld_reply=0
+```
+
+这说明第二轮阻塞仍是 lsd store 的同步回复，而不仅是 SpringBoard 内的
+unfair lock。H537 将等待位置从
+`enumerateBundlesOfType:legacySPI:block:` 推进到了
+`_workQueue_currentProcessProxyWithOutURL:`，但没有到达根窗口。
+
+SpringBoard 随后再次 self-SIGABRT：
+
+```text
+1535.100848 SIG pid=27 sig=6 sender=27/SpringBoard
+1535.647350 EXIT pid=27 status=0x6 code=0x6 flags=0 sender=27/SpringBoard
+1538.299233 EXEC SpringBoard pid=210
+1565.863493 EXIT pid=210 status=0x6 code=0x6 flags=0 sender=210/SpringBoard
+1565.984865 SIG pid=210 sig=6 sender=210/SpringBoard
+```
+
+第二次退出后 Android `boot_completed=1`。本轮证据：
+
+```text
+logs/H537/device/20261122-084602/
+H537-live.log
+  59e7b07ca03e5e54c9628b8c8888ee9e2bc2fed355f19977b5166472c9fe2f11
+H537-live.frames.bin
+  e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+H537-tail32.bin
+  a879ff3295a06d7a0d6c5b0810e5e13c33a6421434d0a7a61746ec8aeec1e8ef
+H537-h103.txt
+  e1d726769ec3403aad5f24693177ded06fa9871000c5e6795c069f24c5b8a41f
+```
+
+H103 尾环只从 uptime 约 1227 秒开始保留可见消息，`msg_bytes=7705`，
+没有早期 constructor/installer 日志。分类为
+`H537-observed-app-launch-progress/current-process-proxy-locked/self-SIGABRT`。
+
+### §208 H538：旁路 `_workQueue_currentProcessProxyWithOutURL:`
+
+H537 的 sample 6180 把下一步精确到
+`-[FBSApplicationLibrary _workQueue_currentProcessProxyWithOutURL:]`。
+对 21H461 `FrontBoardServices` 的同一镜像反汇编显示，调用者
+`-[FBSApplicationLibrary _load]` 在调用后直接检查返回值；`nil` 会跳到
+后续 load-complete 路径。因此 H538 只新增一个用户态行为：
+
+- 保留 H537 的 `addObserver:` 与
+  `enumerateBundlesOfType:legacySPI:block:` 立即返回；
+- 让 `-[FBSApplicationLibrary
+  _workQueue_currentProcessProxyWithOutURL:]` 写回 nil out URL 并返回 nil；
+- 安装线程显式加载 FrontBoardServices，并在 120 秒间隔继续验证三个 IMP。
+
+SpringBoard observer、H537 lsd recovery shim、A540Trace、kernel、ADT、
+Data seed、TOML 和 boot arguments 均保持不变。H538 的 10-entry GPU
+addon 从 H537 逐项复制，只有 `lib/SpringBoardSceneObserver.dylib` 改变；
+其余 9 项的编码、长度、CRC 和存储方式均相同。
+
+源码与产物：
+
+```text
+NativeMetal commit        0936915
+superproject commit      c7d6a217
+observer SHA-256         c486baeca7c905e4647158b42cc70445063e79100974e3b1d6d008346e9350bb
+observer CDHash          85daedea6ae8eeffc453b7dc1c0f30cd8ed749ef
+GPU addon SHA-256        1a02ea86f95ee2b612d70886a813a15f75eae1babac9525a99b3b97e81b2a458
+owner trust SHA-256      a7fb559cbd14739a9f309c264fd48524990e3689918a61ed25a18391a4bd5820
+payload SHA-256          e32348571451841398843dfeecd39b88afffa7921203d7f7495165618ee343f6
+boot SHA-256             65275e6e8e9d362f9cc038f40ee3d625a03dddd0af08d96891630f610d999c18
+boot.json SHA-256        ed65de8d0f4f73f1dbe408a78e0d71766b7575741c7338308168c304def0c23b
+```
+
+payload 与 H537 的 kernel、ADT、scratch Data 和 `unixnu.toml` 相同，
+只有 GPU addon 与 owner trust 不同。单文件核验：
+
+```text
+kernel.macho              7fb58f798b632696ccb72a54d78e818ba890db681621bf272553fb2d5f9cb8ce
+kernel.macho.adt          9fa9e5ba88b84546ef89f79b26bbd9a9cea5e881b8efebf2c2149d09259eb74d
+scratch-data.img          7522c2b803bac371190e5f316bacc825d1dd3c964ef3a3ab6ffd75bf0f9bae79
+unixnu.toml               dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e065f01e81
+```
+
+observer 为 arm64、ad-hoc 签名，strict codesign 通过；owner trust 为 90
+项。bootargs 为 `1008/1024`，最坏 `1016/1024`，boot JSON
+`problems=[]`。产物位于 `display-first-frame/builds/H538/`，状态为
+`H538-built-static-verified-device-pending`。首次启动前将再次清零并回读
+`userdata_ios` 末尾 32 MiB。验收顺序为：
+
+1. 确认 `build=H538`、`H538_LS: methods installed` 以及
+   `current process proxy skipped`；
+2. 对比 H537 sample 6180，确认主线程离开
+   `_workQueue_currentProcessProxyWithOutURL:` 的 LS store 等待；
+3. 检查 SBMainWorkspace 初始化、根窗口、host context、content、commit、
+   present 和 `fr=1`，不得把合成自检混入 SpringBoard 产品首帧。
