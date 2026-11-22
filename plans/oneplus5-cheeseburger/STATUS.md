@@ -24357,3 +24357,37 @@ live log SHA-256 为
 `SBTelephonyManager sharedTelephonyManager`、
 `sharedTelephonyManagerCreatingIfNecessary:` 和 `init` 三处
 enter/return 观测，不修改行为。
+
+### §221 H552：观测 SBTelephonyManager 获取链
+
+H552 保持 H551 的 SystemStatus 恢复与 change-log 空键初始化，只增加三处
+only-observe hooks：
+
+- `+[SBTelephonyManager sharedTelephonyManager]`
+- `+[SBTelephonyManager sharedTelephonyManagerCreatingIfNecessary:]`
+- `-[SBTelephonyManager init]`
+
+验收时若 `shared` 有 enter 无 return，直接沿 `CreatingIfNecessary` 继续；
+若 `Creating` 有 enter 无 return，记录其同步 IPC 对端；若 `init` 有 enter
+无 return，再拆解实例初始化。只有 `h552_telephony_init_return` 和
+`h550_ringer_init_enter` 都出现，才能说 HUD 已越过 telephony 获取阶段。
+
+H552 构建与静态核验：
+
+```text
+NativeMetal commit        d6f06e3
+superproject source       68e77a0d
+observer SHA-256         a4ace719e1976d1be0f83ee3bd636487eb185af6e3960a879592f8e782b3e8a5
+observer CDHash          a5b5956cb0fcba453c7fb6c3b50e8e5200b84ca3
+raw addon SHA-256        6f5fe1cce6dcb18e3848bf84803dfd695470cde65bb52a783b6299bf030ad3af
+GPU addon SHA-256        ff65122810bd1ee13e0cf33b47751d73f72f1ca997de4e94ef8b5e13ccc52302
+owner trust SHA-256      4cf1572e21e23c9d7d9321f73c2f27d882cfd30f7ca53dc036b2f146c59469e2
+payload SHA-256          06bd40bf7a0ef63fa78d18f8bb1e6a775f71a3e1561e4b8d93154f769f53ec60
+boot SHA-256             dedb87f491ee7572e8b282fc3c18d99071f6367257f1b1af1de35b159122b179
+boot.json SHA-256        5323d5854f588fb21d03da43f10f885f371f10032fe455f8c9c48daea383de58
+```
+
+observer 为 arm64，strict codesign 通过；生产 addon 保持稳定 10 项，owner
+trust 保持 93 项并保留 A540Trace。payload 其它输入与 H541 相同，
+bootargs 最坏 `1016/1024`，boot JSON `problems=[]`。状态为
+`H552-built-static-verified-device-pending`。
