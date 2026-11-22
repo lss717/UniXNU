@@ -24595,3 +24595,35 @@ IMP 不会覆盖子类方法。H554 的功能修复未生效，但这次失败�
 live log SHA-256 为
 `a5392216e74b2fc230997ff1837d9e02d836aed4f808fd77dc8cc7395d77b73e`。
 状态更新为 `H554-device-nssetm-hook-missed`。
+
+### §224 H555：在 `__NSSetM` 具体类安装 nil removal guard
+
+H555 保留 `NSMutableSet` 基类 hook，并额外解析私有类 `__NSSetM`，在其实例
+`removeObject:` 方法上安装同一 guard。nil 输入记录
+`h554_mutable_set_remove_nil_ignored` 后返回，非 nil 输入调用具体类原实现。
+
+验收要求 `h555_concrete_set_remove_guard installed=1`，并且实际
+`com.apple.springboard` 查询返回 nil 后出现
+`h554_mutable_set_remove_nil_ignored class=__NSSetM`。随后必须看到
+`h553_application_controller_init_return`，否则继续检查应用加载下一处异常；
+不再以基类 hook 的 `installed=1` 当成修复生效。
+
+H555 构建与静态核验：
+
+```text
+NativeMetal commit        59de74d
+superproject source       ef58f489
+observer SHA-256         9c8da25254101dbbcf415351c8179ec74b8ed31017416d2d5349f21ca8b5d212
+observer CDHash          e104976f558487b5ed3a2f0be4a3f52983949f59
+raw addon SHA-256        8df1d68bfc73eba89bf35b68c6a92c32bfb22a32d8951920058d1ad4e6886f27
+GPU addon SHA-256        d961e809e1767914459d3a8ef6143c61df8d6d79043279ecb6584acf2979f1bd
+owner trust SHA-256      936f05931e56b66b4749ab4588f3d946f831b93e54f8d8c3fe6c709e37228ba7
+payload SHA-256          2beab4ddc580cc6b8e0ffdbc66a7461909fb7628b234729cdaccc54bc3559da9
+boot SHA-256             3280663f9fb0703f8805be1993acb3b864efeeddebabb6df86365f6540f5c032
+boot.json SHA-256        7584ce48b152b57c4a49c8aba6642018d9d9f7248fb4f35b690f4051b0fc8fb7
+```
+
+observer 为 arm64，strict codesign 通过；生产 addon 保持稳定 10 项，owner
+trust 保持 93 项并保留 A540Trace。payload 从 H541 复制，只替换
+trustcache 与 gpuaddon；bootargs 最坏 `1016/1024`，boot JSON
+`problems=[]`。状态为 `H555-built-static-verified-device-pending`。
