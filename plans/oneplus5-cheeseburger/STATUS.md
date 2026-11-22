@@ -24535,3 +24535,36 @@ live log SHA-256 为
 `26278ce38903a0a4695cd752333887d9f1836e5e5c74a5ea6e573f4fc4dafe32`。
 UFS 继续为 `ocs_err=0`、`lock_timeout=0`、`seq=done`。状态更新为
 `H553-device-springboard-app-info-missing`。
+
+### §223 H554：忽略应用集合中的 nil SpringBoard 移除
+
+H554 保留 H553 的全部应用库观测，只修正已由反汇编确认的单点行为：
+swizzle `-[NSMutableSet removeObject:]`，当对象为 nil 时记录
+`h554_mutable_set_remove_nil_ignored` 并返回；非 nil 输入仍调用原实现。
+这对应 `-[SBApplicationController _loadApplications:remove:] +0x70`
+无条件移除 `_springBoardApplication` 的路径，不跳过其它应用加载。
+
+验收要求 `h554_mutable_set_remove_guard installed=1` 且 nil removal 标记
+出现；随后确认 `h553_application_controller_init_return` 是否出现。若出现，
+继续等待 `h541_did_finish_return`、scene activation 和首帧提交流程；若没有，
+按应用加载下一处同步点继续。
+
+H554 构建与静态核验：
+
+```text
+NativeMetal commit        0503f64
+superproject source       96dacad6
+observer SHA-256         85f3a3954ac387b53e268be1af4081591c0529956c8d65ff864737ae704ca2a6
+observer CDHash          8aa1a8fc78c3c1c708f2c468e30a8d13f6a51cb9
+raw addon SHA-256        28ab8f796542ebd3435245ee5283dc90120df0a0d8f62488316b532b9ee88b62
+GPU addon SHA-256        0c560be81de48da49c248e3b0db603372bbbca8925f3671ead5e18d928ae9417
+owner trust SHA-256      b5d9465a586c7ee406a1f7fdf41da19bb5916e5a1da88a19c8468948885820be
+payload SHA-256          4bfb23ff975b5768577f0a4aa0c3fd6f69a20eb19934e5fbc1085e1ecebd9dd6
+boot SHA-256             bbb2e83bf756598ef77eefadf36e82e272f30cdb15221f64408e3e9dc8608c16
+boot.json SHA-256        686e8896f7a2ed63b304e486a0090b633b8935e72bb75590026ce7c6f3b3968a
+```
+
+observer 为 arm64，strict codesign 通过；生产 addon 保持稳定 10 项，owner
+trust 保持 93 项并保留 A540Trace。payload 从 H541 复制，只替换
+trustcache 与 gpuaddon；bootargs 最坏 `1016/1024`，boot JSON
+`problems=[]`。状态为 `H554-built-static-verified-device-pending`。
