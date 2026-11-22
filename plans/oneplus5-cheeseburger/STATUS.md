@@ -25399,3 +25399,29 @@ H567 只把这一差异恢复为本轮 OS mount 的完整 timezone 数据：从�
 OS DMG 重新创建正 1 GiB APFS skeleton、Preboot overlay、LaunchServices
 readiness、Setup/no-idle 和容器目录。UUID 改变，因此 kernel 必须按新 UUID
 重新完整编译；addon、trust、payload 和 boot 也重新生成。
+
+H567 已完成 fresh build/package。新的 Data UUID 为
+`7A2FDD02-3064-44A6-B029-55335EF3B31F`，展开后的
+`db/timezone/tz/2023c/zoneinfo` 来自本轮挂载的 21H461 OS，seed 编码大小
+回到 `3,453,024` bytes。源码 head 为
+`0975f7e7a231a62f72c3433c6649097a58e7a82a`，设备仓库仍为
+`914038e725c353b581d516a6ca201cb50260103c`。
+
+```text
+kernel SHA-256             bfd7c67f72a82dcf3305257a50b6c54d6f2e6718f444c24952546c8847d0478c
+ADT SHA-256               34c669d3cf82799b55fb761204cd4749a02b801ffb5686ef021dcddf8dd93940
+Data seed SHA-256         9fa1010ea4a6e43b71328c85554a679460cc4f413917e7fa64a83513d94426af
+GPU addon SHA-256         6e093036281e1100d2ebe5979a441654082911fd4435629da02c6873567e41d6
+owner trust SHA-256       d1f7c6ea31ddfc862ee22de7f2a4a569e669bc1aff5178a4d02d2604053390a3
+payload SHA-256           6003128f23d5b3e2a6351bd7638cd3a9011e8a724acf64bd006c01eaf2ad0149
+payload JSON SHA-256      8cbf320759edd19e70e50b6ea03b81d5873ca5cfd168bac48c696e1d69c436aa
+boot SHA-256              c65dff9d567607ecfededb4cd25574e93454f6234538fae4c24d579763042cdf
+boot JSON SHA-256         c6a3f97416f6b0dcf4374885675a3ee1ba17b827b3ba92930ebe6ef8295ed8ff
+static checks SHA-256     fcabb0913e99fdc83a171c05071437ff8110e501cf2aa2679e0b2c71e3ac4a9f
+static verification       02fca4be5dbbe7a8baef007b6f26ad5533251a398cc6e5d484ce120bec6eab82
+```
+
+payload 内的 kernel、trust、GPU addon 和 Data seed 逐字节回读一致；固定 H407
+UEFI、ADT、kernel bases、observer codesign、988-byte 参数和 CDC 自检均通过。
+状态为 `H567-built-static-verified-device-pending`。设备门先确认不再在
+Data/Preboot 后约 54 秒复位，并等待同一 boot 的真实 `NATIVE_SBABORT`。
