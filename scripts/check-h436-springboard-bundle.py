@@ -34,7 +34,7 @@ def main():
         '"/System/Library/xpc/lsdwrap"',
         'b"build=H539"',
         'b"H539_LS"',
-        'b"methods installed state="',
+        'b"methods installed add=independent state="',
         'b"application enumeration skipped"',
         'b"current process proxy skipped"',
         'b"ls_installer sample="',
