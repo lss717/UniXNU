@@ -26518,3 +26518,57 @@ H584 live **采集窗口**，不能据此判断：
 这只记为“镜像已发送，设备接口在采集开始前消失”。下一步只有两种有效恢复：
 等待设备自行重新枚举，或由用户物理重启/重新进入可用模式；在接口出现前不重复
 发送同一镜像，也不修改下一轮变量。
+
+### §266 H584 真机：返回值修复有效，活动订阅同步 XPC 成为下一停点
+
+约五分钟后 CDC 自行重新枚举，采集回到同一 boot。实际内核 boot 为
+`2265effd`，CDC 连接请求标识为 `375DA75B`。关键顺序：
+
+```text
+468.243761 h557_ui_run_enter
+471.157808 h541_did_finish_enter
+605.681911 h557_complete_startup_enter
+619.693531 h557_icon_controller_init_enter
+620.988602 h557_chrono_subscribe_enter
+623.615247 h577_chrono_subscribe_skip
+624.089039 h557_chrono_subscribe_return skipped=1 result=0
+624.424006 h584_chrono_subscribe_skip_return_nil
+```
+
+H584 的唯一标记命中后，SpringBoard PID 27 没有 SIGABRT，H583 在
+`_lock_createServerSubscriptionIfNecessary:+0x164` 的 `value` lookup fatal
+已经消失。这是 H584 修复有效的直接证据。
+
+启动并未完成。从 668.300827 秒开始，同一 SpringBoard 主线程 TID 291 停在
+libsystem receive → libdispatch → libxpc → BoardServices
+`sendSynchronouslyWithError:` → ActivityKit。`req=83203`、
+`rport=0x14503` 在 742、815、889、963、1038 秒采样中均为 `q=1`，
+直到约 1102 秒停止采集都没有回复。没有 `h557_complete_startup_return`、
+`h583_complete_startup_exception_caught`、新的 abort 或 `NATIVE_EXIT pid=27`。
+
+该持久请求不能归因为 UFS：UFS 在 340–1102 秒持续完成请求，样本中
+`timeout=0`、`ocs_err=0`、`dbto=0`、`recover=0`；软件锁累计
+`lock_wait_ms` 从 4.39 秒升至约 13.77 秒，最大 30.327 秒，没有下降。
+H584 的结论是：
+
+1. ChronoServices 跳过 hook 的对象返回 ABI 必须返回 `nil`，否则会进入
+   selector fatal；
+2. 修复后才到达 ActivityKit 的 BoardServices 同步 XPC 等待；
+3. 该请求在观测窗口内不返回，且当前证据没有指出具体活动订阅调用。
+
+证据：
+
+```text
+logs/H584/device/20261123-054356/H584-live.log
+  32867733cb39ee3d173501151b9260a803c1ee4665e565a0fc96ef44d4995616
+H584-tail32.bin
+  90418963b7aaff9622a7e87f274b1b65686fdf4948390200b2db2673309f593a
+H584-h103.txt
+  11311d4db7093149e555179889e35444a2a46a65c9c0f8da2817290721b3b716
+```
+
+H584 通过 UXC1 `424585` 正常重启到 Android，再进入 TWRP。随后清零
+`userdata_ios` 末尾 32 MiB，回读仍为
+`83EE47245398ADEE79BD9C0A8BC57B821E92ABA10F5F9ADE8A5D1FAE4D8C4302`。
+下一轮只增加 BoardServices/ActivityKit 同步请求的 sender、service name 和
+selector 观测，不改变 ChronoServices 返回值或显示路径。
