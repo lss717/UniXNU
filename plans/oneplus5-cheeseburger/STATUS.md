@@ -23783,3 +23783,23 @@ H541 包中把旧 observer `9a7d296b5e6182cdb445294338236497d141253c` 替换为
 H544 observer，保留 A540Trace `e874b48ff6795c4c7008a9d4fa022d794585680a`
 和其余模块。验收仍是 `h541_did_finish_return`、
 `h542_after_did_finish`、窗口/scene 状态及随后的 content/present 链。
+
+H544 构建与静态核验：
+
+```text
+NativeMetal commit        67216eb
+superproject source       bbf87e54
+observer SHA-256         3159b70c484c011d87593bb7fbea0726db530a1ec20850577a132c409cbb9bd9
+observer CDHash          9c03faf166214716e0e9d4846d1ab66c594819e4
+raw addon SHA-256        f46b4265e5647741e4ba8332b3275c7722b243c5f298fd4001d5cafbf738a837
+GPU addon SHA-256        ea5cf71a243dc09185602dd5d63d4c935b6cddd325d7e05c4d65c115cac0b851
+owner trust SHA-256      d38fb0c2271f62eefa2ad1f090c717a58970c39b76bb9d1c26e1922b9e1a8eb7
+payload SHA-256          5b2a4f6c5965a4e5fb541190293b913a3e3add20493992678488fce2c13bb781
+boot SHA-256             b29c625f7c1f00ad1611b459fd6804f9029464a4ca4647e3072aab7006292dcd
+boot.json SHA-256        8121d51c0eaa56e982e43956b31137fa632c993aa6d238ac66107d808f908891
+```
+
+observer strict codesign 与 arm64 检查通过；稳定 addon 10 项中只有 observer
+变化，trust owner 仍为 93 项并同时保留 A540Trace。payload 的 kernel、ADT、
+Data seed 和 TOML 与 H541 一致，bootargs 最坏 `1016/1024`，boot JSON
+`problems=[]`。状态为 `H544-built-static-verified-device-pending`。
