@@ -23803,3 +23803,46 @@ observer strict codesign 与 arm64 检查通过；稳定 addon 10 项中只有 o
 变化，trust owner 仍为 93 项并同时保留 A540Trace。payload 的 kernel、ADT、
 Data seed 和 TOML 与 H541 一致，bootargs 最坏 `1016/1024`，boot JSON
 `problems=[]`。状态为 `H544-built-static-verified-device-pending`。
+
+#### H544 真机结果：跳过 SetupManager init 过深，对象未初始化即崩溃
+
+H544 的 boot ID 为 `21788df6`。SystemStatus bypass 仍然有效：
+
+```text
+419.259656 h541_did_finish_enter pid=27
+420.063944 h542_status_server_bypass_enter pid=27
+420.272499 h542_status_server_bypass_return pid=27
+423.977079 ca_context_remote_create contextId=0x2364d0ab
+427.501622 uiwindow_set_hidden window=status visible=1
+430.913783 h544_setup_manager_init_bypass object=0x300cf6af0
+432.073108 NATIVE_EXIT pid=27 status=0x6 sender=27/SpringBoard
+```
+
+跳过 `SBSetupManager init` 后约 1.16 秒即退出。对象尚未安装原 init 中的
+weak table、map table、migration observer 和其它状态，后续调用因此不能
+继续。该轮只证明此方法不能整体替换，不能据此判断 SetupAssistant 本身的
+最终状态。
+
+H544 产物：
+
+```text
+observer SHA-256         3159b70c484c011d87593bb7fbea0726db530a1ec20850577a132c409cbb9bd9
+observer CDHash          9c03faf166214716e0e9d4846d1ab66c594819e4
+GPU addon SHA-256        ea5cf71a243dc09185602dd5d63d4c935b6cddd325d7e05c4d65c115cac0b851
+owner trust SHA-256      d38fb0c2271f62eefa2ad1f090c717a58970c39b76bb9d1c26e1922b9e1a8eb7
+payload SHA-256          5b2a4f6c5965a4e5fb541190293b913a3e3add20493992678488fce2c13bb781
+boot SHA-256             b29c625f7c1f00ad1611b459fd6804f9029464a4ca4647e3072aab7006292dcd
+boot.json SHA-256        8121d51c0eaa56e982e43956b31137fa632c993aa6d238ac66107d808f908891
+```
+
+### §214 H545：让 SetupManager 正常初始化，只跳过云配置 UI 判断
+
+H545 撤回 H544 的 `SBSetupManager init` 整体替换，保留原始 init 和
+migration observer 注册。只增加
+`-[MCProfileConnection shouldShowCloudConfigurationUI]` 的 `NO` 返回，使
+`Internal_BYSetupAssistantNeedsToRun` 不进入 activation-record 和 migration
+同步查询。H543 的 wait hook 继续保留为防御性后备，但本轮验收要求先看到
+`h545_cloud_config_ui_bypass`，不能把未命中当成成功。
+
+稳定 10 项 addon 仍以 H541 最终包为基线，只替换 observer；trust 用新
+observer CDHash 替换 H541 的旧 observer，并保留 A540Trace 及其余项。
