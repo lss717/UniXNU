@@ -135,3 +135,4 @@ springboard-late-union.patch
 exit-reason-signal-source.patch
 threadsignal-exception-source.patch
 psignal-uthread-probe.patch
+springboard-abort-snapshot.patch
