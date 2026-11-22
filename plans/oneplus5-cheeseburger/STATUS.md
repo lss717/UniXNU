@@ -24093,3 +24093,35 @@ SHA-256 为 `878ef3b71ee1da34ee3a04f0da7fbe89ed5c2f17142970aa1a0993d9f344e419`�
 本轮 UFS 快照保持 `ocs_err=0`、`lock_timeout=0`、`seq=done`，
 没有用户态结论依赖 UFS 软锁或请求完成异常。状态更新为
 `H548-device-sentinel-interpose-missed`。
+
+### §218 H549：在 SetupManager init 返回后直接采样主线程
+
+H549 保持 H548 的用户态行为和无效 interpose 不变，只增加观测。swizzle 的
+`-[SBSetupManager init]` 调用原实现并正常返回后，Observer 将当前主线程的
+Mach thread port 交给一个 detached 采样线程，在约 1、2、4、7 秒分别调用
+`thread_get_state(ARM_THREAD_STATE64)`，记录 PC、LR、SP、FP、返回值和状态字
+数量。采样线程不修改主线程状态，也不替换 setup 调用；目的是覆盖此前两次
+60 秒级 kernel sampler 之间、init 返回后约 7–8 秒内发生的 SIGABRT 窗口。
+
+H549 构建与静态核验：
+
+```text
+NativeMetal commit        13b4e15
+superproject source       b72b478e
+observer SHA-256         2d0d6b6b3a9cf5401c13038cb8fd8b58fe28041918ec6422ff57f3f916e6ac20
+observer CDHash          60281fd88653ef6d69bc3d9c9a45e82104c85ecd
+raw addon SHA-256        e6069b8dd6722080050656d49eae43f214115d8eb6a7377047a45ccb7fdce9ff
+GPU addon SHA-256        838c5a17f52fe0e30f0f3d5c03b9008588cfe6aaa45a7f4f0bf367776601a597
+owner trust SHA-256      abb9d8f17267ef5c47a1790ce3bc9d99b34a90cb27848c3111f57eee54b16135
+payload SHA-256          a6e302c95605a9236f2b8b7720e1de7313f480cdb45267e181eee7e933fbd826
+boot SHA-256             f735187926d3e05d5bda9dccd7cbec7f8cbd54bb3366c2a81fe3a950bfb8be01
+boot.json SHA-256        dff9bb1bce770cada9ff05b82c006efb36e0117255fd98e0476cc86557de4589
+```
+
+observer 为 arm64，strict codesign 通过，包含
+`h549_setup_return_sampler_start` 和 `h549_setup_return_main_sample` 标记。
+生产包仍使用 H541 的稳定 10 项结构，只替换 observer；93 项 owner trust
+包含 H549 observer CDHash 与 A540Trace CDHash，不含 H541 旧 observer。
+payload 从 H541 复制，只替换 trustcache 与 gpuaddon；bootargs 最坏
+`1016/1024`，boot JSON `problems=[]`。状态为
+`H549-built-static-verified-device-pending`。
