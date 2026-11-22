@@ -38,6 +38,7 @@ SPRINGBOARD_JOB = (
     "/System/Library/LaunchDaemons/com.apple.SpringBoard.plist"
 )
 LSD_JOB = "/System/Library/LaunchDaemons/com.apple.lsd.plist"
+CHRONOD_JOB = "/System/Library/LaunchDaemons/com.apple.chronod.plist"
 
 
 def pad(data: bytes) -> bytes:
@@ -141,7 +142,7 @@ def main() -> int:
         OBSERVER,
         (
             b"observer load process=",
-            b"build=H557",
+            b"build=H560",
             b"H492_CCS",
             b"filter bypass installed",
             b"filter bypass pid",
@@ -182,6 +183,10 @@ def main() -> int:
             b"h557_complete_startup_enter",
             b"h557_ui_run_enter",
             b"h557_post_run_snapshot",
+            b"h560_ipc_hooks",
+            b"h560_bsxpc_sync_enter",
+            b"h560_nsxpc_decode_enter",
+            b"h560_chrono_class_dump",
             b"methods installed add=independent state=",
             b"observer bypass pid=",
             b"application enumeration skipped",
@@ -347,6 +352,29 @@ def main() -> int:
             if key not in (SPRINGBOARD_JOB, LSD_JOB) and \
                     modified_cache["LaunchDaemons"].get(key) != value:
                 raise SystemExit("launchd cache changed unrelated job " + key)
+    chronod_job = daemons.get(CHRONOD_JOB)
+    if not isinstance(chronod_job, dict):
+        raise SystemExit("launchd cache has no chronod job")
+    before_chronod = copy.deepcopy(chronod_job)
+    if chronod_job.get("ProgramArguments") != [
+        "/System/Library/PrivateFrameworks/ChronoCore.framework/Support/chronod"
+    ]:
+        raise SystemExit("cached chronod job has an unexpected executable")
+    chronod_environment = dict(chronod_job.get("EnvironmentVariables", {}))
+    chronod_environment["DYLD_INSERT_LIBRARIES"] = (
+        "/private/var/ngpu/lib/SpringBoardSceneObserver.dylib"
+    )
+    chronod_environment["DYLD_FORCE_FLAT_NAMESPACE"] = "1"
+    chronod_job["EnvironmentVariables"] = chronod_environment
+    modified = plistlib.dumps(cache, fmt=plistlib.FMT_BINARY, sort_keys=False)
+    modified_cache = plistlib.loads(modified)
+    if modified_cache["LaunchDaemons"][CHRONOD_JOB] != chronod_job:
+        raise SystemExit("launchd cache chronod job did not round-trip")
+    allowed_jobs = (SPRINGBOARD_JOB, LSD_JOB, CHRONOD_JOB)
+    for key, value in daemons.items():
+        if key not in allowed_jobs and \
+                modified_cache["LaunchDaemons"].get(key) != value:
+            raise SystemExit("launchd cache changed unrelated job " + key)
     (XPC / "launchd.plist").write_bytes(modified)
     if not springboard_source.is_file():
         raise SystemExit("SpringBoard input is missing")
@@ -409,6 +437,11 @@ def main() -> int:
             "DYLD_FORCE_FLAT_NAMESPACE": environment["DYLD_FORCE_FLAT_NAMESPACE"],
         },
         "springboard_program_arguments": job["ProgramArguments"],
+        "chronod_job_before_environment": before_chronod.get("EnvironmentVariables", {}),
+        "chronod_environment": {
+            "DYLD_INSERT_LIBRARIES": chronod_environment["DYLD_INSERT_LIBRARIES"],
+            "DYLD_FORCE_FLAT_NAMESPACE": chronod_environment["DYLD_FORCE_FLAT_NAMESPACE"],
+        },
         "lsd": lsd_report,
         "files": [name for name, _, _ in files],
     }

@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "scripts/build-h436-springboard-bundle.py"
+OBSERVER = ROOT / "drivers/NativeMetal/SpringBoardSceneObserver.mm"
 
 
 def require(condition, message):
@@ -15,10 +16,12 @@ def require(condition, message):
 
 def main():
     text = BUILD.read_text(encoding="utf-8")
+    observer = OBSERVER.read_text(encoding="utf-8")
     for marker in (
         "cache.get(\"LaunchDaemons\")",
         '"/System/Library/LaunchDaemons/com.apple.SpringBoard.plist"',
         '"/System/Library/LaunchDaemons/com.apple.lsd.plist"',
+        '"/System/Library/LaunchDaemons/com.apple.chronod.plist"',
         '"/System/Library/CoreServices/SpringBoard.app/SpringBoard"',
         'environment["DYLD_INSERT_LIBRARIES"]',
         '"/private/var/ngpu/lib/SpringBoardSceneObserver.dylib"',
@@ -32,7 +35,7 @@ def main():
         '("xpc/lsd.real"',
         '("lib/LsdRecoveryAsync.dylib"',
         '"/System/Library/xpc/lsdwrap"',
-        'b"build=H557"',
+        'b"build=H560"',
         'b"H540_LS"',
         'b"h541_did_finish_enter"',
         'b"h541_application_state"',
@@ -70,6 +73,10 @@ def main():
         'b"h557_complete_startup_enter"',
         'b"h557_ui_run_enter"',
         'b"h557_post_run_snapshot"',
+        'b"h560_ipc_hooks"',
+        'b"h560_bsxpc_sync_enter"',
+        'b"h560_nsxpc_decode_enter"',
+        'b"h560_chrono_class_dump"',
         'b"methods installed add=independent state="',
         'b"application enumeration skipped"',
         'b"current process proxy skipped"',
@@ -90,6 +97,15 @@ def main():
     require("fastboot" not in text, "build script must not touch the device")
     require("partition" not in text, "build script must not touch a partition")
     require('"/bin/sh"' not in text, "H436 must not use a shell trampoline")
+    for marker in (
+        '!strcmp(process, "chronod")',
+        "install_chronod_ipc_hooks",
+        "trace_bsxpc_send_synchronously",
+        "trace_nsxpc_decode_message",
+        "dump_chrono_classes",
+        "build=H560",
+    ):
+        require(marker in observer, f"H560 chronod observer missing: {marker}")
     print("H436 SpringBoard bundle wrapper packaging gate: PASS")
 
 
