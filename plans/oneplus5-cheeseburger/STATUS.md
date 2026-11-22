@@ -22948,3 +22948,81 @@ payload 与 H534 的 kernel、ADT、scratch Data 和 `unixnu.toml` 相同，
 只有 GPU addon 与 owner trust 不同。trust 从 86 项扩为 87 项。bootargs
 仍为 `1008/1024`，最坏 `1016/1024`，boot JSON `problems=[]`。状态为
 `H535-built-static-verified-device-pending`。
+
+#### H535 真机结果：SpringBoard 越过首个等待，但后续 lsd 请求再次滞留
+
+H535 的内核 boot ID 为 `2118caef`。H103 尾环保留了确切的 observer
+加载证据：
+
+```text
+221.029512 NATIVE_MTL: observer load process=SpringBoard pid=27 build=H535
+```
+
+CDC 在约 280 秒接入。样本 6060 的 SpringBoard request 为
+`req=30211/-1/- q=1 ld_reply=2`，样本 6090 变为
+`req=62979/109/profiled q=0 ld_reply=2`，说明 H533/H534 最初的
+LaunchServices observer 等待没有继续保持原样。主线程在样本 6060
+的 PC 也不在 `_ulock_wait2`。
+
+但启动没有继续到根窗口。样本 6150 产生新的 target port：
+
+```text
+625.116939 req=44811/99/lsd.real q=1 sr=1 so=2 ld_reply=2
+629.344117 lsd receive=0x4903 seen=1 q=1 match=1
+629.379369 NATIVE_TARGETWAIT seen=0 count=0
+```
+
+此后到样本 6240、约 842 秒，同一 `44811/99/lsd.real` 请求仍是
+`q=1 ld_reply=2`。H533 在 580.240890 秒已有 root window，H535 到
+900 秒仍没有 root/status window、host context、content、present 或
+`fr=1`。因此 SpringBoard 的第一处安装已经改变执行阶段，但 lsd
+仍没有消费或回复随后到达的请求。
+
+H535 在 `920.899421 s` 由 UXC1 request `424535` 正常重启。证据：
+
+```text
+logs/H535/device/20261122-080809/
+H535-live.log
+  16b0619fc8213cb29045be1b7f8c3b51cd7e6c5e6d68c8b5340d820bc3d17852
+H535-tail32.bin
+  5eb9d989a75f4140d652d3843d9097ba247d9190880e960f88a32b254c30bb18
+H535-h103.txt
+  f71f160e547104a1a4ee59de0588010731d217e1593b60e48dd9ba266d99ff8
+```
+
+分类为 `H535-observer-load-confirmed/second-LS-request-stuck/no-root`。
+
+### §206 H536：在 lsd dyld 完成后重试 journal-recovery 旁路
+
+现有 `LsdRecoveryAsync` 与 H533 的 SpringBoard 旁路有相同安装缺陷：它在
+constructor 内直接用 `NSClassFromString` 查找
+`_LSInstallProgressService`。H536 只改变该 shim 的安装时序：
+
+- constructor 只创建 lsd 进程内的 detached worker；
+- worker 每 100 ms 重试，最多 300 次；
+- 用显式 CoreServices `dlopen` 和 `objc_getClass` 获取类及
+  `performJournalRecovery`；
+- 安装成功后继续跳过原 recovery，不引入新的恢复行为。
+
+SpringBoard observer、A540Trace、kernel、ADT、Data seed、TOML 和 boot
+arguments 均保持 H535。H536 addon 从 H535 的 10-entry addon 复制，
+只替换 `lib/LsdRecoveryAsync.dylib`；其余 9 项逐字节相同。
+
+源码与产物：
+
+```text
+NativeMetal commit       ab3c7f1
+superproject commit      31ce1697
+LsdRecovery SHA-256      4a7aa94b2c2eb33e74a4a5febe4c9b8a0982e77214a03a4e21df3d3f8f9828a5
+LsdRecovery CDHash       105bc81ed1f3d8acc7c7da493be0e2261dadd89a
+GPU addon SHA-256        cfe597dc3f7f49934a785401a958933199eb6d5676d3b5169ad57879a1fb11b5
+owner trust SHA-256      0aea9f0c528fe1242b3a37a82d637fc8f9895e65ea8daa5d9e1d9dbea07cc2c3
+payload SHA-256          a3fe96c639233a17dbefdce6dd1501c8b911cf78df9537a972bdf30ac232d748
+boot SHA-256             d19149d4fcf56ed79e48fac648717ef90d201cca9d8606e3c00601783e1fa968
+boot.json SHA-256        9723ac59d6a78e435f042c40a0d8c1e09e61faca46e66973e41bbd7a365ba08b
+```
+
+payload 与 H535 的 kernel、ADT、scratch Data 和 `unixnu.toml` 相同，
+只有 GPU addon 与 owner trust 不同。trust 从 87 项扩为 88 项。bootargs
+仍为 `1008/1024`，最坏 `1016/1024`，boot JSON `problems=[]`。状态为
+`H536-built-static-verified-device-pending`。
