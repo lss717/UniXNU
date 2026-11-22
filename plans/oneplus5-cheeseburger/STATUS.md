@@ -24898,3 +24898,164 @@ hash 并保留 A540Trace。payload 从 H556 复制，只替换 trustcache 与 GP
 addon；kernel、ADT、Data seed 和 TOML 不变。bootargs 为
 `1008/1024`，最坏 `1016/1024`，boot JSON `problems=[]`。状态为
 `H557-built-static-verified-device-pending`。
+
+#### H557 真机结果：ChronoServices 请求持续到 SpringBoard 退出
+
+唯一设备 `16149951` 通过一次 `fastboot boot` 启动 H557。CDC transport
+boot ID 为 `375C6C54`，kernel boot ID 为 `229a8ed3`。首个 SpringBoard
+PID 27 的直接时间线为：
+
+```text
+393.904757 h557_ui_run_enter
+398.609125 h541_did_finish_enter
+526.402313 h557_complete_startup_enter scene=0x100b47840
+530.738831 h553_application_controller_init_return
+541.893512 h557_ui_controller_shared_enter
+541.928549 h557_icon_controller_init_enter
+544.057638 h557_chrono_subscribe_enter object=0x30341dff0
+1631.281458 NATIVE_EXIT pid=27 comm=SpringBoard status=0x6
+```
+
+从 556 到 1581 秒，六次同 PID 采样都保留同一个请求端口
+`req=14339/91/chronod`、`sr=1`、`so=1`、`ld_reply=0`，端口队列为空。
+主线程候选 `tid=290` 从 930 到 1581 秒持续处于同一 Mach receive 帧
+`pc=0x1cc6dcb58 lr=0x1cc6e0224`；538–1581 秒多个轮次的首线程栈仍以
+`mach_msg2_trap -> xpc_connection_send_message_with_reply_sync ->
+BSXPCServiceConnectionMessage sendSynchronouslyWithError: ->
+CHSChronoServicesConnection _subscribeToExtensions` 为尾部调用链。缺少
+`h557_chrono_subscribe_return`、`h557_icon_controller_init_return`、
+`h557_ui_controller_shared_return` 和 `h557_complete_startup_return`。
+
+这里不能只用“文本未出现”作结论，但 PID 27 的原请求端口持续存在，主线程
+候选帧没有切换，且进程在 1631 秒直接以 SIGABRT 退出。因此可以把首个
+SpringBoard 实例分类为
+`chrono-subscribe-unreturned-until-process-exit`。observer 没有打印
+`h557_ui_run_return`，也没有打印 `h550_uncaught_exception`，首个
+SIGABRT 的直接异常文本仍需 crash report 才能确认。
+
+同一次启动随后进入另一条容易混淆的崩溃链：
+
+```text
+1631.734684 SpringBoard[218] exec
+1696.027317 SpringBoard[218] exit status=0x6
+1703.566996 SpringBoard[225] exec
+1728.598569 NATIVE_TRAP pid=225 exc=6 code=0x1 sig=5
+1728.779330 Client code must invalidate <BSSimpleAssertion:0x302d8edc0>
+           (<extensions: AE3FF05F-C32F-4EA8-8151-89A5A54A56B6>)
+1772.142173 pid=229 在同一 BaseBoard 断点 sig=5
+1772.706550 <extensions: C1436C60-8102-493F-9BE3-DF9A130F1D05>
+1832.855837 SpringBoard[240] exit status=0x6
+1852.366104 Process[240] crashed: SpringBoard. Too many corpses
+```
+
+PID 225/229 的断点解析到
+`/System/Library/PrivateFrameworks/BaseBoard.framework/BaseBoard +0x1f1e8`，
+并且 `NATIVE_TRAP_STR` 明确给出未失效的 extension assertion。它们发生在
+原 PID 27 退出后的冷重启里，不能反向混入 `_subscribeToExtensions`
+的首个阻塞证据。它们也说明“SpringBoard 重启”不是恢复到同一启动阶段的
+等价对照。
+
+同一 boot 的 UFS 状态在 1587 秒为 `seq=274521 done=274520
+timeout=0 ocs_err=0 dbto=0 recover=0 recovered=0 flight=1`；到
+1812 秒仍为 `fr=0`。软件锁累计等待未下降，1818 秒左右的活动采样仍可见
+`lock_waiters>0`，但命令持续完成，没有 OCS、doorbell timeout、恢复或
+watchdog fired 证据。`watchdog_seen` 仍是采样计数。
+
+现场先停止 CDC 采集，再通过一次 UXC1 request `55701` 回到唯一 TWRP
+`16149951`（`cheeseburger`、`3.4.0_9-10-mauronofrio`）。尾部 32 MiB
+ring 的 header 为 `slot_boot=229a8ed3`、`slot_build=H473`、
+`uptime_s=1828`，只读拉取成功；它补充到 1858 秒，晚于 CDC 停止点。
+这些日志只按内容时间使用，不把 CDC 与 TWRP 两个采集段当作无缝流。
+
+```text
+H557-live.log       FB4DD66C7ADAE457C9EB5706D21BAC401D820CBE2183877DFCDC69FCE6B46DC8
+H557-tail32.bin     DDDDF05BA85B4CF3A3B4BED8E940A02542E487BD95B3E066DC6744584224BF5B
+H557-h103.txt       07F907D25854808F675C1F28C449E3AA6250C2CCC73FA42ADDE05BFBBFD76E2F
+```
+
+完整日志目录：
+`display-first-frame/logs/H557/device/20261122-1710-live/`。
+
+#### 本轮新增操作坑
+
+- `observer load ... build=H557` 与 kernel 的 `NATIVE_DISPLAY_GATE
+  build=H473` 是不同组件标记；H557 沿用 H473 内核，不能把两者的数字
+  不一致误判为旧 addon。
+- 长时间固定等待不能替代因果证据。H557 已经证明原 PID 的请求在退出前
+  没有返回，下一轮应同时采样接收方，而不是继续延长相同观测。
+- PID 27 的 SIGABRT、PID 218/240 的 SIGABRT，以及 PID 225/229 的
+  BaseBoard assertion 属于不同进程实例。第三方 crash-loop 不能与首个
+  ChronoServices 等待混成同一条因果链。
+- `NATIVE_TRAP_STR` 已能直接把同一个 BaseBoard 断点关联到
+  `BSSimpleAssertion ... extensions before dealloc`。同类崩溃应优先读取
+  `NATIVE_TRAP_IMAGE_ROW` 和 `NATIVE_TRAP_STR`，不要只凭 signal 编号猜。
+- SpringBoard 被内部 watchdog/异常处理终止时，可能先出现 `NATIVE_EXIT`
+  而没有 `NATIVE_TRAP` 或 uncaught-exception 行。只能结论到“进程在调用
+  未返回时退出”，不能反推未观测到的异常原因。
+
+### §227 H558：采样 ChronoServices 接收方
+
+除新增只读采样外，H558 保持 H557 的 observer、启动旁路、Data seed、TOML
+和显示逻辑不变，只在既有 `native-probe-quiet=2` 采样轮次新增 `chronod`。每次
+SpringBoard/display gate 采样后立即采样 `chronod`，因此下一轮可直接比较：
+
+- SpringBoard 的 `req` receive name 与 chronod 的 `rcv` name；
+- chronod 是否在对应端口上等待、是否已有 queued message；
+- chronod 首线程的 `NATIVE_SBFRAME` 栈和等待地址；
+- `h557_chrono_subscribe_return` 是否在请求发出后出现。
+
+若 chronod 接收端口与 SpringBoard 的请求端口相同，而 chronod 没有对应
+waiter/reply，故障可收敛到接收服务的处理或回包。若端口不同，则说明
+launchd 已撤销或重建端口，下一步追 bootstrap 注册生命期。若
+`h557_chrono_subscribe_return` 出现，则立即停止接收方阻塞假设，转而追
+启动完成、scene/window contents、CAContext 和 backboardd 提交。
+
+观测源码提交为 `f2a8a7db`（`feat(display): sample ChronoServices
+receiver`）。构建状态由后续打包记录补充。
+
+#### H558 构建与包
+
+H558 的生产 addon、trust cache、Data seed、TOML 和显示路径沿用 H557，
+仅内核中的只读 sampler 增加 `chronod`，并把 kernel build marker 更新为
+`H558`。Mac 构建树与 Windows 均为 `f2a8a7db`，构建时使用
+Python 3.12 和 mtools。
+
+```text
+superproject source        f2a8a7db
+unlinked XNU SHA-256       a9140a55b7f78d689dec99b29396912dc5af1f8e250b0124246331b217c01d4b
+prelinked kernel SHA-256   0d5fba55022097d4e406cea3b5581d09a95e598787ecd07788c0edae7b8501fb
+observer SHA-256          b307828c7ef904e0b436cce61255e7a96abc9b224ec79474eb8495dbee68ae80
+observer CDHash           4ac77dbc45b84d34d49503f4574fac0dc485cdca
+raw addon SHA-256         e3e727348caae6450eae93eff0ccdcbf191a0ca39514f45fe61b04c22be37ee1
+GPU addon SHA-256         3929afd44d1e7cd755ee646c3e27413691550f451ebfc58fc97a2f7b41847c73
+owner trust SHA-256       9ce6e7c0b3f05f92178df444a7cccc7a853803c8fd032ab19d771569c9f61dce
+payload SHA-256           09a846c9aab7de859d3e1027996b954e50ce8d008d78b66fa23c0d9a8e21509b
+boot SHA-256              7234acd38b2eef1e49d294248c8a2ecd6228e31c0087ae7305692b26468e053c
+boot.json SHA-256         aba56ce490197b7748f3ad4f30793b4e8b6e979b3322cdd9af31b5ce2e4aa0a2
+```
+
+payload 只读回读得到
+`kernel.macho=0d5fba55…`、trust cache `9ce6e7c0…`、GPU addon
+`3929afd4…`，均与上述输入一致。`unixnu.toml` 原有
+`native-probe-quiet=2` 生效，因此新增的 chronod 采样会在约 240 秒后按
+既有低频轮次执行。bootargs 为 `992` bytes，加 `zap-base` 后为
+`1012/1024`，最坏 `1020/1024`；boot JSON 为 `problems=[]`。
+
+Windows 产物目录：
+`display-first-frame/builds/H558/`。状态为
+`H558-built-static-verified-device-pending`。
+
+启动前在唯一 TWRP `16149951` 上只清零 `userdata_ios` 最后 32 MiB，
+4 KiB 块起止为 `12892347 + 8192`。原分区回读和本地 pull 均得到全零
+SHA-256
+`83EE47245398ADEE79BD9C0A8BC57B821E92ABA10F5F9ADE8A5D1FAE4D8C4302`。
+
+本轮新增操作坑：
+
+- `macos-build-kernel.sh` 成功结束时，`out/cheeseburger/kernel/kernel.macho`
+  仍是上一轮 prelink 产物；本次它保持
+  `7fb58f79…`。必须再运行 `unixnu build prelink`，确认该文件变为新的
+  `0d5fba55…` 后才能打包。不能把“脚本退出 0”当成 kernel 已更新。
+- 不要只比较外层 prelinked kernel。先确认本轮 unlinked XNU 产物为
+  `a9140a55…`，再让 prelink 生成新内核；这两层分别验证源码确已重编译和
+  最终装载体确已替换。
