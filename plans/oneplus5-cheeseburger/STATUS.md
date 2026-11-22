@@ -26851,3 +26851,71 @@ CDC/UXC1 合同均 PASS，`problems=[]`。状态为
 名称路径出现 `h588_folder_name_localization_bypass`，并确认主线程离开
 `_ulock_wait2`。若图标模型继续阻塞，应记录新的栈和 selector，不把名称旁路
 扩大成整个 icon model 旁路。
+
+### §273 H588 真机：文件夹名称旁路生效，默认 widget intent 成为新停点
+
+H588 的 kernel boot 为 `2274942c`。同 boot 的 H103 确认
+`observer load process=SpringBoard pid=27 build=H588`。595.990 和 599.355 秒的
+两次 ActivityKit init 都返回；604.144 秒命中
+`h588_folder_name_localization_bypass ... name=Folder`。
+
+新栈在 625 和 693 秒一致：
+
+```text
+_ulock_wait2
+-> LaunchServices Database Context::_get
+-> LSApplicationExtensionRecord initWithBundleIdentifier:requireValid:platform:error:
+-> SBHContainingBundleRecordForWidgetWithBundleIdentifier
+-> SBHWidget containerBundleIdentifier
+-> SBIconController configurationDataForDataSource:ofIcon:
+-> SBHIconManager _archivedIntentForDataSource:inIcon:
+-> SBHIconManager _loadAndSaveDefaultIntentIfNecessaryForWidget:ofIcon:viewController:
+-> SBHIconManager iconModel:didAddIcon:
+-> SBHIconModel addIcon:
+-> SBHIconModel layout
+```
+
+`req=25603/99/lsd.real q=1` 从 550 秒持续到 702 秒，`fr=0`。因此 H588
+越过默认文件夹名称查询，但图标模型在加载默认 widget intent 时再次等待
+LaunchServices。日志哈希：
+
+```text
+H588-live.log      98a0f00ed06dccb75ad7c772743bc1076df03a6f9d4c97b73c2ec27aeff14c73
+H588-tail32.bin    cbf761441f4ba29b2a4b574d202048d42579363a5cfc73fffb76e070934c51ab
+H588-h103.txt      7bec66187dd2c067b288eb6d96db9c639c503f82860a2c921296b706c3c0da07
+```
+
+随后清零末尾 32 MiB，固定回读 SHA 保持
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+
+### §274 H589：跳过默认 widget intent 加载
+
+H589 只 hook
+`-[SBHIconManager
+_loadAndSaveDefaultIntentIfNecessaryForWidget:ofIcon:viewController:]` 并直接
+返回。该路径只为 widget 创建/保存默认 intent，不影响内核、硬件或主显示窗口。
+
+源码 head `10f9dc6d`，NativeMetal `24e6885`。kernel、Data seed 和 988-byte
+bootargs 继续与 H588 字节级一致。H589 构建与静态检查已 PASS：
+
+```text
+GPU addon                 74cb8c7591a0f9b50968e76e4158cb7617c842dfc0ae9209ccd970e444ef04bb
+owner trust               c304fe64a380583fdbc389f42c97b8a02e981183d5f8c27e720d0bf0c9826fbb
+payload                   99ea55771f8805f5d29f41c37a6d63d4dde60c7735e4beb2599e584fe348b14f
+boot                      a3f98a7347d107f2a22784f82ae5ed44fabfe958b0974e3c7eecef50076e076c
+boot.json                 7b9001305751829a67855764b685e4fcff198a6b9dfe5af2549bb41c46a0e078
+ADT                       a060738dc87670a69fe0735e180e86fbe5ae14e6e6dbd33645cc357d223b26cb
+observer CDHash           25174757309c28544188b16823d1325503f690f3
+SpringBoard CDHash        6d667a029eef784517158012af93bc61a0f4c200
+H407 UEFI                 9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6
+```
+
+payload 回读、988-byte bootargs（`zap-base` 后 1008/1024，最坏 1016/1024）、
+owner trust 7 项、observer/SpringBoard codesign、bundle gate、boot 布局与
+CDC/UXC1 合同均 PASS，`problems=[]`。状态为
+`H589-built-static-verified-device-pending`。
+
+设备门要求 `h589_default_widget_intent_hook installed=1`，然后
+`h589_default_widget_intent_skip` 命中，且主线程离开
+`SBHIconModel addIcon:` 的 LaunchServices 锁。若仍停在同一锁，需先找持锁线程；
+若继续到新的启动边界，则记录新停点后继续。
