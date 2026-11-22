@@ -23231,3 +23231,103 @@ observer 为 arm64、ad-hoc 签名，strict codesign 通过；owner trust 为 90
    `_workQueue_currentProcessProxyWithOutURL:` 的 LS store 等待；
 3. 检查 SBMainWorkspace 初始化、根窗口、host context、content、commit、
    present 和 `fr=1`，不得把合成自检混入 SpringBoard 产品首帧。
+
+#### H538 真机结果：根窗口和 host 出现，但安装器没有装上已有旁路
+
+H538 的 boot ID 为 `214cd33b`。root window 在 `588.568111 s` 可见，
+状态栏在 `592.087657 s` 可见，`CALayerHost` 在 `591.342900 s` 触发绑定
+回调并在 `591.702671 s` 变为可见。到 `599.51 s`，显示服务器列出两个
+context，根层均为 `contents=-`。
+
+从 `629.555645 s` 到 sample 6390 的 `1214.839223 s`，新的
+LaunchServices request 持续为：
+
+```text
+req=63499/99/lsd.real q=1 sr=1 so=2 ld_reply=0
+```
+
+没有 content setter、layer commit、context slot、commit wait、present、
+`display_surface` 或 `fr=1`。sample 6180 的主线程仍位于：
+
+```text
+_LSContextInitCommon
+LaunchServices::DMFSupport::reloadAllPolicies
+getNotificationCenter
+-[LSApplicationWorkspace addObserver:]
+FBSApplicationLibrary _initWithApplicationWorkspace:configuration:
+SBApplicationController init
+SBMainWorkspace _finishInitialization
+```
+
+这说明 H538 把三个方法作为同一安装批次是一个错误：只要
+`FBSApplicationLibrary` 或第三个 selector 当时不可用，原有的 addObserver
+和 enumeration 旁路也不会安装。live 与 TWRP 尾环都没有 `H538_LS`，与
+这一解释一致。H538 的两处窗口事件不能证明 current-process proxy 旁路
+已经执行。
+
+本轮在 `1306.397719 s` 由 UXC1 `424538` ACK 并正常重启，`MACH Reboot`
+后 Android `boot_completed=1`。证据：
+
+```text
+logs/H538/device/20261122-091953/
+H538-live.log
+  b29bc873a25a828675acf61bc60b8993a944b6fc58068250feb5bbae724c1e44
+H538-reboot.log
+  2d33a0fd2e597686f6768fcfdd5c3fca74986b12901624edd5a3aa2c7dd749c8
+H538-live.frames.bin
+  e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+H538-tail32.bin
+  ff8cb72d6c534ccb1e02efc4043fb5c23dd227cd10ebf96494d6dc3b85f4fdb9
+H538-h103.txt
+  f7e48905533b0b12820bf60f5221865c74e62bb6cb2068e2fca7dfd1b17c5867
+```
+
+H103 窗口的 `msg_bytes=0`，只能从 delta slots 得到 1293-1303 秒的尾部，
+因此本轮 canonical 行为来自停采前 live log 与单独的 UXC1 reboot log。
+分类为 `H538-root-and-host/incomplete-installer/LS-request-stuck`。
+
+### §209 H539：独立安装并发布 LaunchServices hook 状态
+
+H539 保留三项目标行为，但取消“三方法全有才安装”的耦合：
+
+- addObserver 与 legacy-SPI enumeration 各自在 method 可见时立即安装；
+- current-process proxy 在 `FBSApplicationLibrary` 和 selector 可见时独立安装；
+- CoreServices、FrontBoardServices、class、method、各 IMP 状态组成一个
+  原子位图；
+- observer 启动独立 reporter，每 30 秒通过已有的 A540 ABI `line()` 路径输出
+  `ls_installer sample=<seconds> state=0x...`，因此不再依赖 CDC 是否在
+  constructor 执行前已经接入。
+
+内核、ADT、Data seed、TOML、lsd recovery shim、A540Trace 和其他 addon
+entry 均保持 H538。H539 的 10-entry GPU addon 从 H538 复制，只有
+`lib/SpringBoardSceneObserver.dylib` 改变；其余 9 项的编码、长度、CRC 和
+存储方式逐项相同。
+
+源码与产物：
+
+```text
+NativeMetal commit        8d93e56
+superproject commit      ff70000d
+observer SHA-256         23e32b4bd2d54a922d1c04a956734a9b0b46b9bc7549ba74336461599bc12ba9
+observer CDHash          483182f0a59ad78f663ff7b21eefbbeee6a713c9
+raw addon SHA-256        89b96ee652ace1e5f6376c8b929eb3f9989d2194a87c6bfb8455ea65bb2071f5
+GPU addon SHA-256        d4397f91c7e0b7283a35c65719fe3d2c485b48df3d66b668e927a041483bb089
+owner trust SHA-256      1701b6f1f394fe04c456ecf3250b701ae177cfd07657be7215591e30bcc9f922
+payload SHA-256          217fc47e9999b670e978cc2c929cad824aa15b29b740eb0e9cbe857d03a30b5f
+boot SHA-256             39b7377d8db92e306d079ff426bf095ca94dc83bc4813084bad28936df51371d
+boot.json SHA-256        22e4be1cf2c3ec10bbed92f5bf6d54939d9daa831a14b02c94c6bf84d7c0befc
+```
+
+payload 与 H538 的 kernel、ADT、scratch Data 和 `unixnu.toml` 相同，
+只有 GPU addon 与 owner trust 不同。owner trust 从 90 项扩为 91 项；
+observer strict codesign 通过；bootargs 为 `1008/1024`，最坏
+`1016/1024`，boot JSON `problems=[]`。产物位于
+`display-first-frame/builds/H539/`，状态为
+`H539-built-static-verified-device-pending`。
+
+启动前将再次清零并回读 `userdata_ios` 末尾 32 MiB。验收顺序：
+
+1. 在 CDC 接入后的任一 `ls_installer sample=` 中读取状态位图；
+2. 确认 `build=H539`、H539 addObserver/enumeration/proxy 的实际调用标记；
+3. 对比 H538，确认主线程离开 `addObserver:`；
+4. 检查根窗口、host context、content、commit、present 和 `fr=1`。
