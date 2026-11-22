@@ -129,7 +129,7 @@ static uint32_t gH103SlotCursor;
 // boot wrote it.  The header alone is not enough: it is written after the
 // slot, and a late header write failure leaves a stale slots_written behind,
 // which made earlier logs mix slots from several boots.
-#define H103_BUILD "H558"
+#define H103_BUILD "H473"
 static uint64_t gH103BootId;
 static volatile int gH103Quiet;
 static volatile uint64_t gH103LastSlotTicks;
@@ -821,9 +821,6 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
         native_sb_pc_sample ("SpringBoard", 6000 + sample * 30);
         a540DisplayGate (6000 + sample * 30);
         // The kernel emits non-SpringBoard frame chains only for sample % 30 == 0.
-        // H558: pair SpringBoard's synchronous ChronoServices request with the
-        // receiver process, its waiters and the listening port state.
-        native_sb_pc_sample ("chronod", 12030 + sample * 30);
         native_sb_pc_sample ("lsd", 7020 + sample * 30);
         // Follow both per-user and system services; ordinal is not a fixed UID.
         native_sb_pc_sample_instance ("lsd", 10020 + sample * 30, 1);
