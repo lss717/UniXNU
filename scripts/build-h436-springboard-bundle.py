@@ -141,7 +141,7 @@ def main() -> int:
         OBSERVER,
         (
             b"observer load process=",
-            b"build=H550",
+            b"build=H551",
             b"H492_CCS",
             b"filter bypass installed",
             b"filter bypass pid",
@@ -162,6 +162,8 @@ def main() -> int:
             b"h550_sound_init_enter",
             b"h550_ringer_init_enter",
             b"h550_uncaught_exception",
+            b"h551_status_data_log_empty_init_enter",
+            b"h551_status_hooks",
             b"methods installed add=independent state=",
             b"observer bypass pid=",
             b"application enumeration skipped",
