@@ -26494,3 +26494,27 @@ H584 第一次 payload 曾使用设备仓当前默认参数，缺少
 `build=H584` 和 `h584_chrono_subscribe_skip_return_nil`，且不再发生
 `value` lookup 失败；随后记录 completeStartup return、catch、下一处终态故障或
 `fr=1`。
+
+### §265 H584 第一次发送：成功返回 Booting OKAY，但零接口
+
+H584 从 TWRP 经一次 `adb reboot bootloader` 进入 Fastboot，确认唯一设备为
+`16149951` 后，只执行
+
+```text
+fastboot -s 16149951 boot H584-boot.img
+Sending 'boot.img' (79314 KB) OKAY
+Booting OKAY
+```
+
+没有执行 flash、erase 或分区写。发送后持续观察 125 秒，Windows 未出现
+`VID_1209:PID_0001` CDC、ADB、Fastboot、QDLoader，也未出现匹配
+`16149951` 的未知 USB 设备。由于 USB 接口在早期即消失，本轮没有
+H584 live **采集窗口**，不能据此判断：
+
+- `_subscribeToExtensions` 对象返回 ABI 修复是否命中；
+- completeStartup 是否继续；
+- 设备是在 UEFI、DarwinBoot、XNU 还是用户态复位。
+
+这只记为“镜像已发送，设备接口在采集开始前消失”。下一步只有两种有效恢复：
+等待设备自行重新枚举，或由用户物理重启/重新进入可用模式；在接口出现前不重复
+发送同一镜像，也不修改下一轮变量。
