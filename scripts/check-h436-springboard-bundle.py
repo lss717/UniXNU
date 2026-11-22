@@ -33,7 +33,7 @@ def main():
         '("xpc/lsd.real"',
         '("lib/LsdRecoveryAsync.dylib"',
         '"/System/Library/xpc/lsdwrap"',
-        'b"build=H585"',
+        'b"build=H586"',
         'b"H540_LS"',
         'b"h541_did_finish_enter"',
         'b"h541_application_state"',
