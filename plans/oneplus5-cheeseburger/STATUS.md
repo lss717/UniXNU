@@ -24030,3 +24030,29 @@ migration、safe-haven、launch-log 和 sentinel 状态更新。
 `applicationDidFinishLaunching:` 返回。若未命中该标记，则说明 dyld
 interpose 没有覆盖这个 import；若命中但回调仍不返回，则继续用同 PID 栈查找
 下一个同步点。
+
+H548 构建与静态核验：
+
+```text
+NativeMetal commit        3077a0d1
+superproject source       e0bc616a
+observer SHA-256         a1fda996acad8a756e97b7965ae61a61923cf4ac3c0d31c1b7cc0df2497e2d2b
+observer CDHash          5489d6f720c24a2456ee840b2b1b807810f5147e
+raw addon SHA-256        8402d9b87f3f3f0ce4008f49bbef281db3d8c62968c13d62521750d7781fc2a0
+GPU addon SHA-256        44798d6c71c7b263c42f1bc03f91abd54043dcd9d8d8a01f906f84380a95387d
+owner trust SHA-256      68bcda4fa092edd88461c01d7ef4b33b931749fa1cb213e032f984544af8aada
+payload SHA-256          b1d8367843a952d7fe96478060427a3ef6473f0ce73cad702d7b21389f742693
+boot SHA-256             29f60387dd66042c4b6673b3ac2d1d9ae5242d51bb44614fc5290df6b4614c39
+boot.json SHA-256        3759201b1227c4cba7f872105b4d902d87ae36aa160627f1a3e7e5c46bdaf85e
+```
+
+observer 为 arm64 且 strict codesign 通过。H548 的 raw addon 由构建器生成
+12 项，但不能直接替换生产包：稳定 10 项 addon 仍以
+`H541-gpuaddon.img` 为基线，只将
+`lib/SpringBoardSceneObserver.dylib` 替换为 H548 observer。93 项 owner
+trust 原地将 H541 的 `9a7d296b5e6182cdb445294338236497d141253c`
+替换为 H548 的 `5489d6f720c24a2456ee840b2b1b807810f5147e`，并保留
+A540Trace 的 `e874b48ff6795c4c7008a9d4fa022d794585680a`。payload 从
+H541 payload 复制，只替换 trustcache 与 gpuaddon；kernel、ADT、Data seed
+和 TOML 均未改变。bootargs 最坏 `1016/1024`，boot JSON
+`problems=[]`。状态为 `H548-built-static-verified-device-pending`。
