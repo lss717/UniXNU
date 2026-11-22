@@ -25189,3 +25189,49 @@ H559 kernel 当成 H557 的等价替换继续叠加改法。
   自己通过同设备启动门。
 - 内核版本字符串出现两次；归一化必须处理全部 build timestamp，不能假设
   只有一处。
+
+### §229 H560：在已验证 H557 payload 上观测 chronod
+
+H559 失败后停止重建 kernel，直接以 H557 payload 为基底。H560 只替换
+GPU addon 和 owner trust cache，未重编 kernel、ADT、UEFI 或 Data seed：
+
+```text
+NativeMetal commit        2d3b316
+superproject source       7b164568
+implementation source     96dae801
+overlay tooling           dad51b64
+kernel SHA-256            7fb58f798b632696ccb72a54d78e818ba890db681621bf272553fb2d5f9cb8ce
+ADT SHA-256               9fa9e5ba88b84546ef89f79b26bbd9a9cea5e881b8efebf2c2149d09259eb74d
+observer SHA-256          17cb189b021b6d2e5ece7717a883e05661f4add62ad9da1635b7ff75e706b4f8
+observer CDHash           8bfa84f63f639ed56023c0f28e4a2b9cd774ec49
+raw addon SHA-256         12b8c2898fa87df0b0e24c64d1fb972ad250fcd4936f9fd110dc7f9e04e166dd
+GPU addon SHA-256         2bc9087ecc20fc6e130e9431b19c52102aa4e648e8e0274eabcb211c8208ff4e
+owner trust SHA-256       7b0f750587aa0a17d8afb52c2b9cadd9b6db1685cf1fe2baa44df917a1aa2cdc
+payload SHA-256           7271aac9b26a113649740dfe36e47a3ad13fc5ab085b0fa94cadc0a6a50bb9a6
+boot SHA-256              a4142343981ba04791a0f7f2a738932696841fa976fad3b2df21776cbd8eb36a
+boot.json SHA-256         e751447226a94f345775a21dffb961695e9dda6317405ffee1c2a37d58f2af52
+```
+
+observer 在 `chronod` 分支只通过 `/dev/console` 输出，避免在 chronod 中
+打开加速器。它同时 hook：
+
+- `-[BSXPCServiceConnectionMessage sendSynchronouslyWithError:]`；
+- `-[NSXPCConnection _decodeAndInvokeMessageWithEvent:reply:flags:]`；
+- `NSXPCConnection` 的 Mach service 初始化和 `resume`；
+- `NSXPCListener` 的 Mach service 初始化。
+
+启动 5 秒后还会有限枚举 Chrono 相关类及名称含
+`subscr`/`extension`/`server`/`connect` 的方法。全部输出有固定上限。
+
+launchd cache 从原 21H461 cache 生成，SpringBoard、lsd 和 chronod 三个 job
+依次修改；其余 job round-trip 必须逐项不变。chronod 原
+`MallocStackLoggingDirectory` 保留，只增加
+`DYLD_INSERT_LIBRARIES=/private/var/ngpu/lib/SpringBoardSceneObserver.dylib`
+和 `DYLD_FORCE_FLAT_NAMESPACE=1`。modified cache SHA-256 为
+`10866140b8840e1377f9cf3e1151420df840e583e137104da8e21409d54af72d`。
+
+raw addon 有 12 项，生产 GPU addon 按 H557 白名单精确选为 10 项。payload
+内回读的 kernel、ADT、TOML 与 H557 相同；GPU addon 内 observer 和
+launchd cache 与上述新文件相同。owner trust 从 93 项变为 94 项。bootargs
+为 `988`，加 `zap-base` 后 `1008/1024`，最坏 `1016/1024`。状态为
+`H560-built-static-verified-device-pending`。
