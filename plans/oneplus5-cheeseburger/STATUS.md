@@ -23331,3 +23331,116 @@ observer strict codesign 通过；bootargs 为 `1008/1024`，最坏
 2. 确认 `build=H539`、H539 addObserver/enumeration/proxy 的实际调用标记；
 3. 对比 H538，确认主线程离开 `addObserver:`；
 4. 检查根窗口、host context、content、commit、present 和 `fr=1`。
+
+#### H539 真机结果：前两 hook 已证实安装，第三 selector 未找到
+
+H539 的 boot ID 为 `215c23ec`。CDC 接入后，带外安装位图持续给出：
+
+```text
+ls_installer sample=60  state=0x7f
+ls_installer sample=90  state=0x7f
+ls_installer sample=120 state=0x7f
+ls_installer sample=150 state=0x7f
+ls_installer sample=180 state=0x7f
+ls_installer sample=210 state=0x7f
+ls_installer sample=240 state=0x7f
+ls_installer sample=270 state=0x7f
+ls_installer sample=300 state=0x7f
+ls_installer sample=330 state=0x7f
+ls_installer sample=360 state=0x7f
+```
+
+`0x7f` 明确置位了 worker、CoreServices、workspace class、
+`addObserver:`、legacy-SPI enumeration、FrontBoardServices 和
+`FBSApplicationLibrary` class；`currentProcessProxy` 的 method-found 位
+`0x80` 没有出现。因此 H537 的两个旧 hook 已经独立安装，而第三项确实
+没有找到。
+
+sample 6150 与位图一致。主线程已经越过 `addObserver:` 顶层调用，直接停在：
+
+```text
+_LSContextInitCommon
+LSApplicationProxy applicationProxyForBundleType:identifier:isCompanion:URL:itemID:bundleUnit:
+FBSApplicationLibrary _workQueue_currentProcessProxyWithOutURL:
+__30-[FBSApplicationLibrary _load]_block_invoke
+SBApplicationController init
+SBMainWorkspace _finishInitialization
+```
+
+LaunchServices request 从 `623.328121 s` 到 sample 6360 的
+`1136.094233 s` 一直为：
+
+```text
+req=45867/98/lsd.real q=1 sr=1 so=2 ld_reply=0
+```
+
+本轮只看到 `589.128979 s` 的系统手势窗口，没有
+`SBRootSceneWindow`、根层 content setter、commit、present 或 `fr=1`。
+UXC1 `424539` 在 `1167.903306 s` ACK，随后正常 `MACH Reboot`；
+Android `boot_completed=1`。证据：
+
+```text
+logs/H539/device/20261122-094604/
+H539-live.log
+  aa20a68966da12e920ad4693a9ab7a1a6d46e30e8d04c55d48a89ef1fb0be14a
+H539-reboot.log
+  e27327776ced5ba7dd18e766ec0a3f11d18b80bb588ecc26580961e52c171596
+H539-live.frames.bin
+  e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+H539-tail32.bin
+  cb6cf44d29e35d5096a19226801b24a19f9cda242170d18d1147adb4408d5e7a
+H539-h103.txt
+  e0204d48f5f78cfa0f5847f930619fbc52b193bf933f801217aa8f9b9b82d03f
+```
+
+分类为 `H539-two-LS-hooks-confirmed/current-proxy-selector-unavailable`。
+
+### §210 H540：旁路 LSApplicationProxy 的 current-process 构造
+
+CoreServices 的 21H461 反汇编显示以下两个 class method 都直接尾跳到
+`+[LSApplicationProxy
+applicationProxyForBundleType:identifier:isCompanion:URL:itemID:bundleUnit:]`：
+
+- `+[LSApplicationProxy applicationProxyForIdentifier:]`
+- `+[LSApplicationProxy applicationProxyForBundleURL:]`
+
+H540 保留 H539 的独立安装和位图，只新增一个用户态行为：这两个构造入口
+立即返回 nil。H538 的调用栈显示 `_workQueue_currentProcessProxyWithOutURL:`
+会对 nil proxy 走可处理分支，因此这比继续依赖找不到的 FBS selector 更直接。
+
+新增状态位记录 `LSApplicationProxy` class、两个 class method 的发现和安装。
+expected partial state 为 `0xf87f`：H539 的 `0x7f`、class `0x800`、两个
+method-found/installed 共 `0xf000`。complete 状态还会加入 method-found/
+installed 与 done 位；运行后按实际位图判断，不按预期值倒推。
+
+源码与产物：
+
+```text
+NativeMetal commit        3939503
+superproject commit      ddc1afb8
+observer SHA-256         90bf96c52f4f2b73744888ed55a01c7a8a42db3dd3b39f4bed04e5e790c6b911
+observer CDHash          43cdfc3ed31374d4b7ac12fcf2edab3397d5996e
+raw addon SHA-256        10025085992525f2710d131b15ccd18dbd8f37ff98a95bedf05d8d21889ef017
+GPU addon SHA-256        4ad794691f70b1e7f808f41379488175bce3992414670ea2f77dd90db59dd28f
+owner trust SHA-256      29b47a321d1b9a5f27b51c10ab62a0e2e7fe5cf194183d3db6b07127be5a7f9d
+payload SHA-256          a513e116be89069f528265dc60f72ce22b03c2495797a9d8a9fe69e3ad4e296d
+boot SHA-256             6688f0a97b8135a4020258195abe1a398dd2f4ff4cdcb9b6f41a2ddb1e80eb96
+boot.json SHA-256        c9ffff8056ee4678f503739818b0f4286e093b420709bf26ba3632f2b309ca81
+```
+
+payload 与 H539 的 kernel、ADT、scratch Data 和 `unixnu.toml` 相同，
+只有 GPU addon 与 owner trust 不同；10-entry addon 只有 observer 改变。
+trust 从 91 项扩为 92 项。bootargs 为 `1008/1024`，最坏
+`1016/1024`，boot JSON `problems=[]`。产物位于
+`display-first-frame/builds/H540/`，状态为
+`H540-built-static-verified-device-pending`。
+
+启动前将再次清零并回读 `userdata_ios` 末尾 32 MiB。验收顺序：
+
+1. 读取 CDC 后的 `ls_installer` 位图，确认 LSApplicationProxy class
+   与两个 method/install 位；
+2. 检查 `application proxy identifier skipped` 或
+   `application proxy URL skipped`；
+3. 对比 H539 的 sample 6150，确认主线程离开
+   `_workQueue_currentProcessProxyWithOutURL:` 内的 LS context 调用；
+4. 继续追根窗口内容、context 绑定、content、commit、present 和 `fr=1`。
