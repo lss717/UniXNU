@@ -24902,25 +24902,31 @@ addon；kernel、ADT、Data seed 和 TOML 不变。bootargs 为
 ### §230 H562：全新源码与构建污染隔离
 
 H562 使用全新 checkout 和全新 `out/`，用于回答 H558/H559 中“源码等价
-但重建镜像不能通过真机启动”与“不能再复用旧产物”之间的边界。本轮只完成
-kernel 和 prelink，尚未生成 payload、addon、trust cache 或 boot image。
+但重建镜像不能通过真机启动”与“不能再复用旧产物”之间的边界。kernel、
+Data seed、raw addon、production addon、owner trust、payload 和 boot image
+均从本轮干净树重新生成。唯一固定输入是已经两次实机验证的 H407 UEFI blob，
+其 SHA-256 保持在 `9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6`。
 
 `zzzzzzzzzzzz-h25*` 再次出现在 Mac 构建树上，不是新一轮创建了这些补丁，
 而是 clean checkout 固定到了历史提交 `f93a8046`。该提交仍包含四个旧实验
 补丁，而删除它们的 `5e040bd2` 只位于另一条分支，未进入该历史基线。第一次
 构建前虽然在 worktree 中手工删除了文件，但没有形成可复现提交，因此下一份
 clean clone 仍会重新带出它们。现已建立
-`codex/h562-clean-build`，以 `f93a8046` 为父提交并正式应用删除提交，分支
-head 为 `d36b820a872e761d11dcd98e5562c35674947dd4`。
+`codex/h562-clean-build`，以 `f93a8046` 为父提交并正式应用删除提交。随后
+带入 H560 暴露后的 `c60457d1`（生产 addon 保留原始 SpringBoard 二进制）和
+`7ad7a986`（owner trust CDHash 替换）。打包源码 head 为
+`e5438e13`，不包含 H560 的 chronod observer 提交。
 
 核验结果：
 
 ```text
-UniXNU source              d36b820a872e761d11dcd98e5562c35674947dd4
+UniXNU source              e5438e13
+kernel build base          f93a8046
+patch removal              d36b820a
 device source              0e97aed710a6aab04a8825ffde21c4bfd0cbd7f7
 NativeMetal                37653c703b49b4006f6c47c52c61bac8166a4fee
 Xcode                      26.3 / 17C529
-Python                     3.9.6
+Python                     3.12.16 (/opt/local/bin/python3.12)
 tracked z-prefixed patches 0
 on-disk z-prefixed patches 0
 ```
@@ -24939,10 +24945,49 @@ on-disk z-prefixed patches 0
 日志 SHA-256 为
 `15142f4316fff7addd021be94bd4da31b305a2be7fa7501e8941fcc485f92dfc`。
 
-状态为 `H562-kernel-built-not-device-tested`。后续 payload、owner trust、
-raw addon、production addon 和 boot image 必须从该干净树重新生成，不得复制
-H557、H560、H561 或任何更早轮的对应产物。打包完成并写回本节之前，不得向
-设备发送镜像。
+H562 的 OS、SpringBoard、`launchd.plist` 和 `lsd` 从当前树的
+`unixnu ipsw fetch` cache 重新提取。固定校验为：
+
+```text
+SpringBoard SHA-256       62929b2b3c9080c83c43ee348bfc6abe2e1e27136dc4a34a633f5f42c8cbb24b
+launchd.plist SHA-256     f1b99c4e3e738cb1c2622ad82f5e78cd2fbd1f88c8ced13c423aabf91b2b22eb
+lsd SHA-256               43ee16e03145f3ad6b84fc7dac63ee767ec8182b51bc9cb5bd8bf8650baa4e5b
+Static trust module       da88460e6e513438d5307e5c526f76497a74754476a24da29f239f0c90120fc2
+System trust module       d121ba89167e03aafd00fa687c30cd8ebc4ccafd10c1408adb2ba3de12403651
+```
+
+Data seed 由当前脚本重新生成 1 GiB APFS skeleton，再执行 LaunchServices
+readiness transform。其 volume UUID 为
+`3AAB21A7-0124-4EED-B5A4-872F17A7B998`，不再是 H557 的旧 seed。
+
+```text
+raw addon SHA-256         5d75ef40a005e0fd31dd8d2c5586faf42cd2ba615cd159a40ebafdce55a008f7
+production addon         886dc9b58b448739ff6e9edcb3f81025e6fe585c176415d787df695b9b992ad2
+observer SHA-256          8b145de69bd17f5e15a54ace8833501ae07bd8ad44a9d20f2bfc4f89d404186c
+owner trust SHA-256       b277c991c07316d4d4d639c6eff2f3a86178875f8a3511db7d0a99026fe08d57
+Data seed SHA-256         9d3f0aac8e495090d075eb0da10ee58e372ddb71a8a73d689c9077d984f1dd1b
+ADT SHA-256               d4ce30eddcfbdca7cedf13d06530f29a607b07c5a9c74ee875266e1c8a7a1680
+payload SHA-256           44a09e6b2e90e15ef8bb9631317af1cb955dd54d2ff932d61b9b7df7e939a047
+boot SHA-256              627b2d9a6cba64a1731ebb7773ca1fe2cd0fe032e5fb757dd46643fc4d298e05
+boot.json SHA-256         8e290a6bc07c153d2b37e8aa1ca85e05e27017d920fd171a155b0afdbc5fdf3a
+```
+
+生产 addon 为 10 项，`springboard/SpringBoard` 与指定 21H461 原始
+SpringBoard 逐字节一致，不含 `springboard/SpringBoard.real` 和
+`bin/scenebootstrap`。owner trust 包含 fresh trace、observer、lsd wrapper、
+modified lsd 和 recovery shim 共 5 个 CDHash，两个原始 Apple module 逐字节
+未变。
+
+payload 回读证明内嵌 kernel、trust、addon 和 Data seed 均与输入完全相同。
+bootargs 为 988 bytes，加 `zap-base` 后当前 `1008/1024`，最坏
+`1016/1024`。boot 内 UEFI blob 与 payload 均逐字节回读一致，无尾随数据。
+静态检查日志位于
+`/Users/lss/h468-build/H562-clean-20261122/H562-static-checks.log`，SHA-256
+为 `2b47c743e8dd4f681db218ea577653c58b7f8c4247c60154acd99bc6a4449ec2`。
+完整报告位于同目录 `H562-static-verification.json`。
+
+状态为 `H562-built-static-verified-device-pending`。后续不得用 H557、H560、
+H561 或更早轮产物替换本节的任一新鲜组件。
 
 新增硬门：
 
