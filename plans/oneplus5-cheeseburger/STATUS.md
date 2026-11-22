@@ -25617,3 +25617,55 @@ display-first-frame/logs/H571/device/20261122-231712/H571-r1-h103.txt
 尾部 32 MiB 在 TWRP 3.4.0-1 中只读拉取。实时分区大小为
 `52,840,607,744` bytes，4 KiB 块 seek 为 `12,892,347`。解码报告的五个 slot
 标记全部属于 boot `21acaabb`，没有把旧 boot 的运行时长拼入本轮。
+
+### §243 H572：fatal C++ 信息与 observer-load 证明
+
+H572 只增加两项用户态观测：为 fatal C++ terminate 保留日志预算并记录
+`type`/`what()`，以及每 30 秒输出 `h572_observer_alive` 以证明 SpringBoard
+observer 的真实 PID 和执行上下文。启动旁路没有变化。
+
+源码为 `d75344c8`，AdrenoMetal/observer 子模块为 `a1747c51`，device repository
+为 `914038e7`。全新 Data UUID 为
+`FF2C0C89-B703-4E4B-A672-794D6D815357`。
+
+```text
+kernel                    2ff304c81f9848bba440e250be9744cb5bec854ecb3d8001fbe9215cc182e3dc
+real PMGR archive         d1caa2329604ead301bfe6fa0478976fe24575ef83158d39c26d8ffd1ed3d99e
+ADT                       18b92ba6257a6dadb0137c41d79e0dac911a2bd228b5e19bd7cab1ed203f529d
+Data seed（encoded）      9407c6d29a6987ed53497fe8adcb5ea26e1aeb5671130dfca2f790b0603fe32d
+GPU addon                 64ddaa2feb982e1305f505495525008dd3b90c31b30ec4bcb0673075b884428a
+owner trust               208f1e51fb518125746a482eb000d5bb612daae8ae558142688a90fa376e02a5
+payload                   64732347bc0022cfd33fa726c99252778abfb6fb31495ece2b711ff22eea89f7
+payload JSON              93b5f9acf3b097a69bd0d6fb31a6f88cb5189271d370ade959dec13caa451d8a
+boot                      f1aeff1d965c2bfe79194700f246acd0730c0cba1e349af9ba13ca596ca99cc1
+static checks             3dfe55d74a6b21f10626bdad51e89523dbaf108283b81ec0a8fb89ec378c8270
+```
+
+第一遍日志使用 `build-sheng-pmgr-stub.py`，不带 `--clean` 的第二遍使用
+`build-sheng-pmgr.py`。payload 内 kernel、ADT、trust、addon 和 Data seed
+回读逐字节一致；kernel bases、ADT placeholders、observer codesign、CDC 协议
+自检通过。已知工作参数为 988 bytes，加 `zap-base` 后最坏 1016/1024。
+
+第一次打包误用了 device repository 默认参数，实际包含
+`sheng-gpu-addon=0 offline-accelerator=0`，只有 975 bytes。该无效轮已丢弃：
+kernel boot `21065da3` 的持久环在 32.566576 秒直接记录
+`NATIVE_GPU_ADDON: probe found=1 enabled=0 length=995`，因此
+`addon=-1` 是配置结果，不是安装代码回归。无效 payload/boot 保留为
+`H572-invalid-payload.img` 和 `H572-invalid-boot.img` 对照，不进入产品候选。
+
+随后只重建 payload 和 boot，复用同一批 H572 kernel/Data/addon/trust，并传入
+H571 的已知工作参数。新 `kernel_args` 与 H571 逐字节相同（988 bytes）。
+有效轮 kernel boot 为 `212e0ab0`；CDC 在约 260 秒后才枚举，实时接收因此从
+约 273 秒开始。Data/addon 为 `12/12`，`stage=5 status=0`。到约 340 秒仍
+没有任何 `h572_observer_alive`，证明 launchd job 中的
+`DYLD_INSERT_LIBRARIES=/private/var/ngpu/lib/SpringBoardSceneObserver.dylib`
+没有让 observer 在该 SpringBoard PID 中运行。不能用这轮解释
+`UIApplicationMain` 或桌面提交；下一步需要改变 observer 注入方式。
+
+有效轮实时日志：
+
+```text
+display-first-frame/logs/H572/device/20261123-004145/H572-live.log
+```
+
+设备结论和持久环哈希在本轮结束后补录。
