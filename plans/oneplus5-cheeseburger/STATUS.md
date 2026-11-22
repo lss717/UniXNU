@@ -25114,6 +25114,58 @@ payload 回读均为 PASS。状态为
 `H564-built-static-verified-device-pending`。设备门首先要求
 `offline Preboot overlay mount failed: 2` 消失。
 
+### §234 H564 真机：Data/Preboot 已通过，lsd 后 SpringBoard self-SIGABRT
+
+H564 使用一次 `fastboot boot`。发送阶段返回 `OKAY`，随后 `fastboot`
+客户端报 `Status read failed (Too many links)`；设备实际已启动，因此没有
+重发镜像。CDC 接入后 transport boot ID 为 `368D76FC`，kernel boot 为
+`21e4981c`。
+
+同一 boot 中：
+
+```text
+336.878943 NATIVE_DISPLAY_GATE ... fr=0
+405.993153 NATIVE_SBCHAIN ... req=25347/98/lsd.real ld_reply=0
+1390.521016 NATIVE_DISPLAY_GATE ... fr=0
+1463.275712 NATIVE_SBCHAIN ... req=3843/85/cfprefsd ld_reply=0
+1510.229721 NATIVE_EXIT pid=27 comm=SpringBoard status=0x6 sender=27/SpringBoard
+1515.803882 NATIVE_EXEC pid=213 comm=SpringBoard
+1528.408228 NATIVE_EXIT pid=213 comm=SpringBoard status=0x6 sender=213/SpringBoard
+```
+
+因此 Data 与 Preboot 两项都已经越过。SpringBoard 从 `lsd.real` 请求继续
+到 `cfprefsd`，但随后两次以 self-SIGABRT 退出。没有 kernel `NATIVE_PANIC`，
+也没有观察到 watchdog 触发。1469.826257 秒有一条 8-block UFS stall 记录，
+`waited=201988924 ns`，但 UFS 其余计数器继续前进，不能把它单独认定为
+SpringBoard 退出原因。
+
+本轮 `H557` 生命周期文本完全没有出现，故不能根据该轮判断
+`UIApplicationMain`、didFinish 或 Chrono 边界。Main-thread sampler 在
+`pc=0x1cdd30b58` 的同步等待栈持续到 lsd 返回，之后转往 cfprefsd，但没有
+足够证据定位第二个进程的 abort 原因。
+
+```text
+H564-live.log
+  3a2cc945d32d00ff2fa4ae70a9c82ddd4a85c678e3a162e511781fded0eac117
+H564-tail32.bin
+  8fabce5124c1ea44e461be4cca15bef169a0573647aa1542c7344e7298890121
+H564-h103.txt
+  b3f3549e0e2d50b62242b18ff698c3434b491b474dbcba31bfe26138cca0903b
+```
+
+新 Data seed 与能越过 lsd 的旧参照 seed 做只读目录对照后，确认当前 seed
+缺少旧 seed 中的以下用户态启动状态：
+
+- `mobile/Library/Preferences/com.apple.purplebuddy.plist` 的 Setup 完成标记；
+- `com.apple.purplebuddy.notbackedup.plist`；
+- `com.apple.managedconfiguration.notbackedup.plist`；
+- `com.apple.springboard.plist` 的 no-watchdog、禁自动变暗和禁 idle sleep；
+- `containers/Bundle`、`containers/Temp` 等基础目录。
+
+旧 seed 只作为只读对照，没有被用于启动。H565 将使用仓库已有的
+`scripts/seed-data-skip-setup.py` 给 H564 seed 合并上述 preferences 和目录，
+保持 UUID、kernel、Preboot overlay、addon 和 trust 不变。
+
 新增硬门：
 
 - clean clone 只有“当前内容没有 `z*.patch`”还不够，删除必须已经进入该
