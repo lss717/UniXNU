@@ -25936,3 +25936,66 @@ bootargs、7 项 owner trust、observer 和 SpringBoard codesign、Android boot
 `h557_chrono_subscribe_return ... skipped=1`，随后观察 completeStartup 是否
 返回、桌面内容是否首次提交以及 `fr=1`。H577 的 build 状态为
 `H577-built-static-verified-device-pending`。
+
+### §250 H577 真机：跳过 ChronoServices 后仍有后续 SIGABRT
+
+H577 真机 CDC boot 为 `37DD652A`。SpringBoard PID 27 在 603.785598 秒进入
+`_completeStartupAfterMainSceneConnect:`，619.007002 秒进入 ChronoServices
+订阅。619.108076 秒出现 `h577_chrono_subscribe_skip`，619.204320 秒
+`h557_chrono_subscribe_return ... skipped=1`，确认跳过路径实际执行。
+
+636.360390 秒 PID 27 以 `status=0x6` 退出，637.084370 秒出现
+`NATIVE_SBABORT`。替换 SpringBoard PID 179、184、189 又分别在 667.782570、
+721.807192、782.716806 秒出现相同 SIGABRT。全程没有
+`h557_complete_startup_return`、真实内容 commit 或 `fr=1`。
+
+本轮的 abort 栈仍停在 libc++abi terminate/abort 路径，但新加载的
+`NSSetUncaughtExceptionHandler`、自定义 `std::terminate` handler 和
+`__cxa_throw` interposer 都没有留下原因记录。不能把 H577 的直接 skip 当成
+ChronoServices 修复完成，也不能声称后续 abort 已定性。
+
+```text
+H577-live.log
+  e05a0cc720c1ff90b9ac5bd4a1ff8b02e95474fcfdf6fab3537ebb7fc35a6b02
+H577-tail32.bin
+  3d2ce1a7a86f13f461332a50355910eab673aaccb7ca54ba48a0f46919980065
+H577-h103.txt
+  fcef2552f527d7f7509f209fd37842485d302caec641e8c40737ea02b4a795f1
+```
+
+H577 通过 UXC1 `424578` 正常重启，Android `boot_completed=1` 后一次进入
+TWRP。持久环已完整拉取。
+
+### §251 H578：重新武装终止与 SIGABRT 观测
+
+H578 不改变启动旁路功能，只把 H575/H576 的异常观测重新安装到
+ChronoServices 路径入口，并保存原 SIGABRT action。它将记录 abort 时的 PC、LR、
+SP、FP 和最多 16 层 frame return address。源码
+`ed09120d1c3a2969f94adacc1e56f7030768645a`，NativeMetal
+`76bd963ff9d920db661197b5f8a45351895366b2`，device
+`914038e725c353b581d516a6ca201cb50260103c`。
+
+为保持唯一变量，kernel
+`7ffb0c1b2606cf4e9e46dfd36c55a2fe22a391ccfa1945164c8004272c6599e9`
+和 Data seed
+`0ef3db84e89bdca5c1ba02607182468b551174908f9a5562b74dcc85095ce24e`
+继续沿用 H576/H577 的显式控制输入。addon、trust、payload 和 boot 新建：
+
+```text
+GPU addon                 2bf2d7df6f69a852eb109a9cfb88546c8d3d94888ccad9e36c91e96f02f7fc46
+owner trust               7766e7b8346f63645bc9bb4f330bb792c89a5bf1be39e813b573bdebf2a3c4ac
+payload                   c1c5a43437a083315bde415eb86ff09b2346c8168aa35c0f7a2e74bb49348813
+boot                      5b0782f0dee2f4ebc71d62677b605a34ee83242a4400461dc4a25218913e1553
+ADT                       2bebd5eb7326706151659330bd916019c9a71fc31c7227dcfbb27b51c0674449
+observer                  7eb81e1a1f4415107c3a08dd2653392e4c867f7d
+SpringBoard patched       6d667a029eef784517158012af93bc61a0f4c200
+H407 UEFI                 9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6
+```
+
+payload 内 kernel、trust、addon 和 Data seed 逐字节回读一致。ADT、988 字节
+bootargs、owner trust、observer 和 SpringBoard codesign、boot 布局及 CDC
+合同均 PASS。设备门先要求 `build=H578`、
+`h578_exception_reporters_rearmed` 和 `h577_chrono_subscribe_skip`，之后必须
+得到至少一条 `h578_abort_signal` 或能替代它的确定终止原因。
+
+状态为 `H578-built-static-verified-device-pending`。
