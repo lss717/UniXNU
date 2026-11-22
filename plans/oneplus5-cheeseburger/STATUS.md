@@ -25204,3 +25204,104 @@ payload、ADT、kernel bases 和 CDC 合同检查均 PASS。状态为
   依赖 build 前的临时删除；
 - 构建前同时检查 `git status --short`、`git ls-files 'patches/**'` 和
   `find patches -type f -name 'z*.patch'`，结果不一致时不得开始编译。
+
+### §236 H565 真机结果：第一轮 USB fault，第二轮越过 lsd 后 SpringBoard 连续 self-SIGABRT
+
+H565 第一轮使用 `fastboot boot` 后没有 CDC。Windows 显示
+`VID_0000&PID_0002`、Code 43，同 boot 的内核记录为：
+
+```text
+NATIVE_USB_STATUS: started=1 connected=0 fault=1
+```
+
+因此“未知 USB 设备”是内核 USB 端点故障，不是设备没有进入 DarwinBoot，也不能
+据此重发镜像。第一轮仍进入 userspace 并运行 SpringBoard，但没有可用的 CDC
+证据。
+
+随后对同一个 H565 boot SHA 做一次有界重放，CDC 在 COM8 枚举。transport boot
+为 `33A11DF0`，kernel boot 为 `2137595e`。第二轮的主要时间线为：
+
+```text
+405.882038 req=24323/96/lsd.real ld_reply=4
+1470.170157 req=2055/1/launchd ld_reply=4
+1511.417899 SpringBoard pid=27 self-SIGABRT
+1523.132826 SpringBoard pid=226 exec
+1558.514214 SpringBoard pid=226 self-SIGABRT
+1590.605691 SpringBoard pid=231 exec
+1604.881927 SpringBoard pid=231 self-SIGABRT
+```
+
+`ld_reply=4` 证明 H564 中未完成的同一类 LaunchServices 同步请求在本轮已有回复。
+PID 27 随后仍以 `status=0x6` 自终止，替换实例 226 和 231 分别约在 35 秒和 14 秒
+后崩溃。到实时采集停止的 1618.961 秒，没有 kernel panic，也没有观察到产品首帧。
+
+显示侧最后一个完整 gate 为：
+
+```text
+1545.164339 NATIVE_DISPLAY_GATE ... accel=20/0/2553/0 dpy=4/18/0/1/0 s345=0/0/0 val=0 xf=0 fr=0
+```
+
+`NATIVE_FRAME` 为 0。已有 `backboardd` 显示 context、根 CALayer 和提交事件，
+但上下文内容仍为 0；本轮不能把这些旧的 context 状态当成三次 abort 的原因。
+
+UFS 在同一 boot 内继续完成请求：
+
+```text
+1048.798337 NATIVE_UFS_STALL_LOG req=5f83c0/8 waited=199579777
+1616.213054 H469 seq=290497 done=290497 timeout=0 ocs_err=0 dbto=0
+             recover=0 recovered=0 flight=0 lock_timeout=0 lock_waiters=0
+```
+
+1048 秒出现一次有界 stall，但 `seq==done`、OCS、doorbell、recovery 和 lock
+timeout 都没有异常。`lock_wait_ms` 是累计等待时间；
+`lock_waiters` 曾在飞行请求期间升到 47，至 1585.805976 秒已回落到 0，因此本页
+不能写成 UFS 锁等待没有下降，也不能写成请求没有完成。USB 在 abort 前后也保持
+`connected=1 fault=0`。现有证据没有把连续 SpringBoard abort 归因于 UFS。
+
+`NATIVE_IOKIT: op=open ... ok=0` 是既有诊断补丁写死的值，不是 IOKit open
+返回值。abort 前反复出现该行不能证明 AppleKeyStore 打开失败。
+
+证据：
+
+```text
+H565-r2-live.log
+  B7D30BC49DD5BDE2D240160283C4ACDB64CD28CD5AC3FE4CCE7E7DF17DAE2D1C
+tail32.bin
+  DB71117CC71A08F5EAF2B310A8CE29CD0F4C9F8EF024C3C7513AF624D101E70E
+h103.txt
+  F8E47349843233FE54C8F783B0AC2E02E4B83F9C79DC14F6873D46B04055AE6A
+```
+
+本轮读取尾部时再次确认 `userdata_ios` 为 `52840607744` bytes，4 KiB block
+总数为 `12,900,539`，最后 8192 个 4 KiB block 的 `skip` 为 `12,892,347`。
+尾部读取走 Android root shell 的只读 `dd`；没有写分区。`/tmp` 在该环境中不存在，
+临时文件使用 `/data/local/tmp` 并在 pull 后删除。
+
+状态从 `H565-built-static-verified-device-pending` 更新为
+`H565-device-tested-usb-fault-and-springboard-abort-loop-no-product-frame`。
+无异常的短轮不能验证 watchdog；本轮没有 watchdog 触发证据。H565 的连续 abort
+不等于 H466/H469 的 UFS watchdog 已验证。
+
+### §237 H566：首个 SpringBoard SIGABRT 的即时线程快照
+
+H566 只增加一个诊断变量。既有 30 秒进程轮询无法覆盖三次 abort 的发生瞬间；
+用户态 observer 的 H557 文本在本轮也没有进入 CDC 或持久环，因此不能再靠轮询
+或“没看到 marker”判断调用栈。
+
+新补丁 `patches/xnu/springboard-abort-snapshot.patch` 位于
+`psignal-uthread-probe.patch` 之后。它只在同一进程向自身发送 `SIGABRT` 时，保存
+当前用户线程的 PC/LR/SP/FP、x0/x1/x16、共享区 slide 和 24 个栈字，再沿用既有
+lock-free signal ring 在正常上下文输出：
+
+```text
+NATIVE_SBABORT
+NATIVE_SBABORT_STACK
+```
+
+该路径不改信号语义、不增加用户态权限、不旁路 LaunchServices，也不修改显示链。
+补丁先保存后打印，避免在可能禁用抢占的 signal 路径直接 `printf`。补丁已在包含
+此前全部 series 的 xnu worktree 上通过 `git apply --check` 和 `patch --dry-run`。
+H566 源码提交为 `b17ac1b5`。
+
+设备门：同一 boot/PID/TID 内必须先看到一次真实 `SIGABRT` 对应的
+`NATIVE_SBABORT`，然后才能把首帧失败归因到该栈；若没有触发，这一轮只算观测失败。
