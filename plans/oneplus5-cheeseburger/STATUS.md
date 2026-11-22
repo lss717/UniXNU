@@ -24263,3 +24263,43 @@ live log SHA-256 为
 `3408084da1b543a797779c45935128977544cae4ec9adcf2039efe1bdbc6f897`。
 全轮 UFS 快照保持 `ocs_err=0`、`lock_timeout=0`、请求完成计数前进。
 状态更新为 `H550-device-system-status-prerequisite-confirmed`。
+
+### §220 H551：恢复 SystemStatusServer，仅清空 change-log 初始键
+
+H551 保留 H550 的 HUD/声音观测和未捕获异常记录器，并修改一个用户态行为：
+
+- `-[SpringBoard _startSystemStatusServerAndFriends]` 的现有 hook 改为记录后
+  调用原实现，不再整体跳过。
+- `-[STStatusDomainDataChangeLog initWithRecordKeys:]` 记录输入类型后，把
+  已确认在 `copy` 处不返回的 record-key 集合替换为空 `NSArray`，再调用原
+  initializer。这样仍由原类建立 `_sortedRecordKeys` 和 `_recordsByKey`，
+  但不枚举会触发同步 XPC 的键。
+- 为类查找显式 `dlopen` `SystemStatus.framework` 和
+  `SystemStatusServer.framework`。
+
+验收要求先看到 `h551_status_hooks statusDataLog=1`。若
+`h551_status_data_log_empty_init_enter/return` 成对出现，并且
+`h542_status_server_bypass_return` 出现，再检查
+`SBTelephonyManager ... system status server` 异常是否消失。若仍未消失，
+说明还有别的初始化依赖；若消失，继续观察 HUD 返回、ringer 构造、窗口和
+首帧。
+
+H551 构建与静态核验：
+
+```text
+NativeMetal commit        15e8a06
+superproject source       faae97cb
+observer SHA-256         c44efca923d9ab17994cb67b72519b7e1edf122708006896b4795dc692c4d672
+observer CDHash          a9e2768265705d540545c4950abe2fb052e9c101
+raw addon SHA-256        a0b95f6d3eb5b16f2a40225c3bc61b087559c280d020e6f9b9ea07028b3936bc
+GPU addon SHA-256        ab738a0661bedab80a5ce86ec5b1d07baaf4ad5c7f57b5cec724bc7e40fc6741
+owner trust SHA-256      45517ea4dc4997defccc7126f349098af0e7c7e329c81380dfd497db16a27720
+payload SHA-256          0562bdfb201c0ead1e24c0879b9f9ef212bec6b780fa9d1f3c21164cce785488
+boot SHA-256             400bc80e5c6c68093f16ec734356836779f93c0edd1e5d15fd87bf894f6c501b
+boot.json SHA-256        618b52274279a6f7df188bf199c48ea0392e87925b660fd845001c8da7c86000
+```
+
+observer 为 arm64，strict codesign 通过；生产包保持稳定 10 项结构，只有
+observer 改变。owner trust 保持 93 项并保留 A540Trace。payload 从 H541
+复制，只替换 trustcache 和 gpuaddon；bootargs 最坏 `1016/1024`，boot JSON
+`problems=[]`。状态为 `H551-built-static-verified-device-pending`。
