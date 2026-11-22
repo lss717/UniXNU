@@ -23846,3 +23846,24 @@ migration observer 注册。只增加
 
 稳定 10 项 addon 仍以 H541 最终包为基线，只替换 observer；trust 用新
 observer CDHash 替换 H541 的旧 observer，并保留 A540Trace 及其余项。
+
+H545 构建与静态核验：
+
+```text
+NativeMetal commit        ee0d4d6
+superproject source      4702f603
+observer SHA-256         f70fcb48b5338b310c26683889fcd54901115784ad6be50a89b64287e5d7d300
+observer CDHash          ad367143507b02267e7051da3750e7b519a340de
+raw addon SHA-256        c2f15adbe79fc68ca2e65083d30523587af0cdf18cf8de1163981c79b826958c
+GPU addon SHA-256        c097e12ea0dda6045ec98d7b0a03751faff1d2f9ae1adfdd3fc804a91cc7e314
+owner trust SHA-256      2d023dca75c5a8a5e4aeada941cde74eb17c23625c74e79222283c50bc3b19f7
+payload SHA-256          16bca3391754d7892b2133a5be93f73d43e5298d8ac54af6cd5c7f811b1cee4e
+boot SHA-256             3965b4c3295b2404555a266701d7b4b644916fd2da1e04915f9b22c813d80dac
+boot.json SHA-256        e8d5fd7e49555838ada00169cf32a3c12a29c68fdcdec769a38f0be3764ba548
+```
+
+observer strict codesign 和 arm64 检查通过；A540Trace 与 H545 observer 均在
+93 项 owner trust 中。稳定 addon 10 项中只有 observer 改变。payload 的
+kernel、ADT、Data seed 和 TOML 与 H541 一致，bootargs 最坏
+`1016/1024`，boot JSON `problems=[]`。状态为
+`H545-built-static-verified-device-pending`。
