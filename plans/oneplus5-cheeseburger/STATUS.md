@@ -26628,6 +26628,16 @@ SHA-256   89af045e452494a6649bf49021f4d152f34ce8e55bc4aac5dd81ff5833d054f4
 `com.apple.frontboard.systemappservices`，说明 BoardServices 路径本身不是永久
 不可用。
 
+TWRP 随后拉取了同 boot 的末尾 32 MiB：
+
+```text
+H585-tail32.bin 21a63580dc3e626bec6c6bdce45c4cacfffc11ae1b6b963f971756cada053d8e
+H585-h103.txt   2ded30feefbc88aca0cd5201c0e7a1b2619f78a6d6310768339caa0b246c319c
+```
+
+H103 内容延续到约 2981 秒。清零同一尾部后回读为
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+
 564.279 秒进入 `completeStartup`，565.743 秒进入 ApplicationController init，
 567.078 秒返回。579.816 秒 H584 的 ChronoServices skip 正常返回 `nil`。
 584.414 秒进入 `ACActivityCenter init`，584.442 秒和 585.370 秒又发起同步 XPC，
@@ -26697,3 +26707,76 @@ PASS，`problems=[]`，计入 `zap-base=0xabe00000` 为 1008/1024，最坏
 的同步请求行，并观察 583–585 秒同类 ActivityKit 请求是否返回。只有 return
 出现后才能判定 ABI 修正改变了投递行为；仍无 return 时继续追 selector 对应的
 服务端。
+
+H586 已通过唯一 Fastboot 目标 `16149951` 发送：
+
+```text
+Sending 'boot.img' (79314 KB) OKAY
+Booting OKAY
+```
+
+发送后的前 120 秒 Windows 未出现 CDC、ADB 或 Fastboot，随后 CDC 自行枚举为
+`COM8`。因此该空窗只记为 USB 接口延迟，不能推断内核结果。同一启动的 kernel
+boot 为 `26fd0991`，采集目录为
+`logs\H586\device\20261123-070324`。H103 开头确认：
+
+```text
+observer load process=SpringBoard pid=27 build=H586
+```
+
+391.661 秒的首个同步调用在 391.723 秒返回对象 `0x3011910a0`；528.938 秒的
+请求返回对象 `0x3011a4e70`。修复后的 hook 使用真实 encoding
+`@24@0:8o^@16`，不再把对象指针解释为 `BOOL`。
+
+537.458 秒进入 `completeStartup`。576.897 秒进入 `ACActivityCenter init`，
+577.090 秒主线程发出同步请求；631、707、784 和 860 秒均为
+`req=69635 q=1`，仍无 return。结论是 H585/H586 的 ActivityKit 停点与上一轮
+`BOOL` hook 无关，真实地发生在 `ACActivityCenter` 初始化触发的频繁更新观察
+连接中。live、尾部与 H103 哈希：
+
+```text
+H586-live.log     53acb9198864424c931834e30fc7b64dab01525c35b232b4aab06e87310a4a4f
+H586-tail32.bin   90cf77f4c046a3d335d8ebc219a628dff629be9966f12cc6e4c5278e100b3e67
+H586-h103.txt     dc118af638501768799a447e65e8dceb38219c369125b02e4249174232cc2f39
+```
+
+随后已清零 `userdata_ios` 同一末尾 32 MiB，回读仍为
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+
+### §270 H587：跳过 ActivityKit 频繁更新观察连接
+
+ActivityKit 字符串和反汇编显示，`-[ACActivityCenter init]` 先调用 superclass
+`init`，随后取得
+`ActivityFrequentUpdatesObservationClient` 的单例并写入
+`_activityCenter`。H586 的 `frequent updates observation service` 同步连接正是
+在这个第二步没有返回。
+
+H587 只改变这一步：保留 superclass `init`，跳过非必要的 frequent-updates
+observation client 建立，随后让原 `init` 返回当前对象。其他启动旁路保持不变。
+源码 head `180cce414df470f42d32e0dea42979a3ceb552f3`，NativeMetal
+`a5be3bf682116a28c03e9dd69e4ecb25a1e9ef5e`。H587 首次编译因 iOS SDK 未声明
+`objc_msgSendSuper2` 而失败；已用文件作用域的显式声明修复，未发机。
+
+H587 的 kernel、Data seed 和 988-byte bootargs 继续与 H586 字节级一致：
+
+```text
+GPU addon                 ae8aca0f69be07416d524abfd53403eda4397d470a9b9956040dbb23eca22a78
+owner trust               7f339b3e2ae13d424590975b8d0fd24c901ef0b629853fe8e7e92f5f65c2f985
+payload                   8f3efdfaa5554b6a1b49727f6b67699f8d1c30ac74bf7c1576ad93054adb9cf4
+boot                      0dea05e74f02641c3e05d23e0ddb484f278241d9a9624e71f8337ba2a9094b2f
+boot.json                 911fef77a6a164e815ce349bb393bac5cfa2ac86f71c19ed6c54e80ea0dbef6b
+ADT                       2a0b0ecf1177abf14ed69093ad9996933b4364f05363f7737e3bd03fe5612fdd
+observer CDHash           95a1e510a7e4bdf899d5a643ad51067d9e5d7149
+SpringBoard CDHash        6d667a029eef784517158012af93bc61a0f4c200
+H407 UEFI                 9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6
+```
+
+payload 回读、988-byte bootargs（`zap-base` 后 1008/1024，最坏 1016/1024）、
+owner trust 7 项、observer/SpringBoard codesign、bundle gate、boot 布局与
+CDC/UXC1 合同均 PASS，`problems=[]`。状态为
+`H587-built-static-verified-device-pending`。
+
+设备门要求 `h587_activity_center_service_skip` 命中后立即出现
+`h585_activity_center_init_return`，并观察 `completeStartup` 是否继续、主线程是否
+离开原同步 XPC。若 init 返回但后续查询因 `_activityCenter=nil` 失败，应记录首个
+具体 selector 或异常，不把这次旁路直接视为最终修复。
