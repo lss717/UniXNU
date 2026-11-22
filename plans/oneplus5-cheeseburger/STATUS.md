@@ -25480,3 +25480,57 @@ boot SHA-256               dd2305f619a10e1f152390dd0925ab07358ef6a444527589f53d4
 
 参数仍为精确 988 bytes，加 `zap-base` 后最坏 `1016/1024`。状态为
 `H569-control-built-static-verified-device-pending`。
+
+### §241 H566-H569 早期复位根因：fresh 树误链接 PMGR stub
+
+用户提供的复位前屏幕照片给出了决定性证据：
+
+```text
+NATIVE_PANIC_STR: "AMFI: No PMGR7\n" @ConfigurationSettings.cpp:235
+NATIVE_PANIC: flags=fd616000 client=0 xfer=0 frames=0
+panic(cpu 0 caller ... ConfigurationSettings.cpp:235): "AMFI: No PMGR7\n"
+```
+
+H568 无 abort 快照补丁、H569 十项 addon 和精简 trust 都没有改变早期停点，
+因此此前的 abort/addon/trust 假设已经排除。完整 build 日志确认：
+
+```text
+pass 1: == archive scripts/build-sheng-pmgr-stub.py (no prelinked kernel yet)
+pass 2: == archive scripts/build-sheng-pmgr.py
+```
+
+H566-H569 只完成了 fresh 树的第一轮 PMGR stub 链接。虽然该轮随后完成了
+archive 和最终 XNU link，但 PMGR archive 仍是 stub；DMG 上的持久环在
+launchd/dyld cache 阶段后停止只说明日志写盘早停，不能当作真实复位时刻。
+真正的复位是 `AMFI: No PMGR7`。这解释了为什么改变 timezone、abort 探针和
+addon 都不能越过停点。
+
+H571 在已经生成首个 prelinked kernel 后用相同 UUID 再执行一次完整
+`macos-build-kernel.sh` 和 prelink。第二遍日志明确使用真实
+`build-sheng-pmgr.py`，archive SHA-256 为
+`211e8eb315aaae2f1bbea64847cd589311a5c59d61ab93d10bf3c6baf06041c2`。
+
+H571 使用全新 Data UUID `D65F5315-8F4D-42B4-A6A6-69EF960CA19B`，重新执行
+OS mount timezone、Preboot、LaunchServices 和 Setup/no-idle 变换；addon、
+trust、payload 与 boot 也全部重新生成。
+
+```text
+kernel SHA-256             7d02cc2b6d7d9807bb57a4265b00d50415c8532ba725c03dc32387eb6b334ea0
+ADT SHA-256                61626b186f4f3d32a48cdad17924ed341bfc7c9a8f077785665c52f3406ef047
+PMGR archive SHA-256       211e8eb315aaae2f1bbea64847cd589311a5c59d61ab93d10bf3c6baf06041c2
+Data seed SHA-256          685859635b24e602ca2db840b3b2781edc33dba0227fd0ebb650e9bf606984b9
+GPU addon SHA-256          6e093036281e1100d2ebe5979a441654082911fd4435629da02c6873567e41d6
+owner trust SHA-256        d1f7c6ea31ddfc862ee22de7f2a4a569e669bc1aff5178a4d02d2604053390a3
+payload SHA-256            3fabb230873190b2f3c53ad5f6ddef5a60118516e92662cec1d5ec683b695fab
+payload JSON SHA-256       9c44e8d049798c3c2c3fa24c96d1928df05c538137815f3528fc4773abf2f986
+boot SHA-256               afb9be221bda96bbf443ec2ff1c6dbd1f5fa83c309451901e7ba78b4d2b6773f
+boot JSON SHA-256          ed43656b0bffbf4ce460b36f4cc951b54edfa8b218d514e15e4ac0960ba184ac
+static checks SHA-256      2cd26ddeca64998629142f696868cf1cd4a3bcbfaa6f303087831fc16e91a8d3
+static verification        96da81c14283d2a4cc2c5d90187efac262f97a645e3144b7222f19c45e72f2a2
+```
+
+payload 回读、ADT、kernel bases、observer codesign、988-byte 参数及 CDC 自检
+通过。状态为 `H571-real-pmgr-built-static-verified-device-pending`。设备门
+首先要求 `AMFI: No PMGR7` 不再出现；随后才看 USB、SpringBoard abort 和
+`fr=1`。以后任何 fresh 树在首次 prelink 后都必须再跑一轮 full-PMGR kernel
+build，并检查 pass-2 日志不是 stub。
