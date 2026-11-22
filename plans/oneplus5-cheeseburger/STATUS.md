@@ -26188,3 +26188,56 @@ SpringBoard codesign、boot 布局及 CDC 合同均 PASS。设备门要求
 `h581_nsexception` 给出可读 name/reason，随后才能判断应从
 ChronoServices 内部状态、SpringBoardHome 调用还是前置 scene 注册修复。
 状态为 `H581-built-static-verified-device-pending`。
+
+### §258 H581 真机：assertion 调用后转为直接 SIGABRT
+
+H581 CDC boot 为 `3A593E65`。547.664674 至 547.994352 秒依次完成
+ChronoServices enter、skip 和主线程 return，548.263519 秒命中
+`h579_chrono_assertion_stub`。549.165191 秒直接出现
+`h578_abort_signal number=6`，没有 `h581_nsexception` 或
+`h575_cxx_throw`。549.201458 秒 PID 27 退出。
+
+captured frame 仍经过 libobjc、CoreFoundation、ChronoServices
+`+0x2a160/+0x29b04/+0x2970c/+0x3800/+0x10f70` 和 SpringBoardHome
+`+0x106284`。因此 `__cxa_throw` 解码没有覆盖这条直接 abort 路径。`fr=1` 和
+completeStartup return 均未出现。
+
+```text
+H581-live.log
+  26a717384dd49d1014d014e65fb875b5ac89a9b1a92ac313df0cdbbf7ff723c5
+H581-tail32.bin
+  a4d8df76bee7fc31e5d7bebf633bb6ad7525c004cd6a26cf5c40777f203d6417
+H581-h103.txt
+  9f477ac67404d3d7711d4c3015ba3072d50dea6f46454e44c7e274833c1b833e
+```
+
+设备随后自行回到 Android。通过一次
+`adb reboot recovery` 进入 TWRP 并完成持久环拉取。
+
+### §259 H582：把 SBIconController 初始化异常留在当前 SpringBoard 进程
+
+H582 只扩大异常边界：`SBIconController
+initWithMainDisplayWindowScene:` 的原调用被 `@try/@catch (NSException *)` 包住。
+捕获时记录 `h582_icon_init_exception_caught` 的 name/reason，随后返回 nil，
+不再让异常逃逸并终止主线程。源码 `c2399207`，NativeMetal
+`acce1b90b950c9bb2938cde5ecc653c9ed6d9ac1`，device
+`914038e725c353b581d516a6ca201cb50260103c`。
+
+kernel 和 Data seed 继续使用显式控制输入。新建产物：
+
+```text
+GPU addon                 7fc45b0083227a6c2a365d59fbca37d992b880b8eb0850578676fd971cdfcc18
+owner trust               320948ae75593e8f1f4c19584ba8173cb74fa579b9ef2106bc92b58c11184cd5
+payload                   3fb036c8b79d8e68ee1b71c760cabefec98f86e44bcf6a90b67f95f0b9b10eb7
+boot                      d84337153cc03dbe51ca3004139172410659531a976f566ba2d82d721fde4bc8
+ADT                       7941f259a298206563c35635f96df734c2a98745657f7ab766faf4b83b0ff5b5
+observer                  c5f60c9cd5d0c99d83ec688278524006a285b997
+SpringBoard patched       6d667a029eef784517158012af93bc61a0f4c200
+H407 UEFI                 9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6
+```
+
+payload 回读、ADT、988 字节 bootargs、owner trust、observer 和
+SpringBoard codesign、boot 布局及 CDC 合同均 PASS。设备门要求
+`h582_icon_init_exception_caught` 命中后 PID 仍存活，并继续观察
+completeStartup、desktop context 和真实 `fr=1`。状态为
+`H582-built-static-verified-device-pending`。
