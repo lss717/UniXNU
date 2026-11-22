@@ -141,7 +141,7 @@ def main() -> int:
         OBSERVER,
         (
             b"observer load process=",
-            b"build=H547",
+            b"build=H548",
             b"H492_CCS",
             b"filter bypass installed",
             b"filter bypass pid",
@@ -154,6 +154,7 @@ def main() -> int:
             b"h545_cloud_config_ui_bypass",
             b"h546_setup_manager_init_enter",
             b"h547_by_setup_assistant_needs_to_run_bypass",
+            b"h548_by_setup_prepare_launch_sentinel_bypass",
             b"methods installed add=independent state=",
             b"observer bypass pid=",
             b"application enumeration skipped",

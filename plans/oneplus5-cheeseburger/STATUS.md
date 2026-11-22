@@ -23985,3 +23985,48 @@ external symbol 通过 `-undefined dynamic_lookup` 在 SpringBoard 注入环境�
 解析。稳定 addon 10 项中只有 observer 改变，trust owner 保持 93 项并保留
 A540Trace。payload 其它输入与 H541 一致，bootargs 最坏 `1016/1024`，boot
 JSON `problems=[]`。状态为 `H547-built-static-verified-device-pending`。
+
+#### H547 真机结果：顶层 BYSetupAssistantNeedsToRun interpose 未命中
+
+H547 的 boot ID 为 `21752ae3`。同一 PID 的观测：
+
+```text
+437.281271 h541_did_finish_enter
+437.805862 h542_status_server_bypass_enter
+437.871699 h542_status_server_bypass_return
+447.924357 h546_setup_manager_init_enter
+452.148082 h545_cloud_config_ui_bypass
+452.323731 h546_setup_manager_init_return
+459.485772 NATIVE_EXIT pid=27 status=0x6 sender=27/SpringBoard
+```
+
+`h547_by_setup_assistant_needs_to_run_bypass` 没有出现，说明
+`BYSetupManager init` 的实际路径直接进入 `Internal_BYSetupAssistantNeedsToRun`，
+没有经过导出的顶层 `BYSetupAssistantNeedsToRun()`。因此该 interpose 未命中，
+不能把本轮当作 setup requirement 已被旁路。init 返回后约 7.16 秒退出，
+`didFinishLaunching` 和 scene probe 仍未返回。
+
+H547 产物：
+
+```text
+observer SHA-256         a70612be2184e6c82057a9c28162b38198ca64ba8fe5319bac26eb3b8f1292b0
+observer CDHash          f0e05e642d87d5d5d3c8f7807ed93fa432cb6a03
+GPU addon SHA-256        f35cabc6fef7cc5ebf6c170510f06841e612a28c0b80a20a826167b54c2ecedf
+owner trust SHA-256      d1444e008998099bff810810dbd744feebc502ac18b272c680a813568cc8f633
+payload SHA-256          d7811c41341bc1c9cceb2d9c0298f1ed56b567ea87547e15aef5af91636c0716
+boot SHA-256             1758f2ed083b751967c0308d717a8c7b8d52a51dec20065b4ae155e34a0bdcca
+boot.json SHA-256        3f281941ad860144cc761419798644d694b0128657a8116d321e98569480c4ba
+```
+
+### §217 H548：在已确认的 SetupAssistant sentinel 入口返回
+
+H548 保留 SetupManager 的原始 init，并新增 dyld interpose
+`BYSetupAssistantPrepareLaunchSentinel()`，该入口已由 H543 的栈和
+H547 的 init 内部调用确认。replacement 只记录
+`h548_by_setup_prepare_launch_sentinel_bypass` 后返回，不再执行
+migration、safe-haven、launch-log 和 sentinel 状态更新。
+
+此轮用于判断：正常 SetupManager 对象构造在跳过 sentinel 后能否完成并让
+`applicationDidFinishLaunching:` 返回。若未命中该标记，则说明 dyld
+interpose 没有覆盖这个 import；若命中但回调仍不返回，则继续用同 PID 栈查找
+下一个同步点。
