@@ -26780,3 +26780,74 @@ CDC/UXC1 合同均 PASS，`problems=[]`。状态为
 `h585_activity_center_init_return`，并观察 `completeStartup` 是否继续、主线程是否
 离开原同步 XPC。若 init 返回但后续查询因 `_activityCenter=nil` 失败，应记录首个
 具体 selector 或异常，不把这次旁路直接视为最终修复。
+
+### §271 H587 真机：ActivityKit 停点消除，转到图标模型本地化锁
+
+H587 同一次启动的 kernel boot 为 `2271ebdb`。H103 在 233.466 秒记录
+`observer load process=SpringBoard pid=27 build=H587`。ActivityKit 的
+`ACActivityCenter init` 两次分别于 598.917/599.272 秒进入；每次紧接
+`h587_activity_center_service_skip`，并分别在 599.090/599.452 秒返回
+`ACActivityCenter`。H586 从 577 秒持续到 860 秒的
+`req=69635` 同步 XPC 等待已从主线程消失。
+
+主线程随后进入新的稳定停点：
+
+```text
+_ulock_wait2
+-> LaunchServices Database Context::_get
+-> UTTypeRecord _typeRecordWithIdentifier
+-> UIKitCore _addDescendantUTIsToSet
+-> _UIApplicationInfo _localizedFolderNameForName:
+-> SBHIconManager localizedFolderNameForDefaultDisplayName:
+-> SBHIconModel localizedDefaultFolderName
+-> SBHIconStateUnarchiver
+-> SBHIconModel _unarchiveRootFolderWithLayoutStatus:
+-> SBIconController initWithMainDisplayWindowScene:
+```
+
+644、719、795 秒的三个样本保持一致；同期
+`NATIVE_SBCHAIN ... req=48643/96/lsd.real q=1` 持续，
+`fr=0`。采集在 803 秒结束，没有观察到 PID 27 退出。结论是 H587 成功绕过
+ActivityKit，但图标模型在默认文件夹名称本地化时等待 LaunchServices 数据库锁。
+
+```text
+H587-live.log      d3ed696a75262827aa208594cd3a9bfe5d3e0846a9a46239954f01ea3236dd4c
+H587-tail32.bin    250133914648ede7f1a464d121becc4a738ad72ee6e360efaaedf3f385e4b552
+H587-h103.txt      52d906f9635395adaa51855a892950457ff8bf6c7222087953cc282db71a4884
+```
+
+随后清零末尾 32 MiB，回读仍为固定值
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+
+### §272 H588：绕过默认文件夹名称本地化
+
+H588 只 hook `-[SBHIconManager
+localizedFolderNameForDefaultDisplayName:]`，直接把调用方已有名称返回，避免对
+每个默认文件夹名称执行 UIKit UTType 到 LaunchServices 数据库的查询。该值只
+影响展示名称，不改变图标模型结构或显示合成路径。
+
+源码 head `46344709`，NativeMetal `19a8c23`。H588 首次编译因 hook 的 selector
+参数未使用触发 `-Werror`；已显式标记后重新打包，未发机。kernel、Data seed 与
+988-byte bootargs 继续与 H587 字节级一致：
+
+```text
+GPU addon                 7b41a5951691d78a479467eb49bb96d157a1cee78a84cb5d222627f3cf4f0a44
+owner trust               3c695a81ba29791694bfc52e69acd09cbda758f20c1dbd127c5d4b9d0cb22593
+payload                   7e794dbe669b743310f06427231c61038180d3673816749cce62ac889dc19f42
+boot                      6900486c39b06cf3b90235cc9c2a86daccef0894946d25601a3c7c0890cc3b3e
+boot.json                 9fab6ba7bc101331817973fc46f56c9f4276d4d71ffe8c32ba9761f6edb0b68b
+ADT                       9a1012aea0cdc33b2de8bf68747b16e922429769d83a15ac9a589122fb11b336
+observer CDHash           b33312e92e72fa8ae8e73fab64011726fe53e0e9
+SpringBoard CDHash        6d667a029eef784517158012af93bc61a0f4c200
+H407 UEFI                 9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6
+```
+
+payload 回读、988-byte bootargs（`zap-base` 后 1008/1024，最坏 1016/1024）、
+owner trust 7 项、observer/SpringBoard codesign、bundle gate、boot 布局与
+CDC/UXC1 合同均 PASS，`problems=[]`。状态为
+`H588-built-static-verified-device-pending`。
+
+设备门要求 `h588_folder_name_localization_hook installed=1`，随后默认文件夹
+名称路径出现 `h588_folder_name_localization_bypass`，并确认主线程离开
+`_ulock_wait2`。若图标模型继续阻塞，应记录新的栈和 selector，不把名称旁路
+扩大成整个 icon model 旁路。
