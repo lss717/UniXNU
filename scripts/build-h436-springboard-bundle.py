@@ -213,14 +213,15 @@ def main() -> int:
         require_binary_markers(
             LSD_SHIM,
             (
-                b"H491_LSD",
+                b"H536_LSD",
                 b"recovery skip installed",
+                b"recovery install failed",
                 b"recovery skipped",
             ),
         )
         lsd_shim_cdhash = compact_signed_bundle(
             LSD_SHIM,
-            "org.blu-sharky.H491LsdRecoveryAsync",
+            "org.blu-sharky.H536LsdRecoveryAsync",
         )
         lsd_entitlements = subprocess.run(
             ["codesign", "-d", "--entitlements", ":-", str(lsd_source)],
