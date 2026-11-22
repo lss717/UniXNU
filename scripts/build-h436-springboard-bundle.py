@@ -216,7 +216,7 @@ def main() -> int:
         BOOTSTRAP, "org.blu-sharky.H435SpringBoardWrapper", entitlements
     )
 
-    lsd_report = None
+    lsd_report = {}
     if lsd_source is not None:
         expected_lsd_sha256 = (
             "43ee16e03145f3ad6b84fc7dac63ee767ec8182b51bc9cb5bd8bf8650baa4e5b"
@@ -334,24 +334,24 @@ def main() -> int:
             raise SystemExit("launchd cache changed unrelated job " + key)
     if modified_cache["LaunchDaemons"][SPRINGBOARD_JOB] != job:
         raise SystemExit("launchd cache SpringBoard job did not round-trip")
-    if lsd_source is not None:
-        lsd_job = daemons.get(LSD_JOB)
-        if not isinstance(lsd_job, dict):
-            raise SystemExit("launchd cache has no mobile lsd job")
-        before_lsd = copy.deepcopy(lsd_job)
-        if lsd_job.get("ProgramArguments") != ["/usr/libexec/lsd"]:
-            raise SystemExit("cached lsd job has an unexpected executable")
-        lsd_job["ProgramArguments"] = ["/System/Library/xpc/lsdwrap"]
-        lsd_report["lsd_job_before_program_arguments"] = before_lsd["ProgramArguments"]
-        lsd_report["lsd_job_after_program_arguments"] = lsd_job["ProgramArguments"]
-        modified = plistlib.dumps(cache, fmt=plistlib.FMT_BINARY, sort_keys=False)
-        modified_cache = plistlib.loads(modified)
-        if modified_cache["LaunchDaemons"][LSD_JOB] != lsd_job:
-            raise SystemExit("launchd cache lsd job did not round-trip")
-        for key, value in daemons.items():
-            if key not in (SPRINGBOARD_JOB, LSD_JOB) and \
-                    modified_cache["LaunchDaemons"].get(key) != value:
-                raise SystemExit("launchd cache changed unrelated job " + key)
+    lsd_job = daemons.get(LSD_JOB)
+    if not isinstance(lsd_job, dict):
+        raise SystemExit("launchd cache has no mobile lsd job")
+    before_lsd = copy.deepcopy(lsd_job)
+    if lsd_job.get("ProgramArguments") != ["/usr/libexec/lsd"]:
+        raise SystemExit("cached lsd job has an unexpected executable")
+    lsd_job["ProgramArguments"] = ["/System/Library/xpc/lsdwrap"]
+    lsd_report["lsd_job_before_program_arguments"] = before_lsd["ProgramArguments"]
+    lsd_report["lsd_job_after_program_arguments"] = lsd_job["ProgramArguments"]
+    lsd_report["binary_rebuilt"] = lsd_source is not None
+    modified = plistlib.dumps(cache, fmt=plistlib.FMT_BINARY, sort_keys=False)
+    modified_cache = plistlib.loads(modified)
+    if modified_cache["LaunchDaemons"][LSD_JOB] != lsd_job:
+        raise SystemExit("launchd cache lsd job did not round-trip")
+    for key, value in daemons.items():
+        if key not in (SPRINGBOARD_JOB, LSD_JOB) and \
+                modified_cache["LaunchDaemons"].get(key) != value:
+            raise SystemExit("launchd cache changed unrelated job " + key)
     chronod_job = daemons.get(CHRONOD_JOB)
     if not isinstance(chronod_job, dict):
         raise SystemExit("launchd cache has no chronod job")
