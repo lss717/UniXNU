@@ -24218,3 +24218,48 @@ observer 为 arm64，strict codesign 通过。生产包保持稳定 10 项结构
 observer；owner trust 保持 93 项并保留 A540Trace。payload 从 H541 复制，
 只替换 trustcache 和 gpuaddon；bootargs 最坏 `1016/1024`，boot JSON
 `problems=[]`。状态为 `H550-built-static-verified-device-pending`。
+
+#### H550 真机结果：HUD 成功后，缺失 SystemStatusServer 触发异常
+
+启动前只清零并回读 `userdata_ios` 最后 32 MiB，全零 SHA-256 仍为
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+唯一设备 `16149951` 只通过 `fastboot boot` 启动 H550。首个 SpringBoard
+PID 27 的时间轴为：
+
+```text
+421.274671 h541_did_finish_enter
+451.128857 h546_setup_manager_init_enter
+455.045443 h545_cloud_config_ui_bypass
+455.863748 h546_setup_manager_init_return
+456.171685 h550_setup_hud_enter
+457.450395 h550_sound_shared_enter receiver=SBSoundController
+457.563877 h550_sound_init_enter
+457.647563 h550_sound_init_return
+457.751176 h550_sound_shared_return
+458.276808 h550_uncaught_exception name=NSInternalInconsistencyException
+           reason=SBTelephonyManager is being created before the system status server
+461.194141 NATIVE_EXIT pid=27 status=0x6 sender=27/SpringBoard
+```
+
+`_setUpHUDControllerAndFriends` 已进入，`SBSoundController` 的
+`sharedInstance` 和 `init` 均已成对返回；没有到达 `SBRingerControl` 构造，
+也没有 `h550_setup_hud_return`。异常栈按本 boot slide
+`0x1a3ac000` 符号化为：
+
+```text
+SpringBoard +[SBTelephonyManager sharedTelephonyManagerCreatingIfNecessary:] +0x15c
+SpringBoard -[SpringBoard _setUpHUDControllerAndFriends] +0xf0
+SpringBoard -[SpringBoard applicationDidFinishLaunching:] +0x4b8
+```
+
+第二个 PID 128 在 init 返回约 `0.16 s` 后依次命中相同的 HUD、声音和异常
+标记，证明这不是首个 PID 的采样偶然。根因是 H542 为绕开
+`STStatusServer` 卡死而整体跳过
+`-[SpringBoard _startSystemStatusServerAndFriends]`，导致后续首次创建
+`SBTelephonyManager` 时前置状态不成立并抛出
+`NSInternalInconsistencyException`。
+
+live log SHA-256 为
+`3408084da1b543a797779c45935128977544cae4ec9adcf2039efe1bdbc6f897`。
+全轮 UFS 快照保持 `ocs_err=0`、`lock_timeout=0`、请求完成计数前进。
+状态更新为 `H550-device-system-status-prerequisite-confirmed`。
