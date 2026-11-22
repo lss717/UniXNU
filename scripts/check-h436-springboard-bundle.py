@@ -85,6 +85,8 @@ def main():
         '"lsd_source_sha256"',
         '"observer_cdhash"',
         '"bootstrap_cdhash"',
+        '"springboard_cdhash"',
+        '"springboard_observer_load_command"',
         '"lsd_bootstrap_cdhash"',
         '"lsd_recovery_cdhash"',
     ):

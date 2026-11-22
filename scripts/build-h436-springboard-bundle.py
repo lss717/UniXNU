@@ -360,6 +360,37 @@ def main() -> int:
     os.chmod(BOOTSTRAP, 0o755)
     shutil.copyfile(BOOTSTRAP, SPRINGBOARD_DIR / "SpringBoard")
     os.chmod(SPRINGBOARD_DIR / "SpringBoard", 0o755)
+    springboard_entitlements = subprocess.run(
+        ["codesign", "-d", "--entitlements", ":-", str(springboard_source)],
+        capture_output=True,
+        check=True,
+    )
+    if b"<plist" not in springboard_entitlements.stdout:
+        raise SystemExit("Original SpringBoard had no readable entitlements")
+    springboard_entitlements_path = OUT / "springboard-entitlements.plist"
+    springboard_entitlements_path.write_bytes(springboard_entitlements.stdout)
+    springboard_binary = SPRINGBOARD_DIR / "SpringBoard.patched"
+    subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/add-macho-load-dylib.py"),
+            str(springboard_source),
+            "/private/var/ngpu/lib/SpringBoardSceneObserver.dylib",
+            str(springboard_binary),
+        ],
+        check=True,
+    )
+    os.chmod(springboard_binary, 0o755)
+    springboard_cdhash = compact_signed_bundle(
+        springboard_binary, "com.apple.springboard",
+        springboard_entitlements_path,
+    )
+    springboard_load_commands = subprocess.check_output(
+        ["otool", "-l", str(springboard_binary)], text=True
+    )
+    if "/private/var/ngpu/lib/SpringBoardSceneObserver.dylib" not in \
+            springboard_load_commands:
+        raise SystemExit("Patched SpringBoard is missing the observer LC_LOAD_DYLIB")
 
     files = []
     for path in sorted(p for p in BUNDLE.rglob("*") if p.is_file()):
@@ -370,11 +401,12 @@ def main() -> int:
     files.append(("lib/SpringBoardSceneObserver.dylib", 0o755, OBSERVER.read_bytes()))
     files.append(("bin/scenebootstrap", 0o755, BOOTSTRAP.read_bytes()))
     files.append(("xpc/launchd.plist", 0o644, modified))
-    # Production addons must overlay the original signed SpringBoard at this
-    # path. The observer is loaded through the job environment. Installing the
-    # H435 wrapper here makes the kernel reject it as a non-platform binary.
+    # The H483 launchd environment did not inject the observer on 21H461.
+    # Install a copy of the original executable with an explicit observer
+    # LC_LOAD_DYLIB and its original entitlements. The raw executable remains
+    # beside it for inspection and wrapper compatibility.
     files.append(("springboard/SpringBoard", 0o755,
-                  springboard_source.read_bytes()))
+                  springboard_binary.read_bytes()))
     files.append(("springboard/SpringBoard.real", 0o755,
                   (SPRINGBOARD_DIR / "SpringBoard.real").read_bytes()))
     if lsd_source is not None:
@@ -410,6 +442,11 @@ def main() -> int:
         "springboard_binary_sha256": hashlib.sha256(
             springboard_source.read_bytes()
         ).hexdigest(),
+        "springboard_patched_sha256": hashlib.sha256(
+            springboard_binary.read_bytes()
+        ).hexdigest(),
+        "springboard_cdhash": springboard_cdhash,
+        "springboard_observer_load_command": True,
         "springboard_environment": {
             "DYLD_INSERT_LIBRARIES": environment["DYLD_INSERT_LIBRARIES"],
             "DYLD_FORCE_FLAT_NAMESPACE": environment["DYLD_FORCE_FLAT_NAMESPACE"],
