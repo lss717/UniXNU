@@ -25425,3 +25425,36 @@ payload 内的 kernel、trust、GPU addon 和 Data seed 逐字节回读一致；
 UEFI、ADT、kernel bases、observer codesign、988-byte 参数和 CDC 自检均通过。
 状态为 `H567-built-static-verified-device-pending`。设备门先确认不再在
 Data/Preboot 后约 54 秒复位，并等待同一 boot 的真实 `NATIVE_SBABORT`。
+
+### §239 H568：无 abort 快照补丁的精确控制
+
+H567 同镜像两次都没有 CDC，持久环在约 47–54 秒的 dyld cache 序列后停止。
+为区分这是 USB/启动波动还是 abort 快照补丁本身，H568 使用独立分支
+`codex/h568-no-abort-probe`，源码 head
+`4ecf108d4c259719d4b31e77298b8b8a14971aa6`。除执行
+`springboard-abort-snapshot.patch` 外，kernel、seed 和 userspace 输入与
+H567 对齐。
+
+这是因果控制，不是新的最终候选：为保证唯一变量，H568 有意使用 H567 的同一
+Data seed `9fa1010e…4426af` 和同一 UUID
+`7A2FDD02-3064-44A6-B029-55335EF3B31F`。kernel 在新的空 `out/` 中完整编译；
+addon、owner trust、payload 和 boot 也从 committed source 重新生成。若该控制
+能稳定越过早期停点，则后续正式候选必须重新生成 fresh seed，不能把 H568
+复制输入的做法带入最终包。
+
+```text
+kernel SHA-256             29dac01bfef0f358a7a9611ea9eed78a9dd3ca5b648b5808cfc965e6f6baf2fd
+ADT SHA-256                de5e7fcf0c891915d04f217848e34e27c53ad4109f87b9f69f96fb43530b8334
+Data seed SHA-256          9fa1010ea4a6e43b71328c85554a679460cc4f413917e7fa64a83513d94426af
+GPU addon SHA-256          6e093036281e1100d2ebe5979a441654082911fd4435629da02c6873567e41d6
+owner trust SHA-256        d1f7c6ea31ddfc862ee22de7f2a4a569e669bc1aff5178a4d02d2604053390a3
+payload SHA-256            ee9171c03540632d95335c68e2b20f9d793fce57cafeb469fea4e8d6e9f3399d
+payload JSON SHA-256       583c2c014ce82041d505212a47caf287fa2de8886a0b54c1809f72093f62afd1
+boot SHA-256               8c6ff01e8737260f2619b2c86a6e84aff49c5bd80901c5c81ceeded9898fb76d
+boot JSON SHA-256          4d9ccc691a6f57d38fbf91b4764edd575ace3ff4c532108bd14eb0a57e4b8961
+static checks SHA-256      6d6695fc054df028bb0c4ce41cad7ec332d931e47881f4b619ae157c28ea4b1b
+```
+
+readback、ADT、kernel bases、988-byte 参数和 CDC 自检通过；kernel 中仍有正确
+Data UUID，但没有 `NATIVE_SBABORT` 字符串。状态为
+`H568-control-built-static-verified-device-pending`。
