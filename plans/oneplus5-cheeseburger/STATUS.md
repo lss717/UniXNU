@@ -24568,3 +24568,30 @@ observer 为 arm64，strict codesign 通过；生产 addon 保持稳定 10 项�
 trust 保持 93 项并保留 A540Trace。payload 从 H541 复制，只替换
 trustcache 与 gpuaddon；bootargs 最坏 `1016/1024`，boot JSON
 `problems=[]`。状态为 `H554-built-static-verified-device-pending`。
+
+#### H554 真机结果：基类 hook 未覆盖 `__NSSetM`
+
+H554 启动后，`h554_mutable_set_remove_guard installed=1` 出现，证明
+`NSMutableSet` 基类 hook 安装成功。但首个 PID 27 随后仍以原异常退出：
+
+```text
+535.849565 h553_application_controller_init_enter
+536.454030 installed_application_enter bundle=com.apple.springboard
+536.552397 installed_applications_enter bundle=com.apple.springboard
+536.946473 installed_applications_return class=__NSArrayM
+537.084358 installed_application_return object=0x0 class=nil
+537.450120 all_installed_enter
+537.602286 all_installed_return class=__NSArrayI_Transfer
+538.397053 h550_uncaught_exception
+           reason=*** -[__NSSetM removeObject:]: object cannot be nil
+544.770047 NATIVE_EXIT pid=27
+```
+
+异常中完全没有 `h554_mutable_set_remove_nil_ignored`。类簇
+`__NSSetM` 自己实现了 `removeObject:`，在 `NSMutableSet` 基类上替换
+IMP 不会覆盖子类方法。H554 的功能修复未生效，但这次失败把安装目标从
+`NSMutableSet` 收敛到实际私有类 `__NSSetM`。
+
+live log SHA-256 为
+`a5392216e74b2fc230997ff1837d9e02d836aed4f808fd77dc8cc7395d77b73e`。
+状态更新为 `H554-device-nssetm-hook-missed`。
