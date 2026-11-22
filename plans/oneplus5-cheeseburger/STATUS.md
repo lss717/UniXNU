@@ -25668,4 +25668,75 @@ H571 的已知工作参数。新 `kernel_args` 与 H571 逐字节相同（988 by
 display-first-frame/logs/H572/device/20261123-004145/H572-live.log
 ```
 
-设备结论和持久环哈希在本轮结束后补录。
+H572 有效轮 kernel boot 为 `212e0ab0`。Data/addon 安装为 `12/12`，
+launchd 与 SpringBoard overlay 都是 `stage=5 status=0`。实时日志从约 273 秒开始，
+到 1409 秒仍持续记录 SpringBoard 的 `lsd.real` 同步等待，`fr=0`；整个窗口没有
+任何 `h572_observer_alive`。因此 launchd job 的 `DYLD_INSERT_LIBRARIES` 在 21H461
+SpringBoard 上没有实际加载 observer。该轮在出现明确 abort 前因 CDC 链路结束而
+退回 TWRP，不能把窗口末端写成 panic 或 abort 的原因。
+
+H572 有效轮证据：
+
+```text
+H572-live.log
+  ed56008c54eb50322c1bd1efdc3c586c6a98363c8d2755b7b22339360a870962
+H572-valid-tail32.bin
+  ffbb5824e81c335b8a6709438b5076765a7f7b49d447aad9c21254d624f74065
+H572-valid-h103.txt
+  2c020e536446dee1828deff00883f657926d1656faff4a0ea0fe6c6fcc028ae5
+```
+
+### §244 H573：SpringBoard LC_LOAD_DYLIB observer 成功，阻塞点定位到 chronod 订阅
+
+H573 将 observer 从 launchd 环境变量改为直接写入 SpringBoard 可执行副本的
+`LC_LOAD_DYLIB`。新增副本保留原 entitlements，并以
+`com.apple.springboard` 重新签名；SpringBoard CDHash
+`6d667a029eef784517158012af93bc61a0f4c200` 和 observer CDHash
+`e5e0724e2c35168f39e01480dafb32fd006337eb` 都加入 owner trust。
+
+该候选使用全新 checkout、全新 `out/`、全新 1 GiB Data skeleton 和全新 UUID
+`69CDF6F7-5E8E-4281-B21A-84C0E1A7CA5A`。第一次在旧 `out/` 上运行
+`macos-build-kernel.sh --clean` 仍沿用了已有 prelinked kernel，发现后立即作废；
+最终构建来自空 `out/`。
+
+```text
+kernel                    5aa218b410fa6327137687d28f7221a09cdf8f8b92bfbe5f28a99d98f135ca4e
+real PMGR archive         ed81dea3e4d0830a38d3234ca516ebe37e355eed5c346b749f3957ebf89da3ac
+ADT                       c8997126adaf6dec11b9c514c9c765348e617111e87565f10ba6c8b1d96b95fb
+Data seed（encoded）      0a39ccaaf70543d593a6bf7d258f2f74055e3b23864f4a288686931e478216b9
+GPU addon                 47740b09335fa4844fd072eb2054531c8cfdf5b4ff02309702871fdb87af8886
+owner trust               3cc7bf967da286522922ee8677bded7df1cb05b7e2e90ed0dc74bd07fc64151f
+payload                   cffc0866487a6e7aa74f5e1895233209cf265039bcd888726e82e0706856df07
+boot                      13f5a528e875c74a1eaa3d8205a56bf97740f3d3e3c40a704600232a8fe26c3c
+static checks             be478f8f1e012727ee44ea016e61f3d3c6a73645e93e158d5199aa23bca0ee29
+```
+
+`fastboot boot` 后在 kernel boot `22740fde` 的 PID 27 内首次得到连续
+`h572_observer_alive`，确认注入成功。时间线如下：
+
+```text
+408.817  SpringBoard 首次观察到 lsd.real 请求
+426.657  UIApplication _run 进入
+429.503  application:didFinishLaunching: 进入
+449.489  SBSetupManager init 返回
+536.360  SBTelephonyManager shared/create 返回
+565.603  _completeStartupAfterMainSceneConnect: 进入
+568.913  SBApplicationController init 返回
+577.562  SBUIController sharedInstance 进入
+577.597  SBIconController initWithMainDisplayWindowScene: 进入
+581.305  CHSChronoServicesConnection _subscribeToExtensions 进入
+```
+
+到 779 秒，主线程仍持有 `req=12035/90/chronod`，没有 subscribe return；
+631、707、779 秒三次采样一致，`fr=0`。这排除了 lsd、SetupManager、HUD、
+TelephonyManager 和 ApplicationController 作为当前唯一阻塞点，并把下一步限定为
+ChronoServices 同步订阅。
+
+H573 实时日志：
+
+```text
+display-first-frame/logs/H573/device/20261123-011325/H573-live.log
+```
+
+本轮尚未结束时的持久环哈希和最终 SIGABRT 结果稍后补录。不要把进入图标控制器或
+ChronoServices 当成桌面首帧已经产生。
