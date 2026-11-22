@@ -23626,3 +23626,35 @@ seed 和启动参数，只把
 4. 回调返回后出现另一种明确崩溃：先取最后栈和 crash report，再决定下一变量。
 
 本轮不调用 `makeKeyAndVisible`，不修改 scene 状态，也不改变 display backend。
+
+H542 构建与静态核验：
+
+```text
+NativeMetal commit        c3a3f73
+superproject source      4d83abd7
+observer SHA-256         2dcfb941dc28f398f794fc64ecb6b7d3745c41ccad3e4d6fe27e6ab0652a436c
+observer CDHash          751a245f6c18882f69177be1d37c64a50ddb28ea
+raw addon SHA-256        1ab64fc040e6fd4fdda2c915eef830e8e5924320dec98f62f7ed3d9388d0f3ec
+GPU addon SHA-256        8e2b2b2f0c76dbd1c3745d7e1ac484dc410b2ee2bc247bdbf5a5f1987e58d48a
+owner trust SHA-256      b53cb9e8031b094980b1d911c54b5984460cda0cf0fb0243b116d8916b8053a0
+payload SHA-256          d2237c24b426d464aa6ea2bd829a2274e0d6a155de578fcffd5528a4ec5875f3
+boot SHA-256             cad0dc9d20912e85c21fc12576c7cb02786135ab3c73db43f9854418b05b3de0
+boot.json SHA-256        0916517f89a9d4d63c090dc4035702a15b821ad4c21f3f3896c6a49a0a9b69dd
+```
+
+observer 为 thin arm64，`codesign --verify --strict` 通过，实际二进制包含
+`build=H542`、`h542_status_server_bypass_enter` 和
+`h542_after_did_finish`。最终 addon 为 10 项。trust 从 93 项扩为 94 项。
+payload 从 H541 FAT 基线出发，只替换 `kernel.macho.trustcache` 与
+`kernel.macho.gpuaddon`；以下文件在 H541/H542 payload 中逐字节一致：
+
+```text
+kernel.macho       7fb58f798b632696ccb72a54d78e818ba890db681621bf272553fb2d5f9cb8ce
+kernel.macho.adt   9fa9e5ba88b84546ef89f79b26bbd9a9cea5e881b8efebf2c2149d09259eb74d
+scratch-data.img   7522c2b803bac371190e5f316bacc825d1dd3c964ef3a3ab6ffd75bf0f9bae79
+unixnu.toml        dd6f80f19f74931600aa5cd83543245cac09db82fb5cf3da3457b8e065f01e81
+```
+
+bootargs 为 `1008/1024`，最坏 `1016/1024`；boot JSON `problems=[]`。
+产物位于 `display-first-frame/builds/H542/`，状态为
+`H542-built-static-verified-device-pending`。
