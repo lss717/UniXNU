@@ -24458,3 +24458,39 @@ uptime 约 833 秒，期间没有新的 SIGABRT。
 live log SHA-256 为
 `c38c5d699b83f4889264802cd4a723e743bb4810ac218ea603c69cc62c4a1026`。
 state 更新为 `H552-device-application-library-query-blocked`。
+
+### §222 H553：观测 SBApplicationController 与 FBSApplicationLibrary
+
+H553 保持 H552 的用户态行为不变，只增加启动查询链观测，并把 H549 主线程
+采样扩展到 15、30、60、120 秒：
+
+- `-[SBApplicationController init]`
+- `-[FBSApplicationLibrary installedApplicationWithBundleIdentifier:]`
+- `-[FBSApplicationLibrary installedApplicationsForBundleIdentifier:]`
+- `-[FBSApplicationLibrary allInstalledApplications]`
+
+验收时若 controller init 未返回，按最后一个完成/未完成 enter 定位；若
+`installedApplicationsForBundleIdentifier:` 有 enter 无 return，则查询该
+bundle identifier 的 LaunchServices/FrontBoard 回复；若 all-installed 查询
+未返回，优先查应用数据库枚举。只有 controller init 返回并出现
+`h541_did_finish_return`，才回到真实桌面内容与 CA 提交链路。
+
+H553 构建与静态核验：
+
+```text
+NativeMetal commit        47a0fa1
+superproject source       661231f0
+observer SHA-256         571d72f7f3c0d47d42fa9f7c1692857f6dfe180ee9644ced40c5985a625b2e6f
+observer CDHash          e1a93d35d7933f390f6d28f2a5820f8bccd803f5
+raw addon SHA-256        2a8b3341f9005c857d77f9ccea2851a4f01dc2070812c6062a31d198803bb478
+GPU addon SHA-256        ca8c30f2f4ef0932e8934d008d7890d59407400a2123b05c91fcb45aa32a49d9
+owner trust SHA-256      848f7e7d76623430e6bd027f2b9fd32f2d6a997c087ca9fd39bb77d98998cb48
+payload SHA-256          bdc07c2a1d4356bed34b3cb6725670131ebe8d349086360d5ce444602713ff54
+boot SHA-256             3e4b8986b1794c6535b78ba053de286f5f53d83e9d5f5b09b0ca09579dfd8033
+boot.json SHA-256        5ba44dbd03523fdb3baac2c480a2488e52038e04bfe70363ce0f677b233e1a7f
+```
+
+observer 为 arm64，strict codesign 通过；生产 addon 保持稳定 10 项，owner
+trust 保持 93 项并保留 A540Trace。payload 从 H541 复制，只替换
+trustcache 与 gpuaddon；bootargs 最坏 `1016/1024`，boot JSON
+`problems=[]`。状态为 `H553-built-static-verified-device-pending`。
