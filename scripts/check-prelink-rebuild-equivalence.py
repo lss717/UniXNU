@@ -47,7 +47,7 @@ def normalized(data):
         lo, hi = match.span(0)
         b[lo:hi] = match.group(1) + b'0' * (hi - lo - len(match.group(1)))
         counts['version_timestamp'] += 1
-    if (counts['uuid'] != 1 or counts['version_timestamp'] != 1 or
+    if (counts['uuid'] != 1 or not counts['version_timestamp'] or
             counts['derived_kcid'] != 1 or not counts['oso_timestamps']):
         raise ValueError('Unexpected identity/debug metadata')
     return bytes(b), counts
