@@ -22868,3 +22868,83 @@ H534 payload 与 H533 的 kernel、ADT、scratch Data 和 `unixnu.toml`
 逐字节相同，只有 GPU addon 与 owner trust 不同。owner trust 从 85 项
 扩为 86 项。bootargs 仍为 `1008/1024`，最坏 `1016/1024`，boot JSON
 `problems=[]`。状态为 `H534-built-static-verified-device-pending`。
+
+#### H534 真机结果：等待前移，但根窗口没有出现
+
+H534 boot ID `2120c261` 在 serial `16149951` 上启动。CDC 从约 277 秒
+开始，live log 中仍未出现 constructor 的 `H534_LS`。样本 6060 至
+6240 的 LaunchServices request 从 H533 持续的 `q=1` 变成
+`q=0`，但 `ld_reply=0` 始终不变：
+
+```text
+407.572118 req=24071/96/lsd.real q=0 sr=1 so=1 ld_reply=0
+625.930592 req=24071/96/lsd.real q=0 sr=1 so=1 ld_reply=0
+841.938606 req=24071/96/lsd.real q=0 sr=1 so=1 ld_reply=0
+```
+
+SpringBoard 主线程 TID 292 在样本 6240 仍停在
+`libsystem_kernel _ulock_wait2`。同一栈包含：
+
+```text
+_LSContextInitCommon
+LaunchServices::Database::Context::_get
+_LSDBEnumeratorGetNextObject
+-[_LSDBEnumerator countByEnumeratingWithState:objects:count:]
+FrontBoardServices
+SpringBoard
+```
+
+H533 在 580.240890 秒已经看见根窗口，H534 到 897.566361 秒仍没有
+root/status window、host context、content、present 或 `fr=1`。尾环也没有
+`H534_LS`。这说明 H534 的显式 CoreServices 安装没有运行到方法替换，
+并且启动停在 LaunchServices database enumerator，而不是进入 compositor。
+
+本轮在 `1123.246557 s` 由 UXC1 request `424534` 正常重启，随后进入
+TWRP。证据：
+
+```text
+logs/H534/device/20261122-074649/
+H534-live.log
+  537ce92451a57804f888c4ad85c65d0668689084e4f912fc53a0a938cda3764e
+H534-tail32.bin
+  44a5af7f13f871475943f3e9ad72a8b25c433c9324e35103933a84e30a6c9c68
+H534-h103.txt
+  be1fc6dce81136130df4d369ff4e9d859ea62e3b753f9418d46e1eecb311c513
+```
+
+分类为 `H534-request-dequeued/LS-enumerator-blocked/no-root-window`。
+
+### §205 H535：在 dyld 完成后由后台线程安装 LaunchServices 旁路
+
+H534 的 constructor 仍可能在 CoreServices/H534 日志可见之前执行。H535
+把安装动作移出 constructor：
+
+- constructor 只创建 detached worker；
+- worker 等 5 秒后，每 10 秒重试一次，最多 30 次；
+- 每次用 `objc_getClass("LSApplicationWorkspace")` 和
+  `class_getInstanceMethod()` 重新查询，避免缓存初始化早期的 nil；
+- 安装成功后记录 method、旧 IMP、CoreServices handle 和 class；
+- CDC 接入后仍每隔 120 秒检查一次当前 IMP，共 5 次。
+
+observer 的 CA/scene 行为、lsd recovery shim、A540Trace、kernel、ADT、
+Data seed、TOML 和 boot arguments 均保持 H534。H535 addon 从 H534 的
+10-entry addon 复制，只替换 observer entry；其余 9 项相同。
+
+源码与产物：
+
+```text
+NativeMetal commit       9772f16
+superproject commit      f6be14a5
+observer SHA-256         bb70333aec61a87298e89bfdc6162f4068772354c67e59fef6c63b5fe2ccc1df
+observer CDHash          450e4cf5eb89ceb4776daecc94ee85e6d3eac6c2
+GPU addon SHA-256        09823f5c3237edb973b2cb14fcd1a7238610160270600ec6ea76a5aa921065a7
+owner trust SHA-256      4c2b6495c2f2d30a129049073298ddd86992691487614f5c6aa145f239fa1f16
+payload SHA-256          6e22fa5e102bbcebb80006019ad7c8b461d74c65434e4ce35d9ef361b1ac646e
+boot SHA-256             12dceff2ee9c781cbdfc1fdbb0e2650d925c9cd930fdd9bbb1938a212cbe4865
+boot.json SHA-256        324d718db4e65993ae6d09ad1157d18d5b5b1659a18436e3b56de396a4cfd9a0
+```
+
+payload 与 H534 的 kernel、ADT、scratch Data 和 `unixnu.toml` 相同，
+只有 GPU addon 与 owner trust 不同。trust 从 86 项扩为 87 项。bootargs
+仍为 `1008/1024`，最坏 `1016/1024`，boot JSON `problems=[]`。状态为
+`H535-built-static-verified-device-pending`。
