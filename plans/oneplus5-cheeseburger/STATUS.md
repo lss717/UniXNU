@@ -26070,3 +26070,60 @@ bootargs、owner trust、observer 和 SpringBoard codesign、boot 布局及 CDC
 scene/context 绑定与真实首帧提交。
 
 状态为 `H579-built-static-verified-device-pending`。
+
+### §254 H579 真机：assertion 桩已安装，但未覆盖当前致命调用
+
+H579 CDC boot 为 `39C7AEF6`。持久环在 230.004137 秒明确记录
+
+```text
+event=h579_chrono_assertion_stub_installed pid=27 class=1 added=1
+```
+
+因此运行期方法确实加入成功。本轮没有观察到
+`h579_chrono_assertion_stub` 命中。PID 27 在 611.186717 秒已进入
+SIGABRT，栈经 `libsystem_kernel +0xaf74`、`libsystem_c +0x70708`、
+CoreFoundation、SpringBoardHome 和 FrontBoard/FrontBoardServices。
+这与 H578 的纯 ChronoServices 栈不同，说明 assertion 桩没有覆盖当前这条
+更早或不同的致命调用。
+
+PID 27 在 611.838797 秒以 `status=0x6` 退出，替换 PID 178 在 656.255875 秒
+重复 SIGABRT。live log 因 CDC drop 没有保留对应 h5xx 文本，内核环保留了
+两次 abort 的 PC/LR/frame 链。全窗口仍无 `fr=1`。
+
+```text
+H579-live.log
+  2d0a865dfb7aebc932753b18eb0cdb68dfcea4cd39eea85b46e8625c6e5c18f9
+H579-tail32.bin
+  67421494ea02ce10cc57a3f6c9a6c40ff483fd5ddabd570c3a13bb95a3dbec69
+H579-h103.txt
+  c18c2eaff30c57aabc771b92333cf5e7ef97b61d0093fa6b708479041ab34b52
+```
+
+H579 通过 UXC1 `424580` 正常重启，并在 Android `boot_completed=1` 后进入
+TWRP。
+
+### §255 H580：直接拦截 Objective-C 异常并记录 reason
+
+H580 保持 H579 的 assertion 桩和 H578 的终止观测，只新增
+`objc_exception_throw` interpose。每次抛出记录异常 class、name、reason 和
+caller，然后调用原函数。源码 `8c169687`，NativeMetal
+`81828876651e9c86e60cc42421209409f839d473`，device
+`914038e725c353b581d516a6ca201cb50260103c`。
+
+kernel 和 Data seed 仍为显式控制输入。新建产物：
+
+```text
+GPU addon                 37d91ad6a72c8868eb53021d7d2269b2173287a7d0ca8d35ea53849296322c5c
+owner trust               e8ff0e9981dfae4206294999d0847043a6907d3b90ded263d49f4ea916c5d50a
+payload                   73d69982b84550755626c141baf22436e95005f3f633c02db00494186d34d8da
+boot                      c67fbcb4f1a97db8ce26c8d02bb341417e834948feccf80fe1aaa1b7d5d6ddc7
+ADT                       ae6b9c36294767f7cdd3b6300d25ce8b8b2ba36f5c9b70401c9fa52165ffee1a
+observer                  f15f39f0665890caf657bd7e0772e41eb24eb66a
+SpringBoard patched       6d667a029eef784517158012af93bc61a0f4c200
+H407 UEFI                 9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6
+```
+
+payload 回读、ADT、988 字节 bootargs、owner trust、observer 和
+SpringBoard codesign、boot 布局及 CDC 合同均 PASS。设备门要求先得到
+`h580_objc_exception` 的具体 name/reason，再定位该调用所属子系统。状态为
+`H580-built-static-verified-device-pending`。
