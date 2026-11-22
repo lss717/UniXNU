@@ -24691,3 +24691,78 @@ recovered=0 lock_timeout=0`。软件锁等待总时间没有下降，1163 秒已
 H553/H554 的确定异常已修复，SpringBoard 继续执行启动链，但桌面内容提交仍
 未发生。本轮第一段采集在 1179 秒按有界窗口结束，随后另开采集继续观察同一
 boot；最终结果和下一断点在本节后续补充。
+
+同 boot 续采仍使用 transport boot `37A4B076` 和 kernel boot `2279bbb4`。
+第二段覆盖约 `1214.5–1815.1 s`，第三段覆盖约 `1835.7–2340.4 s`；两段之间
+以及更早的第一段之间没有连续证据，CDC 还多次报告设备端主动丢弃日志，因此
+未出现的标记只能记为“未观测”。第二段最终为
+`frames=4861 payload_bytes=803920 crc_errors=0 sequence_gaps=0
+boot_switches=0`，第二次续采最终为
+`frames=10095 payload_bytes=1858230 crc_errors=0 sequence_gaps=0
+boot_switches=0`。
+
+第二段最重要的直接进展来自同 PID 27/TID 291 的内核栈。1285–1437 秒，主线程
+已越过 ApplicationController，并位于：
+
+```text
+mach_msg2_trap
+  <- xpc_connection_send_message_with_reply_sync
+  <- BSXPCServiceConnectionMessage sendSynchronouslyWithError:
+  <- CHSChronoServicesConnection _subscribeToExtensions
+  <- CHSServerSubscription subscribeWithResult:error:
+  <- CHSWidgetExtensionProvider _lock_loadContentInitiallySynchronouslyIfNecessary
+  <- SBHIconManager init
+  <- SBIconController initWithMainDisplayWindowScene:
+  <- SBUIController sharedInstance
+  <- SpringBoard _completeStartupAfterMainSceneConnect:
+```
+
+到 1799 秒，同一 TID 291 的主线程栈已经变为：
+
+```text
+CA::Context::commit_transaction
+  <- CA::Transaction::commit
+  <- CA::Transaction::flush_as_runloop_observer
+  <- UIApplicationFlushCATransaction
+  <- UIUpdateSequenceRun
+  <- CFRunLoop
+  <- GSEventRunModal
+  <- UIApplication _run
+  <- UIApplicationMain
+  <- SBSystemAppMain
+```
+
+这直接证明 `applicationDidFinishLaunching:` 已返回且 SpringBoard 已进入主
+run loop。日志传输丢弃了对应的 `h541_did_finish_return` 和后续
+`h541_application_probe` 行，不能把标记缺失解释为回调仍未返回。
+
+1799 秒开始的 Core Animation transaction flush 没有形成产品帧。之后由
+existing display probe 产生的 `selector=4/5` 提交持续增加，但到
+`2352.603716 s` 仍是 `fr=0`。这些提交的 8,294,400-byte readback 为全零，
+`NATIVE_FRAME` 为 `xfer=1 frames=0`；不能把 `val/xf` 增长当作产品内容。
+1995 秒的 telephony timer 栈又进入
+`SBTelephonyManager _handleTelephonyDaemonRestart -> _serverConnection ->
+CTServerConnection` 的同步 bootstrap look-up；这是运行中的定时回调，尚不能
+据此认定主线程全局阻塞。
+
+最后的持久环状态在 `2362.985555 s` 为
+`seq=375417 done=375416 timeout=0 ocs_err=0 dbto=0 recover=0
+recovered=0`。后期出现了 `lock_timeout=2`，累计
+`lock_wait_ms=33068759`、最大 `78631 ms`，因此软件锁等待没有下降；普通 UFS
+请求仍大体持续完成，且没有 OCS、doorbell timeout、recovery、kernel panic
+或 watchdog fired/trigger。`watchdog_seen=4500` 仍只是观测计数。
+
+持久日志目录：
+`display-first-frame/logs/H555/device/20261122-1512-resume2/`。
+
+```text
+H555-live.log       4EBB4F68FFCF2765754B728C3F802B152ECC436691E8951BF59F32EE057AC977
+H555-h103.txt       CC8796BD0EF2636339EBD904F07054C18826995DE266FDF08AC169212CF2DF5B
+H555-tail32.bin     285EE74243FE6F543A8D81467E577996E83D37E7AABE283A192BF45B19530509
+```
+
+H555 最终分类为
+`startup-callback-complete-ca-runloop-active-product-frame-absent`。下一轮不再
+重复 ApplicationController、ChronoServices 或 `didFinish` 返回判定；直接观察
+didFinish 后的 scene/window/layer contents、CAContext 绑定和 backboardd
+接收，定位“UI 已进入 run loop 但没有内容进入产品 surface”的第一处缺失。
