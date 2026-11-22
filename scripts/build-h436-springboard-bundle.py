@@ -141,7 +141,7 @@ def main() -> int:
         OBSERVER,
         (
             b"observer load process=",
-            b"build=H557",
+            b"build=H572",
             b"H492_CCS",
             b"filter bypass installed",
             b"filter bypass pid",
@@ -182,13 +182,16 @@ def main() -> int:
             b"h557_complete_startup_enter",
             b"h557_ui_run_enter",
             b"h557_post_run_snapshot",
+            b"h572_observer_loaded",
+            b"h572_observer_alive",
+            b"h572_cxx_terminate",
             b"methods installed add=independent state=",
             b"observer bypass pid=",
             b"application enumeration skipped",
             b"current process proxy skipped",
             b"application proxy identifier skipped",
             b"application proxy URL skipped",
-            b"ls_installer sample=",
+            b"h572_observer_alive sample=",
         ),
     )
     observer_cdhash = compact_signed_bundle(
