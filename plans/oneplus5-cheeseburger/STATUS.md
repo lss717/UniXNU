@@ -24125,3 +24125,59 @@ observer 为 arm64，strict codesign 通过，包含
 payload 从 H541 复制，只替换 trustcache 与 gpuaddon；bootargs 最坏
 `1016/1024`，boot JSON `problems=[]`。状态为
 `H549-built-static-verified-device-pending`。
+
+#### H549 真机结果：init 返回后进入 HUD/声音初始化
+
+H548 结束后设备回到 Android，随后进入 TWRP。启动 H549 前只读拉取了
+H548 的持久化 ring，但解析 header 和全部 slot 仍是旧 boot
+`227a31fa / H473`，最早约 30 秒、最后约 286 秒，`slot=53`。
+因此该 ring 没有补齐 H548 第二轮 PID 132 之后的尾部，H548/H549 的
+用户态结论必须继续以 live CDC 为准。只读 ring 和解析报告保存在：
+
+`E:\WindowsData\Project\ios\main-route\display-first-frame\logs\H548\device\20261122-124430`
+
+H549 启动前再次只清零并回读 `userdata_ios` 最后 32 MiB，全零
+SHA-256 为
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+唯一设备 `16149951` 经 TWRP 进入 Fastboot 后只用 `fastboot boot`
+启动 H549。CDC 在 uptime 约 278 秒接入 COM8。首个 SpringBoard 的同一
+PID 27 时间轴为：
+
+```text
+467.716714 h541_did_finish_enter
+489.277678 h546_setup_manager_init_enter object=0x3036e59e0
+492.764595 h545_cloud_config_ui_bypass object=0x300ac1710
+493.552605 h546_setup_manager_init_return object=0x3036e59e0
+493.632887 h549_setup_return_sampler_start thread_port=0x103
+494.848081 h549_setup_return_main_sample delay=1 pc=0x1b223b894 lr=0x1b223b53c sp=0x16f66f510 fp=0x16f66f530
+495.853461 h549_setup_return_main_sample delay=2 pc=0x1d8c806b8 lr=0x1d88655f8 sp=0x16f66fa30 fp=0x16f66fa70
+496.802628 NATIVE_EXIT pid=27 status=0x6 sender=27/SpringBoard
+```
+
+同 boot 的 `NATIVE_SBPC_IMAGE` 给出 shared-cache slide
+`0x8e0c000`、runtime base `0x188e0c000`。用 21H461 提取出的 dyld
+和 SpringBoard.framework 符号化两组样本：
+
+```text
+delay=1 pc  -> usr/lib/dyld _strcmp +0x44
+delay=1 lr  -> usr/lib/dyld objc::StringHashTable::tryGetIndex +0x94
+delay=2 pc  -> SpringBoard.framework +[SBSoundController sharedInstance]
+delay=2 lr  -> SpringBoard.framework -[SpringBoard _setUpHUDControllerAndFriends] +0x78
+```
+
+第一个样本仍处于 dyld 动态符号解析，第二个样本已由
+`-[SpringBoard _setUpHUDControllerAndFriends]` 调用
+`+[SBSoundController sharedInstance]`。进程在第二个样本后约 `0.95 s`
+自 SIGABRT，4 秒和 7 秒样本因进程退出没有产生。后续 PID 147、151
+也重复启动但在 init 返回后很快退出，说明首个 PID 的时间轴不是孤立现象。
+本轮 UFS 每 30 秒快照保持 `ocs_err=0`、`lock_timeout=0`，请求完成计数
+继续前进，当前退出边界不指向 UFS 软锁、OCS 或恢复路径。
+
+live log SHA-256 为
+`977b2fc3f3730d7c4eaec97067e0bfedf4b9b268c4e5eebdbbcad7d2dcb11fa6`。
+状态更新为 `H549-device-hud-sound-phase-observed`。下一步只增加
+HUD/声音调用链观测，不改 SetupAssistant 行为：记录
+`_setUpHUDControllerAndFriends`、`+[SBSoundController sharedInstance]`、
+`-[SBSoundController init]` 和 ringer-control 构造的 enter/return，
+并安装 ObjC 未捕获异常记录器；若 `SBSoundController init` 不返回，优先查
+其内部同步初始化；若它返回，则沿 `SBRingerControl` 之后的下一次调用继续。
