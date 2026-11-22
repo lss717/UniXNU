@@ -26415,3 +26415,82 @@ skip hook 的返回 ABI，返回 `nil`，不再添加新的系统旁路。
 `recover=0`。因此本窗口可确认“请求能完成”，但累计和最大软件锁等待均上升，
 不能据此声称 UFS 锁问题改善。归因仍需 TWRP 末尾环保留 H583 build 标识；
 当前 live 证据只到 `build=H473` 的固定控制内核标识和 boot `28e83f0c`。
+
+TWRP 末尾环随后补上了缺失的归因证据。同一 boot 在 35.753112 秒记录
+`NATIVE_BUILD: H473 boot=28e83f0c`，在 238.191047 秒记录
+`observer load process=SpringBoard pid=27 build=H583`。因此上面的启动、CA
+context、selector fatal 都属于 H583 本身。环在 560.428633 秒后最后写入
+`h579_chrono_assertion_stub` 附近即停止，未包含 560.875264 秒 abort 行；
+abort 由同 boot 的 live log 提供，两者 boot id 一致。
+
+```text
+H583-tail32.bin
+  9575eab7fdda94925890daee2e3369bb14dd3fc13bfd3c55de9dab3bcf5f7af8
+H583-h103.txt
+  6a6d62547ecb701230a923ee459c43e583887194b7caad6b5000d3d689073dfc
+```
+
+通过 UXC1 之外的既有 Android→Recovery 路径进入 TWRP 后，仅清零
+`userdata_ios` 末尾 32 MiB，回读 SHA-256 为
+`83EE47245398ADEE79BD9C0A8BC57B821E92ABA10F5F9ADE8A5D1FAE4D8C4302`。
+
+### §264 H584：修正 `_subscribeToExtensions` skip hook 的对象返回 ABI
+
+H583 的同 boot 反汇编和栈表明，`_subscribeToExtensions` 正常返回时使用 `x0`
+返回对象。H577-H583 的跳过实现声明为 `void`，调用方可能把残留的
+`CHSChronoServicesConnection self` 当成订阅结果；随后
+`_lock_createServerSubscriptionIfNecessary:+0x164` 对该对象调用
+`objc_msgSend$value`，进入 `objc_fatal`/abort。H584 只改这一处：
+
+```c
+static id trace_chrono_services_subscribe(...)
+{
+    ...
+    return nil;
+}
+```
+
+ChronoServices 订阅仍保持跳过，不新增系统旁路。外层 completeStartup catch、
+icon-controller catch、launchd/LS/HUD/telephony 替代和显示观测均保持 H583
+相同。源码 head `7f73228f779d73ec0759e71aa40ca3e5dbbdd1ad`，NativeMetal
+`b7f028a648e2cc23fdce84e00681fef79f5d740b`，device
+`914038e725c353b581d516a6ca201cb50260103c`。
+
+kernel、Data seed 和完整 988-byte bootargs 继续作为 H583 的字节级控制输入：
+
+```text
+kernel                    7ffb0c1b2606cf4e9e46dfd36c55a2fe22a391ccfa1945164c8004272c6599e9
+Data seed                 0ef3db84e89bdca5c1ba02607182468b551174908f9a5562b74dcc85095ce24e
+bootargs TOML SHA-256     b24897892bc1167fb6e62a3ccb456ef5e5386f3fefc21502413f684a0c13ebd9
+```
+
+新产物：
+
+```text
+GPU addon                 9a75780c2dd37eb8e5af83cc6adc38f2b835ffa126a327539bd873b92f198bf3
+owner trust               09a88e043131dc6831dca8af9ec889a3ccaa786ae25a9bed8702c95d7870fd6f
+payload                   a11811390e9d561fc4127093d08f36f4a3033f887a7dd380b471ea883b9ad309
+boot                      ad0f7d44c8f410db20c2c7342539c0a0df556faa33914ef62c08fcfdedb996e2
+boot.json                 d3a0456c8f9991eb2c6c1a9def78e73492fd18f14dfb26f8f74ee53a59634947
+ADT                       01085b68a8779b88a21868c6e6ddd5b3f44fd3fa18e08fc4d01115d366bf6e8d
+observer CDHash           08ad8362ff8ab7844f9dcf0b61d361b57b51de92
+SpringBoard CDHash        6d667a029eef784517158012af93bc61a0f4c200
+H407 UEFI                 9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6
+```
+
+payload 内 kernel、ADT、trust、GPU addon、Data seed 和 TOML 已逐字节回读。
+本地与 Mac 哈希一致；bootargs 为 988 bytes，加 `zap-base` 为 1008/1024，
+最坏 1016/1024；boot 布局 `kernel=0x10000000-0x10174000`、
+`ramdisk=0x12000000-0x16c00000`、`tags=0x18000000`，`problems=[]`；
+observer 和 patched SpringBoard codesign、H436 bundle gate、CDC/UXC1
+合同均 PASS。
+
+H584 第一次 payload 曾使用设备仓当前默认参数，缺少
+`offline-accelerator=1`、`_offline-accelerator-plugin=A540Trace` 和
+`sheng-no-lc=1`，并多出 `native-trace-amfi-syscall=1`、`h114-icc=0`。
+该 payload/boot 在发送前已丢弃；最终 payload 使用与 H583 完全相同的
+988-byte 参数行后重新打包。状态为
+`H584-built-static-verified-device-pending`。设备门要求同 boot 出现
+`build=H584` 和 `h584_chrono_subscribe_skip_return_nil`，且不再发生
+`value` lookup 失败；随后记录 completeStartup return、catch、下一处终态故障或
+`fr=1`。
