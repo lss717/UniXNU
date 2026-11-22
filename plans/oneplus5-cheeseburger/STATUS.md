@@ -25123,4 +25123,19 @@ prelinked kernel SHA-256   1314fa983a1c5e2eab1e2fc994b79d35ae44b8bf2635b1da16e3d
 同一 H557 源码使用全新 XNU/build 目录后仍产生不同内核 SHA，说明这些产物
 至少包含每次构建变化的 UUID/布局信息，不能要求跨构建字节一致。H559 的
 验收只看：它是否重新到达 CDC/`SHLOG001`，而 H558 在同一流程下无法到达。
-当前状态为 `H559-built-device-package-pending`。
+
+H559 打包结果：
+
+```text
+source commit              1cb716f6
+unlinked XNU SHA-256       8354769db2cde00e6d09a9e7738e4942d16811ef8f8a2140a6919a664fc3234d
+prelinked kernel SHA-256   1314fa983a1c5e2eab1e2fc994b79d35ae44b8bf2635b1da16e3d347a9386560
+payload SHA-256            ff826e51b3363f4f2b166948118cc7792f0c10f39e7047626489b0fc70635f47
+boot SHA-256               880c7eeb3346101c904eadfc00cff3695c0de388dcf5419edfc1a7581d5eec75
+boot.json SHA-256          40150a21f500cb6d7f58157df80f341ec9f7bb5e0d6d05743df79af3800e12d2
+```
+
+payload 内 kernel 回读严格等于 `1314fa98…`；observer、GPU addon 和 trust
+cache 与 H557 字节一致。bootargs 仍为 `992`，加 `zap-base` 后
+`1012/1024`，最坏 `1020/1024`，boot JSON `problems=[]`。状态为
+`H559-built-static-verified-device-pending`。
