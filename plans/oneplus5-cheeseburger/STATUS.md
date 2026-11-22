@@ -23900,3 +23900,23 @@ H546 完全保持 H545 的 SystemStatus、migration 后备和云配置 UI bypass
 
 稳定 10 项 addon 仍只替换 observer；trust 会将 H541 的旧 observer 替换为
 H546 observer，A540Trace 与其余条目保持不变。
+
+H546 构建与静态核验：
+
+```text
+NativeMetal commit        2d5b4f8
+superproject source       45c60371
+observer SHA-256         dfbfaa0daa9383b1fd93b4224d97f3c7fe537ee0c5bf949d369a31fd244dc488
+observer CDHash          7d8ebee67b8773548ac248d25c6112cee1a52ddc
+raw addon SHA-256        a11af8c888f2aa5ff9d2b97ba7274651daa9e7028e631ce5eab16f60a11f9df6
+GPU addon SHA-256        d31673d4173f36cc317c0e7c4567db4b524c7423f6f803aa9ccc68dae939379e
+owner trust SHA-256      fbcb20d9995cf86c39b12ccb04fcee2929d0755e64239ceccd395d40092cb58e
+payload SHA-256          29e76a7a5b855e9a4c7b7daa5fc0d2170accac73ff057cb3d235d547ae9eef6a
+boot SHA-256             6a4089a1297ab46c9c3845bd2457f66981d74f687329d493fba42c03f0381a94
+boot.json SHA-256        5c1d5fc74533d26278160d473d1928810913ce354db9bcced5afc62a6668eef0
+```
+
+observer strict codesign 和 arm64 检查通过；93 项 owner trust 同时保留
+A540Trace 与 H546 observer。稳定 addon 只有 observer 改变，payload 的其它
+输入与 H541 一致，bootargs 最坏 `1016/1024`，boot JSON `problems=[]`。
+状态为 `H546-built-static-verified-device-pending`。
