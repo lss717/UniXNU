@@ -24303,3 +24303,57 @@ observer 为 arm64，strict codesign 通过；生产包保持稳定 10 项结构
 observer 改变。owner trust 保持 93 项并保留 A540Trace。payload 从 H541
 复制，只替换 trustcache 和 gpuaddon；bootargs 最坏 `1016/1024`，boot JSON
 `problems=[]`。状态为 `H551-built-static-verified-device-pending`。
+
+#### H551 真机结果：SystemStatus 恢复，HUD 在 telephony 获取处停住
+
+启动前只清零并回读 `userdata_ios` 最后 32 MiB，全零 SHA-256 仍为
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+唯一设备 `16149951` 只通过 `fastboot boot` 启动 H551。首个 PID 27 的
+关键时间轴为：
+
+```text
+400.382552 h541_did_finish_enter
+400.835121 h542_status_server_bypass_enter
+400.945942 h551_status_data_log_empty_init_enter keys=__NSOrderedSetI
+401.050258 h551_status_data_log_empty_init_return
+418.104071 h542_status_server_bypass_return
+455.761049 h546_setup_manager_init_enter
+459.862023 h545_cloud_config_ui_bypass
+460.305725 h546_setup_manager_init_return
+460.362565 h550_setup_hud_enter
+466.047173 h550_sound_shared_enter
+466.150935 h550_sound_init_enter
+466.242471 h550_sound_init_return
+466.333678 h550_sound_shared_return
+596.559920 NATIVE_EXIT pid=27 status=0x6 sender=27/SpringBoard
+```
+
+`_startSystemStatusServerAndFriends` 第一次恢复了原始执行，
+`STStatusDomainDataChangeLog initWithRecordKeys:` 的输入确为
+`__NSOrderedSetI`，空数组替代后原 initializer 在约 `0.10 s` 正常返回。
+SystemStatusServer 约 `17.27 s` 后返回。H550 的
+`SBTelephonyManager ... before the system status server` 异常没有再出现，
+说明前置服务已经建立。
+
+但 `SBSoundController` 返回后，`_setUpHUDControllerAndFriends` 仍未返回，
+也没有 `h550_ringer_init_enter`。H549 主线程采样为：
+
+```text
+delay=1 libsystem_kernel +0x71cc, lr Foundation +0x8cf98
+delay=2 libobjc.A +0x2c08, lr Foundation +0x4eb40
+delay=4 BannerKit +0x41f24, lr BannerKit +0xe660
+delay=7 libsystem_kernel +0x1b58, lr libsystem_kernel +0x5224
+```
+
+4 秒样本刚接近声音控制器创建，7 秒样本已经进入 Mach 消息同步等待。
+SpringBoard 一直存活到约 596.56 秒才再次自 SIGABRT，且 H550 异常记录器
+没有给出新的 ObjC 异常，因此这一轮不是之前的内部不一致异常。GPU heartbeat
+保持 `s345=0/0/0`、`fr=0`。该阻塞与 UFS 无关，UFS 仍为
+`ocs_err=0`、`lock_timeout=0`、请求完成计数前进。
+
+live log SHA-256 为
+`c0d244738eb72d15beabd532faa33cdaf322698e6988a540b18210085b0d304a`。
+状态更新为 `H551-device-telephony-acquisition-blocked`。H552 只增加
+`SBTelephonyManager sharedTelephonyManager`、
+`sharedTelephonyManagerCreatingIfNecessary:` 和 `init` 三处
+enter/return 观测，不修改行为。
