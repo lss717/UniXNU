@@ -25807,3 +25807,132 @@ H574 实时日志：
 ```text
 display-first-frame/logs/H574/device/20261123-014737/H574-live.log
 ```
+
+### §247 H575：同步订阅与 C++ 首次抛出探针对照
+
+H575 在 H573 的同一同步 ChronoServices 调用上增加 `__cxa_throw` 拦截，源码
+`a1d4b60e764589c88205e31dce61b53dbe26876f`，NativeMetal
+`bf35d63edd6017e65e66c179ebe4cc56070a2f85`。kernel
+`32f3c02e9754693dce0fabcfe89ca01672c38df1c622b5e66ff89547c2bac2f1`，
+payload `e1c1959f34e67d68d8dc9ed24cdfbd319910a8d8a84289618f40ed3e761a4365`，
+boot `b534f3c1275dc75d4402cc30e0a0a2d838e0cedf4daa4d1353ab7b1487a27ff6`。
+
+真机 boot `21364dd6`。SpringBoard PID 27 在 638 至 1447 秒持续保持
+`req=14851/90/chronod`，没有 subscribe return，也没有任何
+`h575_cxx_throw`。1648.383078 秒 PID 27 以 `status=0x6` 退出，
+1648.994219 秒出现真实 `NATIVE_SBABORT`。替代 SpringBoard PID 223 又在
+1699.545059 秒出现相同 abort。直到 1899 秒仍为 `fr=0`。
+
+结论是同步等待仍然存在。没有首次抛出标记只能说明该拦截没有命中，不能据此断言
+没有异常。UFS 在同一窗口仍无 timeout、OCS、doorbell timeout、recovery 或软件锁超时。
+
+```text
+H575-live.log
+  ef1f6e7e1ce9699a718dbee49eb5590d21fe43ce0a11c398d515a538e3939365
+H575-tail32.bin
+  61b3d471bb007cfda2150b49d8df280ed8340415cf6f9505c541c8ad4cd57b33
+H575-h103.txt
+  8a569cb1a96a50de734cbb6d59b507d7791dfb4ba974f87eb0d614f8089da422
+H575-reboot.log
+  9e062c214e132a2b65c801333b634ce2e2264094f0e7a1b91496311dfea1ba2e
+```
+
+H575 通过 UXC1 `424576` 正常重启。Android 返回
+`boot_completed=1` 后只发送一次 `adb reboot recovery`，最终确认 serial
+`16149951`、product `cheeseburger`、TWRP `3.4.0_9-10-mauronofrio`。
+
+### §248 H576：把 ChronoServices 原调用移出主线程并取得确定异常
+
+H576 的唯一行为变化是把 `_subscribeToExtensions` 的原实现投递到全局队列。源码
+`f6e7de5797f251f008e53de259dcf87262d091ab`，NativeMetal
+`6a62f994dc9862d068f098202822272b565d21c4`，device
+`914038e725c353b581d516a6ca201cb50260103c`。
+
+本轮从全新 checkout、全新 Data/Preboot/LaunchServices/Setup 变换和全新 addon
+构建，依次完成 stub PMGR、prelink、真实 PMGR、prelink。kernel、Data、addon 与
+owner trust 均不复用旧候选的 kernel 或 payload。产物：
+
+```text
+kernel                    7ffb0c1b2606cf4e9e46dfd36c55a2fe22a391ccfa1945164c8004272c6599e9
+Data seed（encoded）      0ef3db84e89bdca5c1ba02607182468b551174908f9a5562b74dcc85095ce24e
+GPU addon                 425a0ac4f1d7f6fedfbd1d6baab8420ea6fd6a3610eaf5a2236f5a325ba016f8
+owner trust               a061c4065cdca7be22650ea1e8e2963cf1d30e827804eae1cd54ca20410a9d06
+payload                   566585427a0cba1b2f73153f3bf24280f5e20c67e8c7eb391dc675b4ccb57e74
+boot                      1e4d2dec18492e107c7bacf595881cf2e7c4152998e9638970190ce0bf0126ec
+```
+
+CDC boot 为 `3B50FB38`，SpringBoard PID 27。关键时间线：
+
+```text
+555.018720  _completeStartupAfterMainSceneConnect: 进入
+584.483046  ChronoServices _subscribeToExtensions 进入
+584.565121  h576_chrono_subscribe_async
+584.642251  主线程 subscribe return
+584.831405  后台块进入
+584.966078  h575_cxx_throw，NSException
+587.387416  NSInvalidArgumentException:
+            -[CHSChronoServicesConnection assertion]:
+            unrecognized selector sent to instance 0x30313dff0
+593.577250  PID 27 status=0x6 退出
+593.600025  NATIVE_SBABORT
+```
+
+替代 SpringBoard PID 156 在 672.344132 秒再次进入同一路径，主线程在
+672.344202 秒返回，随后 0.0007 秒内再次抛出同一 selector 异常。
+PID 156 和 172 分别于 678.992662、745.188616 秒 abort。全窗口
+`fr=1`、真实内容 commit 和 completeStartup return 均为零。
+
+这证明把原调用移出主线程确实改变了故障形态，主线程的同步死等消失。原调用随后
+进入 `assertion` selector 并立即抛异常，说明当前 `CHSChronoServicesConnection`
+实例不实现该 selector。H576 没有证明 chronod 已完成，也没有证明 desktop 内容
+已经提交。
+
+```text
+H576-live.log
+  cdf9705a6b3741e61baeafd372da4a26eee49102f9a07539515cd4571aa57af2
+H576-tail32.bin
+  8f8372c074068484c188dd610d7a791a1d45ee2f34ee912bc677f915f500c5de
+H576-h103.txt
+  7f34a358bf497bd962c891d3be3475c0b10b3ffe62c55f60c64cadae280b1d04
+```
+
+H576 通过 UXC1 `424577` 正常重启，并在 Android
+`boot_completed=1` 后一次进入 TWRP。随后只清零 `userdata_ios` 末端 32 MiB，
+回读 SHA-256 为
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+
+### §249 H577：跳过已证实损坏的 ChronoServices 原调用
+
+H577 只把 H576 的后台原调用替换为直接返回，保留所有前面的启动替代和显示观测。
+源码 `b3559827ed4e6f541d4c3a22a12e9e7aaccf1169`，NativeMetal
+`b8b840d27efaefbcc77993f142684815b3324f80`，NativeAdreno
+`d7572a16306b6b1b2ac715390d04065238e9c55e`，device
+`914038e725c353b581d516a6ca201cb50260103c`。
+
+为保持唯一变量，H577 沿用 H576 的 kernel
+`7ffb0c1b2606cf4e9e46dfd36c55a2fe22a391ccfa1945164c8004272c6599e9`
+和 Data seed
+`0ef3db84e89bdca5c1ba02607182468b551174908f9a5562b74dcc85095ce24e`
+作为显式控制输入。addon、owner trust、payload 和 boot 均新建：
+
+```text
+GPU addon                 cbbceaf66fa38e87524824877efd9b17bae861a28c4df011e778f37a1ab41dfc
+owner trust               7e6f9a99a6526666bafc74a99a29cc73dee0a15af0534a8cbb511d4af0eb7bba
+payload                   73990e095b0c786ac7f1db70c1ee30c54ae93f695e570336337ba5d6c8db61d3
+boot                      b5c275d9cce5adf562e64f3e035a953e2d9792974012c00632875f3359594ede
+ADT                       6670e656e583ab0275fe6be661d45152eb62ac672709a704c6b9d152551d0ddc
+observer                   8570dfde5b6a9100a15c17a5e499fe3260fbc041
+SpringBoard patched       6d667a029eef784517158012af93bc61a0f4c200
+H407 UEFI                 9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6
+```
+
+addon 输入均从 21H461 OS 卷重新读取并核验：launchd cache
+`f1b99c4e…`、SpringBoard `62929b2b…`、lsd `43ee16e0…`。payload
+内 kernel、trust、addon 和 Data seed 逐字节回读一致。ADT、988 字节
+bootargs、7 项 owner trust、observer 和 SpringBoard codesign、Android boot
+布局与 CDC 合同均 PASS。
+
+设备门要求出现 `build=H577`、`h577_chrono_subscribe_skip` 和
+`h557_chrono_subscribe_return ... skipped=1`，随后观察 completeStartup 是否
+返回、桌面内容是否首次提交以及 `fr=1`。H577 的 build 状态为
+`H577-built-static-verified-device-pending`。
