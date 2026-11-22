@@ -23541,3 +23541,88 @@ trust 从 92 项扩为 93 项。bootargs 为 `1008/1024`，最坏
 `display-first-frame/builds/H541/`，状态为
 `H541-built-static-verified-device-pending`。启动前将再次清零并回读
 `userdata_ios` 末尾 32 MiB。
+
+#### H541 真机结果：应用回调未返回，阻塞点落在 SystemStatus 初始化
+
+H541 的 32 MiB 尾环按 boot `217eada2` 解码。observer 在 `226.759980 s`
+明确打印 `build=H541`，LaunchServices 安装位图从 `258.500387 s` 起保持
+`state=0xf87f`，因此本轮的 LS 行为和 H540 一致：
+
+```text
+226.613014 ca_event_hooks ... springboardDidFinish=1
+226.759980 observer load process=SpringBoard pid=27 build=H541
+258.500387 ls_installer sample=30 state=0xf87f
+```
+
+`405.447341 s` 捕获到：
+
+```text
+event=h541_did_finish_enter pid=27 thread=0x204b88d40 main=1
+```
+
+但直到首个进程退出都没有 `h541_did_finish_return`，也没有
+`h541_application_probe`、`h541_application_state`、root visibility、
+CA host/content、commit、display surface 或 `fr=1`。所以本轮只能确认应用
+回调进入，不能把缺失的 probe 当作 scene 状态。
+
+sample 6060 使用同 boot dyld slide `0x10340000` 符号化后，SpringBoard
+主线程的最后调用链为：
+
+```text
+-[SpringBoard applicationDidFinishLaunching:] +1192
+  -[SpringBoard _startSystemStatusServerAndFriends] +52
+    -[STStatusServer init] +116
+      -[STLocalStatusServer init] +216
+        -[STStatusDomainDataChangeLog initWithRecordKeys:] +104
+          objc_msgSend$copy
+```
+
+这说明 H540/H541 后续故障已经从 LaunchServices 转移到应用启动回调内的
+SystemStatus server 初始化。首个 SpringBoard 在 `603.281519 s` 以
+`status=0x6 code=0x6 sender=27/SpringBoard` 退出。launchd 随后记录
+`SpringBoard[27] Corpse failure, too many 6`。这是同一 job 连续崩溃后的
+corpse/crash-limit 结果，不能当作新的独立崩溃原因。
+
+SpringBoard 消失后，175、186、191、195、198、201 继续启动并在
+`650.002`、`713.719`、`790.473`、`862.294`、`929.485`、`949.877 s`
+重复 SIGABRT。其间 UFS 仍持续完成请求；到 `920.311841 s` 为
+`seq=done=212053`、`timeout=0`、`ocs_err=0`、`flight=0`、
+`lock_timeout=0`。因此本轮锁等待累计值会增加，但软件锁没有超时，块请求
+持续完成，watchdog 也按 `watchdog_seen=1740` 正常计数。没有针对 UFS 再改
+代码的依据。
+
+本轮证据：
+
+```text
+logs/H541/device/20261122-102938/
+H541-live.log
+  69954566a6954999150b21cdc2a1964abbb40c2e6f65c1dbe98d9b442db31332
+H541-live.frames.bin
+  e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+H541-tail32.bin
+  5b7a143f86c1b981a8d05512bc432ed7d1d35a7a6562d94d2e4f8dd27a91265d
+H541-h103.txt
+  81a2603638815f09c573b6d4d2c6c7b1668983a7075d48e6f99c8126d5cb0ed3
+```
+
+分类为
+`H541-LS-current-process-proxy-bypassed/application-finish-entered/SystemStatus-init/no-root/crash-loop`。
+
+### §212 H542：只跳过 SpringBoard 的 SystemStatus server 初始化
+
+H542 保留 H541 的 LaunchServices 行为、全部现有观测、内核、ADT、Data
+seed 和启动参数，只把
+`-[SpringBoard _startSystemStatusServerAndFriends]` 替换为空实现。入口和返回
+都会打印 `h542_status_server_bypass_*`，所以下一轮可以确认方法确实命中。
+`applicationDidFinishLaunching:` 返回后还会立即记录一次窗口和 scene 状态，
+不依赖此前未触发的 30 秒主队列 probe。
+
+验收只按结果分支：
+
+1. 回调返回且根窗口出现：继续追 CA context、contents、commit、present 和
+   `fr=1`；
+2. 回调返回但窗口仍隐藏或没有 scene：检查 activation/delegate 与 WindowScene；
+3. 回调仍未返回：记录新的同步点，不再修改 SystemStatus；
+4. 回调返回后出现另一种明确崩溃：先取最后栈和 crash report，再决定下一变量。
+
+本轮不调用 `makeKeyAndVisible`，不修改 scene 状态，也不改变 display backend。
