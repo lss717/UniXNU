@@ -141,7 +141,7 @@ def main() -> int:
         OBSERVER,
         (
             b"observer load process=",
-            b"build=H575",
+            b"build=H576",
             b"H492_CCS",
             b"filter bypass installed",
             b"filter bypass pid",
@@ -186,6 +186,9 @@ def main() -> int:
             b"h572_observer_alive",
             b"h572_cxx_terminate",
             b"h575_cxx_throw",
+            b"h576_chrono_subscribe_async",
+            b"h576_chrono_subscribe_background_enter",
+            b"h576_chrono_subscribe_background_return",
             b"methods installed add=independent state=",
             b"observer bypass pid=",
             b"application enumeration skipped",
