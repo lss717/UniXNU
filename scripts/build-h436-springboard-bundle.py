@@ -141,8 +141,9 @@ def main() -> int:
         OBSERVER,
         (
             b"observer load process=",
-            b"build=H587",
+            b"build=H588",
             b"h587_activity_center_service_skip",
+            b"h588_folder_name_localization_bypass",
             b"H492_CCS",
             b"filter bypass installed",
             b"filter bypass pid",
