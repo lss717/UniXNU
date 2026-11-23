@@ -774,6 +774,7 @@ extern "C" void native_sigbus_drain (void);
 extern "C" { extern volatile uint32_t native_a540_bo_diag[8]; }
 extern "C" uint32_t native_a540_c3_state(void);
 extern "C" uint32_t native_a540_c3_lastput(void);
+extern "C" { extern volatile uint32_t native_a540_fence_diag[8]; }
 
 // H413: one compact, fixed-storage display record next to the existing
 // SpringBoard sample. This is observation-only and does not alter USB,
@@ -1067,6 +1068,10 @@ heartbeatThread (void *, wait_result_t)
              (unsigned) native_a540_bo_diag[3], (unsigned) native_a540_bo_diag[4], (unsigned) native_a540_bo_diag[7],
              (unsigned) native_a540_bo_diag[5], (unsigned) native_a540_bo_diag[6],
              (unsigned) native_a540_c3_state(), (unsigned) native_a540_c3_lastput());
+      IOLog ("NATIVE_A540_FENCE: sf=%x r0=%x r1=%x done=%x wf=%x w0=%x w1=%x to=%x\n",
+             (unsigned) native_a540_fence_diag[0], (unsigned) native_a540_fence_diag[1], (unsigned) native_a540_fence_diag[2],
+             (unsigned) native_a540_fence_diag[3], (unsigned) native_a540_fence_diag[4], (unsigned) native_a540_fence_diag[5],
+             (unsigned) native_a540_fence_diag[6], (unsigned) native_a540_fence_diag[7]);
     }
     // H128: the process dumps and the persistent-log flush run here, in thread
     // context with no storage lock held.  They used to run from the UFS
