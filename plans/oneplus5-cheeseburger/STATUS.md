@@ -27690,3 +27690,23 @@ Windows 目录 `builds/H600`。状态 `H600-built-static-verified-device-pending
 9. **编译期 Data UUID 必须等于 packed seed 的真实 APFS UUID。** H594–H597 用旧
    `1A4…`/生产 `3AAB…` 均 95.9s mount 失败；真实值 `09FB365F…` 需展开 DBRDISK1 后
    `diskutil info` 实测，且与已工作内核字符串交叉核对（H598 修复）。
+
+### §298 H600 命名栈与第一帧门槛
+
+H600 的 `NATIVE_TRAP_IMAGE_ROW` 给出空指针调用（pc=0）的命名栈：调用点在
+**SpringBoard 自身 `+0x60065c`/`+0x600778`**，上层为 UIKitCore
+（`+0x184a00/0x408558/0x2d6178`）→ FrontBoard（`+0x568c0` 等）→
+FrontBoardServices/BaseBoard，即 FrontBoard 场景激活驱动 SpringBoard 时调用了
+空 IMP。该崩溃是晚期症状（~1704s），与第一帧无直接因果。
+
+`MTLCompilerService` 的 `status=0x9 sender=1/launchd`（`launchd.ask`）是空闲 XPC
+服务的正常回收，**不是**崩溃，排除其为第一帧根因。
+
+第一帧（`fr=1`）的真正门槛仍为：
+1. AGX 渲染管线为 nil（`drawPrimitives/dispatchThreads/commit=0`，C6a-MTL 线），
+   CA 无法产出可扫描内容；
+2. SpringBoard 的 `CALayerHost` 绑定 `context=0/contextId=0`，桌面窗口未挂接
+   backboardd 渲染上下文。
+显示扫描路径本身可用（探针 presentSurface 曾产生 val=47），故一旦 CA/AGX 产出
+surface 即可上屏。下一步应沿 C6a 让 AGX 管线编译成功，或先以合成 surface 验证
+扫描链（fr=1），再追真实桌面内容。
