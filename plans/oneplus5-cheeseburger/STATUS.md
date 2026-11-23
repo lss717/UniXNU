@@ -27710,3 +27710,31 @@ FrontBoardServices/BaseBoard，即 FrontBoard 场景激活驱动 SpringBoard 时
 显示扫描路径本身可用（探针 presentSurface 曾产生 val=47），故一旦 CA/AGX 产出
 surface 即可上屏。下一步应沿 C6a 让 AGX 管线编译成功，或先以合成 surface 验证
 扫描链（fr=1），再追真实桌面内容。
+
+### §299 H600 事实/假设分离与指令级崩溃定位
+
+**已观察事实：**
+- CA/backboardd 在 ~357s 发出真实渲染管线请求（`path_blit_vert_lph`、
+  `downsample_blur_*`、`narrow_blur_*`，H600-live.log），与探针 colorCube 不同。
+- 插件 `newRenderPipelineStateWithDescriptor:error:` 仅记录后返回
+  `trace_object_of` stub，不调用真实编译器、无 NSError；`-commit` 自完成空操作；
+  draw/dispatch/commit=0（A540TracePlugin.mm:3458-3479、3026）。即“管线创建”
+  返回 stub，从未真实编译。
+- `CALayerHost` 实际拿到 contextId（0x45b117fe/0xe6c19181）并 visible；bind 日志
+  `context=0/contextId=0` 读的是 `self.context`，对远端 host 恒为 nil，属观察
+  对象错误，**不是**绑定失败。
+- 崩溃指令级定位（H600 slide=0x89a4000，SpringBoard.framework 未滑动基址
+  0x1cf99c000，子缓存 .25）：`+0x600650 ldr x8,[x0,#0x10]`、
+  `+0x600658 blr x8`，x8=0 → 对象 x0(0x101849a00)+0x10 处回调为空；上层
+  UIKitCore→FrontBoard 场景激活。LR=+0x60065c 与 blr 位置吻合。
+- `MTLCompilerService` status=0x9 sender=launchd（launchd.ask）为空闲 XPC 回收，
+  非崩溃。
+
+**假设（未证明）：**
+- fr=0 由 Metal stub 无真实 GPU 内容导致（需实现真实渲染验证）。
+- 晚期崩溃由未初始化回调对象导致，与 fr=0 为两个独立机制，或共享上游缺数据。
+
+**验收条件：** 实现真实管线编译/present（C6a）后 draw/dispatch/commit>0 且真实
+CA surface 上屏（fr=1，非合成）；或定位 x0 对象类型与 +0x10 初始化路径、补齐依赖
+后 pc=0 消失。证据：logs/H600/device/20261123-1655-H600/H600-live.log、
+A540TracePlugin.mm、dyld_shared_cache_arm64.25。
