@@ -777,6 +777,7 @@ extern "C" uint32_t native_a540_c3_lastput(void);
 extern "C" { extern volatile uint32_t native_a540_fence_diag[8]; }
 extern "C" { extern volatile uint32_t native_a540_gpu_state[6]; }
 extern "C" { extern volatile uint32_t native_a540_smmu_state[4]; }
+extern "C" { extern volatile uint32_t native_a540_pwr_state[4]; }
 
 // H413: one compact, fixed-storage display record next to the existing
 // SpringBoard sample. This is observation-only and does not alter USB,
@@ -1080,6 +1081,9 @@ heartbeatThread (void *, wait_result_t)
       IOLog ("NATIVE_A540_SMMU: fsr=%x far=%x gfsr=%x sctlr=%x\n",
              (unsigned) native_a540_smmu_state[0], (unsigned) native_a540_smmu_state[1],
              (unsigned) native_a540_smmu_state[2], (unsigned) native_a540_smmu_state[3]);
+      IOLog ("NATIVE_A540_PWR: gx=%x cx=%x branch=%x rcg=%x\n",
+             (unsigned) native_a540_pwr_state[0], (unsigned) native_a540_pwr_state[1],
+             (unsigned) native_a540_pwr_state[2], (unsigned) native_a540_pwr_state[3]);
     }
     // H128: the process dumps and the persistent-log flush run here, in thread
     // context with no storage lock held.  They used to run from the UFS
