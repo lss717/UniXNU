@@ -27374,3 +27374,25 @@ NATIVE_PANIC_STR: offline scratch Data mount failed: 60 @kern_exec.c:8832
 回归。H596 将以同一正确 UUID 和相同配置重建，但暂时从 series 移除
 `trap-thread-state.patch`。设备门首先确认 Data `status=0` 和启动恢复；只有该对照
 成立后，才重新设计不改变关键布局的故障现场记录。
+
+### §288 H596：恢复控制内核以隔离诊断补丁回归
+
+H596 保持 H595 的当前 Data UUID、两遍 PMGR、H593 addon、Data seed 和 bootargs，
+只从 XNU series 移除 `trap-thread-state.patch`。最终 kernel 含
+`3AAB21A7-0124-4EED-B5A4-872F17A7B998`，不含旧 UUID，也不含
+`NATIVE_TRAP_STATE`。
+
+```text
+pass 1 prelink     ca354142bc8293f970fd679f02766b781dbec1f5643776969dffb4853e277209
+real PMGR archive  eef18fa022be042c4e1f4a75720c742b6bbe2aef7ed9048552e6c923eb786e80
+final kernel       71bff6c4651056d123995e247a6642ff9ada7e5aec02a92e993e3dd6ceabafed
+payload            55285c8c92dba3059c2c6b043ccd8697a14ab2988cbf5abdf1808618dc1d4458
+boot               26c8fdb41ef58b2ed7745083e692acc1493ebdd786c36b656d05d07c70424497
+boot.json          37a2bc2a71a0fd5bb85bbc4d288ecbbe5575c9a64ce2bed292f71c73ef381923
+static verification 4c6931935466a0ef7e0af94964ada058783afa6898ddeeb9e01593b5466a3ce1
+```
+
+配置与 H576 控制相同，两遍 PMGR、payload 回读、988-byte bootargs 和 boot
+布局 PASS。状态 `H596-built-static-verified-device-pending-control`。设备门只验证
+Data `status=0` 和恢复常规启动；若恢复，则判定 H594 的补丁布局是 Data mount
+回归来源。
