@@ -27134,3 +27134,42 @@ H592 因此只增加 SpringBoard 致命信号现场记录：对 SIGSEGV/SIGILL �
 16-frame signal handler，记录 signal、si_addr、PC、LR、SP、FP 和返回地址，
 再调用原 handler/重新触发原信号。该诊断不改变 H591 的业务旁路、内核、Data
 seed、bootargs 或显示路径，用来补齐当前缺失的 SpringBoard 故障栈。
+
+### §280 H592：只记录 SpringBoard 致命内存信号
+
+H592 不改变启动业务路径，只把 `SpringBoardSceneObserver` 的终止信号观测从
+SIGABRT 扩展到 SIGSEGV/SIGILL。新 handler 记录 signal、`si_addr`、PC、LR、SP、
+FP 和最多 16 层 frame return address，然后恢复原 handler 并重新触发原信号，
+不吞掉崩溃。源码 head `f55a50e5`，NativeMetal `a1606a7`。kernel、Data seed、
+ADT、UEFI 和 988-byte bootargs 与 H591 逐字节一致。
+
+完整 bundle 重建在 lsd 输入校验处正确拒绝失败：H591 addon 内的 `lsd.real`
+已经打过 LsdRecoveryAsync shim，不是原始 21H461 lsd。为避免替换无关组件，
+H592 从 H591 已验证的 12-file `NGPUADD2` addon 解包，只替换
+`lib/SpringBoardSceneObserver.dylib` 后按原排序、模式和 CRC 重新打包。其余 11
+个文件逐字节一致。这是本轮新增的工具坑：**不要把已烘焙的 addon 内
+`lsd.real` 当作 `build-h436-springboard-bundle.py` 的原始 lsd 输入。**
+
+静态产物：
+
+```text
+observer sha256            d54f2c1db53f29234361382705f6cdb77c8c6f624ab6229290e79d82c2e21a84
+observer CDHash            1133ed88ff9388dc5459eeebe9035d0737a4c121
+GPU addon                 00cd54ceddc3dd5f9944fa54a32ee91d66ac8013dee37f1e7877741aa7e9d64d
+owner trust               55d76a1cb75656ea3b4ac07a5fa9bcd01158a24ca7e64d629c0f9a6fca82778a
+payload                   3087cc6e1dada8dcd5bd561764dafb2ca9d422a3a3b15b4ce949d614a1088fba
+boot                      a967868b1f59f24ae26dc916a57c793dfa60e6a03a4de42087a91aee7d1967c7
+boot.json                 789a966821529513b7ef917b04e98742b5b58d777aa1caf5a8a149a14d76bafb
+bundle trust              e70928bbd4dad022205fca8fbdbb00563bb9e2842eb7843a42aff79501844d70
+static verification       3951b2d62bf5c555a44d9eb154d36332579b2be500765249c6282c1f551c0387
+```
+
+observer marker、strict codesign、12-file addon CRC、owner trust 7 项、payload
+回读、H591 控制输入、bootargs fit（988 字符，1008/1024，最坏 1016/1024）和
+boot 布局 `problems=[]` 均 PASS。状态为
+`H592-built-static-verified-device-pending`。
+
+设备门只接受同一 boot 中以下证据：`build=H592`、`h592_signal_hooks`，以及至少
+一次 `h592_fatal_signal`/`h592_fatal_frame`。随后把故障 PC/LR/frame 与 H591
+的 `EXC_BAD_ACCESS code=1/sub=0/sig=11` 对齐；在该现场日志取得前，不对崩溃根因
+作推断。
