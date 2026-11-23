@@ -27928,3 +27928,34 @@ RPTR==n+RBBM idle+20ms 仍超时，需判定 fence 写是否落入 rptr BO（cac
    脚本后 kernel.macho 哈希不变≠构建失败，而是缺 prelink。
 4. boot_args 超 1024 会静默停 UEFI；dyld_flags 十六进制前导零可缩短（同值）腾位。
 5. GetStatus 的 faults/suspends 是零初始化 stub，不能当 GPU 故障证据。
+
+### §307 H605：fence 根因实测——C3 之后 CP 取指但不执行内存写（2026-11-23）
+
+**插桩（已提交 ac354e6e / GopFramebuffer 6bda3f1）：** `native_a540_submit_bo` 内部等待后
+锁存 rptr[0]/rptr[1]/done；`native_a540_wait_fence` 锁存期望 f 与末次 rptr[0]/rptr[1]＋超时计数；
+心跳每 10 拍重发 `NATIVE_A540_FENCE`。kernel `01e581ab86784b97f939ccbad06619d02b321574008214516dcfd1b2b7075684`，
+boot `5ebf24412a6058b5a0e0e916e39d2edb7b32e2947d1f2f59307cb7a49e6c18eb`，boot id `3BBF52B3`。
+复用 H604 args（sheng-gpu-power=7）。日志 `logs/H605/device/20261123-2158-H605/H605-live.raw.bin`。
+
+**实测（337–368s，多轮稳定）：**
+```text
+NATIVE_A540_FENCE: sf=5 r0=4 r1=0 done=1 wf=5 w0=4 w1=0 to=1
+NATIVE_A540_FENCE: sf=6 r0=4 r1=0 done=1 wf=6 w0=4 w1=0 to=2
+NATIVE_A540_BO:   … ok=2/4 sub=0 fence=e00002d6 c3=f lastput=600d00c3
+```
+sf=提交 fence（5/6），**r0/w0 恒=4**（C3 内部最后一次 fence 值），r1/w1=0，done=1
+（submit 内部 CP_RB_RPTR==n 等待成功），to 递增（WaitFence 超时）。
+
+**根因（实测）：** C3 之后，GPU CP **消费 ring 指针（RPTR 前进、done=1）但不执行内存写包**：
+`CACHE_FLUSH_TS` 写往 kRptrIova 的 fence 从未落地，rptr BO 停留在 C3 内部最后值 4，
+用户态提交的 fence 5/6 永远写不进去 → WaitFence 必超时。C3 内部 fill32 的 wait_fence 通过
+（c3=f 要求），说明**同一函数在 C3 期间写通路正常、C3 完成后失效**。故缺口不是 wait 逻辑
+（s[1]==0 成立），而是 **C3 完成后 CP 内存写执行/可见性失效**。
+
+**候选（未证明，需 H606 区分）：** C3 完成后 GPU 时钟/电源门控致写停滞；CP_ME 进入 halt；
+SMMU context 丢失使 kRptrIova/kTgtIova 翻译失效；VBIF 写通路阻塞。下一步在用户态 submit 后
+读 CP_ME_CNTL/RBBM_STATUS/SMMU fault 寄存器并与 C3 期间对照锁存，判定是时钟/电源、CP 状态
+还是 SMMU。注意本轮 ~368s 后 CDC 停止输出（疑反复失败提交致 GPU 总线挂起或心跳停），需重启取证。
+
+**阶段判定更新：** BO alloc✓ map✓ Submit✓（仅取指）→ **Fence✗：C3 后 CP 不执行内存写**。
+selftest hits=4/4 仍未达成；真实桌面第一帧另需 a5xx Metal 渲染后端（Turnip 无 a5xx）。
