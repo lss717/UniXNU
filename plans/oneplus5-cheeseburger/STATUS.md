@@ -27605,3 +27605,40 @@ kernel 同时含 `NATIVE_TRAP_STATE` 和实际 seed UUID。Windows 目录：
 `H599-built-static-verified-device-pending`。设备门是同一 boot 中 SpringBoard
 发生 `EXC_BAD_ACCESS` 后出现 `NATIVE_TRAP_STATE` 及至少一条
 `NATIVE_TRAP_STATE_FRAME`。
+
+### §295 H599 真机：SpringBoard 以 pc=0 空函数指针调用崩溃，取得完整寄存器与栈
+
+第一次启动（1502）的持久环在 1734 秒停止刷新，未覆盖约 1761 秒的 SpringBoard
+崩溃，但多个 mediaserverd 的 `NATIVE_TRAP_STATE` 证明补丁生效。第二次启动
+（1610，H599b）用不被中断的 CDC 采集覆盖到崩溃瞬间：
+
+```text
+1758.116814 NATIVE_TRAP: pid=27 comm=SpringBoard exc=1 code=0x1 sub=0x0 sig=11
+1758.158282 NATIVE_TRAP_STATE: pid=27 pc=0x0 lr=0x1e688465c sp=0x16eb79fe0 fp=0x16eb7a0b0
+            x0=0x10184b200 x1=0x9 x2=0x20bfb5880 x3=0x19d7159a0 far=0x0 esr=0x82000005
+```
+
+`pc=0`、`far=0`、`esr=0x82000005`（EL0 指令中止、翻译故障）表明 SpringBoard
+通过一个**空函数指针**跳转，而非普通数据解引用。`lr=0x1e688465c` 是发起调用的
+返回地址。同 boot 的共享缓存 `slide=0x168e8000`、`base=0x1968e8000`
+（`NATIVE_SBPC_IMAGE`），故未滑动地址 = 运行时地址 − 0x168e8000：
+
+```text
+lr  0x1e688465c -> 0x1dff9c65c   （空指针调用点）
+f0  0x1e647c9bc -> 0x1dfb949bc
+f1  0x1e647bc90 -> 0x1dfb93c90
+f2  0x1e6884778 -> 0x1dff9c778
+f3  0x1a0a52a00 -> 0x18a16aa00
+f6  0x1bd9d78c0 -> 0x1a70ef8c0
+f7  0x1b5cbe198 -> 0x19f3d6198
+```
+
+崩溃前 `fr=0` 持续，UFS `timeout=0/ocs_err=0/recover=0`，`lock_timeout=0` 但累计
+锁等待增长，仍为独立延迟项。该崩溃与 H598 同一空指针语义，但 H599 首次给出
+pc/lr/栈。下一步（H600）在故障现场直接调用 `native_report_trap_image` 命名
+lr 与栈帧所属镜像，以定位空指针调用点。
+
+```text
+H599b-live.log   31b4ac04446185a9cd570a6aed33c3e799eee6c8886460531ac797d9b24db008
+H599b-live raw   589535c8ea7d00d5936cd9398df59ba9f6eed16dd4fb81d2b7a1e9b7e46560ca
+```
