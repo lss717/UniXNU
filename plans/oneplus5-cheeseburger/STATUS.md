@@ -28206,3 +28206,57 @@ GPU 绘制，避免同一轮同时改两个变量。
 `SESSION-HANDOFF-2026-11-11.md`、新增的 `scripts/check-display-first-frame-probe.py`），
 这些内容已被 `codex/h562-clean-build` 分支上的提交覆盖，我未做 stash 或删除。
 C: worktree 里搬空后的 `builds` 目录因 PowerShell 删除策略未能移除，是空目录，可手工删除。
+
+### §314 H611：启动参数进入已提交配置，a5xx 真实 2D blit 首次上机通过（2026-11-24）
+
+**前置门禁已完成。** 设备仓库 `board.toml` 现在保存 H610 实际生效的参数集合
+（提交 `49d0376`，逗号修正 `bef79ba`，分支 `codex/patch-series`）。构建机从 detached HEAD
+`914038e` 切到该分支。用 `tomllib` 解析后逐项核对，45 项以单空格连接得到 1000 字节，与从
+`H610-payload.img` 提取的 args 逐字相同。第一次提交漏掉了 TOML 数组逗号导致 `board.toml`
+无法解析，是 `tomllib` 抓出来的，我先前用按行解析的自写校验没能发现这个错误。
+
+**payload 现在可复现。** 从已提交配置重建 payload 并与 H610 对比：kernel.macho、
+trustcache、gpuaddon、args 完全一致，scratch-data 需要显式传
+`--data-ramdisk /Users/lss/display-first-frame/inputs/data-seeds/H610-scratch-data.img`
+才能一致。原因是当前 `seed-data-skip-setup.py` 产出 921,696 字节，而 H591 以来的镜像里一直是
+725,088 字节，让 payload 步骤自动生成 seed 会同时改动第二个变量，所以这一轮把它固定成 H610 的
+那份。seed 工具产出与历史不一致这件事仍未解决，留作后续单独处理。adt 只差 64 字节的
+`random-seed` 属性，其余 14,788 字节相同，该属性每次构建重新生成。
+
+**Stage 1 规格查证。** 按"不得假定 clear 或 blit 是否需要 shader"的要求，用 WSL Ubuntu 的
+apt 源取得 Mesa 25.2.8 源码（gitlab.freedesktop.org、kernel.org cgit 与 mesa archive 都返回
+Anubis 人机验证页）。权威结论是 a5xx 的 2D 拷贝不需要 shader。
+`src/gallium/drivers/freedreno/a5xx/fd5_blitter.c` 的 `emit_blit_buffer` 只用
+`CP_SET_RENDER_MODE(BLIT2D)`、`RB_2D_SRC_INFO`/`GRAS_2D_SRC_INFO`、
+`RB_2D_DST_INFO`/`GRAS_2D_DST_INFO`、`CP_BLIT(BLIT_OP_COPY)` 和
+`CP_SET_RENDER_MODE(END2D)`。寄存器与操作码取自
+`src/freedreno/registers/adreno/a5xx.xml` 和 `adreno_pm4.xml`：
+`CP_SET_RENDER_MODE=0x6c`、`CP_BLIT=0x2c`、`RB_2D_SRC_INFO=0x2107`、
+`RB_2D_DST_INFO=0x2110`、`GRAS_2D_SRC_INFO=0x2181`、`GRAS_2D_DST_INFO=0x2182`、
+`BLIT2D=5`、`END2D=8`、`BLIT_OP_COPY=1`、`RB5_R8_UNORM=0x03`、`TILE5_LINEAR=0`、`WZYX=0`，
+`RB_2D_*_SIZE` 的 PITCH 与 ARRAY_PITCH 均以 >>6 存储。
+
+**H611 实现。** `native_a540_hb_blit_selftest()`（`NativeA540C3.cpp`，提交 `f348252`）在
+bo[3] 构造 34 个 dword 的间接缓冲，源 bo[4] 填 `i ^ 0xa5` 梯度、目的 bo[5] 由 CPU 清零，
+提交 1024 字节单行 blit，等 fence 后逐字节比较。目的区在提交前是 0，而 `src[0]=0xa5`，
+所以只有 GPU 真的写入才会匹配。heartbeat 在 `beat % 30 == 15` 调用它，与 H609 的
+`beat % 30 == 0` 提交测试错开，bo[0]/bo[1] 仍归用户态自检、bo[6]/bo[7] 仍归 H609 测试，
+三者不互相占用。结果通过 `NATIVE_A540_BLIT` 每十个 beat 上报（`NativeUfsProbe.cpp`，
+主仓库提交 `b85399d`）。
+
+**真机结果。** boot `3C75E374`，镜像 `35e98796189a9e2b348372c174c9210e5fb6cef0d1933a70821774ca3270b566`。
+从 302 秒到 707 秒共 39 次 blit，全部 `sr=0 wr=0 match=400 bad=ffffffff d0=a5 s0=a5`，
+`match=400` 是十六进制即 1024 字节全部匹配，`bad=ffffffff` 表示没有任何不匹配位置，
+fence 从 `0x12` 递增到 `0x33`，说明每次都是新的提交而不是重复读同一结果。
+同一轮里 H609 的内核提交仍正常（`NATIVE_A540_HBSUB sr=0 wr=0 n=15`），
+`NATIVE_A540_FENCE done=1 to=0`，`NATIVE_A540_GPU me=0 rbbm=1`，
+用户态 `selftest hits=4/4` 未受影响，无 panic，日志活到 714 秒。
+`NATIVE_A540_SMMU fsr=400` 在 H610 同一时间窗里取值相同，属于既有状态，不是 blit 引入。
+
+**验收边界。** 这证明 a5xx 渲染后端能在 GPU 控制下把一块内存按 2D blit 搬到另一块，
+并由 CPU 读回校验，是本项目第一次让 GPU 真正搬运像素数据。它不证明 shader、光栅、
+纹理采样或混合可用，也不等于桌面第一帧：同一轮 `val=0 xf=0 fr=0`。合成 present 路径
+仍是独立证据，不能与本轮拼成端到端成功。
+
+**下一步（Stage 2）。** 把这次真实 GPU 输出的那块 surface 接入显示 present，分别验证绘制、
+读回与扫描输出三件事，再谈真实 CA 请求。
