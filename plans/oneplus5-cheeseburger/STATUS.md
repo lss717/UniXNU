@@ -27058,3 +27058,79 @@ CDC/UXC1 合同均 PASS，`problems=[]`。状态为
 设备门要求 `h591_today_layout_prepare_hook installed=1`，随后
 `h591_today_layout_prepare_skip` 命中；主线程不得再进入 `resetTodayLayout`。
 若仍停在同一链，先检查 hook 是否命中；若继续到新的启动边界，则按新栈继续。
+
+### §279 H591 真机：Today 布局旁路生效，随后 SpringBoard 在同 boot 中反复 SIGSEGV
+
+H591 被测试两次，镜像 SHA-256 均为
+`165f33acf628c8a1d52f1bcbe978151b36e5462485ba700f9e2e4d354c114c46`。
+第一次启动在 Fastboot 后没有枚举 CDC，持续到约 1961 秒后回到 Android；持久环
+仍保留了 1433-1961 秒的完整用户态尾部，boot `22656d02`，但早期 H591 marker
+已被环形日志覆盖，因此只能记为“真实运行但 observer 早期证据缺失”。第二次启动
+在尾环清零并核对固定 SHA 后进行，CDC 于 09:15:33 以
+`USB\VID_1209&PID_0001\OP5CDCH408`/COM8 枚举，boot `2282cbe3`，取得完整实时
+UXL1 和持久 H103。
+
+实时日志在 589.369703 秒明确命中：
+
+```text
+NATIVE_MTL: event=h591_today_layout_prepare_skip pid=27 main=1 object=0x100e63760
+```
+
+H590 在 698/771/846 秒的 `_prepareDefaultTodayLayoutIfNecessary` /
+`resetTodayLayout` 栈没有在 H591 重现。主线程随后前进到新的同步边界，1074-1600
+秒的稳定栈符号化为：
+
+```text
+_ulock_wait2
+-> LaunchServices Database Context::_get
+-> LSApplicationExtensionRecord initWithBundleIdentifier:
+-> SBHContainingBundleRecordForWidgetWithBundleIdentifier
+-> SBHContainingBundleIdentifierForWidgetWithBundleIdentifier
+-> SBHWidget containerBundleIdentifier
+-> SBIconController configurationDataForDataSource:ofIcon:
+-> SBHIconManager _archivedIntentForDataSource:inIcon:loadingIfNecessary:
+-> SBHIconManager _precacheDataForRootIcons
+-> SBHIconManager _iconModelDidLayout:
+-> CFNotificationCenter post
+```
+
+到 1778 秒，主线程已回到 `mach_msg2_trap`，说明上述 LaunchServices 等待最终
+返回，不能把整段启动判成永久卡死。可是产品帧仍为 `fr=0`。1801.022178 秒
+SpringBoard PID 27 的主线程 `tid=291` 触发
+`EXC_BAD_ACCESS code=0x1 sub=0x0/sig=11`，1801.055266 秒以 `status=0xb`
+退出；1818.058569 秒 PID 232 接替，但 1959.619247 秒再次以同样的
+`code=0x1/sub=0x0/sig=11` 退出；PID 240 在 1983.378003 秒启动，2080.456134
+秒第三次同样退出；PID 250 于 2129.154055 秒启动，2239.873281 秒第四次同样
+退出。实时窗口最后仍为 `fr=0`，没有发现首帧。
+
+本 boot 的 UFS 持续完成请求，保留窗口内
+`ocs_err=0 dbto=0 recover=0 recovered=0 lock_timeout=0`；累计软件锁等待继续
+上升，已观察到 `lock_wait_ms=24562855`、`lock_wait_max_ms=51767`，因此 UFS
+不是本次第一停点，也不能宣称软件锁等待已降低。
+
+日志与产物：
+
+```text
+H591-live.log                 B8E732C82F035D70E9259B2CF2D0DC335CB26F65E753D1653DF800C54C4F3029
+H591-live.frames.bin          246A240E03A6A035FE2CC34F09086FDFD702E5C7BD881A7F2BAFCF45BCCF266F
+H591-tail32-second.bin        BF26EEB0BCC54AC90FAB987BC5BCF4F1078A0B9D7EF5DA1451F1268CEA120F45
+H591-h103-second.txt          F2CCF1A3DB5F1FA28B5C1C03A792643661FAAEED9D1193CFEEF363D20984C277
+H591-tail32-first.bin         50373CF21EBEAA24E96FF6401A8A7185BAFA40238EED0046772FA5D03C2400C5
+H591-h103-first.txt           AA2BA52E5243F276C68DFE2D390D3228563FFE8526D9E8AABCAFD7B4337EAAC3
+```
+
+第二次日志目录：
+`E:\WindowsData\Project\ios\main-route\display-first-frame\logs\H591\device\20261123-0911-second-attempt`。
+清零后固定回读仍为
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+
+用户本次提供的 `AMFI: No PMGR7` 画面不是 H591：文件时间为
+2026-11-22 23:00:50，SHA-256 为
+`6b064e62a93684a01430c9d771ff16f3a600a7cb463b78f359d1d45771569177`，
+与 §241/§262 中 H566-H569 PMGR stub 旧图逐字节相同。H591 payload 回读 kernel
+是已越过该边界的真实 PMGR 内核 `7ffb0c1b...59e9`。
+
+H592 因此只增加 SpringBoard 致命信号现场记录：对 SIGSEGV/SIGILL 安装
+16-frame signal handler，记录 signal、si_addr、PC、LR、SP、FP 和返回地址，
+再调用原 handler/重新触发原信号。该诊断不改变 H591 的业务旁路、内核、Data
+seed、bootargs 或显示路径，用来补齐当前缺失的 SpringBoard 故障栈。
