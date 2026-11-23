@@ -27642,3 +27642,23 @@ lr 与栈帧所属镜像，以定位空指针调用点。
 H599b-live.log   31b4ac04446185a9cd570a6aed33c3e799eee6c8886460531ac797d9b24db008
 H599b-live raw   589535c8ea7d00d5936cd9398df59ba9f6eed16dd4fb81d2b7a1e9b7e46560ca
 ```
+
+### §296 H600：故障现场镜像命名包
+
+H600 在 H599 基础上仅追加 `trap-state-image-naming.patch`：在
+`native_report_trap_state` 中对 `lr` 与每个栈帧返回地址调用
+`native_report_trap_image`，直接打印所属镜像，避免离线解析共享缓存。
+其余输入（seed UUID 09FB、H593 addon、Data seed、bootargs、UEFI）不变。
+
+```text
+source          e76c9c1e1f6b1af166029a045f9361f3cbac85a9
+pass 1 kernel   ebc0621c313fe30173a947e669bff4277711259653ab102aed5fed762972d3de
+final kernel    1b45f64da8a8e5aaeeafc034a8e187da46305b5d62c502ad361a3566f32b6ca0
+payload         f41f38ef7d935ae84d8560be4ba58d3c587908d4a3715bdf971e28d297ac898f
+boot            757d9b8c7764ea10cdcea67694580bc28c9b155b9b88592c95b3e8368c0b1c55
+boot.json       532f90bf81106ea3c17c1eddbcb095e5af63eabd3e1626dd70c1d6892502bb3a
+```
+
+两遍 PMGR（stub→真实）、payload 回读、bootargs 988/1008/1016、boot 布局均 PASS。
+Windows 目录 `builds/H600`。状态 `H600-built-static-verified-device-pending`。
+设备门：SpringBoard `EXC_BAD_ACCESS` 后的 `NATIVE_TRAP_IMAGE` 行给出 lr/栈帧镜像名。
