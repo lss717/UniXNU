@@ -779,7 +779,10 @@ extern "C" { extern volatile uint32_t native_a540_gpu_state[6]; }
 extern "C" { extern volatile uint32_t native_a540_smmu_state[4]; }
 extern "C" { extern volatile uint32_t native_a540_pwr_state[4]; }
 extern "C" { extern volatile uint32_t native_a540_hbsub[6]; }
+/* H611: real a5xx 2D blit through CP_BLIT, reported every tenth beat. */
+extern "C" { extern volatile uint32_t native_a540_blit_diag[8]; }
 extern "C" void native_a540_hb_selftest(void);
+extern "C" void native_a540_hb_blit_selftest(void);
 
 // H413: one compact, fixed-storage display record next to the existing
 // SpringBoard sample. This is observation-only and does not alter USB,
@@ -1068,6 +1071,8 @@ heartbeatThread (void *, wait_result_t)
            (unsigned) native_a540_sel_last);
     }
     if ((beat % 30) == 0 && (native_a540_c3_state() & 4u)) native_a540_hb_selftest();
+    /* H611: offset from the H609 submit test so the two never share a beat. */
+    if ((beat % 30) == 15 && (native_a540_c3_state() & 4u)) native_a540_hb_blit_selftest();
     if (beat == 1 || (beat % 10) == 0) {
       IOLog ("NATIVE_A540_BO: n=%u rc=%x ready=%u free=%u used=%x ok=%u sub=%x fence=%x c3=%x lastput=%x\n",
              (unsigned) native_a540_bo_diag[0], (unsigned) native_a540_bo_diag[1], (unsigned) native_a540_bo_diag[2],
@@ -1087,6 +1092,11 @@ heartbeatThread (void *, wait_result_t)
       IOLog ("NATIVE_A540_PWR: gx=%x cx=%x branch=%x rcg=%x\n",
              (unsigned) native_a540_pwr_state[0], (unsigned) native_a540_pwr_state[1],
              (unsigned) native_a540_pwr_state[2], (unsigned) native_a540_pwr_state[3]);
+      IOLog ("NATIVE_A540_BLIT: sr=%x wr=%x f=%x n=%x match=%x bad=%x d0=%x s0=%x\n",
+             (unsigned) native_a540_blit_diag[0], (unsigned) native_a540_blit_diag[1],
+             (unsigned) native_a540_blit_diag[2], (unsigned) native_a540_blit_diag[3],
+             (unsigned) native_a540_blit_diag[4], (unsigned) native_a540_blit_diag[5],
+             (unsigned) native_a540_blit_diag[6], (unsigned) native_a540_blit_diag[7]);
       IOLog ("NATIVE_A540_HBSUB: sr=%x wr=%x f=%x r0=%x t0=%x n=%x\n",
              (unsigned) native_a540_hbsub[0], (unsigned) native_a540_hbsub[1], (unsigned) native_a540_hbsub[2],
              (unsigned) native_a540_hbsub[3], (unsigned) native_a540_hbsub[4], (unsigned) native_a540_hbsub[5]);
