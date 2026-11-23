@@ -26988,3 +26988,73 @@ CDC/UXC1 合同均 PASS，`problems=[]`。状态为
 `h590_icon_state_save_skip`，并确认主线程不再进入
 `SBHIconStateArchiver`/widget container bundle 查询。若保存被跳过后出现依赖其
 完成回调的新等待，应记录具体调用方，不恢复整段 icon model。
+
+### §277 H590 真机：图标保存链不再出现，默认 Today 布局进入 LS 锁
+
+H590 的 kernel boot 为 `227d0be4`。H103 在 230.613 秒明确记录
+`h590_icon_state_save_hook installed=1`，231.379 秒记录 `build=H590`。
+
+H589 在 640/717 秒的 `_saveIconStateWithError` 栈没有在 H590 重现。H590 在
+623 秒已推进到 `BaseBoard +[BSAbstractDefaultDomain initialize]` 的 selector
+初始化工作，随后 698、771、846 秒停在：
+
+```text
+_ulock_wait2
+-> LaunchServices Database Context::_get
+-> LSApplicationExtensionRecord initWithBundleIdentifier:
+-> SBHContainingBundleRecordForWidgetWithBundleIdentifier
+-> SBHWidget displayName
+-> SBLeafIcon displayNameForLocation:
+-> SBHIconManager iconModel:willRemoveIcon:
+-> SBHIconModel removeIcon:shouldRemoveFromRootFolder:
+-> SBHIconModel removeIcons:
+-> SBHIconManager resetTodayLayout
+-> SBIconController _tryToPrepareNonDynamicDefaultTodayLayout
+-> SBIconController _prepareDefaultTodayLayoutIfNecessary
+-> SBIconController _rootFolderDidChange
+-> SBHIconModel layout
+```
+
+因此 H590 的保存旁路确实改变了原栈，但 `Today` 默认布局仍在首次 layout 中
+归档/删除 widget 并查询 LaunchServices；`req=29187/93/lsd.real q=1` 持续，
+`fr=0`。`h590_icon_state_save_skip` 文本没有留存在 H103 中，可能被设备丢弃的
+日志覆盖，故这里只把“原保存栈消失”作为实际结果。
+
+```text
+H590-live.log      c28ef49b53b6c4d12baa94e7eb5b27b8d16132a2a7389485f1095f41735b9e0e
+H590-tail32.bin    f2d6a66ec99e8e3aea1e03d3a36787761ccc6570ae87c4abbc18894c92b2100f
+H590-h103.txt      0cb5a904849aa2794099880e8efa3c66afe9ff0c09eea29e5c3ac629cfbc67c9
+```
+
+清零末尾 32 MiB 后，固定回读仍为
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+
+### §278 H591：跳过默认 Today 布局准备
+
+H591 只 hook `-[SBIconController _prepareDefaultTodayLayoutIfNecessary]` 并直接
+返回，跳过 `resetTodayLayout`、widget 删除和对应的 LaunchServices 查询。该默认
+Today 布局不是启动锁屏所需状态，其他 icon model 和场景路径保持。
+
+源码 head `a945b97a`，NativeMetal `de4fa38`。kernel、Data seed 和 988-byte
+bootargs 继续与 H590 字节级一致。静态产物：
+
+```text
+GPU addon                 59932b2f04b00c95ed2b0dd7b6b3aac51898f59e44d7ab2878c3821337ff225f
+owner trust               a5fff716f220e440a2ce7bcca8fc9ac2d11c694fd7dfdad3f81e00b9d6935fe3
+payload                   b4a2a3da9827a22a6959b21b7453934af325c87da2cebe979f22ad9581b8ecc6
+boot                      165f33acf628c8a1d52f1bcbe978151b36e5462485ba700f9e2e4d354c114c46
+boot.json                 3a7695fd6d69e2c8a88bb08256c024d6dbbee1eb7627d2171eae3ecfe4910ad5
+ADT                       e0de6561f89598930513a1491a691414911f93b9ffdbd3fe4d4e6d66ae09faf6
+observer CDHash           75a813e980e0d183ea203544ffd892d5f0346a99
+SpringBoard CDHash        6d667a029eef784517158012af93bc61a0f4c200
+H407 UEFI                 9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6
+```
+
+payload 回读、988-byte bootargs（`zap-base` 后 1008/1024，最坏 1016/1024）、
+owner trust 7 项、observer/SpringBoard codesign、bundle gate、boot 布局与
+CDC/UXC1 合同均 PASS，`problems=[]`。状态为
+`H591-built-static-verified-device-pending`。
+
+设备门要求 `h591_today_layout_prepare_hook installed=1`，随后
+`h591_today_layout_prepare_skip` 命中；主线程不得再进入 `resetTodayLayout`。
+若仍停在同一链，先检查 hook 是否命中；若继续到新的启动边界，则按新栈继续。
