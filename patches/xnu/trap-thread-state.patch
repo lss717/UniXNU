@@ -1,0 +1,78 @@
+--- a/bsd/uxkern/ux_exception.c
++++ b/bsd/uxkern/ux_exception.c
+@@ -44,6 +44,9 @@
+ #include <sys/vmparam.h>        /* MAXSSIZ */
+ 
+ #include <sys/ux_exception.h>
++
++#include <mach/arm/thread_status.h>
++#include <kern/thread.h>
+ #include <kern/task.h>
+ #include <libkern/libkern.h>
+ #include <libkern/copyio.h>
+@@ -252,7 +255,55 @@
+ 			    "above=%d %s\n", pid, p->p_comm, (unsigned long long)pairs[k],
+ 			    (unsigned long long)(addr > pairs[k] ? addr - pairs[k] : pairs[k] - addr),
+ 			    addr < pairs[k] ? 1 : 0, path);
++		}
++	}
++}
++
++static void
++native_report_trap_state(proc_t p, thread_t thread)
++{
++	arm_thread_state64_t state = {};
++	arm_exception_state64_t exception_state = {};
++	mach_msg_type_number_t state_count = ARM_THREAD_STATE64_COUNT;
++	mach_msg_type_number_t exception_count = ARM_EXCEPTION_STATE64_COUNT;
++	uint64_t fp;
++	unsigned depth;
++
++	if (thread_getstatus(thread, ARM_THREAD_STATE64,
++	    (thread_state_t)&state, &state_count) != KERN_SUCCESS) {
++		printf("NATIVE_TRAP_STATE: pid=%d comm=%s regs-unavailable\n",
++		    proc_getpid(p), p->p_comm);
++		return;
++	}
++	if (thread_getstatus(thread, ARM_EXCEPTION_STATE64,
++	    (thread_state_t)&exception_state, &exception_count) != KERN_SUCCESS) {
++		exception_count = 0;
++	}
++	printf("NATIVE_TRAP_STATE: pid=%d comm=%s pc=0x%llx lr=0x%llx sp=0x%llx fp=0x%llx "
++	    "x0=0x%llx x1=0x%llx x2=0x%llx x3=0x%llx far=0x%llx esr=0x%x exception=%u\n",
++	    proc_getpid(p), p->p_comm,
++	    (unsigned long long)state.pc, (unsigned long long)state.lr,
++	    (unsigned long long)state.sp, (unsigned long long)state.fp,
++	    (unsigned long long)state.x[0], (unsigned long long)state.x[1],
++	    (unsigned long long)state.x[2], (unsigned long long)state.x[3],
++	    exception_count ? (unsigned long long)exception_state.far : 0,
++	    exception_count ? exception_state.esr : 0,
++	    exception_count ? exception_state.exception : 0);
++	fp = state.fp;
++	for (depth = 0; depth < 16 && fp; depth++) {
++		uint64_t frame[2];
++		if (copyin((user_addr_t)fp, frame, sizeof(frame)) != 0) {
++			printf("NATIVE_TRAP_STATE_FRAME: pid=%d index=%u fp=0x%llx read-failed\n",
++			    proc_getpid(p), depth, (unsigned long long)fp);
++			break;
+ 		}
++		printf("NATIVE_TRAP_STATE_FRAME: pid=%d index=%u fp=0x%llx ret=0x%llx\n",
++		    proc_getpid(p), depth, (unsigned long long)fp,
++		    (unsigned long long)frame[1]);
++		if (frame[0] <= fp || frame[0] - fp > 0x100000) {
++			break;
++		}
++		fp = frame[0];
+ 	}
+ }
+ 
+@@ -329,6 +380,9 @@
+ 		printf("NATIVE_TRAP: pid=%d comm=%s exc=%d code=0x%llx sub=0x%llx sig=%d\n",
+ 		    proc_getpid(p), p->p_comm, exception,
+ 		    (unsigned long long)code, (unsigned long long)subcode, ux_signal);
++		if (exception == EXC_BAD_ACCESS) {
++			native_report_trap_state(p, thread);
++		}
+ 		if (exception == EXC_BREAKPOINT) {
+ 			native_report_trap_image(p, (uint64_t)subcode);
+ 			native_report_trap_strings(p, (uint64_t)subcode);
