@@ -28103,3 +28103,43 @@ boot `ac0fa00f7e03b1c7fbdba6a098e9cdbf7dd0b38995af035ae0bc34a4549ddf70`，boot i
 插件 `pm4_type7` 编码，对照内核 `type7()`；确认是畸形包还是缓存覆盖。若为 (a) 修插件编码；
 若为 (b) 让 `submit_bo` 对 caller 非缓存写的 BO 改为 invalidate 或跳过 clean。**不再**沿
 GPU 电源/SMMU 方向排查。真实桌面第一帧仍需 a5xx Metal 渲染后端（Turnip 无 a5xx）。
+
+### §312 H610 根因修复：用户态 selftest hits=4/4，GPU 不再被毒化（2026-11-23）
+
+**根因（H609 定位，H610 修复）：** A540Trace 插件 `pm4_type7` 写成
+`(3u<<30)|((opcode&0x7f)<<16)|(count&0x3fff)`——用了 **type-3 头 0xC0000000** 且**缺 A5xx
+PM4 奇偶校验位**。内核 `type7()` 是 `0x70000000 | count | parity(count)<<15 | opcode<<16 |
+parity(opcode)<<23`（H236as 明确“省略 parity 会让 CP 拒绝并置 CP_INTERRUPT_STATUS bit0”）。
+畸形 CP_MEM_WRITE 令 CP 取指执行到非法包 → 硬件挂起 → 毒化此后所有提交（含内核）。
+
+**修复（已提交 NativeMetal 96725dd / super 53e5f7fd）：** 插件 `pm4_type7` 改为与内核
+`type7()` 逐位一致（补 `pm4_parity`，头改 0x70000000，加 parity(count)<<15、parity(opcode)<<23）。
+
+**打包：** `build-a540-trace-plugin.py` 重建 bundle（新 CDHash `93890b7bea7ebc157efff4224ea75764230c94e8`）；
+repack 原位替换 12-addon gpuaddon 的 A540Trace.bundle（3 文件）；`add-owner-trust-hash.py --replace`
+旧 CDHash→新；H609 kernel `47cbbc93…` + 新 gpuaddon + 新 trust 装入 H610-payload。
+boot `262b32a4e0f20dedbbef1d33f1c8a158ba76a2ed2f18573c47906ecec2bbd21d`，boot id `378060EF`。
+日志 `logs/H610/device/20261123-2352-H610/H610-live.raw.bin`。
+
+**实测（300s 自测，通过）：**
+```text
+gpu#18 query abi=0x1 in=32 out=40 maxbo=268435456
+gpu#19 info chip=0x5040000 gmem=0 va=0x2000000+0x8000
+gpu#20 mapped ib=4096 target=4096
+gpu#21 selftest hits=4/4 fence=13 t0=0adc0de1 t3=deadbeef
+NATIVE_A540_FENCE: sf=d r0=d r1=0 done=1 wf=0 w0=0 w1=0 to=0
+NATIVE_A540_HBSUB: sr=0 wr=0 f=c r0=c t0=12345678 n=8   （心跳提交仍正常，未被毒化）
+```
+- **hits=4/4**：3 个 CP_MEM_WRITE 目标值全部写入正确（t0=0adc0de1==value[0]），t3 保持
+  0xdeadbeef（范围外未触碰），fence=13 完成。
+- fence 锁存 `r0=d==sf=d`（fence 落地）、`to=0`（无超时）。
+- 心跳内核提交 `n=8 wr=0` 依旧成功 → 用户态提交**不再毒化** GPU。
+
+**里程碑意义：** 用户态经 ABI（BoAlloc→BoMap→BoCpuMap→Submit→WaitFence→读回）到 a5xx CP
+的端到端命令提交+执行+fence+回读**首次完整打通**。这是任何真实渲染都将复用的命令通路。
+selftest hits=4/4 仅证 CP 提交，**不等于桌面第一帧**：真实桌面仍需把 CoreAnimation/Metal 的
+渲染请求翻译成 a5xx 着色器与 3D/blit PM4（C6a；Turnip 无 a5xx，Gallium fd5+IR3 为源码候选）。
+
+**下一步：** 在 selftest 通路已稳的基础上，处理真实渲染：A540Trace 目前对 `newRenderPipelineState`
+返回 trace stub、`-commit` 空操作（§299/§300）。需要真实管线编译与 present。同时保留本修复，
+避免真实提交再次落入畸形 PM4。
