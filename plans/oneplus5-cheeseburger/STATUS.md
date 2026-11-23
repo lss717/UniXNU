@@ -27354,3 +27354,23 @@ pass 1 使用 stub PMGR；pass 2 使用 `build-sheng-pmgr.py`。payload 只替�
 其余组件与 H593 逐字节一致；988-byte bootargs（1008/1024，最坏 1016/1024）和
 boot 布局 PASS。状态 `H595-built-static-verified-device-pending`。设备门先验证
 Data 挂载成功，再取得首次 SpringBoard null fault 的 `NATIVE_TRAP_STATE`。
+
+### §287 H595 真机：正确 UUID 仍出现 Data mount 超时；H596 需要移除补丁对照
+
+H595 最终 kernel 已确认含 `3AAB21A7-0124-4EED-B5A4-872F17A7B998` 且不含旧
+UUID，但第一次启动仍没有 CDC。持久环在 `95.936252` 秒记录：
+
+```text
+NATIVE_H82_DATA: status=60 stage=0 ro=-1 dev=-1 size=0
+NATIVE_PANIC_STR: offline scratch Data mount failed: 60 @kern_exec.c:8832
+```
+
+因此 UUID 字符串不是唯一条件。将 H595 构建树与已工作的 H576 控制构建比较：
+`out/cheeseburger/.config` 完全相同，`patches/xnu/series` 的唯一差异是末尾新增
+`trap-thread-state.patch`；H576 PMGR archive 为 `6ef53ef2…`，H595 因 kernel
+布局不同为 `55bba091…`。
+
+这说明新增诊断改变了内核布局，现有 PMGR/early-init 地址链或异常路径可能因此
+回归。H596 将以同一正确 UUID 和相同配置重建，但暂时从 series 移除
+`trap-thread-state.patch`。设备门首先确认 Data `status=0` 和启动恢复；只有该对照
+成立后，才重新设计不改变关键布局的故障现场记录。

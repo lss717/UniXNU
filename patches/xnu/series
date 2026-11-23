@@ -136,4 +136,3 @@ exit-reason-signal-source.patch
 threadsignal-exception-source.patch
 psignal-uthread-probe.patch
 springboard-abort-snapshot.patch
-trap-thread-state.patch
