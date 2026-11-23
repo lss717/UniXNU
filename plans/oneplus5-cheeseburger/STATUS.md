@@ -27396,3 +27396,75 @@ static verification 4c6931935466a0ef7e0af94964ada058783afa6898ddeeb9e01593b5466a
 布局 PASS。状态 `H596-built-static-verified-device-pending-control`。设备门只验证
 Data `status=0` 和恢复常规启动；若恢复，则判定 H594 的补丁布局是 Data mount
 回归来源。
+
+### §289 H596 真机：无 trap-state 补丁仍失败，回归范围缩到 abort-snapshot
+
+H596 含当前 Data UUID `3AAB21A7-0124-4EED-B5A4-872F17A7B998`，不含旧 UUID，
+也不含 `trap-thread-state.patch`，但同一次启动仍没有 CDC，并在完全相同的阶段
+超时：
+
+```text
+ 95.923030 NATIVE_H82_DATA: status=60 stage=0 ro=-1 dev=-1 size=0
+ 95.959321 NATIVE_PANIC_STR: offline scratch Data mount failed: 60 @kern_exec.c:8832
+```
+
+H596 的持久环与静态文件：
+
+```text
+H596-h103-first.txt       FDBBB903CCB5C2030FA3802796EB2EB53E60B6AF5D108CB4E1D680C9685C5E53
+H596-tail32-first.bin     4e3f1c4552c2a86c2365f8ce95d8025d80bb6fa322e39f30eed43ea410dad344
+```
+
+H596 因此排除了 `trap-thread-state.patch` 是唯一回归源。回查已工作的 H563
+源 `0f611b34` 到 H596 源 `309ab752`，`patches/xnu` 的净差异只有
+`springboard-abort-snapshot.patch` 及其 series 行。该补丁把
+`native_sigrec` 扩充为包含 tid、寄存器快照和 24 个栈字的静态环。H597 的唯一
+变量是从补丁树完全移除这项诊断，并保留当前 Data UUID、H593 addon、Data seed、
+bootargs 和 UEFI。
+
+### §290 H597：移除 abort-snapshot 后全新构建，静态门禁通过
+
+H597 使用全新克隆：
+
+```text
+UniXNU source             3fb5581a9458bf692ec4b09e62290d9744bcb3fe
+UniXNU-cheeseburger      914038e725c353b581d516a6ca201cb50260103c
+kernel source pointer     8e4ef560275023a7f21dc70783632c0299058f31
+payload NativeMetal       8b5e858c991165c487d96e67a21fd12d9325764a
+Data UUID                3AAB21A7-0124-4EED-B5A4-872F17A7B998
+```
+
+Mac 构建目录为 `/Users/lss/h468-build/H597-source-20261123/UniXNU` 和
+`/Users/lss/h468-build/H597-clean-20261123-r2`。第一遍明确使用
+`build-sheng-pmgr-stub.py`，第二遍明确使用 `build-sheng-pmgr.py`。
+
+```text
+pass 1 kernel      c2818e64215897925bae704856e79cb8740360448852f25c7dac28db8da0e540
+final kernel       d284b73ecc14f7f9575f699e3e29a915d53ad9dba1e102c6823bdbb3000cc6b8
+raw kernel         e567cb9b5d84df394f9601f95e725e3ad537f6d42ea5320264b50bba2a2b8e25
+real PMGR archive  7dc3ae3658f5417f2f617a70389ad9e796e679f487cf3e66495e531b1e974793
+payload            2eddef9b07a2d4bc7f611cb4ee79bb3af312f25d079a7ac5d1a4d9878df7bdeb
+boot               ed866818e3ebd97121c847e020587b1a158323d56c3622185dc757c9b78e2726
+boot.json          9242cf4a2151b4d572fdeb846d4ecbe92a04626da9bf1d7daffae9843c72b030
+kernel dSYM        c1b9580f563f7b1260b81e12a246638ac086e387eecb4ed45f55de8d15adb05a
+```
+
+payload 只在 H593 已验证 payload 中替换 `Payloads/kernel.macho`。回读内容如下：
+
+```text
+ADT                 e0de6561f89598930513a1491a691414911f93b9ffdbd3fe4d4e6d66ae09faf6
+GPU addon           1f472627f846e867292507d27a2c3a14a11d887a65407a8a31f604538a96b7a3
+owner trust         6e45d90c6db117e3cb1c1dc407fef34981551ec8448fe08930af590de1465de9
+Data seed           0ef3db84e89bdca5c1ba02607182468b551174908f9a5562b74dcc85095ce24e
+```
+
+kernel 含当前 Data UUID，不含旧 UUID，不含 `NATIVE_SBABORT`。payload label 为
+`OP5ESP`，boot 布局 PASS，bootargs 为 988 bytes，加 `zap-base` 后
+`1008/1024`，最坏 `1016/1024`。Windows 镜像目录：
+`E:\WindowsData\Project\ios\main-route\display-first-frame\builds\H597`。状态为
+`H597-built-static-verified-device-pending`。设备门是同一 boot 中出现
+`NATIVE_H82_DATA: status=0` 并继续到 CDC 或 SpringBoard。
+
+本次构建坑：若只从 `patches/xnu/series` 删除一项但保留对应 `.patch` 文件，
+`apply-patch-series` 会以 `unlisted patch files: ...` 拒绝构建。移除实验必须同时
+删除或移出补丁文件，保持目录和 series 双向一致。
