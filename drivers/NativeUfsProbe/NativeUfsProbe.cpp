@@ -775,6 +775,7 @@ extern "C" { extern volatile uint32_t native_a540_bo_diag[8]; }
 extern "C" uint32_t native_a540_c3_state(void);
 extern "C" uint32_t native_a540_c3_lastput(void);
 extern "C" { extern volatile uint32_t native_a540_fence_diag[8]; }
+extern "C" { extern volatile uint32_t native_a540_gpu_state[6]; }
 
 // H413: one compact, fixed-storage display record next to the existing
 // SpringBoard sample. This is observation-only and does not alter USB,
@@ -1072,6 +1073,9 @@ heartbeatThread (void *, wait_result_t)
              (unsigned) native_a540_fence_diag[0], (unsigned) native_a540_fence_diag[1], (unsigned) native_a540_fence_diag[2],
              (unsigned) native_a540_fence_diag[3], (unsigned) native_a540_fence_diag[4], (unsigned) native_a540_fence_diag[5],
              (unsigned) native_a540_fence_diag[6], (unsigned) native_a540_fence_diag[7]);
+      IOLog ("NATIVE_A540_GPU: me=%x rbbm=%x cpint=%x rptr=%x wptr=%x rbbmint=%x\n",
+             (unsigned) native_a540_gpu_state[0], (unsigned) native_a540_gpu_state[1], (unsigned) native_a540_gpu_state[2],
+             (unsigned) native_a540_gpu_state[3], (unsigned) native_a540_gpu_state[4], (unsigned) native_a540_gpu_state[5]);
     }
     // H128: the process dumps and the persistent-log flush run here, in thread
     // context with no storage lock held.  They used to run from the UFS
