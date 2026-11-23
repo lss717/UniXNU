@@ -26919,3 +26919,72 @@ CDC/UXC1 合同均 PASS，`problems=[]`。状态为
 `h589_default_widget_intent_skip` 命中，且主线程离开
 `SBHIconModel addIcon:` 的 LaunchServices 锁。若仍停在同一锁，需先找持锁线程；
 若继续到新的启动边界，则记录新停点后继续。
+
+### §275 H589 真机：默认 widget intent 旁路生效，图标状态保存再次进入 LS 锁
+
+H589 的 kernel boot 为 `22781dba`。H103 确认
+`observer load process=SpringBoard pid=27 build=H589`。567–581 秒期间
+`h589_default_widget_intent_skip` 连续命中多个 widget，574 秒的
+`req=46851/97/lsd.real` 返回 `q=0`，说明 H588 的默认 intent 查询链已越过。
+
+随后主线程在 640 和 717 秒的两个样本保持一致：
+
+```text
+_ulock_wait2
+-> LaunchServices Database Context::_get
+-> LSApplicationExtensionRecord initWithBundleIdentifier:
+-> SBHContainingBundleRecordForWidgetWithBundleIdentifier
+-> SBHWidget containerBundleIdentifier
+-> SBHIconStateArchiver _addValuesForCustomIconElement:
+-> SBHIconStateArchiver archiveRootFolderInModel:
+-> SBHIconModel _saveIconStateWithError:
+-> SBHIconModel saveIconStateIfNeeded
+-> SBIconController _enableWidgetSuggestionsForIconsInModel:withRootFolder:
+-> SBIconController _rootFolderDidChange
+-> CFNotificationCenter post
+-> SBHIconModel layout
+```
+
+`fr=0`。因此 H589 消除了默认 intent 的单独查询，但首次 layout 的图标状态保存
+再次经 widget 的 container bundle record 进入同一 LaunchServices 数据库锁。
+日志哈希：
+
+```text
+H589-live.log      3fd73c874b84e3990b1fac1e4971f2581a09a4b5392d45e96650cf06644b6ee9
+H589-tail32.bin    9b73a56c93341d8dd15c873e131db99309dae797743e9e0993333bafa2bbd7d7
+H589-h103.txt      545f496780837ff8820d4eec08a10745cff52a6fb5fc92618a4562fb6acf1c15
+```
+
+清零末尾 32 MiB 后的固定回读仍为
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+
+### §276 H590：首次 layout 跳过图标状态保存
+
+H590 只 hook `-[SBHIconModel saveIconStateIfNeeded]` 并直接返回。首次桌面布局
+仍可建立 icon model，但不会在启动过程中立即序列化并保存图标状态。该保存并非
+进入锁屏所必需，也不影响内核、显示服务或已验证的 widget 默认 intent 旁路。
+
+源码 head `2322292e`，NativeMetal `8f551de`。kernel、Data seed 和 988-byte
+bootargs 继续与 H589 字节级一致。静态产物如下：
+
+```text
+GPU addon                 1591afd3a1fe9b9ca123f6da5b96ec6b054fc53cda4ccb58b487f931687c8220
+owner trust               9b04be714d9d09ac9b16fbabecaca512363244b5a91245445cbd813664916f4c
+payload                   8ebad3545e979a4d117e86768431cf88946f7d4dc85f7b6fc437083ecd500b9b
+boot                      089ae04a70902568af0f14545053ee1445f7b38df862e2a30f07a6cb50bbb76d
+boot.json                 4cc0bf3b0b97671094211296367bfb6d12acefea6f374abf40c2a2d8a4605cbc
+ADT                       1660a78b3d7e4dee03468fa55c0884ce5da7a5e6eda06af561144dee59cca1d0
+observer CDHash           f7f8370181f59650fca52e207e850d689aaae456
+SpringBoard CDHash        6d667a029eef784517158012af93bc61a0f4c200
+H407 UEFI                 9e6608c42e7fc7fc66d399e6f9193a00648bab8aff10d446d3fcc0fc486b17a6
+```
+
+payload 回读、988-byte bootargs（`zap-base` 后 1008/1024，最坏 1016/1024）、
+owner trust 7 项、observer/SpringBoard codesign、bundle gate、boot 布局与
+CDC/UXC1 合同均 PASS，`problems=[]`。状态为
+`H590-built-static-verified-device-pending`。
+
+设备门要求 `h590_icon_state_save_hook installed=1`，layout 期间出现
+`h590_icon_state_save_skip`，并确认主线程不再进入
+`SBHIconStateArchiver`/widget container bundle 查询。若保存被跳过后出现依赖其
+完成回调的新等待，应记录具体调用方，不恢复整段 icon model。
