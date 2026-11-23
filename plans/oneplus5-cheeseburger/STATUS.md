@@ -27738,3 +27738,30 @@ surface 即可上屏。下一步应沿 C6a 让 AGX 管线编译成功，或先�
 CA surface 上屏（fr=1，非合成）；或定位 x0 对象类型与 +0x10 初始化路径、补齐依赖
 后 pc=0 消失。证据：logs/H600/device/20261123-1655-H600/H600-live.log、
 A540TracePlugin.mm、dyld_shared_cache_arm64.25。
+
+### §300 A540 后端盘点与最小真实绘制路径（H601）
+
+**架构事实（源码证据）：** 存在两个 Metal 插件。当前 boot 用
+`_offline-accelerator-plugin=A540Trace`＝观测-only（所有 _MTL* 为 trace stub，
+`newRenderPipelineState` 返回 stub、`-commit` 空操作，A540TracePlugin.mm:3458/3026）。
+真实后端是 `NativeAdrenoMetal`（NativeAdrenoMetalPlugin.mm + bridge/ +
+`libvulkan_freedreno.dylib`=Turnip，build-adreno-metal-plugin.py /
+build-turnip-darwin.py / pack-adreno-addon.py --publish），**源码在库但本树未构建、
+未启用**。内核 NativeAdreno 提供干净 BO/Map/Submit/WaitFence ABI
+（NativeAdrenoABI.h），真实 PM4 提交（NativeAdrenoSubmit/Ring.cpp）。
+kits/AdrenoPM4 为真实 PM4/shader/raster 构建器，未链接进插件。
+显示 present 走内核 NativeMobileDisplay，真实（探针 val=47 仅证明该部件）。
+
+**已实施最小单变量（H601）：** 启用 A540Trace 内真实 `gpu_selftest`
+（CP_MEM_WRITE+Submit+WaitFence+读回，C6a 前半），一次性、标注 "gpu selftest"，
+不与 CA 归因混同（A540TracePlugin.mm:3257）。Mac 编译通过（159952B）。
+设备验证待：需重打包完整 addon（保留 observer/lsd 不变）+ 新 A540Trace CDHash
+入 owner trust + payload/boot，验收 `gpu selftest hits=4/4` 且 fence 完成。
+
+**contextId=0 已从故障清单移除**（观察 self.context 对远端 host 恒 nil）。
+**x0 对象**：+0x10 为 block/函子 invoke 槽，blr x8 时 x8=0；类型与初始化路径未确认，
+不假定、不靠跳过空调用宣称修复。无首帧与晚期空回调保持“可能独立/可能共享上游”。
+
+**真实桌面第一帧路径：** 构建并 --publish NativeAdrenoMetal/Turnip bridge（C6a），
+验收真实 CA draw/dispatch/commit>0 + 真实 surface 上屏；不得以合成帧或 selftest
+充当桌面 fr=1。避免对无渲染实现镜像再做无新证据长等待。
