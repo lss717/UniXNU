@@ -27792,3 +27792,12 @@ shader/raster/Metal 渲染。
 
 **选定下一步：** 复测确认 a5xx CP 提交后，最小真实绘制=a5xx shader ISA+3D/blit
 PM4（C6a）；不盲目构建/切换 Turnip，不承诺切换即桌面。
+
+### §302 H601 复测回归：早期 USB 挂死，selftest 未执行
+
+修复版 4eaa4a17（单 NUL、保序重打包）fastboot boot 后 CDC 从未枚举，主机出现
+“未知 USB 设备(设备描述符请求失败)”（VID_0000&PID_0002），主机端口重置无效，
+需手机侧掉电/重插恢复。崩溃发生在 backboardd 设备初始化之前，故 gpu_selftest
+未执行、无 hits 数据；属重打包/trust 的启动回归，而非 selftest 本身。
+教训：重打包 addon 后必须先以已知-good addon 对照确认能启动，再引入 selftest；
+不可直接把重打包镜像当可启动。恢复后先回 H593 known-good addon 基线。
