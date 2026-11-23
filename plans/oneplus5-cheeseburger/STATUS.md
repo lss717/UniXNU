@@ -27239,3 +27239,48 @@ static verification 9939ed8495810693c422a007e56b363357d0c6fcd7b24e85a9f253bc62e6
 状态 `H593-built-static-verified-device-pending`。设备门要求在同一 boot 的
 首个 SpringBoard SIGSEGV 之前出现 `h593_signal_hooks`，并由
 `h593_fatal_signal`/`h593_fatal_frame` 给出故障 PC、LR 和返回链。
+
+### §283 H594：内核直接记录 EXC_BAD_ACCESS 线程现场
+
+H594 保留 H593 observer，只增加 series 末位补丁
+`patches/xnu/trap-thread-state.patch`。当 `ux_exception` 收到
+`EXC_BAD_ACCESS` 时，调用 `thread_getstatus(thread, ARM_THREAD_STATE64)` 和
+`ARM_EXCEPTION_STATE64`，输出 faulting thread 的 PC、LR、SP、FP、x0–x3、
+FAR、ESR、exception class，并用用户栈 frame pointer 读取最多 16 个返回地址。
+该路径不改变异常投递，仍交给原 `threadsignal`。
+
+在 Mac 上从干净 feed `xnu-0b4b910d`（commit `d8b80295`）重新生成 tree，patch
+series 显式应用 `trap-thread-state.patch`。两遍 PMGR 构建结果：
+
+```text
+pass 1 script             build-sheng-pmgr-stub.py
+pass 1 kernel             e97d859c6b6823e62f196f96ff0f000426826dd2b30b071bb2ec65728018048a
+pass 1 prelink            4e13f8dbfe3d32d62aef790631167c14b9f00707a90c40cabd82e81510928c90
+pass 2 script             build-sheng-pmgr.py
+real PMGR archive         d8c234fdd6e1507dbb205529537e9648bf871105fce0c55ba0155b076ad36820
+pass 2 kernel             889eaf92f34d76e4b99b1ad5a375b6d18802df64a2f90cb56c5976395fd345f5
+final prelink             424e046b86d6c9498c8f745fb4206b11ed88465055d0cd5c24900a87609e59ae
+```
+
+第一遍曾在显示 archive 审计处停止，因为重组树的
+`out/ipsw/21H461/kernelcache.decompressed` 未建立。补入同版本本机 feed 的符号
+链接后重新运行成功。这是构建树重组坑，不涉及源码或产物内容。
+
+H594 payload 从 H593 复制，只替换 `Payloads/kernel.macho`；ADT、Data seed、
+owner trust、GPU addon 和 `unixnu.toml` 与 H593 逐字节一致。静态产物：
+
+```text
+kernel                    424e046b86d6c9498c8f745fb4206b11ed88465055d0cd5c24900a87609e59ae
+GPU addon                 1f472627f846e867292507d27a2c3a14a11d887a65407a8a31f604538a96b7a3
+owner trust               6e45d90c6db117e3cb1c1dc407fef34981551ec8448fe08930af590de1465de9
+payload                   6aab3afa374712821124bf878318a703f8d1b323bf0c4613940e00965249d5bd
+boot                      2a11e97074c8baef79dc586b26f272430e1f7fef5cdd9b5c197e88facb1d9b71
+boot.json                 731dfd04d05c874f471f87e67dcf28e5df55a008efcf44da75739783c6b2cba1
+static verification       5080e0506245db302f049878b57a8f571e0ec7d1e1886d9997847bd9b92d0c27
+```
+
+最终 Mach-O 中存在 `NATIVE_TRAP_STATE` 和 `NATIVE_TRAP_STATE_FRAME` 字符串；
+kernel/PMGR 两遍、payload 回读、H593 控制项、988-byte bootargs
+（1008/1024，最坏 1016/1024）和 boot 布局均 PASS。状态为
+`H594-built-static-verified-device-pending`。设备门是首个 SpringBoard
+`EXC_BAD_ACCESS` 后出现完整的 `NATIVE_TRAP_STATE`/frame 记录。
