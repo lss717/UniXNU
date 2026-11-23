@@ -28060,3 +28060,46 @@ fence 写仍不落地（r0=4）、RBBM busy bit6 恒置。
 或由心跳在 C3 后周期调用 `native_a540_submit_bo` 做 dummy 提交并锁存成败，区分“C3 后内核
 自身提交也退化”（状态/时钟问题）与“仅用户态提交失败”（用户态映射/缓存问题）。
 真实桌面第一帧另需 a5xx Metal 渲染后端（Turnip 无 a5xx；Gallium fd5+IR3 源码候选）。
+
+### §311 H609 关键转折：内核自身提交完全正常，用户态提交毒化 GPU（2026-11-23）
+
+**插桩（已提交 65e50c53 / GopFramebuffer da054e6）：** 心跳在 C3 就绪后每 30 拍用
+`native_a540_hb_selftest()`（bo[7]→bo[6]，3×CP_MEM_WRITE，内核 cached 映射写 IB）走
+`native_a540_submit_bo`+`native_a540_wait_fence`，锁存 sr/wr/fence/rptr0/target0/次数，
+独立于用户态自测。kernel `47cbbc937e7d76f3c2759bc8dbaffa0347da1e670547970ee23b638bdaa8aeb9`，
+boot `ac0fa00f7e03b1c7fbdba6a098e9cdbf7dd0b38995af035ae0bc34a4549ddf70`，boot id `383820F9`。
+日志 `logs/H609/device/20261123-2331-H609/H609-live.raw.bin`。
+
+**实测时序（决定性）：**
+```text
+293–304s  HBSUB sr=0 wr=0  f=c r0=c t0=12345678 n=8   GPU me=0 rbbm=1   （心跳内核提交成功）
+313s      gpu#20 mapped ib=4096 target=4096            （用户态自测开始）
+314s      gpu#21 fence fence=13 …                      （用户态 WaitFence 超时）
+326–347s  HBSUB sr=0 wr=ffffffff r0=c t0=deadbeef n=9  GPU me=400 rbbm=800001c1 （心跳提交也失败！）
+358–369s  HBSUB sr=0 wr=ffffffff t0=deadbeef n=a       （持续失败）
+```
+
+**结论（推翻 §308–§310 的“GPU 硬件/电源/SMMU 写总线停滞”判断）：**
+1. **GPU 写通路本身完全正常**：心跳的内核态 `native_a540_submit_bo` 提交成功——fence 落地
+   （r0=c==f）、目标写落地（t0=12345678）、wait_fence 返回 0、RBBM idle（rbbm=1）、ME 运行
+   （me=0）。即 C3 后的内核 CP submit+fence+readback 端到端可用（等价 selftest hits=4/4）。
+2. **用户态自测提交毒化 GPU**：313s 用户态 BoAlloc/Submit 之后，GPU 进入 me=400、
+   rbbm=800001c1（busy bit6 恒置）的停滞态，此后**连内核心跳提交也失败**（wr=ffffffff、
+   t0=deadbeef、rptr 停在 c）。用户态提交是“投毒者”。
+3. 因此 §309 排除电源、§310 排除时钟、以及本节的“内核提交正常”共同证明：停滞不是
+   GPU 硬件/电源/时钟/SMMU，而是**用户态提交路径的某个动作破坏了 GPU 写状态**。
+
+**用户态 vs 心跳提交的差异（下一步定位）：** 用户态经 BoAlloc→BoMap→BoCpuMap→
+`IOConnectMapMemory64(kIOMapInhibitCache)` 用**非缓存映射**写 IB 到 bo[0]，再 ABI Submit
+→`native_a540_submit_bo(0,…)`（内部 `cleanDcache(c.bo[0].cpu)` 刷内核 cached 别名）；
+心跳用内核 cached 映射写 bo[7] 再提交。候选：
+(a) 插件 `pm4_type7` 编码与内核 `type7()` 不一致 → 用户态 IB 是畸形 PM4 → CP 取指执行到
+非法包 → 硬件挂起并毒化后续；
+(b) `submit_bo` 对非缓存写 BO 仍做 `cleanDcache`，把内核陈旧 cached 行刷回 DRAM 覆盖
+用户态 IB → 畸形包；
+(c) 用户态 IB 的目标 IOVA/句柄映射与内核预期不符。
+
+**下一步（H610）：** dump 用户态写入 bo[0] 的 IB 前 12 字（cleanDcache 前/后各一次）与
+插件 `pm4_type7` 编码，对照内核 `type7()`；确认是畸形包还是缓存覆盖。若为 (a) 修插件编码；
+若为 (b) 让 `submit_bo` 对 caller 非缓存写的 BO 改为 invalidate 或跳过 clean。**不再**沿
+GPU 电源/SMMU 方向排查。真实桌面第一帧仍需 a5xx Metal 渲染后端（Turnip 无 a5xx）。
