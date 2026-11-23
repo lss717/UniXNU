@@ -27827,3 +27827,29 @@ H602（selftest 带 BoAlloc IOReturn 打印，7d4b962a）启动正常、addon 12
 USB 命令 worker 不被 GPU 路径拖死，才能实测 rc。真实桌面第一帧仍缺 a5xx
 shader ISA + 3D/blit（C6a），非插件切换可得。
 证据：logs/H602/device/20261123-1945-H602/（H602-live.raw.bin、H602-h103.txt）。
+
+### §304 BoAlloc ABI 离线核查 + 上游 a5xx 能力纠正（H602 后续）
+
+**ABI 离线核查（步骤1）：** 用户态/内核共用同一 NativeAdrenoABI.h，BoAlloc
+请求 16B（bytes/align_log2/contiguous）、回复 8B（handle），external method
+按 sizeof 校验，query/info 已通故传输层无虞。32KiB device-info 字段实为
+`ring_bytes=0x8000` 的 ring 窗口被 deviceInfo 以 window_start_/window_bytes_
+上报，**不是 BO aperture**；BoAlloc 不读它。未证明前不扩大 aperture。
+BoAlloc 失败分支在 `allocBo→memory.allocate`：QueryCpu4K、pool/descriptor、
+getPhysicalSegment≥limit、makeWriteCombined 等；rc 未实测（H602 取证受限）。
+
+**静态审查（步骤2）：** allocBo 经 IOBufferMemoryDescriptor/prepare 可能阻塞
+共享锁；若与 USB 命令 worker 共锁可解释 CDC ~363s 掉线，但**因果未证明**。
+取证设计：首错锁存进周期日志（抗环转），不依赖“286s 必早于断线”。
+
+**上游纠正（步骤4，官方源码/文档）：** Turnip 仅 a6xx+、“no plans to port to
+a5xx”（docs.mesa3d.org/freedreno）。但 **Freedreno Gallium(fd5) 与 IR3 编译器
+支持 a5xx**（mesa-dev “initial a5xx support”“a5xx compute+SSBOs”、ir3-notes、
+sbcwiki）。故可复用组件＝Freedreno Gallium a5xx + IR3 + 现有 NativeAdreno
+Darwin KMD ABI；缺口＝Gallium 的 Darwin KMD 适配、Metal→Gallium 桥、BoAlloc/VM
+修复。不把“GPU 底层通”等同 Metal/CA 兼容完成。
+
+**已验证/源码/假设分离：** 已验证＝启动/addon/query/info/a5xx hw-init；源码＝
+Gallium/IR3 a5xx、NativeAdreno submit；假设＝BoAlloc 阻塞致 USB 掉线、32KiB 影响
+BoMap。下一步：内核 allocBo 首错插桩+有界实测（BO→map→submit→fence→hits），
+并行 Gallium/IR3 Darwin 移植缺口清单。
