@@ -1,0 +1,18 @@
+--- a/bsd/uxkern/ux_exception.c
++++ b/bsd/uxkern/ux_exception.c
+@@ -289,6 +289,7 @@
+ 	    exception_count ? (unsigned long long)exception_state.far : 0,
+ 	    exception_count ? exception_state.esr : 0,
+ 	    exception_count ? exception_state.exception : 0);
++	native_report_trap_image(p, (uint64_t)state.lr);
+ 	fp = state.fp;
+ 	for (depth = 0; depth < 16 && fp; depth++) {
+ 		uint64_t frame[2];
+@@ -300,6 +301,7 @@
+ 		printf("NATIVE_TRAP_STATE_FRAME: pid=%d index=%u fp=0x%llx ret=0x%llx\n",
+ 		    proc_getpid(p), depth, (unsigned long long)fp,
+ 		    (unsigned long long)frame[1]);
++		native_report_trap_image(p, frame[1]);
+ 		if (frame[0] <= fp || frame[0] - fp > 0x100000) {
+ 			break;
+ 		}
