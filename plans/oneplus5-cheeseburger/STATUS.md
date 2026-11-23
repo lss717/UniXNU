@@ -27329,3 +27329,28 @@ XNU_OWNER_DATA_VOLUME_UUID=3AAB21A7-0124-4EED-B5A4-872F17A7B998
 第一遍 stub PMGR、prelink、第二遍 real PMGR、final prelink 均重新执行，产物完成后
 记录 kernel/PMGR/hash。设备门先要求 `offline scratch Data mount failed: 60` 消失，
 再要求首次 SpringBoard `EXC_BAD_ACCESS` 出现 `NATIVE_TRAP_STATE`。
+
+### §286 H595：以当前 Data UUID 重建并保留异常现场诊断
+
+H595 唯一改变构建输入：两遍 kernel 构建均导出
+`XNU_OWNER_DATA_VOLUME_UUID=3AAB21A7-0124-4EED-B5A4-872F17A7B998`。
+最终 kernel 同时包含该 UUID、`NATIVE_TRAP_STATE`，且不再包含旧
+`1A4CE9DF-34B6-4B52-9744-5052A9D20B23`。
+
+```text
+pass 1 prelink     012635306949421ddc05c56fcbe0b56db3af34c1e919a8349e83f0b125c3fe7f
+real PMGR archive  55bba0917c409d24395ec22a86d746ceb87e0996df0295f7880dbc7777d64807
+pass 2 raw kernel  0a9d54c640197daeec66d49889406d8792f4db2b0eb60cc0223d398c2f4c2225
+final kernel       661a50a897fb0fa1a9ed4d7846028418602eef998fb28e1c8b863b0de686e906
+GPU addon          1f472627f846e867292507d27a2c3a14a11d887a65407a8a31f604538a96b7a3
+owner trust        6e45d90c6db117e3cb1c1dc407fef34981551ec8448fe08930af590de1465de9
+payload            464955918100f478cbcd921c7d85f310f9d660b4b2b3c0c1a5e49a0628f4e421
+boot               fc187c4ff1e03c6fe9f441da9bc8b0f1fb6028688c453b69120743ebb92559e4
+boot.json          a34b7575d1ccfc21ffac8e534f923c7a5923e1cb203fe334aefcf5477db5a6c9
+static verification 418cc91eaa17fb0d6ca2f24f5c7995072cca309d518cd38cfde6bac1eea7e710
+```
+
+pass 1 使用 stub PMGR；pass 2 使用 `build-sheng-pmgr.py`。payload 只替换 kernel，
+其余组件与 H593 逐字节一致；988-byte bootargs（1008/1024，最坏 1016/1024）和
+boot 布局 PASS。状态 `H595-built-static-verified-device-pending`。设备门先验证
+Data 挂载成功，再取得首次 SpringBoard null fault 的 `NATIVE_TRAP_STATE`。
