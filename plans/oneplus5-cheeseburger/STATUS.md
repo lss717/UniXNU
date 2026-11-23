@@ -27813,3 +27813,17 @@ BO/VM aperture 未对 backboardd 客户端正确建立。
 的支持（为何 BoAlloc 返回失败、aperture 为何仅 32KiB）。先修该缺口使 selftest
 hits=4/4，再谈 3D/blit。不盲目切 Turnip（无 a5xx）。
 证据：logs/H601/device/20261123-1908-H601b/H601b-h103.txt、H601b-tail32.bin。
+
+### §303 H602：BoAlloc rc 取证受限，缺口指向内核 a5xx BO/VM
+
+H602（selftest 带 BoAlloc IOReturn 打印，7d4b962a）启动正常、addon 12/12。
+但 CDC 于 ~363s 掉线（早于 BoAlloc ~434s），且启用 selftest 后 USB gadget 不
+稳定（UXC1 重启掉线后不再 ack）；TWRP 拉环时早期槽已被环转覆盖，BoAlloc rc
+两处均未留下。故 rc 未实测，不宣称。
+
+缺口收敛：内核 `NativeAdrenoUserClient::allocBo→NativeAdrenoMemory::allocate`
+对 a5xx 宿主进程失败/可能阻塞，且 device-info aperture 仅 32KiB（疑为 ring 窗口
+而非 BO aperture）。需内核侧 instrument（allocBo 入口/各失败分支打印）+ 保证
+USB 命令 worker 不被 GPU 路径拖死，才能实测 rc。真实桌面第一帧仍缺 a5xx
+shader ISA + 3D/blit（C6a），非插件切换可得。
+证据：logs/H602/device/20261123-1945-H602/（H602-live.raw.bin、H602-h103.txt）。
