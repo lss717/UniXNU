@@ -27853,3 +27853,78 @@ Darwin KMD ABI；缺口＝Gallium 的 Darwin KMD 适配、Metal→Gallium 桥、
 Gallium/IR3 a5xx、NativeAdreno submit；假设＝BoAlloc 阻塞致 USB 掉线、32KiB 影响
 BoMap。下一步：内核 allocBo 首错插桩+有界实测（BO→map→submit→fence→hits），
 并行 Gallium/IR3 Darwin 移植缺口清单。
+
+### §305 H603：BoAlloc 首错锁存实测——根因是 C3 未被触发（2026-11-23）
+
+**插桩（已提交）：** 自测 ABI 实际由 `AGXDeviceUserClient::externalMethod`
+（`NativeA540AcceleratorProbe.cpp`）经 C3 BO 池服务，**不是** `NativeAdrenoUserClient`
+（`XNU_NATIVE_ADRENO=0`，该驱动未链接）。最初把插桩写进 NativeAdreno 是错误驱动，已回退
+（子模块分支 `codex/h603-boalloc-diag` 8957059 弃用，指针恢复 d7572a1）。正确插桩在
+GopFramebuffer `73faeed`（BoAlloc 首错锁存 `native_a540_bo_diag[8]`、Submit/WaitFence
+末次 rc、C3 `native_a540_c3_state/lastput`），主仓 `f1a08a76` 让 UFS 心跳每 10 拍重发
+`NATIVE_A540_BO`，抗 USB 掉线与环转。
+
+**镜像：** kernel `abb6c2e86d942d591060766e26d1c83ecda4ce3251f10ffe5973628d89964ff3`，
+boot `4e315e6d0419e02c2c9e3133bf58d31e7f2c5f30571d9ddbbcc6b4dbf23a5029`，boot id `4DD328BD`。
+日志 `logs/H603/device/20261123-2113-H603/H603-live2.raw.bin`（USB 本轮 300s 未掉线）。
+
+**实测（463.5s 自测，465s 锁存）：**
+```text
+NATIVE_MTL: gpu#20 boalloc-ib rc=0xe00002d8
+NATIVE_A540_BO: n=1 rc=e00002d8 ready=0 free=8 used=0 ok=0 sub=0 fence=0 c3=0 lastput=0
+```
+`0xe00002d8 = kIOReturnNotReady`。`c3=0`（gC3Started/Done/Ready/EngineUp 全 0）→
+**C3 从未运行**；`free=8` BO 池健康，非 NoSpace/aperture 问题。32KiB device-info 是
+ring 窗口，与 BoAlloc 无关（§304 已纠正）。
+
+**根因（源码+实测一致）：** C3 仅在 `sheng_gpu_power_step` 的 `step==23 && mode==7`
+触发（`NativeLegacyProbeSupport.cpp:1167`），`mode=PE_parse_boot_argn("sheng-gpu-power")?:0`
+（:1302）。H593+ 的 payload args **缺 `sheng-gpu-power`** → mode=0 → C3 不运行 →
+gA540Ready=0 → BoAlloc 等 120s 后 NotReady。此前“BoAlloc/VM aperture 缺口”是误判。
+SpringBoard 本轮存活至 867s，fr=0。
+
+### §306 H604：重新启用 C3——BoAlloc/Map/Submit 通过，WaitFence 超时（2026-11-23）
+
+**单变量：** 复用 H603 kernel `abb6c2e8…`，仅改 boot args：加 `sheng-gpu-power=7`；
+`dyld_flags=0x0000008A`→`0x8a`（同值，省 6 字节以容纳 1024 上限）。静态 args=1000，
+DarwinBoot 动态追加 `zap-base=0xabe00000`（`DarwinBoot.c:1144`）→1020/1024
+（`check-bootargs-fit.py` 对 16-hex 最坏情形 WARN，实际 8-hex 通过）。C3 还需 zap-base
+（`NativeA540C3.cpp:1549` 缺失即 0xdea00037 失败），由 DarwinBoot 追加，无需静态写入。
+boot `01862bef27a2367a5d65a710ada9c9c10985e4199f671fcedd12fafbb05a6d4c`，boot id `386E5800`。
+日志 `logs/H604/device/20261123-2128-H604/H604-live.raw.bin`。CDC ~225s 才出现（C3 同步
+运行阻塞心跳 ~70s，晚于 H603 的 180s）。
+
+**C3 完成（实测）：** `NATIVE_A540_BO … c3=f lastput=600d00c3`。c3=0xf 四位全置
+（started/done/ready/engineUp）；lastput=0x600d00c3 即 “c1e2 c3 full run rc=0”。
+gA540Ready=1 仅在 submit_probe+bo_submit_test+fill32_test 全过后置位（:1620-1626），
+故**内核 CP 提交+目标写回+内部 fence 已验证**（H236et/fd/fj 路径在当前 kernel 复现）。
+
+**自测分级（354s/455s 两轮，每 ~100s 重试）：**
+```text
+gpu#18 query abi=0x1 in=32 out=40 maxbo=268435456      （Query 通）
+gpu#19 info chip=0x5040000 gmem=0 va=0x2000000+0x8000   （GetDeviceInfo 通）
+gpu#20 mapped ib=4096 target=4096                       （BoAlloc+BoMap+BoCpuMap+IOConnectMapMemory64 通）
+gpu#21 fence fence=6 ticks=…->… faults=0 suspends=0     （WaitFence 超时返回）
+NATIVE_A540_BO: n=0 … ok=2/4/6 sub=0 fence=e00002d6 c3=f lastput=600d00c3
+```
+`sub=0`：`native_a540_submit_bo` 返回 0，即 CP_RB_RPTR 到达 n（CP 已取指消费 ring）。
+`fence=0xe00002d6 = kIOReturnTimeout`：WaitFence(reply.fence, 200ms) 超时，自测在
+fence 处返回，**未到 hits 读回**。`faults/suspends` 恒 0 是 GetStatus 零初始化 stub
+（probe :181-183），非真实 GPU 故障计数，无诊断意义。
+
+**阶段判定：** BO alloc✓ → map✓ → Submit✓ → **Fence✗（超时）**。下一阻塞点为用户态
+WaitFence 的 fence 可见性：C3 内部 bo_submit_test 校验目标 BO hits（不校验 rptr fence 值），
+用户态 WaitFence 校验 `rptr[0]==f`（`native_a540_wait_fence` :1692-1707）。Submit 内部已等
+RPTR==n+RBBM idle+20ms 仍超时，需判定 fence 写是否落入 rptr BO（cache/SMMU 可见性）还是
+等待逻辑问题。下一步（H605）在 wait_fence 锁存末次 rptr[0]/rptr[1] 与期望 f，心跳重发。
+
+**本轮坑（补录）：**
+1. 插桩前先确认 ABI 由哪个驱动服务：NativeAdreno 未链接（XNU_NATIVE_ADRENO=0），自测走
+   AGXDeviceUserClient/C3；写错驱动的心跳 extern 会链接失败。
+2. C3 需 `sheng-gpu-power=7`＋zap-base；H593+ payload 丢了 sheng-gpu-power 致 C3 静默不跑，
+   BoAlloc NotReady 被误读为 BO/VM 缺口。zap-base 由 DarwinBoot 动态追加，静态 args 必须
+   留位（check-bootargs-fit.py，1024 上限）。
+3. `macos-build-kernel.sh` 只链接 mach 内核，`kernel.macho` 需另跑 `unixnu build prelink`；
+   脚本后 kernel.macho 哈希不变≠构建失败，而是缺 prelink。
+4. boot_args 超 1024 会静默停 UEFI；dyld_flags 十六进制前导零可缩短（同值）腾位。
+5. GetStatus 的 faults/suspends 是零初始化 stub，不能当 GPU 故障证据。
