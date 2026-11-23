@@ -27662,3 +27662,31 @@ boot.json       532f90bf81106ea3c17c1eddbcb095e5af63eabd3e1626dd70c1d6892502bb3a
 两遍 PMGR（stub→真实）、payload 回读、bootargs 988/1008/1016、boot 布局均 PASS。
 Windows 目录 `builds/H600`。状态 `H600-built-static-verified-device-pending`。
 设备门：SpringBoard `EXC_BAD_ACCESS` 后的 `NATIVE_TRAP_IMAGE` 行给出 lr/栈帧镜像名。
+
+### §297 本轮（H596–H600）构建与取证坑清单
+
+1. **series 与补丁目录必须双向一致。** 只从 `patches/xnu/series` 删行但保留
+   `.patch` 文件，`apply-patch-series` 会以 `unlisted patch files: ...` 拒绝构建
+   （H597 首建）。移除实验必须同时删除/移出补丁文件。
+2. **`--clean` 不删除已 prelink 的内核。** `macos-build-kernel.sh --clean` 只删
+   `.cache/xnu-work` 与 `tree/build/xnu/ios-obj`，不删
+   `out/cheeseburger/kernel/kernel.macho`，第一遍仍见旧 prelink 而误用真实 PMGR
+   （H598 r2 作废）。标准两遍前先把该文件移走，并核对第一遍日志为
+   `build-sheng-pmgr-stub.py`、第二遍为 `build-sheng-pmgr.py`。
+3. **全新清理后恢复外部头文件偶发 Apple 503。** `prepare-xnu-source.py` 下载被
+   `HTTP 503 Backend.max_conn` 限流，该次无 kernel 产物；等待后原命令重试即可
+   （H598 首建）。
+4. **持久环可能在崩溃前停止刷新。** H599 首启环只到 1734s，而 SpringBoard 崩溃在
+   ~1761s，拉环拿不到 pid=27 现场。覆盖崩溃瞬间必须用不被中断的 CDC 实时采集。
+5. **采集进程不要绑定会话生命周期。** H599 首次采集随 turn 中断在 ~660s 被杀，
+   丢掉崩溃。采集应作为独立后台进程运行到崩溃之后。
+6. **CDC 端口枚举滞后于启动数分钟。** 需 PnP 轮询等待 COM；`Get-CimInstance`
+   慢且易漏，改用 `Get-PnpDevice -PresentOnly` 匹配 `VID_1209&PID_0001`。
+7. **用户态 BSD signal handler 对该故障不触发。** H598/H599 已安装
+   SIGSEGV handler 但崩溃时无输出；异常现场必须靠内核 `ux_exception` 采集。
+8. **离线 dyld 缓存头解析脆弱。** 拆分子缓存主头 `imagesCount=0`，镜像表偏移在
+   144/152 且路径基址易错；优先用运行时 `native_report_trap_image` 直接命名
+   lr/栈帧镜像（H600），不要依赖离线解析。
+9. **编译期 Data UUID 必须等于 packed seed 的真实 APFS UUID。** H594–H597 用旧
+   `1A4…`/生产 `3AAB…` 均 95.9s mount 失败；真实值 `09FB365F…` 需展开 DBRDISK1 后
+   `diskutil info` 实测，且与已工作内核字符串交叉核对（H598 修复）。
