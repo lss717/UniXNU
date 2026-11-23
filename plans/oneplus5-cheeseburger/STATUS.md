@@ -27959,3 +27959,43 @@ SMMU context 丢失使 kRptrIova/kTgtIova 翻译失效；VBIF 写通路阻塞。
 
 **阶段判定更新：** BO alloc✓ map✓ Submit✓（仅取指）→ **Fence✗：C3 后 CP 不执行内存写**。
 selftest hits=4/4 仍未达成；真实桌面第一帧另需 a5xx Metal 渲染后端（Turnip 无 a5xx）。
+
+### §308 H606：fence 失效定位到 C3 后 GPU 写总线停滞（2026-11-23）
+
+**插桩（已提交 4f684cf0 / GopFramebuffer f42794a）：** submit_bo 内部等待后锁存
+CP_ME_CNTL/RBBM_STATUS/CP_INT_STATUS/CP_RB_RPTR/WPTR/RBBM_INT_STATUS，心跳重发
+`NATIVE_A540_GPU`。kernel `0bc70eb9d8c9ed440f588d9d4888b7d879d601b219c53e3df833ff5b9fc9c195`，
+boot `fe8e74c442f42743f50975a3b7b400e27fe928612da3f88ce0c89348adc79306`，boot id `3B8B4E78`。
+日志 `logs/H606/device/20261123-2218-H606/H606-live.raw.bin`。
+
+**实测（360–402s 稳定）：**
+```text
+NATIVE_A540_FENCE: sf=6 r0=4 r1=0 done=1 wf=6 w0=4 w1=0 to=2
+NATIVE_A540_GPU:   me=400 rbbm=800001c1 cpint=0 rptr=c9b wptr=c9b rbbmint=0
+```
+- me=0x400：CP_ME_CNTL bit0（ME_HALT）清零 → **ME 在运行**，非 halt。
+- rptr=wptr=0xc9b：ring 已全部消费（与 done=1 一致）。
+- cpint=0、rbbmint=0：**无 CP/RBBM 中断或故障**。
+- rbbm=0x800001c1：`& 0x7e = 0x40`，**busy bit6 恒置**（submit 等 RBBM idle 500ms 仍不清）。
+- fence r0 恒=4（C3 内部末值），sf=6 写不进。
+
+**判定：** C3 后 CP 取指正常（ME 运行、ring 消费、无故障），但 **GPU 写总线停滞**：
+CACHE_FLUSH_TS 的内存写挂在写通路（RBBM busy bit6 不清），fence 永不落地。非 CP halt、
+非 CP 故障、非 wait 逻辑。候选收敛到 **SMMU context bank 失效/写翻译停滞** 或 **GX 电源/
+时钟域 idle collapse 致写总线挂起**。C3 期间同一写通路正常（fill32 hits=1024），C3 完成后失效。
+
+**H605 更正：** 彼时记“~368s 内核挂起”有误。H605 持久环显示内核存活至 ~950s（UFS
+seq=220324 done 一致、timeout=0），是 **USB CDC 掉线**（命令 worker 随之停 ack），非内核挂起；
+fence r0=4 停滞贯穿全启动。
+
+**下一步（H607）：** 在 submit 后读 SMMU FSR(0x8058)/FAR(0x8060)/全局 FSR(0x48) 与
+CB0 SCTLR，并与 C3 期间对照，判定写停滞是 SMMU 翻译故障还是电源/时钟域。若 SMMU context
+丢失，考虑 C3 后保持 context bank 使能或提交前重编程；若电源域 collapse，考虑 GPU keep-alive。
+真实桌面第一帧另需 a5xx Metal 渲染后端（Turnip 无 a5xx，Gallium fd5+IR3 为源码候选）。
+
+**编译坑（补录）：** `prepare-xnu-source.py` 的 fetch 只对 403/429 重试，**503 直接抛出**；
+worktree 每次因 native-aes-personality.patch 重建会丢失已恢复头文件，反复触发 GitHub 503。
+解法：TrustCache 头文件清单已缓存在 `.cache/sources/xnu-trustcache-*.json`，按清单用
+503 感知重试补齐 `.cache/xnu-work/EXTERNAL_HEADERS/TrustCache/*.h`（git blob sha1 校验），
+再以 `XNU_SKIP_PATCH_LOOP=1` 复用已打补丁 worktree（marker H82_DATA_WAIT 在），即跳过重建与
+下载，增量编译。本轮据此恢复编译。
