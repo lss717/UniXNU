@@ -28032,3 +28032,31 @@ C3 期间写通路正常（fill32 hits=1024），完成后失效。
 2. 若电源域正常，则查 VBIF/写通路 halt（VBIF_HALTED）与 CP_MEM_WRITE 是否真发出。
 真实桌面第一帧另需 a5xx Metal 渲染后端（Turnip 无 a5xx；Gallium fd5+IR3 源码候选，未移植）。
 selftest hits=4/4 仅证 CP 提交，不等于桌面 fr=1。
+
+### §310 H608：排除 GX 电源 collapse——写停滞时 GX 仍上电、gfx3d branch 使能（2026-11-23）
+
+**插桩（已提交 0f66b05f / GopFramebuffer 46679a6）：** 导出 `sheng_gpucc_peek(off)`；
+submit 后读 gx_gdscr(0x1094)/cx_gdscr(0x1004)/gfx3d_branch(0x1098)/gfx3d_rcg(0x1070)，
+心跳重发 `NATIVE_A540_PWR`。kernel `b152094607f758031cebd8bdc07d53e14e4229b4ee17cf9c7f30eae5d1d781ef`，
+boot `48d74a39357ff67f529d8862b588c62a9383e053f14215d701746031328fa3ac`，boot id `384BD8E1`。
+日志 `logs/H608/device/20261123-2255-H608/H608-live.raw.bin`。
+
+**实测（482–502s 稳定）：**
+```text
+NATIVE_A540_GPU:  me=400 rbbm=800001c1 cpint=0 rptr=ca5 wptr=ca5 rbbmint=0
+NATIVE_A540_PWR:  gx=a0282000 cx=a0282000 branch=2621 rcg=2
+NATIVE_A540_FENCE: sf=7 r0=4 … done=1 … to=3
+```
+- gx=0xa0282000：PWR_ON(bit31)=1、SW_COLLAPSE(bit0)=0、HW_CONTROL(bit1)=0、SW_OVERRIDE(bit2)=0
+  → **GX GDSC 软件强制上电、未 collapse**。cx 同。
+- branch=0x2621：gfx3d_branch bit0=1、bit31(off)=0 → **branch 时钟使能**。
+- rcg=0x2：gfx3d_rcg CMD 寄存器，bit0=0、bit1=1（待对照 C2 写入值判定根时钟是否真正使能）。
+
+**判定：** §309 的“GX idle collapse”假设**被排除**（GX 上电、branch 使能）。写停滞时电源域正常。
+剩余疑点收敛到 **gfx3d 根时钟（rcg=2）是否真正运行** 或 **C3 后写通路某状态变化**。
+fence 写仍不落地（r0=4）、RBBM busy bit6 恒置。
+
+**下一步（H609 候选）：** 对照 C2 对 0x1070/0x1074 的写入值与 rcg=2，判定根时钟使能位；
+或由心跳在 C3 后周期调用 `native_a540_submit_bo` 做 dummy 提交并锁存成败，区分“C3 后内核
+自身提交也退化”（状态/时钟问题）与“仅用户态提交失败”（用户态映射/缓存问题）。
+真实桌面第一帧另需 a5xx Metal 渲染后端（Turnip 无 a5xx；Gallium fd5+IR3 源码候选）。
