@@ -27468,3 +27468,75 @@ kernel 含当前 Data UUID，不含旧 UUID，不含 `NATIVE_SBABORT`。payload 
 本次构建坑：若只从 `patches/xnu/series` 删除一项但保留对应 `.patch` 文件，
 `apply-patch-series` 会以 `unlisted patch files: ...` 拒绝构建。移除实验必须同时
 删除或移出补丁文件，保持目录和 series 双向一致。
+
+### §291 H597 真机：abort-snapshot 非根因，实际 payload seed UUID 为 09FB
+
+H597 只执行一次 `fastboot boot`，返回 `Booting OKAY`，没有出现 CDC，随后回到
+Android。TWRP 持久环再次停在：
+
+```text
+ 95.949124 NATIVE_H82_DATA: status=60 stage=0 ro=-1 dev=-1 size=0
+ 95.985513 NATIVE_PANIC_STR: offline scratch Data mount failed: 60 @kern_exec.c:8832
+```
+
+同 boot 的两个 H469 快照为 `seq=done`、`timeout=0`、`ocs_err=0`、`recover=0`、
+`recovered=0` 和 `flight=0`。没有 OCS、恢复或锁超时，故不能在 UFS I/O 完成
+路径上解释本次失败。日志：
+
+```text
+H597-tail32.bin  ca06074ac4efe7206e799585ae348a5e05809608ceafd0818bba0beb5483aba7
+H597-h103.txt    fb06edd5267526a2dbc9f9cd1bf714e2b9993b41575f643e2a18699ca5fe2c2d
+```
+
+H597 排除了 `springboard-abort-snapshot.patch` 作为 Data mount 根因。进一步把
+payload 内的 `scratch-data.img` 展开为 DBRDISK1 原始 APFS 镜像并用 `diskutil`
+只读查询，实际卷为：
+
+```text
+device       /dev/disk26s1
+VolumeName   OwnerData
+VolumeUUID   09FB365F-2D06-48E5-A8DE-AA0CCF86BB74
+```
+
+已工作的 H576/H591/H593 kernel `7ffb0c1b…` 也含该 UUID。H594 的旧 `1A4…` 和
+H595–H597 的 `3AAB…` 都不是这份 `0ef3db84…` Data seed 的卷 UUID。根因确定为
+编译期 UUID 与 payload seed 不一致。H598 的唯一变量是把
+`XNU_OWNER_DATA_VOLUME_UUID` 改为 `09FB365F-2D06-48E5-A8DE-AA0CCF86BB74`，
+其余源码、补丁、addon、Data seed、bootargs 和 UEFI 均保持 H597。
+
+### §292 H598-r3：按实际 seed UUID 重建，两遍 PMGR 与静态门禁通过
+
+H598 与 H597 相比只改 `XNU_OWNER_DATA_VOLUME_UUID`。源码仍为
+`3fb5581a…`，设备仓库仍为 `914038e7…`，payload 仍使用 H593 已验证的
+NativeMetal `8b5e858c…`、Data seed `0ef3db84…`、988-byte bootargs 和 H407 UEFI。
+
+```text
+pass 1 kernel       793a303eb2f9bbae261411844c93e09437baea82f1a444d8ec5cbff5af901217
+final kernel        7b481bbaff868e47622be53002cd434e2d688f0276ac0faa04f5a73159621a1c
+raw kernel          3da5972a405ca9b5f84beecd92f53c80415046b32f81ad86dc71a46dd49c3ecb
+real PMGR archive   cc469cda330ceb6ae272a9bc56e582b530ea98fb3f91045177bfec70545a9ee0
+payload             760694a49035557db7aadbb75d9a7ff9c818791cea1a8cb08d9f6b4814928d37
+boot                1f9eadb1bf474183d5b5641b61973792129bd67280e94803546bcf968b6e5cee
+boot.json           bbe484dee7b3529337ab968f7cdf7818e6c8d6d4cb53c8ce95314f0e67db81ab
+kernel dSYM         95241708146880bcf4de173061784d75be2728afc90530845d4de030a62c3323
+```
+
+第一遍日志明确为 `build-sheng-pmgr-stub.py`，第二遍明确为
+`build-sheng-pmgr.py`。最终 kernel 只含
+`09FB365F-2D06-48E5-A8DE-AA0CCF86BB74`，不含 `3AAB…` 或 `1A4…`。payload
+回读的 ADT、GPU addon、owner trust 和 Data seed 仍分别等于 H593 的
+`e0de6561…`、`1f472627…`、`6e45d90c…` 和 `0ef3db84…`。bootargs
+`988/1008/1016`，boot 布局 PASS。Windows 镜像目录：
+`E:\WindowsData\Project\ios\main-route\display-first-frame\builds\H598-r3`。状态为
+`H598-built-static-verified-device-pending`。设备门是同一 boot 中出现
+`NATIVE_H82_DATA: status=0` 并继续到 CDC。
+
+H598 构建期间确认两个坑：
+
+1. `macos-build-kernel.sh --clean` 会删除 `.cache/xnu-work` 和
+   `tree/build/xnu/ios-obj`，但不会删除
+   `out/cheeseburger/kernel/kernel.macho`。脚本因此仍可能在第一遍选择真实 PMGR。
+   要做标准两遍构建，必须在校验绝对路径后把该 prelink 文件移出或删除；本轮的
+   r2 因未移出 prelink 而在两遍都使用真实 PMGR，未作为设备候选。
+2. 全新清理后恢复缺失的 XNU 外部头文件时，Apple 下载曾返回
+   `HTTP 503 Backend.max_conn`。该次没有任何 kernel 产物，等待后原命令重试成功。
