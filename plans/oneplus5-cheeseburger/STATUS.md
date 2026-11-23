@@ -27217,3 +27217,25 @@ H593 只把 H592 已存在的 SIGSEGV/SIGILL 记录器提取为幂等
 `install_h557_startup_hooks()` 后、打印 observer load 前立即安装；
 `rearm_exception_reporters` 仍再次调用同一幂等函数。handler 的日志、
 16-frame 上限、旧 handler 恢复和原信号重发逻辑不变。状态在打包后记录。
+
+H593 静态包已完成：observer SHA-256
+`2cd244c4a972b706774fe24b418d46a92442b943eabf4842aa490f1f2c6a9081`，
+CDHash `1b5e0509ec77ce42edfd45bd5fc10fb917875ccb`。H592 addon 的其余 11
+个文件逐字节不变；owner trust 7 项改用新 observer；kernel、ADT、Data seed、
+UEFI 和 988-byte bootargs 均与 H592 一致。
+
+```text
+GPU addon          1f472627f846e867292507d27a2c3a14a11d887a65407a8a31f604538a96b7a3
+owner trust        6e45d90c6db117e3cb1c1dc407fef34981551ec8448fe08930af590de1465de9
+payload            d909e6c52e88abf12abe5aaf037ca44b9eaf6c0ef2ddef32f52adf78a426bb32
+boot               9f112ddeab5b055220c5e1edb4de9edd7905402b25fcaf726d9b452bf6b4382b
+boot.json          f99cd471bdea21e97d3bc289371c1051900c8fbd278b99243a897a651481406a
+bundle trust       a0a003f4b191474939c6f99b6d2d7bff9f56bf613ee0539ea0eae357aaca1daf
+static verification 9939ed8495810693c422a007e56b363357d0c6fcd7b24e85a9f253bc62e6c149
+```
+
+所有静态门禁 PASS。Windows 镜像目录：
+`E:\WindowsData\Project\ios\main-route\display-first-frame\builds\H593`。
+状态 `H593-built-static-verified-device-pending`。设备门要求在同一 boot 的
+首个 SpringBoard SIGSEGV 之前出现 `h593_signal_hooks`，并由
+`h593_fatal_signal`/`h593_fatal_frame` 给出故障 PC、LR 和返回链。
