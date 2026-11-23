@@ -28143,3 +28143,66 @@ selftest hits=4/4 仅证 CP 提交，**不等于桌面第一帧**：真实桌面
 **下一步：** 在 selftest 通路已稳的基础上，处理真实渲染：A540Trace 目前对 `newRenderPipelineState`
 返回 trace stub、`-commit` 空操作（§299/§300）。需要真实管线编译与 present。同时保留本修复，
 避免真实提交再次落入畸形 PM4。
+
+### §313 H603-H610 构建记录搬迁与 payload 启动参数不可复现问题（2026-11-24）
+
+**背景。** 本轮按 README 要求核对目录约定，发现 H603 起违反了
+`display-first-frame/builds/README.md`。该文件要求每个候选一个子目录，并记录两个仓库的
+head、submodule 引脚、工具链、完整配置与启动参数、组件哈希、最终 boot 哈希和静态门禁结果。
+实际 E: 线目录 `builds/` 只到 H602，H603-H610 的 8 张 boot.img 与 21 个编辑脚本被写进
+源码 worktree `C:\Users\ls\.codex\worktrees\h467-ufs-observability\UniXNU\builds\H603`
+这一个扁平目录里。
+
+**处理。** 已建立 `builds\H603` 到 `builds\H610` 八个目录，每个目录含该候选的 boot.img、
+Mac 侧 make-bootimg 生成的 `Hxxx-boot.json`、`MANIFEST.json`、`record.md` 以及属于该候选的
+编辑脚本。8 张 boot.img 的本地 SHA-256 与 boot.json 里的 output_sha256 逐一相符：
+
+```text
+H603 4e315e6d0419e02c2c9e3133bf58d31e7f2c5f30571d9ddbbcc6b4dbf23a5029
+H604 01862bef27a2...  H605 5ebf24412a60...  H606 fe8e74c442f4...
+H607 3aa2b7498ead...  H608 48d74a39357f...  H609 ac0fa00f7e03...
+H610 262b32a4e0f20dedbbef1d33f1c8a158ba76a2ed2f18573c47906ecec2bbd21d
+```
+
+**新增目录规则。** 候选产物与构建脚本一律写入
+`E:\WindowsData\Project\ios\main-route\display-first-frame\builds\Hxxx`，不得写入任何源码
+worktree。每次打包完成后必须更新本 STATUS.md，这一条同时写进 HANDOFF.md。
+
+**H611 前置缺口：payload 的实际启动参数无法从已提交配置重现。** 构建机上的设备仓库
+`/Users/lss/h468-build/H597-source-20261123/UniXNU-cheeseburger` 处于 detached HEAD
+`914038e`，它的 `board.toml` kernel_args 与 H610 payload 里生效的 args 差 7 处：
+
+```text
+配置缺少        sheng-gpu-power=7   sheng-no-lc=1   _offline-accelerator-plugin=A540Trace
+配置值不同      offline-accelerator=0  -> payload 为 1
+               sheng-gpu-addon=0      -> payload 为 1
+               dyld_flags=0x0000008A  -> payload 为 0x8a
+配置有而 payload 没有   native-trace-amfi-syscall=1   h114-icc=0
+```
+
+原因由哈希直接证明。H603 到 H609 的 `kernel.macho.adt` 全部是 `e0de6561f8...`、
+`scratch-data.img` 全部是 `0ef3db84e8...`、trustcache 全部是 `026fbcc9bd...`，只有
+kernel.macho 在变，说明这段区间从未重跑 `unixnu build payload`，而是复制上一候选的
+payload 再 `mcopy` 替换 kernel.macho，启动参数靠直接编辑 payload 内的
+`EFI/UniXNU/unixnu.toml`。`builds/H603/measure-args.py` 就是当时为把
+`sheng-gpu-power=7` 塞进 1024 字节 boot_args 上限做的长度核算，args 从 H603 的 988 字节
+变成 H604 起的 1000 字节。H610 额外替换了 gpuaddon 与 trustcache（`c8ad154c91...`、
+`d012ba8fad...`），payload 其余部分仍是同一份手工 lineage。
+
+**后果。** 如果 H611 走正常的 `unixnu build payload`，生成的 args 会丢掉
+`sheng-gpu-power=7`、`sheng-gpu-addon=1` 和 `offline-accelerator=1`，C3 GPU bring-up
+不再执行，直接退回 §305 记录的 H603 现象（BoAlloc 返回 `0xe00002d8` kIOReturnNotReady）。
+
+**修法（H611 第一步，先于任何 GPU 渲染改动）。** 把 H610 生效的 args 集合提交进设备仓库
+的一条分支，让构建机从 detached HEAD 切到该分支，重跑 `unixnu build payload`，再逐项核对
+新生成的 `unixnu.toml` args 与 H610 完全一致，并跑
+`python3 scripts/check-bootargs-fit.py --payload <payload.img>`。核对通过后才开始加真实
+GPU 绘制，避免同一轮同时改两个变量。
+
+**本轮未改动。** E: 的 `display-first-frame\UniXNU` 与 `UniXNU-cheeseburger` 检出和分支
+保持原状，本次只搬文件。E: 的 UniXNU 检出上仍留有 H409 时代的未提交内容
+（`drivers/NativeUfsProbe/NativeUfsProbe.cpp`、
+`patches/xnu/zzzzzzzzzzz-h103-proc-state.patch`、被删的
+`SESSION-HANDOFF-2026-11-11.md`、新增的 `scripts/check-display-first-frame-probe.py`），
+这些内容已被 `codex/h562-clean-build` 分支上的提交覆盖，我未做 stash 或删除。
+C: worktree 里搬空后的 `builds` 目录因 PowerShell 删除策略未能移除，是空目录，可手工删除。
