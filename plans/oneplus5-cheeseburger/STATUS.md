@@ -27173,3 +27173,47 @@ boot 布局 `problems=[]` 均 PASS。状态为
 一次 `h592_fatal_signal`/`h592_fatal_frame`。随后把故障 PC/LR/frame 与 H591
 的 `EXC_BAD_ACCESS code=1/sub=0/sig=11` 对齐；在该现场日志取得前，不对崩溃根因
 作推断。
+
+### §281 H592 真机：handler 安装晚于首个 SpringBoard 崩溃
+
+H592 boot `224cc454` 通过 `fastboot boot` 正常启动，CDC transport boot
+`37139235`，实时采集从约 342 秒开始。`h557_ui_run_enter` 和
+`h541_did_finish_enter` 证明 SpringBoard observer 已加载并执行，但本 boot 在
+600 秒后仍停留在 `SBHIconManager _precacheDataForRootIcons` 的
+LaunchServices 等待，没有到达之前 H591 在 573 秒执行的
+`rearm_exception_reporters`。
+
+1702.403770 秒，SpringBoard PID 27 的主线程 `tid=292` 直接触发：
+
+```text
+NATIVE_TRAP: pid=27 comm=SpringBoard exc=1 code=0x1 sub=0x0 sig=11
+NATIVE_THREADSIG: pid=27 sig=11 tid=292 code=0x1
+```
+
+1703.740666 秒执行 `NATIVE_SIG`，1704.033485 秒以 `status=0xb` 退出。
+本次 live log 的 `h592_signal_hooks`、`h592_fatal_signal` 和
+`h592_fatal_frame` 均为零，原因不是 handler 失效，而是它只放在
+`rearm_exception_reporters`，而崩溃早于该调用。H592 分类为
+`device-tested-signal-handler-not-installed-before-fault`，不能当作诊断包成功。
+
+证据：
+
+```text
+H592-live.log              F68C82CDD33DA8FD96273DAA52F4FA928362A50713D3B4F3EBF141384E49B1B8
+H592-live.frames.bin       9B92C1F09DE183F91727BA9DCB75CFE0D8AC34D18B705ECC7BDC4DEAA4C94A92
+H592-tail32.bin            1F2BE5BABB2BFFE6C5A73293FE4C351A6325D7C5B3FCD9959F773BD51A26C60C
+H592-h103.txt              F5A47DEEE88E13C4661832F81145B65918B9B8BE33CC56BD261D8A2DAA775623
+```
+
+清零后的固定回读仍为
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+新增工具坑：**信号 handler 必须在可能早到的第一个故障之前安装，不能放在后期
+startup hook 内。**
+
+### §282 H593：把 fatal-signal handler 提前到 observer constructor
+
+H593 只把 H592 已存在的 SIGSEGV/SIGILL 记录器提取为幂等
+`install_fatal_signal_reporters()`，在 `h481_observer_constructor` 调用
+`install_h557_startup_hooks()` 后、打印 observer load 前立即安装；
+`rearm_exception_reporters` 仍再次调用同一幂等函数。handler 的日志、
+16-frame 上限、旧 handler 恢复和原信号重发逻辑不变。状态在打包后记录。
