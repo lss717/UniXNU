@@ -770,6 +770,11 @@ extern "C" void native_log_flush_hook (void);
 // H308: kern_sig.c parks signal deliveries in a lock-free ring; printing them from here keeps
 // printf (and its msgbuf mutex) out of proc_exit, which runs with preemption disabled.
 extern "C" void native_sigbus_drain (void);
+/* H603: NativeAdreno BO/method latches, re-emitted from the heartbeat so the first BoAlloc error survives USB drop and ring rotation. */
+extern "C" { extern volatile uint32_t native_adreno_method_stats[20][4]; }
+extern "C" { extern volatile uint32_t native_adreno_pool_stats[8], native_adreno_pool_status, native_adreno_pool_wc; }
+extern "C" { extern volatile uint64_t native_adreno_bo_diag[10]; }
+extern "C" { extern volatile uint64_t native_adreno_alloc_last[4]; }
 
 // H413: one compact, fixed-storage display record next to the existing
 // SpringBoard sample. This is observation-only and does not alter USB,
@@ -1056,6 +1061,20 @@ heartbeatThread (void *, wait_result_t)
            (unsigned) native_a540_open_type,
            (unsigned) native_a540_sel_count,
            (unsigned) native_a540_sel_last);
+    }
+    if (beat == 1 || (beat % 10) == 0) {
+      IOLog ("NATIVE_ADRENO_M: bo=%u/%u/%x/%u map=%u/%u/%x/%u sub=%u/%u/%x/%u fence=%u/%u/%x/%u pool=%u/%u/%u/%u wc=%x\n",
+             (unsigned) native_adreno_method_stats[2][0], (unsigned) native_adreno_method_stats[2][1], (unsigned) native_adreno_method_stats[2][2], (unsigned) native_adreno_method_stats[2][3],
+             (unsigned) native_adreno_method_stats[3][0], (unsigned) native_adreno_method_stats[3][1], (unsigned) native_adreno_method_stats[3][2], (unsigned) native_adreno_method_stats[3][3],
+             (unsigned) native_adreno_method_stats[5][0], (unsigned) native_adreno_method_stats[5][1], (unsigned) native_adreno_method_stats[5][2], (unsigned) native_adreno_method_stats[5][3],
+             (unsigned) native_adreno_method_stats[6][0], (unsigned) native_adreno_method_stats[6][1], (unsigned) native_adreno_method_stats[6][2], (unsigned) native_adreno_method_stats[6][3],
+             (unsigned) native_adreno_pool_status, (unsigned) native_adreno_pool_stats[0], (unsigned) native_adreno_pool_stats[1], (unsigned) native_adreno_pool_stats[2], (unsigned) native_adreno_pool_wc);
+      if (native_adreno_bo_diag[0])
+        IOLog ("NATIVE_ADRENO_BO: n=%llu rc=%llx bytes=%llu flags=%llx step=%llu astage=%llu aphys=%llx alimit=%llx aoff=%llu obits=%llu last=%llu/%llx/%llx/%llx\n",
+               (unsigned long long) native_adreno_bo_diag[0], (unsigned long long) native_adreno_bo_diag[1], (unsigned long long) native_adreno_bo_diag[2], (unsigned long long) native_adreno_bo_diag[3],
+               (unsigned long long) native_adreno_bo_diag[4], (unsigned long long) native_adreno_bo_diag[5], (unsigned long long) native_adreno_bo_diag[6], (unsigned long long) native_adreno_bo_diag[7],
+               (unsigned long long) native_adreno_bo_diag[8], (unsigned long long) native_adreno_bo_diag[9],
+               (unsigned long long) native_adreno_alloc_last[0], (unsigned long long) native_adreno_alloc_last[1], (unsigned long long) native_adreno_alloc_last[2], (unsigned long long) native_adreno_alloc_last[3]);
     }
     // H128: the process dumps and the persistent-log flush run here, in thread
     // context with no storage lock held.  They used to run from the UFS
