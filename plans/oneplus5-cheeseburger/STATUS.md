@@ -27577,3 +27577,31 @@ H598-h103.txt          7df3ac545bb84fae606e1d4079386f24a21edf9b5474e45289b252119
 变量是在 H598 的同一源码与实际 seed UUID 上重新加入
 `trap-thread-state.patch`。异常入口应直接输出 `NATIVE_TRAP_STATE` 及最多 16 个
 frame pointer，避免再次依赖没有触发的用户态信号 handler。
+
+### §294 H599：实际 seed UUID 下的内核异常现场诊断包
+
+H599 保持 H598 的源码、设备仓库、H593 addon、Data seed、bootargs 和 UEFI，只在
+XNU 生成树末尾应用 `trap-thread-state.patch`。实际 seed UUID 继续固定为
+`09FB365F-2D06-48E5-A8DE-AA0CCF86BB74`。
+
+```text
+diagnostic source   e63445734e39916c117d0d735b8b83e1ea58ea78
+docs head           70b801aa9a0594acf79dd691ded4bad80fac8010
+pass 1 kernel       fa5ab9b59a54200a1c4c7b13b8db4e1712e913d5b1b560e9d7c574e6fcc13b77
+final kernel        cd6511c1da1298f4b5536e12879f6cecdc2c42e318ff0c7d4b5ac2fee39f0d24
+raw kernel          ad33e155250df57d1410b9225b359257727477bd081f6a51177756379abbf6ef
+real PMGR archive   373030f41c0bddafcc5d5eee764bca856f2ceb26aa8d146e6d5a327b5c5e235c
+payload             63890b890e660e5c65a4de0844eb5d1c559666f772c3092c375422106ca9840c
+boot                b5f1a62424ed99dcf8aba63fa86ee80b1545bfcda47fd1d6872870d6ad2ddf04
+boot.json           1bab201db2f403e31073270e65d3861ed1f9d05f8420007e6fba7953ae0471af
+kernel dSYM         397c95fe8e9491e24978d056980b4d213cd951d9505a16a2c5716f812cc0f7bb
+```
+
+第一遍日志使用 PMGR stub，第二遍使用真实 PMGR。payload 回读的 ADT、GPU addon、
+owner trust 和 Data seed 仍等于 H593 的 `e0de6561…`、`1f472627…`、
+`6e45d90c…` 和 `0ef3db84…`。bootargs 为 `988/1008/1016`，boot 布局 PASS。
+kernel 同时含 `NATIVE_TRAP_STATE` 和实际 seed UUID。Windows 目录：
+`E:\WindowsData\Project\ios\main-route\display-first-frame\builds\H599`。状态为
+`H599-built-static-verified-device-pending`。设备门是同一 boot 中 SpringBoard
+发生 `EXC_BAD_ACCESS` 后出现 `NATIVE_TRAP_STATE` 及至少一条
+`NATIVE_TRAP_STATE_FRAME`。
