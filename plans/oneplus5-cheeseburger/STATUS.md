@@ -27284,3 +27284,48 @@ kernel/PMGR 两遍、payload 回读、H593 控制项、988-byte bootargs
 （1008/1024，最坏 1016/1024）和 boot 布局均 PASS。状态为
 `H594-built-static-verified-device-pending`。设备门是首个 SpringBoard
 `EXC_BAD_ACCESS` 后出现完整的 `NATIVE_TRAP_STATE`/frame 记录。
+
+### §284 H594 真机：干净重编误用了旧 scratch Data UUID
+
+H594 连续两次 `fastboot boot` 均未出现 CDC，并在同一 kernel 启动阶段复位。第一次
+boot 的持久环显示：
+
+```text
+ 95.873502 NATIVE_H82_DATA: status=60 stage=0 ro=-1 dev=-1 size=0
+ 95.909833 NATIVE_PANIC_STR: offline scratch Data mount failed: 60 @kern_exec.c:8832
+```
+
+第二次复测在 `95.873502` 秒出现完全相同状态，排除偶发 UFS 错误。最终
+H594 Mach-O 的字符串审计显示它含旧 UUID
+`1A4CE9DF-34B6-4B52-9744-5052A9D20B23`，而 H591 已工作的控制 kernel 没有该
+字符串。当前 Data seed 的卷 UUID 仍是
+`3AAB21A7-0124-4EED-B5A4-872F17A7B998`。
+
+根因是 `scripts/macos-build-kernel.sh` 在未显式设置
+`XNU_OWNER_DATA_VOLUME_UUID` 时仍默认旧 UUID。H594 分类为
+`device-tested-build-input-data-uuid-mismatch`，没有进入 SpringBoard，不能用它
+评价 `NATIVE_TRAP_STATE` 补丁。
+
+两次失败环：
+
+```text
+first attempt H594-h103-first.txt
+H594-tail32-first.bin
+second attempt H594-h103-second.txt
+H594-tail32-second.bin
+```
+
+两次清零后的固定回读均为
+`83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302`。
+
+### §285 H595：用当前 seed UUID 重建 H594 kernel
+
+H595 不修改补丁或 userspace，只在两遍 kernel 构建前显式设置：
+
+```text
+XNU_OWNER_DATA_VOLUME_UUID=3AAB21A7-0124-4EED-B5A4-872F17A7B998
+```
+
+第一遍 stub PMGR、prelink、第二遍 real PMGR、final prelink 均重新执行，产物完成后
+记录 kernel/PMGR/hash。设备门先要求 `offline scratch Data mount failed: 60` 消失，
+再要求首次 SpringBoard `EXC_BAD_ACCESS` 出现 `NATIVE_TRAP_STATE`。
