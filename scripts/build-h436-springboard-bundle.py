@@ -141,11 +141,12 @@ def main() -> int:
         OBSERVER,
         (
             b"observer load process=",
-            b"build=H590",
+            b"build=H591",
             b"h587_activity_center_service_skip",
             b"h588_folder_name_localization_bypass",
             b"h589_default_widget_intent_skip",
             b"h590_icon_state_save_skip",
+            b"h591_today_layout_prepare_skip",
             b"H492_CCS",
             b"filter bypass installed",
             b"filter bypass pid",
