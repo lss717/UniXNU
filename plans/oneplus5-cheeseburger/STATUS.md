@@ -27999,3 +27999,36 @@ worktree 每次因 native-aes-personality.patch 重建会丢失已恢复头文�
 503 感知重试补齐 `.cache/xnu-work/EXTERNAL_HEADERS/TrustCache/*.h`（git blob sha1 校验），
 再以 `XNU_SKIP_PATCH_LOOP=1` 复用已打补丁 worktree（marker H82_DATA_WAIT 在），即跳过重建与
 下载，增量编译。本轮据此恢复编译。
+
+### §309 H607：排除 SMMU 翻译故障——C3 后写总线停滞指向电源/时钟域（2026-11-23）
+
+**插桩（已提交 e68975f6 / GopFramebuffer 443c150）：** submit 后读 CB0 FSR(0x8058)/
+FAR(0x8060)/全局 FSR(0x48)/CB0 SCTLR(0x8000)，心跳重发 `NATIVE_A540_SMMU`。
+kernel `f63224aac59804d7e0b96707d3aa2ccefc31e1f8624e830c56614cf5d3aae621`，
+boot `3aa2b7498ead1e28bb9b8c4e48a7583f67e7d68c1107b4bb6a827ccfacdfef8e`，boot id `374ABDC0`。
+日志 `logs/H607/device/20261123-2238-H607/H607-live.raw.bin`。
+
+**实测（397–428s 稳定）：**
+```text
+NATIVE_A540_GPU:   me=400 rbbm=800001c1 cpint=0 rptr=c9b wptr=c9b rbbmint=0
+NATIVE_A540_SMMU:  fsr=400 far=0 gfsr=0 sctlr=1167
+NATIVE_A540_FENCE: sf=6 r0=4 … done=1 … to=2
+```
+- sctlr=0x1167 **正是 C3 smmu_direct 写入值**（`0x1067|(1<<8)`，:299，M=1 使能、CFCFG）→
+  CB0 context bank 使能且与 C3 一致，未丢失。
+- far=0、gfsr=0：**无翻译故障地址、无全局故障**。fence 写往 kRptrIova=0x1400000 若翻译
+  故障，FAR 应为该地址；FAR=0 排除 SMMU 翻译故障。fsr=0x400 为非地址故障位（疑残留/状态位）。
+- 结合 §308：ME 运行、ring 消费、无 CP 故障、RBBM busy bit6 恒置、fence 写不落地。
+
+**判定收敛：** C3 后写停滞**不是** SMMU context 丢失/翻译故障，**不是** CP halt，**不是**
+wait 逻辑。指向 **GPU GX 电源/时钟域 idle collapse 或 VBIF 写通路挂起**：C3（~140s）到
+自测（~354s）间 ~200s 空闲后，CP ring 取指恢复（AON 域）但着色器/写域写事务停滞。
+C3 期间写通路正常（fill32 hits=1024），完成后失效。
+
+**下一步候选（H608，按证据择一）：**
+1. 读 GX GDSC/时钟状态寄存器（GPUCC gx_gdscr/gfx3d_branch、GX GDSC SW collapse 位）
+   与 C3 期间对照，确认是否 idle collapse；若是，加 GPU keep-alive（空闲期周期 dummy submit
+   或禁 GX collapse）再测 fence。
+2. 若电源域正常，则查 VBIF/写通路 halt（VBIF_HALTED）与 CP_MEM_WRITE 是否真发出。
+真实桌面第一帧另需 a5xx Metal 渲染后端（Turnip 无 a5xx；Gallium fd5+IR3 源码候选，未移植）。
+selftest hits=4/4 仅证 CP 提交，不等于桌面 fr=1。
