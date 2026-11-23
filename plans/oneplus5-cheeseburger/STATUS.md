@@ -27759,9 +27759,36 @@ kits/AdrenoPM4 为真实 PM4/shader/raster 构建器，未链接进插件。
 入 owner trust + payload/boot，验收 `gpu selftest hits=4/4` 且 fence 完成。
 
 **contextId=0 已从故障清单移除**（观察 self.context 对远端 host 恒 nil）。
-**x0 对象**：+0x10 为 block/函子 invoke 槽，blr x8 时 x8=0；类型与初始化路径未确认，
-不假定、不靠跳过空调用宣称修复。无首帧与晚期空回调保持“可能独立/可能共享上游”。
+**x0 对象（纠正）**：仅确认 x0+0x10 的值被用作间接调用目标（blr x8）且为零；
+尚不能断言其为 block/函子 invoke 槽，对象类型与初始化路径待确认。不假定、不靠
+跳过空调用宣称修复。无首帧与晚期空回调保持“可能独立/可能共享上游”。
 
-**真实桌面第一帧路径：** 构建并 --publish NativeAdrenoMetal/Turnip bridge（C6a），
-验收真实 CA draw/dispatch/commit>0 + 真实 surface 上屏；不得以合成帧或 selftest
-充当桌面 fr=1。避免对无渲染实现镜像再做无新证据长等待。
+**真实桌面第一帧路径（纠正）**：Turnip 无 a5xx 后端（§301），NativeAdrenoMetal
+路线在本设备不可行；最小替代为 a5xx shader ISA + 3D/blit PM4 发射（C6a），复用已
+验证的 a5xx 内核 CP 提交。验收真实 CA draw/dispatch/commit>0 + 真实 surface 上屏；
+不得以合成帧或 selftest 充当桌面 fr=1。
+
+### §301 后端能力审计：已验证 / 源码候选 / 未验证（H601）
+
+**已验证（a5xx，本设备 Adreno 540）：** 内核 a5xx hw-init/CP_PROTECT/ME_INIT/GPMU/
+PAS（build-environment-2026-11-10.md §800-833，H236ea 实测）；BO/Map/Submit/
+WaitFence ABI（NativeAdrenoABI.h）；CP_MEM_WRITE 提交+读回（gpu_selftest）。
+
+**源码候选但本设备不支持：** NativeAdrenoMetal=metal2vulkan→Turnip。锁定 Mesa
+commit 85fda3b3（adreno-compiler-inputs.json）；Turnip **没有 a5xx 后端**
+（build-environment §1421-1422 明确“Metal 设备创建不可能在这条路上成功”），
+这正是历史选 A540Trace（观测）的原因，属诊断切换而非原后端偶然失败。
+kits/AdrenoPM4 编码 **A740/a7xx** 状态/shader/VPC（README、AdrenoShader.c），
+非 a5xx，不可直接复用于 A540。
+
+**未验证/缺失：** a5xx shader ISA 工具链与 3D/blit PM4 发射（a5xx 无 2D 拷贝引擎，
+Copy32 需 blit，§1394/1412-1414）；Metal→a5xx 命令翻译。故真实 raster/桌面第一帧
+在 A540 上尚无可用真实后端。
+
+**H601 实测：** 首次重打包因解析名含尾 NUL 致重编码双 NUL，addon 挂载失败
+（addon=-1），selftest 未执行，无 hits 数据（不宣称）。已修复重打包（原位替换、
+单 NUL），重发 4eaa4a17 复测中；hits=4/4 仅证明 CP 提交+内存写回，不证明
+shader/raster/Metal 渲染。
+
+**选定下一步：** 复测确认 a5xx CP 提交后，最小真实绘制=a5xx shader ISA+3D/blit
+PM4（C6a）；不盲目构建/切换 Turnip，不承诺切换即桌面。
