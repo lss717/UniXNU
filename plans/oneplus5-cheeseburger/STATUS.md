@@ -27540,3 +27540,40 @@ H598 构建期间确认两个坑：
    r2 因未移出 prelink 而在两遍都使用真实 PMGR，未作为设备候选。
 2. 全新清理后恢复缺失的 XNU 外部头文件时，Apple 下载曾返回
    `HTTP 503 Backend.max_conn`。该次没有任何 kernel 产物，等待后原命令重试成功。
+
+### §293 H598 真机：Data UUID 修复成功，继续到 SpringBoard 的同一空指针退出
+
+H598 只执行一次 `fastboot boot`。设备进入内核后没有再次出现 `Data mount failed`，
+并成功到达 CDC、launchd、`backboardd` 和 SpringBoard。COM 枚举晚于进程发现循环，
+第一段原始采集在约 469 秒才开始，但设备回放了从约 341 秒起的 12870 帧，CRC 错误
+为 0、sequence gap 为 0、boot switch 为 0。
+
+```text
+ 373.721783 h557_ui_run_enter pid=27 main=1
+ 382.930813 h541_did_finish_enter pid=27 main=1
+ 530.602406 h557_complete_startup_enter pid=27 main=1
+ 548.033787 h593_signal_hooks pid=27 segv=1 ill=1
+1691.821012 NATIVE_DISPLAY_GATE ... val=0 xf=0 fr=0
+1761.088593 NATIVE_TRAP: pid=27 comm=SpringBoard exc=1 code=0x1 sub=0x0 sig=11
+1762.067411 NATIVE_EXIT: pid=27 ppid=1 comm=SpringBoard status=0xb ... sender=27/SpringBoard
+```
+
+`h593_signal_hooks` 已证明 SIGSEGV/SIGILL handler 在异常前安装，但没有输出
+`h593_fatal_signal` 或 `h593_fatal_frame`。因此该异常没有经过可用的 BSD signal
+handler。同 boot 的 UFS 采样持续为 `timeout=0`、`ocs_err=0`、`recover=0`、
+`recovered=0`，最近一次 H469 为 `seq=308484 done=308483 flight=1`，不能把该
+SIGSEGV 归因于 OCS 错误或恢复路径。软件锁 `lock_timeout=0`，但累计等待达到
+`19607118 ms`，最大单次 `40792 ms`，仍是独立的延迟观测项。
+
+```text
+H598-live.log          abf9fca42ebd64bde5e8ae7c8f955e96695d8c2a88c552032a1bf060a19f3561
+H598-live raw          1af9075acacbfadcd738d043ae8c6c165a406137a85009f870434422b57d95c
+H598-tail32.bin        68202c83c86e430e82b09dcf18b2d40a34967ff69783b7b4737a7190ab316e95
+H598-h103.txt          7df3ac545bb84fae606e1d4079386f24a21edf9b5474e45289b252119ef3b98d
+```
+
+状态更新为
+`H598-device-tested-data-uuid-fixed-springboard-exec-bad-access-fr0`。H599 的唯一
+变量是在 H598 的同一源码与实际 seed UUID 上重新加入
+`trap-thread-state.patch`。异常入口应直接输出 `NATIVE_TRAP_STATE` 及最多 16 个
+frame pointer，避免再次依赖没有触发的用户态信号 handler。
