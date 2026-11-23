@@ -27793,11 +27793,23 @@ shader/raster/Metal 渲染。
 **选定下一步：** 复测确认 a5xx CP 提交后，最小真实绘制=a5xx shader ISA+3D/blit
 PM4（C6a）；不盲目构建/切换 Turnip，不承诺切换即桌面。
 
-### §302 H601 复测回归：早期 USB 挂死，selftest 未执行
+### §302 H601 实测（TWRP 拉环纠正）：启动正常、selftest BoAlloc 失败
 
-修复版 4eaa4a17（单 NUL、保序重打包）fastboot boot 后 CDC 从未枚举，主机出现
-“未知 USB 设备(设备描述符请求失败)”（VID_0000&PID_0002），主机端口重置无效，
-需手机侧掉电/重插恢复。崩溃发生在 backboardd 设备初始化之前，故 gpu_selftest
-未执行、无 hits 数据；属重打包/trust 的启动回归，而非 selftest 本身。
-教训：重打包 addon 后必须先以已知-good addon 对照确认能启动，再引入 selftest；
-不可直接把重打包镜像当可启动。恢复后先回 H593 known-good addon 基线。
+拉取持久环（boot=214f30b6）纠正此前“早期 panic”判断：修复版 4eaa4a17 实际
+正常启动，addon=12/12 挂载、SpringBoard 运行至 843s+、CA 管线请求持续。主机
+“未知 USB 设备”是 **USB gadget 后期掉线**（内核仍活），非早期 panic；已掉电进 TWRP。
+
+gpu_selftest 实测（H601b-h103.txt）：
+```text
+gpu#18 query abi=0x1 in=32 out=40 maxbo=268435456   （ABI query 通）
+gpu#19 info chip=0x5040000 gmem=0 va=0x2000000+0x8000 （a540， aperture 仅 32KiB）
+gpu#20 boalloc-ib failed / gpu#74 boalloc-ib failed  （BoAlloc 失败）
+```
+即 query/info 通、**BoAlloc 失败**→无 Submit/WaitFence/读回，无 hits；CP 提交
+本轮未验证。chip=0x5040000 确认 a5xx/a540；gmem=0、va 极小，提示内核 a5xx 的
+BO/VM aperture 未对 backboardd 客户端正确建立。
+
+**下一步缺口（证据驱动）：** 内核 NativeAdreno BoAlloc/BoMap/VM 对 a5xx 宿主进程
+的支持（为何 BoAlloc 返回失败、aperture 为何仅 32KiB）。先修该缺口使 selftest
+hits=4/4，再谈 3D/blit。不盲目切 Turnip（无 a5xx）。
+证据：logs/H601/device/20261123-1908-H601b/H601b-h103.txt、H601b-tail32.bin。
