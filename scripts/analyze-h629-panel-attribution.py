@@ -42,6 +42,21 @@ WATCH_H630 = re.compile(COMMON +
 WATCH_H629 = re.compile(COMMON +
     r"wrote=(?P<wrote>\d+) both=(?P<both>\d+) neither=(?P<neither>\d+)")
 
+CASES = re.compile(
+    r"NATIVE_PANEL_CASES: build=\S+ c0 unwritten=(?P<unwritten>\d+) "
+    r"shortblk=(?P<shortblk>\d+) rows=(?P<rows>\d+) "
+    r"mask=(?P<m0>[0-9a-f]+)/(?P<m1>[0-9a-f]+) (?P<m2>[0-9a-f]+)/(?P<m3>[0-9a-f]+) "
+    r"(?P<m4>[0-9a-f]+)/(?P<m5>[0-9a-f]+) (?P<m6>[0-9a-f]+)/(?P<m7>[0-9a-f]+) "
+    r"(?P<m8>[0-9a-f]+)/(?P<m9>[0-9a-f]+) (?P<m10>[0-9a-f]+)/(?P<m11>[0-9a-f]+) "
+    r"(?P<m12>[0-9a-f]+)/(?P<m13>[0-9a-f]+) (?P<m14>[0-9a-f]+)/(?P<m15>[0-9a-f]+) "
+    r"c1 words=(?P<words>\d+) mismatch=(?P<mismatch>\d+) subs=(?P<subs>\d+) "
+    r"first=(?P<fblk>\d+)/(?P<fidx>\d+) exp=(?P<exp>[0-9a-f]+) got=(?P<got>[0-9a-f]+) "
+    r"c3 hitrows=(?P<hitrows>\d+) range=(?P<lo>\d+)-(?P<hi>\d+) "
+    r"unexpected=(?P<unexpected>\d+) first=(?P<uerow>\d+)/(?P<uocol>\d+)/(?P<uoval>[0-9a-f]+) "
+    r"smmu fsr=(?P<fsr>[0-9a-f]+) far=(?P<far>[0-9a-f]+)/(?P<farhi>[0-9a-f]+) "
+    r"synr=(?P<synr>[0-9a-f]+) post=(?P<pfsr>[0-9a-f]+)/(?P<pfar>[0-9a-f]+)/(?P<psynr>[0-9a-f]+) "
+    r"wrap=(?P<wrap>\d+)")
+
 PANEL = re.compile(
     r"NATIVE_A540_PANEL: mapped=\d+ runs=(?P<runs>\d+) .*?"
     r"carry=(?P<carry>[0-9a-f]+) kept=(?P<kept>\d+)/(?P<kepttotal>\d+) .*?finalkept="
@@ -53,7 +68,9 @@ FAULT = re.compile(
     r"srcrow=(?P<srcrow>\d+) rowbad=(?P<r0>[0-9a-f]+)/(?P<r1>[0-9a-f]+)/"
     r"(?P<r2>[0-9a-f]+)/(?P<r3>[0-9a-f]+)/(?P<r4>[0-9a-f]+)/(?P<r5>[0-9a-f]+)/"
     r"(?P<r6>[0-9a-f]+)/(?P<r7>[0-9a-f]+) othercol=(?P<othercol>\d+) "
-    r"odd=(?P<odd>\d+) v1=(?P<v1>[0-9a-f]+) o1=(?P<o1>[0-9a-f]+) "
+    r"odd=(?P<odd>\d+) "
+    r"colours=(?P<c0>\d+)/(?P<c1>\d+)/(?P<c2>\d+)/(?P<c3>\d+)/(?P<c4>\d+)/(?P<c5>\d+) "
+    r"v1=(?P<v1>[0-9a-f]+) o1=(?P<o1>[0-9a-f]+) "
     r"v2=(?P<v2>[0-9a-f]+) o2=(?P<o2>[0-9a-f]+) "
     r"surf0=(?P<surf0>[0-9a-f]+) surfX=(?P<surfX>[0-9a-f]+) surfEnd=(?P<surfEnd>[0-9a-f]+) "
     r"panel0=(?P<panel0>[0-9a-f]+) panelX=(?P<panelX>[0-9a-f]+) "
@@ -88,7 +105,7 @@ def fmt_decay(value):
 
 
 def main(path):
-    watches, panels, activity, faults = [], [], [], []
+    watches, panels, activity, faults, cases = [], [], [], [], []
     with open(path, "r", errors="replace") as handle:
         for line in handle:
             m = WATCH_H630.search(line) or WATCH_H629.search(line)
@@ -106,6 +123,10 @@ def main(path):
             fl = FAULT.search(line)
             if fl:
                 faults.append(fl.groupdict())
+                continue
+            cs = CASES.search(line)
+            if cs:
+                cases.append(cs.groupdict())
 
     if not watches:
         print("no NATIVE_PANEL_WATCH line matched: wrong log shape")
@@ -194,6 +215,9 @@ def main(path):
               % " ".join("%s=%s" % (i, int(fl["r%d" % i], 16)) for i in range(8)))
         print("  pixels holding another block's colour: %s   holding anything else: %s"
               % (fl["othercol"], fl["odd"]))
+        names = ("blue", "green", "red", "cyan", "yellow", "magenta")
+        print("  broken down by which block's colour: %s"
+              % ", ".join("%s=%s" % (names[i], fl["c%d" % i]) for i in range(6)))
         print("  odd values 0x%s at dword 0x%s, 0x%s at dword 0x%s"
               % (fl["v1"], fl["o1"], fl["v2"], fl["o2"]))
         print("  surface words the blit reads : %s %s %s"
@@ -209,6 +233,49 @@ def main(path):
             print("  the panel does not match the surface word the blit was told to read,")
             print("  so the destination row or the read row is addressed wrongly")
 
+    if cases:
+        cs = cases[-1]
+        print("")
+        print("case matrix (H632):")
+        print("  C0 columns that should have changed and did not: %s, over %s rows"
+              % (cs["unwritten"], cs["rows"]))
+        print("     short block %s; per-row unwritten columns (bit position = column):"
+              % cs["shortblk"])
+        any_mask = False
+        for i in range(8):
+            lo = int(cs["m%d" % (i * 2)], 16)
+            hi = int(cs["m%d" % (i * 2 + 1)], 16)
+            if not (lo or hi):
+                continue
+            any_mask = True
+            cols = [x for x in range(32) if lo >> x & 1]
+            cols += [32 + x for x in range(32) if hi >> x & 1]
+            span = "%d..%d" % (cols[0], cols[-1]) if cols else "none"
+            print("       row %d: %2d columns, span %s" % (i, len(cols), span))
+        if not any_mask:
+            print("       no row shows unwritten columns")
+        print("  C1 indirect buffer verified in memory: %s mismatches over %s words "
+              "in %s submissions"
+              % (cs["mismatch"], cs["words"], cs["subs"]))
+        if int(cs["mismatch"]):
+            print("     first mismatch block %s word %s: expected 0x%s, found 0x%s"
+                  % (cs["fblk"], cs["fidx"], cs["exp"], cs["got"]))
+            print("     the CP would fetch something other than what was written, so"
+                  " the command stream itself is the suspect, not the geometry")
+        print("  C3 scan of columns 480..543 down every panel row: %s rows carry a test "
+              "colour" % cs["hitrows"])
+        print("     range %s-%s, pixels outside the expected rows: %s"
+              % (cs["lo"], cs["hi"], cs["unexpected"]))
+        if int(cs["unexpected"]):
+            print("     first at row %s column %s value 0x%s: the data landed where it "
+                  "was not told to" % (cs["uerow"], cs["uocol"], cs["uoval"]))
+        else:
+            print("     nothing outside the expected rows carries a test colour")
+        print("  SMMUv2 fault registers before: fsr=0x%s far=0x%s:%s fsynr0=0x%s"
+              % (cs["fsr"], cs["farhi"], cs["far"], cs["synr"]))
+        print("                        after:  fsr=0x%s far=0x%s fsynr0=0x%s"
+              % (cs["pfsr"], cs["pfar"], cs["psynr"]))
+        print("  ring wraps this session: %s" % cs["wrap"])
     changed = both + neither
     samples = int(g["samples"])
     transitions = int(g["transitions"])
