@@ -29296,3 +29296,23 @@ H634 的 drawable 探针这轮跑到了，结果是明确的：
 日志通道再次自证：六次 STAT 的 `lock` 与 `errors` 逐次相等（107/148/167/175/189/203），`dmashort` 与 `io` 始终为 0，`paused` 累计 1175。写失败全部来自 H319 的单次 try-lock，环缺口主要来自 USB 实时流健康时按设计暂停磁盘。
 
 **H638 的设计。** 在 `8e4ef56` 的五个调用点里去掉 `did-finish-enter` 与 `did-finish-return` 两处（离停滞位置最近），其余输入逐字节不变。complete_startup 恢复则说明 `rearm_exception_reporters()` 在主线程上改变了后续行为，需要查它具体改了什么；不恢复则依次排除 `ui-run-enter` 与 complete-startup 两处，并把力气转到场景激活消息为什么没送到 pid 27。
+
+### §345 H638 判据成立：did-finish 两处 rearm 就是阻塞因素，同时更正"会话结束"的读法（2026-11-24）
+
+H638 去掉 `rearm_exception_reporters()` 在 `did-finish-enter` 与 `did-finish-return` 的调用，其余四处保留。环 262.02 秒确认 `build=H638` 上机，随后：
+
+```text
+463.78 h557_ui_run_enter
+469.41 h541_did_finish_enter
+673.42 h557_complete_startup_enter        <- H636/H637 到会话结束都没有
+676.72 h553_application_controller_init_enter
+721.95..728.50 h589 x16 / h590 x3 / h591 x1
+```
+
+带这两处调用的两轮（H636、H637）都没到 complete_startup，去掉之后的一轮到了；不带的 H593 那轮（H635）也到了。上机前写定的判据落在第一支，**因果成立**：在主线程紧贴 UIKit `didFinishLaunching` 之前做这套 handler 替换，会阻止 SpringBoard 走到场景激活驱动的 complete_startup。机制本身仍未定位——函数确实返回了（`h541_did_finish_enter` 在它之后打印），阻塞发生在返回之后的 UIKit 代码里。`h541_did_finish_return` 在 H635 和 H638 都是 0，所以"did_finish 不返回"是既有状态，不是本变量的效应。
+
+**一条必须记录的更正。** 本轮实时流在 324.54 秒停止、UXC1 无 ACK，我据此判断内核挂死并要求强制重启。环否证了它：环头 `uptime_s=856`，最后内容 867.6 秒，`NATIVE_DISPLAY_GATE` 心跳走到 857.4 秒，`panic=0/0/0`。**内核一直活着，卡住的是 USB 器件栈**，而 UXC1 命令恰好也走这条路径。同样的道理适用于 H635（COM 591 秒断、环写到 808 秒）。今后判断"会话是否结束"必须以环为准，不能以 COM 停止或命令无应答为准。
+
+**桌面侧的新深度。** 过 complete_startup 后环里出现了此前没有的一层：根窗口 `SBRootSceneWindow` 可见（662.22 秒），其 `UIWindowLayer` 绑定 `contextId=0x7f2dc83`（666.42 秒），`CALayerHost` 引用同一 contextId 且 `contents=0`（669.71–669.75 秒）。这正是此前只能靠推断的"宿主已绑定、内容未提交"状态，现在有直接记录。`CAWindowServerDisplay` 的七个读取全部 `type=UNSUPPORTED` 属于插件探针的限制。
+
+**基线选择。** H638 的产物在桌面推进上严格优于 H598，且与 H593 的进度一致，因此以 H638 为新基线继续。下一步不再纠结 handler 的机制细节，而是直接追这笔场景激活之后的内容提交：宿主图层已绑定 contextId 却 `contents=0`，需要确认该 context 的另一端（渲染服务侧）有没有收到过桌面窗口的提交。
