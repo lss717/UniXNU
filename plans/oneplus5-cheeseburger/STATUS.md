@@ -29194,3 +29194,55 @@ H634 把 `probe_drawable` 挂进插件加载后 30/120/300/480 秒的观察块�
 于是两个现象要分开处理。COM 口缺失的原因不是枚举到一半失败，而是器件栈从未起来；环里反复出现的 `CHEESEBURGER_USB: setup 80 06 value=0301/0302` 属于另一个上下文的记录，不能拿来证明 iOS 的 CDC 在被枚举。磁盘通道的 300–389 秒洞则是 `logWrite` 真实失败后的退避：`UFS_LOG_LOCK_TICKS` 为 100 ms，`UFS_LOG_BACKOFF_TICKS` 为 2 s，失败即 `break`，靠下一轮更大的 `delta` 补写，而内核消息缓冲在这 90 秒里绕圈，内容因此永久丢失。
 
 **下一步按这两条分别取证。** 磁盘侧要在 `logWrite` 的失败分支区分锁超时与真实 I/O 错误，并记录 `seq`/`slot`/`errors` 的推进速率，因为现在 `NATIVE_UFS_LOG_FAIL` 只给一个笼统的 `wrote == false`。USB 侧要先确认器件控制器为什么没启动，这一步与第一帧无关但决定后续所有用户态实验能否被观测。
+### §341 H635 日志通道原因码：磁盘通道的失败全部是 try-lock，不是存储错误（2026-11-24）
+
+**唯一变量。** 在 `NativeUfsProbe::logWrite()` 的六个失败点各记一个原因码，并把累计直方图打进 `NATIVE_UFS_LOG_STAT`，同时在 `h103FlushNow()` 的两个提前返回处分别计数。纯观测，不改任何 I/O 行为。`H103_BUILD` 由 `H473` 升到 `H635`，让环自己说明是哪一轮写的。
+
+六个点分别是：前置校验拒绝、DMA 缓冲未就绪、容量裁剪后为空、H319 try-lock 没抢到、`writeBytes()` 短写、`ufsWriteCommand()` 失败。此前它们全部塌缩成同一个 `false`。直方图是累计值，所以即使某段时间没有任何 slot 落盘，下一次成功的 `NATIVE_UFS_LOG_STAT` 仍然带着那段时间的失败分布。
+
+**产物。** UniXNU `fe957dc9`，kernel `add66248db58d5e507f3688af6ff4f856ab7c2c5176582a0bf8436ba0bbcd188`（`6f38ffb5` 之后第一次内核变化），payload `5e4cc7224a86a948d4ee3280d73120e5a053691fbd9202817de3fa1e2c140475`，boot `60746b2c1c9b0f1a0e2920bcea9eebf65dc50476f7bd37e6038767097a66d5b6`。gpuaddon 与 trust 沿用 H634 的 `60d88248d1b5` 与 `79c3fc821b9a`，本轮没有重建插件。上机前清零 `userdata_ios` 尾部 32 MiB 未做，靠 `build=H635` 与 boot 标记区分轮次。设备启动标记 `2c763080`，环覆盖 38.9–808.3 秒，无超过 15 秒的空洞。
+
+**结论一，磁盘通道的退化原因已经确定。** 两次直方图快照：
+
+```text
+[ 129.805210] rounds=61  seq=26 errors=35 idle=1 skips=139 delta=0     pre=0 buf=0 clamp=0 lock=35 dmashort=0 io=0 paused=0 backoff=139
+[ 196.737993] rounds=121 seq=65 errors=56 idle=0 skips=202 delta=10515 pre=0 buf=0 clamp=0 lock=56 dmashort=0 io=0 paused=0 backoff=202
+```
+
+`lock` 与 `errors` 完全相等，`dmashort` 和 `io` 始终为 0，前置校验三类也全为 0。15 条 `NATIVE_UFS_LOG_FAIL` 的 `reason=` 全部是 4。也就是说，**日志写不进去的原因是 H319 的单次 try-lock 抢不过主 I/O 队列，UFS 本身一次错误都没有**。`skips` 也全部来自退避分支（`paused=0`）。整轮 140 个 slot 成功、232 次写失败，尝试失败率约 62%。
+
+**结论二，§340 关于"消息缓冲绕圈导致内容永久丢失"的说法要修正。** 内核消息缓冲大小由环里第一行给出：`NATIVE_UFS_LOG: base cursor=28003 size=131072`。H635 全部 FAIL 的 `delta` 最大 35788，H634 那次 128 秒停滞后的 `delta` 只有 14306，都远小于 131072。所以那些洞主要是"刷写停滞加上内核这段时间产出本来就低"，不是内容被覆盖掉。H634 的 300–389 秒区间按 slot 时间戳核对，内核确实几乎没产出新行。
+
+**结论三，§340 的 USB 判断只对 H634 那一轮成立。** 本轮 `NATIVE_USB_STATUS` 是 `started=1 connected=1 active=1 completions=2419 bytes=404800`，COM8 出现，实时流完整可用。器件控制器是能起来的。同时 `paused=1 reason=usb-healthy` 多次出现，`transitions=12`，说明 H410 那条"USB 实时流健康时暂停磁盘 sink"的规则真的在起作用，而且这是设计行为。H634 的 `started=0` 与本轮的差异本身还需要解释，但它不再是"器件栈永远起不来"的结论。
+
+**修复方向。** 磁盘通道要改的是 H319 的策略，不是 UFS 路径。可选做法是失败后做有界等待而不是立刻放弃，或者把一次 slot 写拆成多段以便在锁间隙里推进。这属于日志可用性，和第一帧无关，排在桌面线之后。
+
+### §342 打包缺口：SpringBoard 侧的观察器从 H593 起就没再上过机（2026-11-24）
+
+**这是本轮真正的收获，而且它推翻了一批前提。**
+
+H634 的 drawable 探针这轮跑到了，结果是明确的：
+
+```text
+[ 509.204510] NATIVE_MTL: draw#391 next observer comm=backboardd   drawable=1 texture=1 1080x1920
+[ 509.149101] NATIVE_MTL: draw#132 next observer comm=mediaserverd drawable=1 texture=1 1080x1920
+[ 502.903594] NATIVE_MTL: draw#385 layer observer comm=backboardd device=1 bounds=360x640 scale=3.00 ds=0x0 max=3
+```
+
+按 H634 上机前写定的判据，这属于第二支：**drawable 路径是通的**，CAMetalLayer 能建、能绑设备、`nextDrawable` 能返回、texture 有真实 1080x1920 后备内存。CA 不发绘制的原因在 QuartzCore/CAMetalLayer 一侧，不在渲染服务器或 IOSurface 分配。
+
+但同一份日志里 **SpringBoard 一条 `builder#1 load` 都没有**，而它明确活着（`h572_observer_alive sample=60..270 pid=27` 每 30 秒一次）。查源码后原因清楚了：`probe_drawable` 和 `builder#1 load` 都在 `A540TracePlugin.mm`，而 SpringBoard 里运行的是另一个组件 `lib/SpringBoardSceneObserver.dylib`，`h513_constructor_enter`、`h572_observer_*` 这些事件都出自它。
+
+于是去看环里那个组件自报的版本：
+
+```text
+[ 269.849444] NATIVE_MTL: observer load process=SpringBoard pid=27 build=H593
+```
+
+源码 `drivers/NativeMetal/SpringBoardSceneObserver.mm:2328` 打印的是 `build=H598`。把 H634 addon 容器里的这个文件取出来实测，二进制里只有 `build=H593` 和到 `h593_signal_hooks` 为止的钩子名，`build=H598` 在整个证据目录里只出现在源码文件中。H628、H633a、H634、H635 四轮环全部显示 `build=H593`。
+
+**根因在打包链。** gpuaddon 是 `NGPUADD2` 容器，12 个条目。H634 用的 `repack-h634.py` 只替换 `addons/A540Trace.bundle/` 的 3 个文件（`assert replaced==3`），其余 9 个文件原样来自 `H604-base-gpuaddon.img`。而 H592 的记录已经写明当时的做法是"从上一轮 addon 解包，只替换 `lib/SpringBoardSceneObserver.dylib`"，两种做法各自只更新一个组件。全量重建走不通的原因在 `scripts/build-h436-springboard-bundle.py` 的产物门禁：它要求编译出的观察器必须含 `b"build=H593"`，源码升到 H598 后这一条必然失败。我把 82 个必需标记逐个对当前源码核对，**只有这一个过时，其余 81 个都在**。所以这不是源码问题，是门禁钉住了旧字符串。
+
+**影响范围。** H594–H598 五轮观察器改动（致命内存信号记录、today layout 跳过、图标状态持久化跳过、widget intent 跳过、致命上报器提前安装与启动后重新武装）从未到达设备。此前凡是把 SpringBoard 侧行为归因于这几轮改动的记录，都需要重新核对。
+
+**H636 的处理。** 把门禁指向源码实际打印的字符串（UniXNU `ee4d678c`），用与全量构建脚本完全相同的编译参数单独构建观察器，`-Werror` 通过、82 个标记齐全、二进制确认 `build=H598`，产物 142432 字节、CDHash `74be5730e13c42b2ff2df9c63f08eb1b14f1a987`。按既有做法只替换容器里的这一个文件（`assert replaced==1`，12 条目顺序与模式保持），并把 trust cache 里的旧观察器 CDHash `1b5e0509ec77ce42edfd45bd5fc10fb917875ccb` 换成新值。内核逐字节沿用 H635 的 `add66248`，所以本轮唯一变量就是"SpringBoard 里跑的是当前源码"。
