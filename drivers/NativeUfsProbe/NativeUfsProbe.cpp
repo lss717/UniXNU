@@ -781,8 +781,11 @@ extern "C" { extern volatile uint32_t native_a540_pwr_state[4]; }
 extern "C" { extern volatile uint32_t native_a540_hbsub[6]; }
 /* H611: real a5xx 2D blit through CP_BLIT, reported every tenth beat. */
 extern "C" { extern volatile uint32_t native_a540_blit_diag[8]; }
+/* H612: real-size surface blit through the static GPU page table. */
+extern "C" { extern volatile uint32_t native_a540_surface_diag[10]; }
 extern "C" void native_a540_hb_selftest(void);
 extern "C" void native_a540_hb_blit_selftest(void);
+extern "C" void native_a540_hb_surface_selftest(void);
 
 // H413: one compact, fixed-storage display record next to the existing
 // SpringBoard sample. This is observation-only and does not alter USB,
@@ -1073,6 +1076,9 @@ heartbeatThread (void *, wait_result_t)
     if ((beat % 30) == 0 && (native_a540_c3_state() & 4u)) native_a540_hb_selftest();
     /* H611: offset from the H609 submit test so the two never share a beat. */
     if ((beat % 30) == 15 && (native_a540_c3_state() & 4u)) native_a540_hb_blit_selftest();
+    /* H612: a third offset so the surface test never shares a beat with the
+     * H609 submit test or the H611 blit test. */
+    if ((beat % 30) == 22 && (native_a540_c3_state() & 4u)) native_a540_hb_surface_selftest();
     if (beat == 1 || (beat % 10) == 0) {
       IOLog ("NATIVE_A540_BO: n=%u rc=%x ready=%u free=%u used=%x ok=%u sub=%x fence=%x c3=%x lastput=%x\n",
              (unsigned) native_a540_bo_diag[0], (unsigned) native_a540_bo_diag[1], (unsigned) native_a540_bo_diag[2],
@@ -1092,6 +1098,12 @@ heartbeatThread (void *, wait_result_t)
       IOLog ("NATIVE_A540_PWR: gx=%x cx=%x branch=%x rcg=%x\n",
              (unsigned) native_a540_pwr_state[0], (unsigned) native_a540_pwr_state[1],
              (unsigned) native_a540_pwr_state[2], (unsigned) native_a540_pwr_state[3]);
+      IOLog ("NATIVE_A540_SURFACE: sr=%x wr=%x f=%x n=%u match=%u bad=%x srcalloc=%u dstalloc=%u padclean=%u alphaclean=%u\n",
+             (unsigned) native_a540_surface_diag[0], (unsigned) native_a540_surface_diag[1],
+             (unsigned) native_a540_surface_diag[2], (unsigned) native_a540_surface_diag[3],
+             (unsigned) native_a540_surface_diag[4], (unsigned) native_a540_surface_diag[5],
+             (unsigned) native_a540_surface_diag[6], (unsigned) native_a540_surface_diag[7],
+             (unsigned) native_a540_surface_diag[8], (unsigned) native_a540_surface_diag[9]);
       IOLog ("NATIVE_A540_BLIT: sr=%x wr=%x f=%x n=%x match=%x bad=%x d0=%x s0=%x\n",
              (unsigned) native_a540_blit_diag[0], (unsigned) native_a540_blit_diag[1],
              (unsigned) native_a540_blit_diag[2], (unsigned) native_a540_blit_diag[3],
