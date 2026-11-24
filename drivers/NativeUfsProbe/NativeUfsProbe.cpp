@@ -790,7 +790,7 @@ extern "C" { extern volatile uint32_t native_a540_panel_diag[180]; }
 /* One build tag for every panel line. H629 and H631 each carried the round
  * number in more than one place and H631 shipped with the watch line still
  * reading H630, so the tag is defined once and substituted everywhere. */
-#define NATIVE_PANEL_BUILD "H633a"
+#define NATIVE_PANEL_BUILD "H634"
 extern "C" { extern volatile uint64_t native_legacy_panel_activity[8][3]; }
 /* H625: which scanout writer ran, when and over which rows. */
 extern "C" { extern volatile uint64_t native_legacy_panel_writes[4][4]; }
