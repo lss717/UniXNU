@@ -783,6 +783,8 @@ extern "C" { extern volatile uint32_t native_a540_hbsub[6]; }
 extern "C" { extern volatile uint32_t native_a540_blit_diag[8]; }
 /* H612: real-size surface blit through the static GPU page table. */
 extern "C" { extern volatile uint32_t native_a540_surface_diag[13]; }
+/* H616: the scanout target as the display driver holds it. */
+extern "C" { extern volatile uint64_t native_legacy_scanout[10]; }
 extern "C" void native_a540_hb_selftest(void);
 extern "C" void native_a540_hb_blit_selftest(void);
 extern "C" void native_a540_hb_surface_selftest(void);
@@ -1098,6 +1100,12 @@ heartbeatThread (void *, wait_result_t)
       IOLog ("NATIVE_A540_PWR: gx=%x cx=%x branch=%x rcg=%x\n",
              (unsigned) native_a540_pwr_state[0], (unsigned) native_a540_pwr_state[1],
              (unsigned) native_a540_pwr_state[2], (unsigned) native_a540_pwr_state[3]);
+      IOLog ("NATIVE_SCANOUT: phys=%llx len=%llx %ux%u rowbytes=%u base=%llx segments=%u first=%llx primary=%u\n",
+             (unsigned long long) native_legacy_scanout[0], (unsigned long long) native_legacy_scanout[1],
+             (unsigned) native_legacy_scanout[2], (unsigned) native_legacy_scanout[3],
+             (unsigned) native_legacy_scanout[4], (unsigned long long) native_legacy_scanout[5],
+             (unsigned) native_legacy_scanout[6], (unsigned long long) native_legacy_scanout[8],
+             (unsigned) native_legacy_scanout[7]);
       IOLog ("NATIVE_A540_SURFACE: sr=%x wr=%x f=%x n=%u match=%u bad=%x srcalloc=%u dstalloc=%u padclean=%u alphaclean=%u rowmask=%x badgot=%x badrowgood=%u\n",
              (unsigned) native_a540_surface_diag[0], (unsigned) native_a540_surface_diag[1],
              (unsigned) native_a540_surface_diag[2], (unsigned) native_a540_surface_diag[3],
