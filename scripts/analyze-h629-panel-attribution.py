@@ -57,6 +57,20 @@ CASES = re.compile(
     r"synr=(?P<synr>[0-9a-f]+) post=(?P<pfsr>[0-9a-f]+)/(?P<pfar>[0-9a-f]+)/(?P<psynr>[0-9a-f]+) "
     r"wrap=(?P<wrap>\d+)")
 
+H633 = re.compile(
+    r"NATIVE_PANEL_H633: build=\S+ alloc=(?P<a0>\d+)/(?P<a1>\d+) "
+    r"r1 rc=(?P<r1s>\d+)/(?P<r1w>\d+) agree=(?P<r1a>\d+) first=(?P<r1f>\d+) "
+    r"usable=(?P<r1u>\d+) "
+    r"r2a rc=(?P<r2as>\d+)/(?P<r2aw>\d+) agree=(?P<r2aa>\d+) "
+    r"first=(?P<r2af>\d+) gpu=(?P<r2ag>[0-9a-f]+) cpu=(?P<r2ac>[0-9a-f]+) "
+    r"r2b rc=(?P<r2bs>\d+)/(?P<r2bw>\d+) agree=(?P<r2ba>\d+) "
+    r"first=(?P<r2bf>\d+) gpu=(?P<r2bg>[0-9a-f]+) cpu=(?P<r2bc>[0-9a-f]+) "
+    r"c2g rc=(?P<c2gs>\d+)/(?P<c2gw>\d+) landed=(?P<c2gl>\d+) "
+    r"sentinel=(?P<c2gs2>\d+) first=(?P<c2gf>\d+) "
+    r"c2 rc=(?P<c2s>\d+)/(?P<c2w>\d+) landed=(?P<c2l>\d+) "
+    r"sentinel=(?P<c2s2>\d+) first=(?P<c2f>\d+) "
+    r"ring=(?P<ringb>\d+)->(?P<ringa>\d+) fence=(?P<fb>\d+)->(?P<fa>\d+)")
+
 PANEL = re.compile(
     r"NATIVE_A540_PANEL: (?:build=\S+ )?mapped=\d+ runs=(?P<runs>\d+) .*?"
     r"carry=(?P<carry>[0-9a-f]+) kept=(?P<kept>\d+)/(?P<kepttotal>\d+) .*?finalkept="
@@ -100,12 +114,79 @@ DECAY = (("beat +1", "d1"), ("beat +2", "d2"), ("beat +3", "d3"), ("beat +5", "d
          ("beat +10", "d10"), ("beat +20", "d20"), ("beat +29", "d29"))
 
 
+def report_h633(h):
+    """Read the H633 cases. The wording is deliberately narrow: a read-back
+    agreement says only that two views of the same addresses agreed, and a
+    disagreement says only that they did not, which is a reason to look at
+    mapping, memory type and visibility, not a proof about page tables."""
+    print("")
+    print("H633 read-back and off-screen cases:")
+    if h["a0"] != "1" or h["a1"] != "1":
+        print("  the case buffers were not allocated, so nothing here ran")
+        return
+    print("  allocation ok: buffer %s, indirect buffer %s" % (h["a0"], h["a1"]))
+    print("  R1 control, panel row 384: rc %s/%s, agreeing columns %s of 64, "
+          "read path usable %s"
+          % (h["r1s"], h["r1w"], h["r1a"], h["r1u"]))
+    if h["r1u"] != "1":
+        print("     first differing column %s" % h["r1f"])
+        print("  STOP: the read path itself does not reproduce, so R2 and C2 are")
+        print("  not evidence about the missing rows. Fix the read path first.")
+        return
+    print("     the read path reproduces, so R2 below is meaningful")
+    for name, a, w, agree, first, gpu, cpu in (
+            ("R2 row 386", "r2as", "r2aw", "r2aa", "r2af", "r2ag", "r2ac"),
+            ("R2 row 387", "r2bs", "r2bw", "r2ba", "r2bf", "r2bg", "r2bc")):
+        print("  %s: rc %s/%s, agreeing columns %s of 64" % (name, h[a], h[w], h[agree]))
+        if h[agree] != "64":
+            print("     first difference at column %s: GPU read 0x%s, CPU read 0x%s"
+                  % (h[first], h[gpu], h[cpu]))
+            print("     the two views of these addresses disagree. That is a reason to")
+            print("     examine mapping, memory type and visibility. It is not a")
+            print("     demonstration that the page table is wrong.")
+        else:
+            print("     GPU and CPU agree on these bytes. That says nothing about")
+            print("     whether the original write happened.")
+    print("  C2g control, off-screen at the offset of row 384: rc %s/%s, columns "
+          "no longer holding the sentinel %s of 64"
+          % (h["c2gs"], h["c2gw"], h["c2gl"]))
+    if h["c2gl"] != "64":
+        print("     first column still holding the sentinel: %s" % h["c2gf"])
+        print("  STOP: the construction does not land even on an ordinary buffer, so")
+        print("  C2 cannot be compared against anything. Fix the construction first.")
+        return
+    print("     the construction lands on an ordinary buffer, so C2 is comparable")
+    print("  C2, off-screen at the offset of row 386: rc %s/%s, columns written %s "
+          "of 64, still sentinel %s" % (h["c2s"], h["c2w"], h["c2l"], h["c2s2"]))
+    if h["c2l"] == "64":
+        print("     the same operation that fails on the panel writes this buffer")
+        print("     completely, so the difference belongs to the panel as a target,")
+        print("     not to the command construction or the source")
+    elif h["c2l"] == "0":
+        print("     nothing landed here either, which matches the panel behaviour and")
+        print("     points at the construction or the source rather than at the panel")
+    else:
+        print("     partially landed, first untouched column %s; the shape is the"
+              % h["c2f"])
+        print("     next thing to look at")
+    ring_delta = int(h["ringa"]) - int(h["ringb"])
+    fence_delta = int(h["fa"]) - int(h["fb"])
+    print("  isolation: ring moved %d words and the fence counter %d, expected 40 "
+          "and 4 for four submissions" % (ring_delta, fence_delta))
+    if ring_delta < 0 or fence_delta != 4:
+        print("     does not match four submissions of ten words each, so another")
+        print("     submitter was active during the cases and these results are not")
+        print("     isolated")
+    else:
+        print("     consistent with exactly the four submissions these cases made")
+
+
 def fmt_decay(value):
     return "not reached" if int(value) == NOT_REACHED else value
 
 
 def main(path):
-    watches, panels, activity, faults, cases = [], [], [], [], []
+    watches, panels, activity, faults, cases, h633 = [], [], [], [], [], []
     with open(path, "r", errors="replace") as handle:
         for line in handle:
             m = WATCH_H630.search(line) or WATCH_H629.search(line)
@@ -127,6 +208,10 @@ def main(path):
             cs = CASES.search(line)
             if cs:
                 cases.append(cs.groupdict())
+                continue
+            hh = H633.search(line)
+            if hh:
+                h633.append(hh.groupdict())
 
     if not watches:
         print("no NATIVE_PANEL_WATCH line matched: wrong log shape")
@@ -276,6 +361,9 @@ def main(path):
         print("                        after:  fsr=0x%s far=0x%s fsynr0=0x%s"
               % (cs["pfsr"], cs["pfar"], cs["psynr"]))
         print("  ring wraps this session: %s" % cs["wrap"])
+    if h633:
+        report_h633(h633[-1])
+
     changed = both + neither
     samples = int(g["samples"])
     transitions = int(g["transitions"])
