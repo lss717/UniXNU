@@ -29316,3 +29316,29 @@ H638 去掉 `rearm_exception_reporters()` 在 `did-finish-enter` 与 `did-finish
 **桌面侧的新深度。** 过 complete_startup 后环里出现了此前没有的一层：根窗口 `SBRootSceneWindow` 可见（662.22 秒），其 `UIWindowLayer` 绑定 `contextId=0x7f2dc83`（666.42 秒），`CALayerHost` 引用同一 contextId 且 `contents=0`（669.71–669.75 秒）。这正是此前只能靠推断的"宿主已绑定、内容未提交"状态，现在有直接记录。`CAWindowServerDisplay` 的七个读取全部 `type=UNSUPPORTED` 属于插件探针的限制。
 
 **基线选择。** H638 的产物在桌面推进上严格优于 H598，且与 H593 的进度一致，因此以 H638 为新基线继续。下一步不再纠结 handler 的机制细节，而是直接追这笔场景激活之后的内容提交：宿主图层已绑定 contextId 却 `contents=0`，需要确认该 context 的另一端（渲染服务侧）有没有收到过桌面窗口的提交。
+
+### §346 H639：普查探针没执行，但查出一个此前被误读的现象（2026-11-25）
+
+H639 把 CAContext 普查挂在观察器周期上报线程的第 14、24 次循环上。该线程在 `h572_observer_alive sample=390`（655.24 秒，第 13 次）之后不再输出，第 14 次的 alive 行本身也没出现，所以普查从未执行，`h639_ctx_census` 在实时流与环里都是 0 条。**探针设计错误，本轮不可判。**
+
+顺带查出的东西比预期重要：**SpringBoard 的插件输出会在会话中途永久静默，而 SpringBoard 和内核都还活着。** 各轮 `h572_observer_alive` 最大 sample：H635 510（795.3 秒）、H636 420（706.5 秒）、H637 420（750.9 秒）、H638 540（816.5 秒）、H639 390（655.2 秒）。H639 的环证明内核活到 1329.81 秒，1045–1330 秒窗口里心跳继续、SpringBoard 被内核探针提到 1005 次，**但 `NATIVE_MTL` 一条都没有**。
+
+这条约束此前所有"SpringBoard 不再产生事件"的解读。H636、H637 的静默时刻同样早于会话结束。判断停滞位置只能依据静默之前的最后一条事件，不能把静默本身当作停滞证据。
+
+另外两条关于日志通道的事实：内核活着而 USB 死掉的情况第三次出现（实时流止于 749.02 秒，环写到 1329.81 秒）；**环在快速刷写时只保留约 285 秒**（H639 `slots_written=498` 而 `slot_count=247`，槽位环绕，260–750 秒的早期内容被覆盖且无法恢复）。需要早期内容时必须在会话还短的时候就拉环。
+
+桌面与服务端的 context 对照仍拿到了实质数据：SpringBoard 自己的 context 是 `0xd996bf04`（522.34 秒 `ca_context_set_layer`），服务端 `allContexts` 在 637.5 秒仍是 2 个 `owner=56` 的条目。但这两种读法当时还分不开，留给 H640。
+
+### §347 H640：`allContexts` 是进程私有的，H638 的因果结论降级为概率性（2026-11-25）
+
+普查改挂在两个早触发的事件上（首次 `-[CAContext setLayer:]` 且 layer 非空、首次 `+[CAContext remoteContextWithOptions:]`），执行成功。环 261.64 秒确认 `build=H640`。
+
+**结论一：`+[CAContext allContexts]` 是进程私有列表。** SpringBoard 侧 `count=1`，唯一条目就是它自己 601.32 秒创建的 `0xa6a32d3d`；backboardd 侧三次 `ctxs=2`，两个条目 `owner=56`。两边互不可见。**因此 H638/H639 里"服务端列表没有桌面 context 所以桌面 context 没注册到服务器"的推论无效**，那个探针读不出跨进程事实。
+
+**结论二：服务端收到了 commit，但提交的图层没有内容。** backboardd 的 `event_layer_commit` 共 8 次，分属两个自己的 context（`0x6010ec8c`、`0xba6015e`），逐层 depth 0/1/2 全部 `contents=- rootContents=-`。**没有一次 commit 落在 SpringBoard 的 `0xa6a32d3d` 上。** 这是服务端事件流的证据，比进程私有列表可靠，因为钩子就装在渲染服务器里。
+
+**结论三：H638 的因果说法要降级。** 同一族代码（去掉 did-finish 两处 rearm）三次结果：H635 到 complete_startup、H638 到、H640 没到（进入 did_finish 后到 905.7 秒仍无，实时流与环一致）。是 2/3，不是 1/1 对 0/2。§345 写的"判据成立、因果成立"过强。
+
+`val=0 xf=0 fr=0` 到 863.05 秒。日志通道仍是 `lock` 与 `errors` 相等、`dmashort=io=0`；环里 278.8 秒的空洞（333.8–612.7）恰好被实时流完整覆盖，`paused=877` 说明是磁盘 sink 按设计暂停。**两通道必须合并**，本轮给出正反两面的实例。
+
+**下一步。** 桌面线现在最有力的一条证据是"服务端收到了 backboardd 自己的提交，却没收到 SpringBoard 的"。要确认它，需要在 backboardd 侧按 context id 主动查询服务端表（插件已经在用 `contextIdHostingContextId:`、`clientPortOfContextId:`、`taskNamePortOfContextId:` 这类以 id 为键的服务端方法），把 SpringBoard 自己报出的 id 拿去问服务器认不认识，而不是再依赖任何进程私有列表。
