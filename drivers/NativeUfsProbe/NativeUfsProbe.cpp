@@ -786,7 +786,8 @@ extern "C" { extern volatile uint32_t native_a540_surface_diag[13]; }
 /* H616: the scanout target as the display driver holds it. */
 extern "C" { extern volatile uint64_t native_legacy_scanout[10]; }
 /* H617: the panel the platform console reported at C3 time. */
-extern "C" { extern volatile uint32_t native_a540_panel_diag[48]; }
+extern "C" { extern volatile uint32_t native_a540_panel_diag[80]; }
+extern "C" { extern volatile uint64_t native_legacy_panel_activity[8][3]; }
 /* H625: which scanout writer ran, when and over which rows. */
 extern "C" { extern volatile uint64_t native_legacy_panel_writes[4][4]; }
 extern "C" void native_a540_hb_panel_watch(void);
@@ -1127,11 +1128,33 @@ heartbeatThread (void *, wait_result_t)
              (unsigned) native_a540_panel_diag[25], (unsigned) native_a540_panel_diag[27],
              (unsigned) native_a540_panel_diag[28],
              (unsigned) native_a540_panel_diag[26], (unsigned) native_a540_panel_diag[29]);
-      IOLog ("NATIVE_PANEL_WATCH: samples=%u now=%u mask=%x transitions=%u prev=%u atSample=%u\n",
+      IOLog ("NATIVE_PANEL_WATCH: build=H629 samples=%u now=%u mask=%x transitions=%u prev=%u atSample=%u blocks=%u/%u/%u/%u/%u/%u sig blk=%u wht=%u gry=%u tile=%u unk=%u unkval=%x unko=%x decay=%u/%u/%u/%u/%u/%u/%u reread=%u/%u cons sc=%u dr=%u rows=%u region=%u-%u grid=%ux%u h=%u wrote=%u both=%u neither=%u\n",
              (unsigned) native_a540_panel_diag[38], (unsigned) native_a540_panel_diag[39],
              (unsigned) native_a540_panel_diag[40], (unsigned) native_a540_panel_diag[41],
-             (unsigned) native_a540_panel_diag[42], (unsigned) native_a540_panel_diag[43]);
-      IOLog ("NATIVE_PANEL_WRITES: progress=%llu@%llu/%llu-%llu panic=%llu@%llu/%llu-%llu blank=%llu@%llu/%llu-%llu copy=%llu@%llu/%llu-%llu\n",
+             (unsigned) native_a540_panel_diag[42], (unsigned) native_a540_panel_diag[43],
+             (unsigned)(native_a540_panel_diag[44] & 0x3ffu),
+             (unsigned)((native_a540_panel_diag[44] >> 10) & 0x3ffu),
+             (unsigned)((native_a540_panel_diag[44] >> 20) & 0x3ffu),
+             (unsigned)(native_a540_panel_diag[45] & 0x3ffu),
+             (unsigned)((native_a540_panel_diag[45] >> 10) & 0x3ffu),
+             (unsigned)((native_a540_panel_diag[45] >> 20) & 0x3ffu),
+             (unsigned) native_a540_panel_diag[46], (unsigned) native_a540_panel_diag[47],
+             (unsigned) native_a540_panel_diag[48], (unsigned) native_a540_panel_diag[49],
+             (unsigned) native_a540_panel_diag[50], (unsigned) native_a540_panel_diag[51],
+             (unsigned) native_a540_panel_diag[52],
+             (unsigned) native_a540_panel_diag[56], (unsigned) native_a540_panel_diag[57],
+             (unsigned) native_a540_panel_diag[58], (unsigned) native_a540_panel_diag[59],
+             (unsigned) native_a540_panel_diag[60], (unsigned) native_a540_panel_diag[61],
+             (unsigned) native_a540_panel_diag[62],
+             (unsigned) native_a540_panel_diag[53], (unsigned) native_a540_panel_diag[54],
+             (unsigned) native_a540_panel_diag[66], (unsigned) native_a540_panel_diag[67],
+             (unsigned) native_a540_panel_diag[73],
+             (unsigned) native_a540_panel_diag[70], (unsigned) native_a540_panel_diag[71],
+             (unsigned) native_a540_panel_diag[68], (unsigned) native_a540_panel_diag[69],
+             (unsigned) native_a540_panel_diag[72],
+             (unsigned) native_a540_panel_diag[63], (unsigned) native_a540_panel_diag[64],
+             (unsigned) native_a540_panel_diag[65]);
+       IOLog ("NATIVE_PANEL_WRITES: progress=%llu@%llu/%llu-%llu panic=%llu@%llu/%llu-%llu blank=%llu@%llu/%llu-%llu copy=%llu@%llu/%llu-%llu\n",
              (unsigned long long) native_legacy_panel_writes[0][0],
              (unsigned long long) native_legacy_panel_writes[0][1],
              (unsigned long long) native_legacy_panel_writes[0][2],
@@ -1148,6 +1171,31 @@ heartbeatThread (void *, wait_result_t)
              (unsigned long long) native_legacy_panel_writes[3][1],
              (unsigned long long) native_legacy_panel_writes[3][2],
              (unsigned long long) native_legacy_panel_writes[3][3]);
+       IOLog ("NATIVE_PANEL_ACTIVITY: build=H629 prog=%llu/%llu/%llu panic=%llu/%llu/%llu blank=%llu/%llu/%llu copy=%llu/%llu/%llu pat=%llu/%llu/%llu slot=%llu/%llu/%llu usb=%llu/%llu/%llu hbcell=%llu/%llu/%llu\n",
+             (unsigned long long) native_legacy_panel_activity[0][0],
+             (unsigned long long) native_legacy_panel_activity[0][1],
+             (unsigned long long) native_legacy_panel_activity[0][2],
+             (unsigned long long) native_legacy_panel_activity[1][0],
+             (unsigned long long) native_legacy_panel_activity[1][1],
+             (unsigned long long) native_legacy_panel_activity[1][2],
+             (unsigned long long) native_legacy_panel_activity[2][0],
+             (unsigned long long) native_legacy_panel_activity[2][1],
+             (unsigned long long) native_legacy_panel_activity[2][2],
+             (unsigned long long) native_legacy_panel_activity[3][0],
+             (unsigned long long) native_legacy_panel_activity[3][1],
+             (unsigned long long) native_legacy_panel_activity[3][2],
+             (unsigned long long) native_legacy_panel_activity[4][0],
+             (unsigned long long) native_legacy_panel_activity[4][1],
+             (unsigned long long) native_legacy_panel_activity[4][2],
+             (unsigned long long) native_legacy_panel_activity[5][0],
+             (unsigned long long) native_legacy_panel_activity[5][1],
+             (unsigned long long) native_legacy_panel_activity[5][2],
+             (unsigned long long) native_legacy_panel_activity[6][0],
+             (unsigned long long) native_legacy_panel_activity[6][1],
+             (unsigned long long) native_legacy_panel_activity[6][2],
+             (unsigned long long) native_legacy_panel_activity[7][0],
+             (unsigned long long) native_legacy_panel_activity[7][1],
+             (unsigned long long) native_legacy_panel_activity[7][2]);
       IOLog ("NATIVE_SCANOUT: phys=%llx len=%llx %ux%u rowbytes=%u base=%llx segments=%u first=%llx primary=%u\n",
              (unsigned long long) native_legacy_scanout[0], (unsigned long long) native_legacy_scanout[1],
              (unsigned) native_legacy_scanout[2], (unsigned) native_legacy_scanout[3],

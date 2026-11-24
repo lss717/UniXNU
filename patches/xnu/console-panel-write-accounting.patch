@@ -1,0 +1,101 @@
+--- a/osfmk/console/video_console.c
++++ b/osfmk/console/video_console.c
+@@ -122,6 +122,27 @@
+ 
+ 
+ extern int       disableConsoleOutput;
++
++/*
++ * H629: the A540 panel test paints colour blocks into the same framebuffer this
++ * console draws text on, and those blocks were found replaced within seconds of
++ * being written. The display driver counts four writers and the console was not
++ * among them, so nothing tied the two together. These counters record what the
++ * console actually does to the panel: scrolls, glyph cells, screen clears and
++ * cursor flips, with the scroll region and text grid in effect. The display
++ * driver reads them once per heartbeat and reports the delta, so a change in
++ * panel content can be matched to a console write in the same beat, or shown to
++ * be independent of it. Nothing here changes behaviour; it only counts.
++ *
++ * [0] scroll_down calls      [1] scroll_up calls
++ * [2] text rows copied by scrolls   [3] bytes copied by scrolls
++ * [4] paint_char calls       [5] clear_screen calls
++ * [6] reverse_cursor calls   [7] last scroll region top
++ * [8] last scroll region bottom     [9] v_rows (text rows on the panel)
++ * [10] v_columns (text columns)     [11] ISO_CHAR_HEIGHT (glyph height, panel rows)
++ */
++unsigned long long video_console_panel_counts[12];
++
+ static boolean_t gc_enabled     = FALSE;
+ static boolean_t gc_initialized = FALSE;
+ static boolean_t vm_initialized = FALSE;
+@@ -1338,6 +1359,7 @@
+ 		return;
+ 	}
+ 
++	video_console_panel_counts[5]++;
+ 	linelongs = vinfo.v_rowbytes * (ISO_CHAR_HEIGHT >> 2);
+ 	rowline = vinfo.v_rowscanbytes >> 2;
+ 	rowlongs = vinfo.v_rowbytes >> 2;
+@@ -1621,6 +1643,7 @@
+ 		return;
+ 	}
+ 
++	video_console_panel_counts[4]++;
+ 	switch (vinfo.v_depth) {
+ 	case 8:
+ 		vc_paint_char_8(xx, yy, ch, attrs, ch_previous, attrs_previous);
+@@ -1731,6 +1754,7 @@
+ 		}
+ 		where = (uint32_t*)(((unsigned char*)where) + vinfo.v_rowbytes);
+ 	}
++	video_console_panel_counts[6]++;
+ }
+ 
+ static void
+@@ -1741,6 +1765,13 @@
+ 	if (!vinfo.v_depth) {
+ 		return;
+ 	}
++
++	/* H629: a scroll rewrites the whole scrolling region, so the number of
++	 * rows it moves is the measurement that matters, not the call alone. */
++	video_console_panel_counts[0]++;
++	video_console_panel_counts[2] +=
++	    (unsigned long long)((int)(scrreg_bottom - scrreg_top) - num);
++	video_console_panel_counts[11] = ISO_CHAR_HEIGHT;
+ 
+ 	linelongs = vinfo.v_rowbytes * (ISO_CHAR_HEIGHT >> 2);
+ 	rowline = vinfo.v_rowbytes >> 2;
+@@ -1751,6 +1782,14 @@
+ 	from = to - (linelongs * num);  /* handle multiple line scroll (Michel Pollet) */
+ 
+ 	i = (scrreg_bottom - scrreg_top) - num;
++
++	video_console_panel_counts[3] +=
++	    (unsigned long long)i * (unsigned long long)ISO_CHAR_HEIGHT *
++	    (unsigned long long)vinfo.v_rowbytes;
++	video_console_panel_counts[7] = scrreg_top;
++	video_console_panel_counts[8] = scrreg_bottom;
++	video_console_panel_counts[9] = vinfo.v_rows;
++	video_console_panel_counts[10] = vinfo.v_columns;
+ 
+ 	while (i-- > 0) {
+ 		for (line = 0; line < ISO_CHAR_HEIGHT; line++) {
+@@ -1785,6 +1824,17 @@
+ 
+ 	i = (scrreg_bottom - scrreg_top) - num;
+ 
++	video_console_panel_counts[1]++;
++	video_console_panel_counts[2] +=
++	    (unsigned long long)((int)(scrreg_bottom - scrreg_top) - num);
++	video_console_panel_counts[3] +=
++	    (unsigned long long)i * (unsigned long long)ISO_CHAR_HEIGHT *
++	    (unsigned long long)vinfo.v_rowbytes;
++	video_console_panel_counts[7] = scrreg_top;
++	video_console_panel_counts[8] = scrreg_bottom;
++	video_console_panel_counts[9] = vinfo.v_rows;
++	video_console_panel_counts[10] = vinfo.v_columns;
++
+ 	while (i-- > 0) {
+ 		for (line = 0; line < ISO_CHAR_HEIGHT; line++) {
+ 			/*
