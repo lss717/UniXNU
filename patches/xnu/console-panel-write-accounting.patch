@@ -23,7 +23,7 @@
 + * [8] last scroll region bottom     [9] v_rows (text rows on the panel)
 + * [10] v_columns (text columns)     [11] ISO_CHAR_HEIGHT (glyph height, panel rows)
 + */
-+unsigned long long video_console_panel_counts[12];
++unsigned long long video_console_panel_counts[12] __attribute__((aligned(16)));
 +
  static boolean_t gc_enabled     = FALSE;
  static boolean_t gc_initialized = FALSE;
