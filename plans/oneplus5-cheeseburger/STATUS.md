@@ -28558,3 +28558,42 @@ GPU 写入并被扫描控制器实际读到的 framebuffer 内容。
 **回归与输入。** H611 blit `match=400`、H609 提交 `sr=0 wr=0 n=11`、H615 surface `match=512 rowmask=ff`
 全部保持；trustcache `d012ba8fad87`、gpuaddon `c8ad154c9123`、Data seed `0ef3db84e89b`、args 1000 字节
 与 H610 逐字相同，每轮只有一个功能变量。`val=0 xf=0 fr=0` 未变：这是测试图案，不是真实 CA 桌面第一帧。
+
+### §322 H620-H621：同一 GPU 输出 surface 到面板的链式拷贝成立，SMMU 故障归零（2026-11-24）
+
+**H620（boot `6670ee46d4929c3dcd23e2a0b233fb20290fc1b3cabbc9f04274b653e8465141`，kernel
+`9a46b9ff73daf75288ca583ee225ae0ac7ab22624fa6c1fd416e61c291bdff5d`，boot id `35F47B4C`）。**
+故障记账方法本身有效，并给出可核查的结论：`fsr(pre=80000402 cleared=400 post=400)`，即按
+MMU-500 的写一清除规则清掉 CB0_FSR 后跑完 A、B 两步，FSR 没有再变，`far` 前后同为
+`0x7111040`。所以 **A、B 没有产生新故障**，之前把非零 FSR 读成"每轮新故障"是不成立的，
+FSR 会粘滞。本轮 step A 失败：`match=0 bad=4410`，`0x4410 = 16*1088 + 16` 正是第一个目的
+像素。原因是我自己把 step A 目的的 ARRAY_PITCH 从 H615 已验证的 4352 改成了 64，step B 的源
+同样被我改成 64。回归全部保持。
+
+**H621（boot `88058030ae165507125ed443dd2e40b37fe272a6f32957c85f6140d88173ddbf`，payload
+`7f8f0dad20d137b975f0f24790a25190053214ddbc5b073ed231516609717e8b`，kernel
+`4e4f213054f0137977886a63a490042edbe316f20b34377b53c10f6ce3966e1d`，boot id `3675026C`）。**
+只把 step A 目的与 step B 源的 ARRAY_PITCH 改回 4352（step B 目的的 64 保留，那是 H619 已验证
+的形式，我没有顺手改动已验证路径）。结果 17 次运行一致：
+
+```text
+A(sr=0 wr=0 match=512 bad=ffffffff)  B(sr=0 wr=0 match=512 bad=ffffffff)
+win=1 sent=0  fsr(pre=400 cleared=400 post=400)  far(pre=0 post=0)
+```
+
+**这条链现在是真的。** CPU 写入的可见图案经 GPU blit A 进入正常分配的真实 surface，CPU 读回
+512 个像素全部一致；同一块 GPU 写入的 surface 区域再经 GPU blit B 进入面板 framebuffer，CPU
+通过非缓存窗口读回 512 个像素再次全部一致，矩形外四个哨兵未变。H619 的源是独立的 CPU 图案
+缓冲，因此当时"同一 GPU 输出 surface 到面板"并不成立，这一点我在上一轮已如实指出，本轮修正。
+
+**SMMU 故障归零。** H621 的 FAR 前后都是 0，FSR 在 W1C 清除后保持 0x400 不变，说明 A、B 两步
+都没有触发翻译故障。H619 的 `far=3001000` 越界读随着源缓冲区扩到 2 页、图案移到偏移 4096 而消失。
+需要说明的是，"硬件即便 depth=1 也会探测 base+ARRAY_PITCH" 始终只是我对那一次观测的推测，
+没有被证实；本轮的做法是消除越界的可能性（扩大映射并把字段恢复成已验证值），不是靠压小字段掩盖。
+
+**边界仍然成立。** 这是二维矩形拷贝链，不证明 shader、光栅、纹理采样或混合。`val=0 xf=0 fr=0`
+未变，扫描可见性**尚未由肉眼确认**，测试图案也不是真实 CA 桌面第一帧。
+
+**下一步。** 先请用户肉眼确认屏幕上的 64x8 色带（面板 x=64..127、y=200..207，红色左到右递增、
+蓝色上到下递增、绿色恒定），再扩大到覆盖奇偶行、左右边界与全屏的重复更新，并加入旧帧回归检查，
+最后才接真实 CA 请求。
