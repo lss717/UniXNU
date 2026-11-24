@@ -141,7 +141,7 @@ def main() -> int:
         OBSERVER,
         (
             b"observer load process=",
-            b"build=H593",
+            b"build=H598",
             b"h587_activity_center_service_skip",
             b"h588_folder_name_localization_bypass",
             b"h589_default_widget_intent_skip",
