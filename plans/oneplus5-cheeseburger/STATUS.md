@@ -29243,6 +29243,34 @@ H634 的 drawable 探针这轮跑到了，结果是明确的：
 
 **根因在打包链。** gpuaddon 是 `NGPUADD2` 容器，12 个条目。H634 用的 `repack-h634.py` 只替换 `addons/A540Trace.bundle/` 的 3 个文件（`assert replaced==3`），其余 9 个文件原样来自 `H604-base-gpuaddon.img`。而 H592 的记录已经写明当时的做法是"从上一轮 addon 解包，只替换 `lib/SpringBoardSceneObserver.dylib`"，两种做法各自只更新一个组件。全量重建走不通的原因在 `scripts/build-h436-springboard-bundle.py` 的产物门禁：它要求编译出的观察器必须含 `b"build=H593"`，源码升到 H598 后这一条必然失败。我把 82 个必需标记逐个对当前源码核对，**只有这一个过时，其余 81 个都在**。所以这不是源码问题，是门禁钉住了旧字符串。
 
-**影响范围。** H594–H598 五轮观察器改动（致命内存信号记录、today layout 跳过、图标状态持久化跳过、widget intent 跳过、致命上报器提前安装与启动后重新武装）从未到达设备。此前凡是把 SpringBoard 侧行为归因于这几轮改动的记录，都需要重新核对。
+**影响范围（本节初稿写错过，已更正）。** 我最初把 `build=` 从 H593 跳到 H598 读成"五轮改动从未上机"。逐个提交核对源码里的字符串后，实际只有一步：设备里那份是 `8b5e858`（打印 `build=H593`），当前 HEAD 是 `8e4ef56`（打印 `build=H598`），中间**只有一个提交**，改动是 `SpringBoardSceneObserver.mm` 的 +7/−1。字符串一次跳了 5 个号，不是有 5 个未上机的版本。H585–H593 的改动本来就在设备里。从未上机的内容就是 `8e4ef56` 增加的几处 `rearm_exception_reporters()` 调用（did-finish-enter、did-finish-return、complete-startup-enter、complete-startup-return、ui-run-enter 以及周期上报线程）。
 
 **H636 的处理。** 把门禁指向源码实际打印的字符串（UniXNU `ee4d678c`），用与全量构建脚本完全相同的编译参数单独构建观察器，`-Werror` 通过、82 个标记齐全、二进制确认 `build=H598`，产物 142432 字节、CDHash `74be5730e13c42b2ff2df9c63f08eb1b14f1a987`。按既有做法只替换容器里的这一个文件（`assert replaced==1`，12 条目顺序与模式保持），并把 trust cache 里的旧观察器 CDHash `1b5e0509ec77ce42edfd45bd5fc10fb917875ccb` 换成新值。内核逐字节沿用 H635 的 `add66248`，所以本轮唯一变量就是"SpringBoard 里跑的是当前源码"。
+
+### §343 H636 上机：打包修复确认生效，但单轮 A/B 不足以归因（2026-11-24）
+
+**打包修复生效。** 环里 268.82 秒 `observer load process=SpringBoard pid=27 build=H598`，这是该版本第一次真正运行在设备上。钩子安装记录齐全：
+
+```text
+[ 261.495219] h551_status_hooks pid=27 statusDataLog=1
+[ 261.634137] h552_telephony_hooks pid=27 shared=1 creating=1 init=1
+[ 261.769009] h553_application_hooks pid=27 controllerInit=1 installedApp=1 installedApps=1 allInstalled=1
+[ 266.269843] h557_startup_hooks pid=27 complete=1 uiShared=1 iconInit=1 chronoSubscribe=1 appRun=1
+[ 266.576500] event=h585_activity_hooks pid=27 bsProxy=0 bsSend=1 centerInit=1 descriptors=1 content=1 budget=1 active=1 enabled=1 authInit=1
+```
+
+实时流里一度看不到这些一次性记录，是因为器件控制器约 254 秒才起来、采集从 290 秒开始，安装发生在 261–266 秒。**这是"没采到"而不是"没发生"**，靠环补齐后才没有误判。
+
+**启动推进。** SpringBoard 主线程 522.98 秒进 `UIApplication._run`，525.31 秒进 `didFinishLaunching`，之后到 1068 秒（543 秒）没有 `h557_complete_startup_enter`，也没有 `h553_application_controller_init_enter`。H635 是 474.79 秒进 did_finish、628.71 秒进 complete_startup。显示侧仍然 `val=0 xf=0 fr=0`。
+
+**但这条对比不足以支撑归因，理由有两条。**
+
+第一，`h541_did_finish_return` 在 H635 和 H636 里都是 0。didFinishLaunching 不返回是既有状态，不是 `8e4ef56` 造成的，所以"卡在 didFinishLaunching 里面"这种说法是错的。complete_startup 的入参带 `scene=0x139d472f0`，它由外部消息驱动，不是 didFinishLaunching 返回之后的下一步。
+
+第二，同一份 H593 产物在这几轮本身的推进差异就很大：H633a 和 H634 连 `h541_did_finish_enter` 都没有，H635 有且到了 complete_startup。也就是说 H593 侧的样本是 0/2 和 1/1，H598 侧只有 1 个样本。在这个方差下，单轮 A/B 分辨不出 7 行改动的影响。
+
+**已经定位到触发者。** H635 里 complete_startup 前 0.1 秒的序列是 `NATIVE_IPC_EVT kind=S/D/R ... to=27` 与 `to=56` 交替，pid 56 实测是 `backboardd`（`NATIVE_EXEC: pid=56 comm=backboardd`，两轮一致）。所以 complete_startup 由 SpringBoard 与 backboardd 之间的一笔场景激活交换触发。H636 里这条通道并没有断：整个窗口内 `to=56` 有 63 次 S、58 次 D、7 次 R，`to=27` 只有 10 次 S、8 次 D。方向是通的，但送到 SpringBoard 的消息极少。
+
+**日志通道本轮的新事实。** 三次 STAT 显示 `paused` 累计到 1105，`backoff=502`，`lock=172`，`dmashort=0 io=0`，15 条 FAIL 的 reason 仍然全是 4。也就是说：写失败的原因还是 try-lock，而**环里的缺口现在主要是 H410 规则故意暂停磁盘 sink 造成的**——USB 实时流健康时磁盘就不写，这是设计行为。结论是：**USB 可用时实时流才是权威来源，环只是补集**，两边必须合并看，不能只拉环。
+
+**下一步（H637）。** 先做同一镜像的重复启动，把 H598 的"到 did_finish、不到 complete_startup"从 1 个样本变成 2–3 个，确认这是稳定状态还是本轮噪声。同时离线比较 H635 与 H636 在 did_finish 之后 SpringBoard 发往 backboardd 的场景激活请求：H635 有对应的 `to=56` 发送与 `to=27` 投递，H636 的 `to=27` 投递只有 8 次。若重复轮次稳定复现，再在 `8e4ef56` 的五个调用点里逐个去掉，定位到底是哪一处改变了推进。
