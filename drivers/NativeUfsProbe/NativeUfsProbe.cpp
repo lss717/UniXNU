@@ -1265,11 +1265,11 @@ heartbeatThread (void *, wait_result_t)
              (unsigned) native_a540_panel_diag[109], (unsigned) native_a540_panel_diag[110],
              (unsigned) native_a540_panel_diag[111], (unsigned) native_a540_panel_diag[144]);
       IOLog ("NATIVE_PANEL_H633: build=" NATIVE_PANEL_BUILD
-             " alloc=%u/%u r1 rc=%u/%u agree=%u first=%u usable=%u
-             " r2a rc=%u/%u agree=%u first=%u gpu=%x cpu=%x
-             " r2b rc=%u/%u agree=%u first=%u gpu=%x cpu=%x
-             " c2g rc=%u/%u landed=%u sentinel=%u first=%u
-             " c2 rc=%u/%u landed=%u sentinel=%u first=%u
+             " alloc=%u/%u r1 rc=%u/%u agree=%u first=%u usable=%u"
+             " r2a rc=%u/%u agree=%u first=%u gpu=%x cpu=%x"
+             " r2b rc=%u/%u agree=%u first=%u gpu=%x cpu=%x"
+             " c2g rc=%u/%u landed=%u sentinel=%u first=%u"
+             " c2 rc=%u/%u landed=%u sentinel=%u first=%u"
              " ring=%u->%u fence=%u->%u\n",
              (unsigned) native_a540_panel_diag[146], (unsigned) native_a540_panel_diag[147],
              (unsigned) native_a540_panel_diag[148], (unsigned) native_a540_panel_diag[149],
