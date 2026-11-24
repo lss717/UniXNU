@@ -58,7 +58,7 @@ CASES = re.compile(
     r"wrap=(?P<wrap>\d+)")
 
 PANEL = re.compile(
-    r"NATIVE_A540_PANEL: mapped=\d+ runs=(?P<runs>\d+) .*?"
+    r"NATIVE_A540_PANEL: (?:build=\S+ )?mapped=\d+ runs=(?P<runs>\d+) .*?"
     r"carry=(?P<carry>[0-9a-f]+) kept=(?P<kept>\d+)/(?P<kepttotal>\d+) .*?finalkept="
     r"(?P<finalkept>\d+)/(?P<finaltotal>\d+)")
 
