@@ -1,0 +1,16 @@
+--- a/osfmk/console/video_console.c
++++ b/osfmk/console/video_console.c
+@@ -3074,9 +3074,11 @@
+ 		 * changed in the same beat as its writes, so this is the control that
+ 		 * decides whether the console is the writer.
+ 		 */
+-		vc_panel_handed_over = TRUE;
+-		video_console_panel_counts[12] = 1;
+-		gc_enable(FALSE);
++		/* H633a: the handoff above is what took the NATIVE_* text off the panel
++		 * from H630 onward. Keep the console drawing so the boot can be read on
++		 * the screen. Counting the control as not taken is the marker: [12] = 0
++		 * means this build left the console in charge of the scanout. */
++		video_console_panel_counts[12] = 0;
+ #endif
+ 		break;
