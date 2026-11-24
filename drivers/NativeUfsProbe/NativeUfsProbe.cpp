@@ -787,6 +787,8 @@ extern "C" { extern volatile uint32_t native_a540_surface_diag[13]; }
 extern "C" { extern volatile uint64_t native_legacy_scanout[10]; }
 /* H617: the panel the platform console reported at C3 time. */
 extern "C" { extern volatile uint32_t native_a540_panel_diag[40]; }
+/* H625: which scanout writer ran, when and over which rows. */
+extern "C" { extern volatile uint64_t native_legacy_panel_writes[4][4]; }
 extern "C" void native_a540_hb_panel_selftest(void);
 extern "C" void native_a540_hb_selftest(void);
 extern "C" void native_a540_hb_blit_selftest(void);
@@ -1120,6 +1122,23 @@ heartbeatThread (void *, wait_result_t)
              (unsigned) native_a540_panel_diag[25], (unsigned) native_a540_panel_diag[27],
              (unsigned) native_a540_panel_diag[28],
              (unsigned) native_a540_panel_diag[26], (unsigned) native_a540_panel_diag[29]);
+      IOLog ("NATIVE_PANEL_WRITES: progress=%llu@%llu/%llu-%llu panic=%llu@%llu/%llu-%llu blank=%llu@%llu/%llu-%llu copy=%llu@%llu/%llu-%llu\n",
+             (unsigned long long) native_legacy_panel_writes[0][0],
+             (unsigned long long) native_legacy_panel_writes[0][1],
+             (unsigned long long) native_legacy_panel_writes[0][2],
+             (unsigned long long) native_legacy_panel_writes[0][3],
+             (unsigned long long) native_legacy_panel_writes[1][0],
+             (unsigned long long) native_legacy_panel_writes[1][1],
+             (unsigned long long) native_legacy_panel_writes[1][2],
+             (unsigned long long) native_legacy_panel_writes[1][3],
+             (unsigned long long) native_legacy_panel_writes[2][0],
+             (unsigned long long) native_legacy_panel_writes[2][1],
+             (unsigned long long) native_legacy_panel_writes[2][2],
+             (unsigned long long) native_legacy_panel_writes[2][3],
+             (unsigned long long) native_legacy_panel_writes[3][0],
+             (unsigned long long) native_legacy_panel_writes[3][1],
+             (unsigned long long) native_legacy_panel_writes[3][2],
+             (unsigned long long) native_legacy_panel_writes[3][3]);
       IOLog ("NATIVE_SCANOUT: phys=%llx len=%llx %ux%u rowbytes=%u base=%llx segments=%u first=%llx primary=%u\n",
              (unsigned long long) native_legacy_scanout[0], (unsigned long long) native_legacy_scanout[1],
              (unsigned) native_legacy_scanout[2], (unsigned) native_legacy_scanout[3],
