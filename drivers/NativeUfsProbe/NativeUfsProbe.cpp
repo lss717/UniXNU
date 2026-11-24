@@ -1128,7 +1128,7 @@ heartbeatThread (void *, wait_result_t)
              (unsigned) native_a540_panel_diag[25], (unsigned) native_a540_panel_diag[27],
              (unsigned) native_a540_panel_diag[28],
              (unsigned) native_a540_panel_diag[26], (unsigned) native_a540_panel_diag[29]);
-      IOLog ("NATIVE_PANEL_WATCH: build=H629 samples=%u now=%u mask=%x transitions=%u prev=%u atSample=%u blocks=%u/%u/%u/%u/%u/%u sig blk=%u wht=%u gry=%u tile=%u unk=%u unkval=%x unko=%x decay=%u/%u/%u/%u/%u/%u/%u reread=%u/%u cons sc=%u dr=%u rows=%u region=%u-%u grid=%ux%u h=%u wrote=%u both=%u neither=%u\n",
+      IOLog ("NATIVE_PANEL_WATCH: build=H630 samples=%u now=%u mask=%x transitions=%u prev=%u atSample=%u blocks=%u/%u/%u/%u/%u/%u sig blk=%u wht=%u gry=%u tile=%u unk=%u unkval=%x unko=%x decay=%u/%u/%u/%u/%u/%u/%u reread=%u/%u cons sc=%u dr=%u rows=%u region=%u-%u grid=%ux%u h=%u paint=%u clear=%u cursor=%u ctl=%u gc=%u wrote=%u both=%u neither=%u\n",
              (unsigned) native_a540_panel_diag[38], (unsigned) native_a540_panel_diag[39],
              (unsigned) native_a540_panel_diag[40], (unsigned) native_a540_panel_diag[41],
              (unsigned) native_a540_panel_diag[42], (unsigned) native_a540_panel_diag[43],
@@ -1152,6 +1152,9 @@ heartbeatThread (void *, wait_result_t)
              (unsigned) native_a540_panel_diag[70], (unsigned) native_a540_panel_diag[71],
              (unsigned) native_a540_panel_diag[68], (unsigned) native_a540_panel_diag[69],
              (unsigned) native_a540_panel_diag[72],
+             (unsigned) native_a540_panel_diag[74], (unsigned) native_a540_panel_diag[75],
+             (unsigned) native_a540_panel_diag[76], (unsigned) native_a540_panel_diag[77],
+             (unsigned) native_a540_panel_diag[78],
              (unsigned) native_a540_panel_diag[63], (unsigned) native_a540_panel_diag[64],
              (unsigned) native_a540_panel_diag[65]);
       /* Read the two counter arrays through local pointers. A constant index
