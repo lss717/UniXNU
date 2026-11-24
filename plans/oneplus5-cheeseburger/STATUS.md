@@ -29184,3 +29184,13 @@ H634 把 `probe_drawable` 挂进插件加载后 30/120/300/480 秒的观察块�
 第二条通道同时不可用：COM 口未出现，环里 `CHEESEBURGER_USB: setup 80 06 value=0301/0302 index=0409 length=255` 反复重试并伴随 `control status start ep=0 data_in=1`，即主机卡在字符串描述符阶段，对应"无法识别的 USB 设备"。
 
 **因此本轮把"日志通道可靠性"提为第一优先事项。** 在 CDC 与持久环至少有一条能完整覆盖 backboardd 加载插件前后的时间窗之前，用户态观察实验无法判定。退化点在 H632 之后：H632 的 CDC 与环都可用。
+
+### §340 H634 日志通道排查：H410 的 USB 暂停规则被排除，USB 器件栈根本没启动（2026-11-24）
+
+先记一个被数据否证的假设。看到 `h103FlushNow()` 里 H410 那条"USB 实时流健康时故意暂停磁盘 sink"的规则后，我推断洞与 COM 缺失同源：内核误判 USB 健康而关掉磁盘，主机侧枚举却失败。这个推断**错了**。
+
+同一份环里 `NATIVE_USB_STATUS` 在 68.0、98.4、128.7 秒三次都是 `paused=0 reason=0 started=0 connected=0 active=0 fault=0 completions=0 bytes=0 age_ms=0 transitions=0`。`paused=0` 说明磁盘 sink 从未被这条规则暂停，`skips=151` 因此只能来自退避分支或 `gH103SlotBusy`；`started=0`、`connected=0`、`completions=0` 说明 iOS 侧 USB 器件控制器根本没有启动。
+
+于是两个现象要分开处理。COM 口缺失的原因不是枚举到一半失败，而是器件栈从未起来；环里反复出现的 `CHEESEBURGER_USB: setup 80 06 value=0301/0302` 属于另一个上下文的记录，不能拿来证明 iOS 的 CDC 在被枚举。磁盘通道的 300–389 秒洞则是 `logWrite` 真实失败后的退避：`UFS_LOG_LOCK_TICKS` 为 100 ms，`UFS_LOG_BACKOFF_TICKS` 为 2 s，失败即 `break`，靠下一轮更大的 `delta` 补写，而内核消息缓冲在这 90 秒里绕圈，内容因此永久丢失。
+
+**下一步按这两条分别取证。** 磁盘侧要在 `logWrite` 的失败分支区分锁超时与真实 I/O 错误，并记录 `seq`/`slot`/`errors` 的推进速率，因为现在 `NATIVE_UFS_LOG_FAIL` 只给一个笼统的 `wrote == false`。USB 侧要先确认器件控制器为什么没启动，这一步与第一帧无关但决定后续所有用户态实验能否被观测。
