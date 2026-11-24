@@ -29342,3 +29342,32 @@ H639 把 CAContext 普查挂在观察器周期上报线程的第 14、24 次循�
 `val=0 xf=0 fr=0` 到 863.05 秒。日志通道仍是 `lock` 与 `errors` 相等、`dmashort=io=0`；环里 278.8 秒的空洞（333.8–612.7）恰好被实时流完整覆盖，`paused=877` 说明是磁盘 sink 按设计暂停。**两通道必须合并**，本轮给出正反两面的实例。
 
 **下一步。** 桌面线现在最有力的一条证据是"服务端收到了 backboardd 自己的提交，却没收到 SpringBoard 的"。要确认它，需要在 backboardd 侧按 context id 主动查询服务端表（插件已经在用 `contextIdHostingContextId:`、`clientPortOfContextId:`、`taskNamePortOfContextId:` 这类以 id 为键的服务端方法），把 SpringBoard 自己报出的 id 拿去问服务器认不认识，而不是再依赖任何进程私有列表。
+
+### §348 离线审计：五个"服务端"钩子都不是事务接收边界，H641 的阴性判据也不成立（2026-11-25）
+
+H642 上机后本机 USB 器件控制器一直没起来（uptime 804 秒仍无任何 USB 器件，无 COM、无 adb、无 fastboot），实时流拿不到，环又必须重启进 TWRP 才能读。趁这个窗口做了三项不需要设备的审计。
+
+**一、钩子的作用域。** `install_trace_instance_hook()` 的实现是 `class_getInstanceMethod()` 加 `method_setImplementation()`，也就是**在调用它的那个进程里替换类方法实现**。因此 `install_server_ca_event_hooks()` 装的五个钩子只能看见 backboardd 自己的 ObjC 活动，没有一个位于跨进程事务的接收路径上。此前把带 `srv` 前缀的行当作"服务端事件流"，是命名造成的误读。
+
+**二、五个钩子在全部历史日志里的命中数**（`logs/` 下所有 `report.txt`、`*.raw.bin`、`*.log` 汇总）：
+
+| 钩子 | 被替换的选择器 | 安装状态 | 历史命中 |
+| --- | --- | --- | --- |
+| `event_layer_commit` | `-[CALayer _didCommitLayer:]` | 1 | 1504 |
+| `event_context_layer` | `-[CAContext setLayer:]` | 1 | 379 |
+| `event_context_slot` | `-[CAContext setObject:forSlot:]` | 1 | **0** |
+| `event_context_commit_wait` | `-[CAContext waitForCommitId:timeout:]` | 1 | **0** |
+| `event_display_surface` | `-[CAWindowServerDisplay presentSurface:withOptions:]` | 1 | **0** |
+
+安装状态来自 1109 条 `srv#… event_hooks contextLayer=1 contextSlot=1 commitWait=1 layerCommit=1 displaySurface=1`，五个全为 1，**说明选择器都存在、替换都成功**，三个零命中是"从未被调用"，不是"没装上"。
+
+`waitForCommitId:timeout:` 在 H638 那轮（桌面根窗口已经可见、宿主图层已经绑定 contextId）也一次都没触发，所以不能把它的沉默当作"客户端事务没到达"的证据——更可能是这个版本的服务器不走这条 API。**结论：当前插桩里没有任何一个经过验证的事务接收边界。** 真正可能的边界在 C++/mach 层（`CA::Render::Server` 与 `com.apple.CARenderServer` 端口上的收包），插件至今只在 `probe_displays()` 里查询过该 bootstrap 端口号，没有在任何一侧观测过收包。
+
+**三、更正我自己写下的判据。** §347 和给 H641 写的判据里，我把"无效 id 返回 0 且 `pid_for_task` 得到 `KERN_INVALID_NAME`"当作让阴性结果有意义的条件，这是不够的。一个根本不存在的 key 查不到，只说明查找函数对未知 key 返回零，不说明一个**确实已注册**的 id 会返回非零。有效的对照必须分层：
+
+- **A1 本地已注册 id**：`allContexts` 里的 id 应解析出非 0 的 client/task 端口。H641 没拿到，因为普查当时跑在构造函数里，那时本进程的 `allContexts` 还是空的。H642 把它移到加载后 30/120/300/480 秒的观察点，那时 `allContexts` 已经有 2 个条目。
+- **A3 相邻 id**：对有效 id 取 `id+1`、`id-1` 再查。若相邻值也返回非 0，说明底层是数组或索引式访问，任何阴性都不成立；若相邻值返回 0，才说明查询真是按 key 进行的。
+- **B 不存在的 id**：`0xdeadbeef` → `client=0x0 task=0x0 host=0x0`、`st=0x5`，已得到。
+- **A2 外部已注册 id**：只有这一条能证明接口能跨进程解析。它需要把 SpringBoard 报出的 context id 传给 backboardd，而当前没有不改动内核、不新增组件就能完成的手段（共享文件受沙盒限制，未验证）。**在拿到 A2 之前，任何"服务端不认识桌面 context"的结论都不许写。**
+
+**H643 的设计**（不需要新通道，全部在同一个插件内）：在观察点同时跑 A1、A3、B，把三档结果一起打印；A2 留作显式的未证明项。这样一轮就能判定"返回 0"到底意味着什么，也能第一次真正给出本地已注册 id 的正对照。
