@@ -28311,3 +28311,48 @@ swap。对外还有 `native_gop_handoff_call(op,...)` 走已授权的 Adreno acc
 本轮同时记录一个仍未解决的输入风险：`seed-data-skip-setup.py` 现在产出 921,696 字节而历史镜像
 一直是 725,088 字节，H611 靠显式传 `--data-ramdisk` 固定，任何一次不传该参数的完整 payload
 重建都会换掉 Data seed。
+
+### §316 H612：真实尺寸桌面 surface 分配与 GPU 映射成功，blit 几何部分正确（2026-11-24）
+
+**镜像。** boot `0f65bed14f9130ddb4571ac340c8700f47ceffacc3d07a130783d727a9110020`，payload
+`dce90ff33270c639c73f1cf4feea1eab8d8c5913d1f68d3f11c3dd021b37ef49`，kernel.macho
+`3d331ccaae8b6eb544135da3295edd810cb25b3c8a420d97172c9e301ce8ddae`。设备 boot id `3FF77C24`，
+唯一序列号 16149951，`fastboot boot` 一次成功。CDC 在约 240 秒出现，采集 790,584 字节、
+4706 帧，crcErrors=0 sequenceGaps=0 bootSwitches=0 truncated=0。
+
+**本轮唯一变量是内核。** gpuaddon `c8ad154c9123`、trustcache `d012ba8fad87`、Data seed
+`0ef3db84e89b` 与 H611 完全相同，args 仍是从已提交配置生成的 1000 字节 H610 集合。
+
+**正面结论一：平台能给出整块桌面尺寸的物理连续缓冲区。** `srcalloc=1 dstalloc=1`，日志里没有
+`H612 surface allocation failed`。目的区就是 `10,444,800` 字节（plane 0 `4352*1920 = 8,355,840`
+加 alpha plane `1088*1920 = 2,088,960`，正好 2550 页），在
+`physicalMask=0x0000000ffffff000` 与 44 位上限内分配成功，并映射到 GPU VA `0x3100000`，源区
+`0x3000000`。两者插在 BO 池之上、trusted window 之下，保持构建器要求的 IOVA 升序。
+
+**正面结论二：GPU 确实把可区分的位置与颜色写进了真实 surface，且没有越界。** 20 次运行全部
+`sr=0 wr=0`，fence 从 `0x16` 递增到 `0x48`。`padclean=1` 说明 plane 0 每行 4320 可见字节与
+4352 stride 之间的 32 字节填充在整个 1920 行里保持为零，`alphaclean=1` 说明 `8,355,840` 之后的
+整个 alpha plane 保持为零。目的区提交前由 CPU 全零，而图案像素最高字节是 `0xff`，所以匹配值
+只可能来自 GPU。
+
+**待修问题：blit 几何只有部分正确。** `match=320`（期望 512 = 64x8），`bad=1101`。
+`0x1101 = 4353`，按 `dstRowWords = 1088` 折算就是第 4 个目的行、第 1 个像素，即图案第 2 行的
+起点。聚合计数无法区分是整行错位还是零散失败，本轮不据此推断原因。下一步 H613 只加一个观测：
+按图案行输出 8 位行掩码和第一个失败像素的实际值，一次运行就足以判断是行步进、列步进还是
+源/目的 pitch 解释不一致。
+
+**记录一个接口约束。** `RB_2D_*_SIZE` 的 ARRAY_PITCH 字段是 16 位且按 >>6 存储，可表示的层间距
+上限是 `65535*64 = 4,194,240` 字节，小于 plane 0 的层间距 `8,355,840`。本轮 depth=1，该字段
+理论上不参与行步进，所以目的区数组间距我按 `4352` 填写。这个上限在需要多层深度时必须另行处理，
+不能假定可以表达整张桌面 plane 0 的层间距。
+
+**回归全部保持。** H611 blit `match=400 bad=ffffffff`、H609 内核提交 `sr=0 wr=0 n=15`、
+`FENCE done=1 to=0`、`GPU me=0 rbbm=1`、用户态 `selftest hits=4/4`，无 panic，日志活到 732 秒。
+`val=0 xf=0 fr=0` 未变，本轮不涉及上屏。
+
+**过程记录。** 第一次构建因 `kSurfAlphaRow` 未使用被 `-Werror` 拒绝，而脚本仍返回 0 且 prelink
+产出与 H611 相同的哈希，正是交接里"失败构建会留下旧 kernel.macho，必须比对哈希"的那条坑，
+本轮靠哈希比对识别出来。第二次失败原因是我把修正只改在本地未提交推送，构建机仍是旧源码。
+`UINT64_C()` 是标记拼接宏，只能用于字面量，对 `kSurfRowBytes` 这类标识符会拼成
+`kSurfRowBytesUL`，改用 `static_cast<uint64_t>`。另外我在 §315 和代码注释里把 plane 0 写成
+`8,359,680`，正确值是 `8,355,840`（总数 `10,444,800` 不变），两处都已更正。
