@@ -43,7 +43,8 @@ WATCH_H629 = re.compile(COMMON +
     r"wrote=(?P<wrote>\d+) both=(?P<both>\d+) neither=(?P<neither>\d+)")
 
 PANEL = re.compile(
-    r"NATIVE_A540_PANEL: mapped=\d+ runs=(?P<runs>\d+) .*?finalkept="
+    r"NATIVE_A540_PANEL: mapped=\d+ runs=(?P<runs>\d+) .*?"
+    r"carry=(?P<carry>[0-9a-f]+) kept=(?P<kept>\d+)/(?P<kepttotal>\d+) .*?finalkept="
     r"(?P<finalkept>\d+)/(?P<finaltotal>\d+)")
 
 ACTIVITY = re.compile(
@@ -124,6 +125,8 @@ def main(path):
     if panels:
         print("  at the blit itself: run %s finalkept=%s/%s"
               % (panels[-1]["runs"], panels[-1]["finalkept"], panels[-1]["finaltotal"]))
+        print("  before the next blit: carry=%s kept=%s/%s (what survived the gap)"
+              % (panels[-1]["carry"], panels[-1]["kept"], panels[-1]["kepttotal"]))
 
     print("")
     print("console operations:")
@@ -156,9 +159,30 @@ def main(path):
             print("  %-15s %s / %s / %s" % (label, a[keys[0]], a[keys[1]], a[keys[2]]))
 
     changed = both + neither
+    samples = int(g["samples"])
+    transitions = int(g["transitions"])
+    atBlit = int(panels[-1]["finalkept"]) if panels else None
+    nowTotal = int(g["now"])
+    print("")
+    print("persistence:")
+    print("  transitions per sample        : %d / %d = %.3f"
+          % (transitions, samples, transitions / float(samples or 1)))
+    print("  total now vs total at the blit: %s vs %s" % (nowTotal, atBlit))
+    if atBlit:
+        print("  content still present         : %.1f%% of what was written"
+              % (100.0 * nowTotal / atBlit))
+    stable = (atBlit is not None and nowTotal == atBlit
+              and transitions <= 2 and wrote <= 2)
     print("")
     if checks and disagree:
         print("VERDICT: withheld, the read path failed its own check.")
+    elif stable:
+        print("VERDICT: the content is persistent. Nothing changed the panel in %d"
+              % samples)
+        print("  sampled beats beyond the two console calls made at acquire time, and")
+        print("  the total still equals what the blit wrote. H629 measured that almost")
+        print("  every panel-change beat coincided with a console draw; with the console")
+        print("  handed off, that loss is gone. The text console was the writer.")
     elif wrote == 0 and changed:
         print("VERDICT: the console never wrote during the sampled beats while the panel")
         print("  changed in %d of them, so the console is excluded." % changed)

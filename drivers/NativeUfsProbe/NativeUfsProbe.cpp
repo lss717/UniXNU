@@ -786,7 +786,7 @@ extern "C" { extern volatile uint32_t native_a540_surface_diag[13]; }
 /* H616: the scanout target as the display driver holds it. */
 extern "C" { extern volatile uint64_t native_legacy_scanout[10]; }
 /* H617: the panel the platform console reported at C3 time. */
-extern "C" { extern volatile uint32_t native_a540_panel_diag[80]; }
+extern "C" { extern volatile uint32_t native_a540_panel_diag[112]; }
 extern "C" { extern volatile uint64_t native_legacy_panel_activity[8][3]; }
 /* H625: which scanout writer ran, when and over which rows. */
 extern "C" { extern volatile uint64_t native_legacy_panel_writes[4][4]; }
@@ -1205,6 +1205,28 @@ heartbeatThread (void *, wait_result_t)
              (unsigned long long) act[21],
              (unsigned long long) act[22],
              (unsigned long long) act[23]);
+      IOLog ("NATIVE_PANEL_FAULT: build=H631 blk=%u y=%u x=%u dst=%llx aligned=%llx shift=%u srcrow=%u rowbad=%x/%x/%x/%x/%x/%x/%x/%x othercol=%u odd=%u v1=%x o1=%x v2=%x o2=%x surf0=%x surfX=%x surfEnd=%x panel0=%x panelX=%x panelEnd=%x\n",
+             (unsigned) native_a540_panel_diag[79], (unsigned) native_a540_panel_diag[80],
+             (unsigned) native_a540_panel_diag[104],
+             (unsigned long long)(((uint64_t)native_a540_panel_diag[82] << 32)
+                                 | native_a540_panel_diag[81]),
+             (unsigned long long)(((uint64_t)native_a540_panel_diag[84] << 32)
+                                 | native_a540_panel_diag[83]),
+             (unsigned) native_a540_panel_diag[85], (unsigned) native_a540_panel_diag[86],
+             (unsigned)((native_a540_panel_diag[87] >> 0) & 0xffu),
+             (unsigned)((native_a540_panel_diag[87] >> 8) & 0xffu),
+             (unsigned)((native_a540_panel_diag[87] >> 16) & 0xffu),
+             (unsigned)((native_a540_panel_diag[87] >> 24) & 0xffu),
+             (unsigned)((native_a540_panel_diag[88] >> 0) & 0xffu),
+             (unsigned)((native_a540_panel_diag[88] >> 8) & 0xffu),
+             (unsigned)((native_a540_panel_diag[88] >> 16) & 0xffu),
+             (unsigned)((native_a540_panel_diag[88] >> 24) & 0xffu),
+             (unsigned) native_a540_panel_diag[91], (unsigned) native_a540_panel_diag[92],
+             (unsigned) native_a540_panel_diag[93], (unsigned) native_a540_panel_diag[94],
+             (unsigned) native_a540_panel_diag[95], (unsigned) native_a540_panel_diag[96],
+             (unsigned) native_a540_panel_diag[98], (unsigned) native_a540_panel_diag[99],
+             (unsigned) native_a540_panel_diag[100], (unsigned) native_a540_panel_diag[101],
+             (unsigned) native_a540_panel_diag[102], (unsigned) native_a540_panel_diag[103]);
       IOLog ("NATIVE_SCANOUT: phys=%llx len=%llx %ux%u rowbytes=%u base=%llx segments=%u first=%llx primary=%u\n",
              (unsigned long long) native_legacy_scanout[0], (unsigned long long) native_legacy_scanout[1],
              (unsigned) native_legacy_scanout[2], (unsigned) native_legacy_scanout[3],
