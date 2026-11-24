@@ -28471,3 +28471,47 @@ GPU VA `0x3100000`，由 GPU 的 2D blit 写入了携带位置与颜色信息的
 **下一步（Stage 2 剩余部分）。** 把这块由 GPU 写入的同一缓冲区交给现有显示路径，先确认
 `completeSwap` 之前究竟由谁完成扫描目标的写入与切换，再验证屏幕内容与 GPU 写入一致。
 handoff 接口存在不等于上屏已通，需要单独证明。
+
+### §320 H616：扫描目标真实布局确认，handoff 的 completeSwap 不写面板（2026-11-24）
+
+**镜像。** boot `0a7206949eabbdc96f5f32cd528ac78fd1358daf9a688615bd44cdb985dc9c6d`，payload
+`192bf5fe1b9d9d2767d8fd6c6ef76d092c192b477022e9e2e54a8179bc1c709f`，kernel
+`d28e0c8c4e86480a640a01dca4ab4b04d48ff8d3dc013aaa969d72b926841a8a`，设备 boot id `4359F485`。
+H615 会话用 COM 普通重启结束，之后为取早期日志进过 TWRP 拉环，再从 TWRP
+`adb reboot bootloader`，`fastboot boot` 一次成功。采集 636,905 字节、3781 帧，
+crcErrors=0 sequenceGaps=0。
+
+**扫描目标布局（34 次采样一致）。** `NATIVE_SCANOUT: phys=9d400000 len=7e9000 1080x1920
+rowbytes=4320 base=9d400000 segments=1 first=7e9000 primary=1`。即物理基址 `0x9d400000`，
+长度 `0x7e9000 = 8,294,400` 字节，正好 `1080*1920*4`；**段数为 1，首段长度等于总长**，所以面板
+缓冲是一整块物理连续区间，单个页表区间就能描述；行字节是 **4320，没有填充**，而 IOSurface
+`'b3a8'` plane 0 的字节 stride 是 4352。两者不同，说明 surface 到面板的拷贝必须改变行间距，
+`CP_BLIT` 的源与目的各有独立 pitch，正好支持这一点。
+
+**顺带修正一条一直误导人的日志。** 原 `NATIVE_LEGACY: startHardware valid=%d phys=%llx len=%llu`
+在 `bootMapping=mapping; mapping=nullptr` 之后才打印，读的是 `mapping`，所以每次成功启动都打印
+`phys=0 len=0`。现在改读 `bootMapping`。这也是为什么之前几轮谁也拿不到扫描目标地址。
+
+**持久环窗口不足以回答早期启动。** 从 TWRP 拉尾部 32 MiB（seek 12,892,347，与交接记录一致）
+解码后 message 区只覆盖 uptime 1237 到 1552 秒，`msg_blocks=256`、`slots_written=815`、
+`write_errors=368`，`startHardware` 早已被轮转出窗口。所以这类一次性启动事实必须靠运行时
+观测，不能指望环日志回溯。
+
+**handoff 语义查清。** `NativeLegacyDisplay::gpuComplete(status)` 的注释与实现都是"客户端报告
+GPU 拷贝完成，成功就退役 swap，失败则回落到 CPU 拷贝"，它本身不做任何面板写入。真正写面板的
+是 CPU 路径里的 `native_legacy_copy_pixels(... bootMapping->getVirtualAddress() ...)` 与
+`native_legacy_fill_pixels(...)`。因此 GPU handoff 期望客户端自己把 surface 拷进扫描目标
+（`native_gop_handoff_memory()` 就是为此把扫描目标作为可写描述符暴露），而这条拷贝目前没有人
+实现。另外 `transfer()` 在 `gpuMode` 下直接返回 `kIOReturnUnsupported`，两种模式互斥。
+handoff 接口存在确实不等于上屏已通，这一点现在有代码依据。
+
+**时序约束。** 显示驱动的 `startHardware` 在约 297 秒才完成，而 GPU C3 的静态页表在此之前就
+建好了，所以不能把扫描目标加进 C3 已经建成的表里。H617 有两条路：在 C3 之前从同一份启动视频
+信息取得 `phys/len` 并纳入静态表，或者使用 `ArmSmmu4KLive` 增量映射。前者的前提是确认该信息在
+C3 时刻可读，后者要满足单一已启用 region、独占 bank/ASID/stream 租约、已安装 fault handling
+以及全程静默，任何不确定都会 poison 且不自动回滚。H617 先验证 C3 时刻能否拿到
+`0x9d400000/8,294,400` 这一事实，再决定走哪条，不凭 API 存在就选动态映射。
+
+**回归全部保持。** 同一轮 `NATIVE_A540_SURFACE sr=0 wr=0 match=512 bad=ffffffff rowmask=ff
+padclean=1 alphaclean=1`、H611 blit `match=400 bad=ffffffff`、无 panic。输入未变：trustcache、
+gpuaddon、Data seed、args 与 H610/H615 相同。
