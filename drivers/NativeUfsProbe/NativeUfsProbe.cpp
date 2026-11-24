@@ -129,7 +129,7 @@ static uint32_t gH103SlotCursor;
 // boot wrote it.  The header alone is not enough: it is written after the
 // slot, and a late header write failure leaves a stale slots_written behind,
 // which made earlier logs mix slots from several boots.
-#define H103_BUILD "H473"
+#define H103_BUILD "H635"
 static uint64_t gH103BootId;
 static volatile int gH103Quiet;
 static volatile uint64_t gH103LastSlotTicks;
@@ -157,6 +157,10 @@ static volatile int gH103StallRecorded;
 // H317: set when a log flush lost the I/O lock, so the next flushes step aside for the main path.
 static volatile uint64_t gH103FlushBackoffTicks;
 static volatile uint32_t gH103FlushSkips;
+// H635: gH103FlushSkips cannot say which of the two early returns in h103FlushNow() caused a skip,
+// so count each branch separately. Both branches already exist; this only records which one ran.
+static volatile uint32_t gH103FlushSkipsPaused;
+static volatile uint32_t gH103FlushSkipsBackoff;
 static volatile uint32_t gH103SlotWriteErrors;
 static volatile uint64_t gH103LastSlotSuccessTicks;
 /* H289: the persistent ring stopped at 258 s in H288 while the system kept running for
@@ -1822,10 +1826,12 @@ h103FlushNow (void)
   // H410: while USB live-log streaming is healthy the persistent disk sink is
   // intentionally paused. Panic paths clear this flag before flushing.
   if (__atomic_load_n (&gH103DiskPaused, __ATOMIC_ACQUIRE)) {
+    gH103FlushSkipsPaused = gH103FlushSkipsPaused + 1;
     gH103FlushSkips = gH103FlushSkips + 1;
     return;
   }
   if (gH103FlushBackoffTicks != 0 && mach_absolute_time () < gH103FlushBackoffTicks) {
+    gH103FlushSkipsBackoff = gH103FlushSkipsBackoff + 1;
     gH103FlushSkips = gH103FlushSkips + 1;
     return;
   }
@@ -3521,20 +3527,45 @@ NativeUfsProbe::syncWindow (void)
   return ok;
 }
 
+// H635: logWrite() has six sites that all returned the same false, so a silent ring could not be
+// attributed to a cause. Name each site and count how often it was reached. The counts live in
+// plain kernel memory, so they survive the very flush hole that loses the log lines: the next slot
+// that does reach the disk reports the whole distribution, including the failures that happened
+// while nothing was being written.
+#define H103_LOGR_PRECONDITION 1  /* fReady/fLock/src/blocks/range/capacity refused the write */
+#define H103_LOGR_NO_DMA_BUFFER 2 /* the log DMA descriptor or buffer was never set up */
+#define H103_LOGR_CLAMP_EMPTY   3 /* the capacity clamp left zero blocks to write */
+#define H103_LOGR_LOCK_BUSY     4 /* H319 try-lock lost to the main I/O path */
+#define H103_LOGR_DMA_SHORT     5 /* IOMemoryDescriptor writeBytes() returned short */
+#define H103_LOGR_IO_FAILED     6 /* ufsWriteCommand() failed: a real storage error */
+#define H103_LOGR_COUNT         7 /* indices 1..6; index 0 stays "no failure recorded" */
+static uint32_t gH103LogWriteReason;
+static uint64_t gH103LogWriteReasons[H103_LOGR_COUNT];
+
+static void
+h103LogWriteFail (uint32_t reason)
+{
+  __atomic_store_n (&gH103LogWriteReason, reason, __ATOMIC_RELAXED);
+  __atomic_fetch_add (&gH103LogWriteReasons[reason], 1, __ATOMIC_RELAXED);
+}
+
 bool
 NativeUfsProbe::logWrite (uint64_t rel, uint32_t blocks, const void *src,
                           uint64_t lockTicks)
 {
   if (!fReady || !fLock || !src || !blocks || rel >= fLogBlocks ||
       blocks > fLogBlocks - rel || blocks > fLogCapacity / 4096) {
+    h103LogWriteFail (H103_LOGR_PRECONDITION);
     return false;
   }
   if (!fLogDma || !fLogData || !fLogDataPhys) {
+    h103LogWriteFail (H103_LOGR_NO_DMA_BUFFER);
     return false;
   }
   if (blocks > fLogCapacity / 4096U) {
     blocks = fLogCapacity / 4096U;
     if (!blocks) {
+      h103LogWriteFail (H103_LOGR_CLAMP_EMPTY);
       return false;
     }
   }
@@ -3543,6 +3574,7 @@ NativeUfsProbe::logWrite (uint64_t rel, uint32_t blocks, const void *src,
   // the log one slot and costs the main path nothing; the caller backs off on failure.
   (void) lockTicks;
   if (!IOLockTryLock (fLock)) {
+    h103LogWriteFail (H103_LOGR_LOCK_BUSY);
     return false;
   }
   uint8_t cdb[16] = { 0x2a };
@@ -3559,6 +3591,7 @@ NativeUfsProbe::logWrite (uint64_t rel, uint32_t blocks, const void *src,
            (unsigned long long) copied, bytes,
            (unsigned long long) (fLogFirst + rel));
     IOLockUnlock (fLock);
+    h103LogWriteFail (H103_LOGR_DMA_SHORT);
     return false;
   }
   uint8_t *savedData = fQueue.data;
@@ -3572,6 +3605,9 @@ NativeUfsProbe::logWrite (uint64_t rel, uint32_t blocks, const void *src,
   fQueue.dataPhys = savedPhys;
   fQueue.dataCapacity = savedCapacity;
   IOLockUnlock (fLock);
+  if (!ok) {
+    h103LogWriteFail (H103_LOGR_IO_FAILED);
+  }
   return ok;
 }
 
@@ -3907,9 +3943,12 @@ NativeUfsProbe::h103SlotWrite (void)
         h103Marker ("logstop", true);
       }
       if (gH103SlotWriteErrors <= 8 || (gH103SlotWriteErrors % 32) == 0) {
-        IOLog ("NATIVE_UFS_LOG_FAIL: slot=%u seq=%u errors=%u delta=%u n=%u blocks=%u\n",
+        // H635: reason names the logWrite site that just failed. It is the last reason recorded
+        // across all callers, so a failure on another CPU between the two statements could print a
+        // different code; the cumulative histogram on NATIVE_UFS_LOG_STAT is the reliable source.
+        IOLog ("NATIVE_UFS_LOG_FAIL: slot=%u seq=%u errors=%u delta=%u n=%u blocks=%u reason=%u\n",
                slot, (unsigned) gH103SlotCursor, (unsigned) gH103SlotWriteErrors,
-               delta, n, blocks);
+               delta, n, blocks, (unsigned) gH103LogWriteReason);
       }
     }
     if (attempts++ < 8) {
@@ -3922,10 +3961,21 @@ NativeUfsProbe::h103SlotWrite (void)
       break;
     }
     if ((gH103FlushRounds % 60) == 1) {
-      IOLog ("NATIVE_UFS_LOG_STAT: rounds=%u seq=%u errors=%u idle=%u skips=%u delta=%u n=%u\n",
+      // H635: cumulative counts, so this line also carries the failures from a window in which no
+      // slot reached the disk. pre/buf/clamp are setup or range refusals, lock is the H319 try-lock
+      // losing to the main I/O path, dmashort is the DMA copy, io is a real storage error.
+      IOLog ("NATIVE_UFS_LOG_STAT: rounds=%u seq=%u errors=%u idle=%u skips=%u delta=%u n=%u "
+             "pre=%u buf=%u clamp=%u lock=%u dmashort=%u io=%u paused=%u backoff=%u\n",
              (unsigned) gH103FlushRounds, (unsigned) (gH103SlotCursor + 1),
              (unsigned) gH103SlotWriteErrors, (unsigned) gH103FlushIdleRounds,
-             (unsigned) gH103FlushSkips, delta, n);
+             (unsigned) gH103FlushSkips, delta, n,
+             (unsigned) gH103LogWriteReasons[H103_LOGR_PRECONDITION],
+             (unsigned) gH103LogWriteReasons[H103_LOGR_NO_DMA_BUFFER],
+             (unsigned) gH103LogWriteReasons[H103_LOGR_CLAMP_EMPTY],
+             (unsigned) gH103LogWriteReasons[H103_LOGR_LOCK_BUSY],
+             (unsigned) gH103LogWriteReasons[H103_LOGR_DMA_SHORT],
+             (unsigned) gH103LogWriteReasons[H103_LOGR_IO_FAILED],
+             (unsigned) gH103FlushSkipsPaused, (unsigned) gH103FlushSkipsBackoff);
     }
     H103LogHeader h;
     memset (&h, 0, sizeof h);
