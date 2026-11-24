@@ -28272,7 +28272,7 @@ fence 从 `0x12` 递增到 `0x33`，说明每次都是新的提交而不是重�
 `native_legacy_surface_bytestride()` 在 `stride < width*4` 时乘 4。桌面 1080 宽、stride 1088 px
 得到字节 stride 4352。`native_legacy_surface_bounds()` 要求 `stride >= width*4` 且
 `allocation >= stride*height` 且 `descriptorBytes >= allocation`。按此算 plane 0 为
-`4352*1920 = 8,359,680`，alpha plane 为 `1088*1920 = 2,088,960`，合计 `10,444,800`，与 AGENTS.md
+`4352*1920 = 8,355,840`，alpha plane 为 `1088*1920 = 2,088,960`，合计 `10,444,800`，与 AGENTS.md
 记录的 `alloc=10444800` 完全吻合，所以约 10 MiB 的估算成立且来源明确，不是猜测。拷贝只读
 plane 0，alpha plane 对不透明扫描输出无用，被有意留空。
 
