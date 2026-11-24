@@ -28356,3 +28356,41 @@ swap。对外还有 `native_gop_handoff_call(op,...)` 走已授权的 Adreno acc
 `UINT64_C()` 是标记拼接宏，只能用于字面量，对 `kSurfRowBytes` 这类标识符会拼成
 `kSurfRowBytesUL`，改用 `static_cast<uint64_t>`。另外我在 §315 和代码注释里把 plane 0 写成
 `8,359,680`，正确值是 `8,355,840`（总数 `10,444,800` 不变），两处都已更正。
+
+### §317 H613：定位 blit 失败带，排除 stride 均匀错位与 SMMU 越界（2026-11-24）
+
+**镜像。** boot `530876b9e5e1e463bc1110e87ae10b2431802815b65ac898f43f097360e94ee9`，payload
+`4266bff9cdb55dfdaf747ded1806b926e512b8ad4ee5f5b806ce8aa8ed2384b8`，kernel
+`923d17dc6c050b26df09ca64e9706e7b88500e40200bd37e8ac5f7624defbc24`，设备 boot id `3681116D`。
+H612 的 iOS 会话用已验证的 COM 普通重启命令结束（`NATIVE_USB_CMD: ack req=20261124 op=reboot`
+→ `reboot armed` → `executing normal reboot`），回到 Android 后 `adb reboot bootloader`，
+`fastboot boot` 一次成功。采集 761,591 字节、4471 帧，crcErrors=0 sequenceGaps=0。
+
+**本轮只加观测，未改任何提交包。** 结果 41 次采样完全一致：`match=320 bad=1101 rowmask=f1
+badgot=3822151 badrowgood=0`，fence 从 `0x16` 递增到 `0x48`。
+
+**定位结论。** `rowmask=0xf1` 即图案第 0、4、5、6、7 行整行匹配，第 1、2、3 行整行失败
+（`badrowgood=0`）。这排除了"行步进统一偏移"：那种情况下失败会从第 1 行一直延续到最后。
+`badgot=0x03822151` 的四个字节是 `51 21 82 03`，而图案缓冲里任何字节只可能是
+`00`、`x`（0 到 63）、`y`（0 到 7）或 `ff`，所以该值不可能来自图案的任何对齐读取，失败行读到的
+不是图案数据。
+
+**排除 SMMU 越界。** 整轮 `NATIVE_A540_SMMU` 41 次采样签名都是 `fsr=400`，与 H610、H611、H612
+在同一时间窗完全相同，`far=0`，`GPU me=0` 全程，`FENCE done=1 to=0`。没有新增翻译故障签名。
+
+**回归全部保持。** H611 blit `match=400 bad=ffffffff`、H609 内核提交 `sr=0 wr=0 n=15`、
+用户态 `selftest hits=4/4`、无 panic、`val=0 xf=0 fr=0` 未变。
+
+**下一个单变量测试（H614）。** Mesa `fd5_blitter.c` 自己的注释写明一条硬件规则：SRC/DST 地址低
+6 位必须为零，即 64 字节对齐，`emit_blit_buffer` 因此把地址向下取整再把差值补进坐标。本轮 DST
+起点是 x=1 像素（RGBA8 下 4 字节），不满足该规则。H614 只把 DST 起点 x 改成 16 像素（64 字节
+对齐），y 起点与其他参数保持不变。若 8 行全部匹配，就确认这条对齐规则是原因；若仍是同一三行带
+失败，则回到源 pitch 与深度字段的解释上继续查。
+
+**组件一致性。** H612 与 H613 的 trustcache `d012ba8fad87`、gpuaddon `c8ad154c9123`、
+scratch-data `0ef3db84e89b` 与 H610、H611 完全相同，只有 kernel 和 adt 的 `random-seed` 变化，
+所以这两轮各自只有一个功能变量。
+
+**流程提醒。** `h410-cdc-console.ps1` 的默认输出路径仍指向日志调用者的当前目录，这次把两份
+`H410-live*` 文件写进了已废弃的 C: worktree。文件已移到
+`logs/H612/device/20261124-0911-H612/reboot-console/`。之后调用该工具要显式指定输出位置。
