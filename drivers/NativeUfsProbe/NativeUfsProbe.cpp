@@ -786,7 +786,7 @@ extern "C" { extern volatile uint32_t native_a540_surface_diag[13]; }
 /* H616: the scanout target as the display driver holds it. */
 extern "C" { extern volatile uint64_t native_legacy_scanout[10]; }
 /* H617: the panel the platform console reported at C3 time. */
-extern "C" { extern volatile uint32_t native_a540_panel_diag[32]; }
+extern "C" { extern volatile uint32_t native_a540_panel_diag[40]; }
 extern "C" void native_a540_hb_panel_selftest(void);
 extern "C" void native_a540_hb_selftest(void);
 extern "C" void native_a540_hb_blit_selftest(void);
@@ -1106,17 +1106,15 @@ heartbeatThread (void *, wait_result_t)
       IOLog ("NATIVE_A540_PWR: gx=%x cx=%x branch=%x rcg=%x\n",
              (unsigned) native_a540_pwr_state[0], (unsigned) native_a540_pwr_state[1],
              (unsigned) native_a540_pwr_state[2], (unsigned) native_a540_pwr_state[3]);
-      IOLog ("NATIVE_A540_PANEL: console=%u accepted=%u mapped=%u iova=%x runs=%u A(sr=%x wr=%x f=%x match=%u bad=%x) B(sr=%x wr=%x f=%x match=%u bad=%x) win=%u sent=%u fsr(pre=%x cleared=%x post=%x) far(pre=%x post=%x)\n",
-             (unsigned) native_a540_panel_diag[0], (unsigned) native_a540_panel_diag[1],
-             (unsigned) native_a540_panel_diag[2], (unsigned) native_a540_panel_diag[11],
-             (unsigned) native_a540_panel_diag[12],
+      IOLog ("NATIVE_A540_PANEL: mapped=%u runs=%u A(sr=%x wr=%x f=%x match=%u/2048 tilebits=%x bad=%x) B(submitbits=%x rectbits=%x match=%u/2048 bad=%x sr=%x wr=%x) win=%u sent=%u fsr(pre=%x cleared=%x post=%x) far(pre=%x post=%x)\n",
+             (unsigned) native_a540_panel_diag[2], (unsigned) native_a540_panel_diag[12],
              (unsigned) native_a540_panel_diag[20], (unsigned) native_a540_panel_diag[21],
              (unsigned) native_a540_panel_diag[22], (unsigned) native_a540_panel_diag[23],
-             (unsigned) native_a540_panel_diag[24],
+             (unsigned) native_a540_panel_diag[31], (unsigned) native_a540_panel_diag[24],
+             (unsigned) native_a540_panel_diag[32], (unsigned) native_a540_panel_diag[16],
+             (unsigned) native_a540_panel_diag[30], (unsigned) native_a540_panel_diag[17],
              (unsigned) native_a540_panel_diag[13], (unsigned) native_a540_panel_diag[14],
-             (unsigned) native_a540_panel_diag[15], (unsigned) native_a540_panel_diag[16],
-             (unsigned) native_a540_panel_diag[17], (unsigned) native_a540_panel_diag[18],
-             (unsigned) native_a540_panel_diag[19],
+             (unsigned) native_a540_panel_diag[18], (unsigned) native_a540_panel_diag[19],
              (unsigned) native_a540_panel_diag[25], (unsigned) native_a540_panel_diag[27],
              (unsigned) native_a540_panel_diag[28],
              (unsigned) native_a540_panel_diag[26], (unsigned) native_a540_panel_diag[29]);
