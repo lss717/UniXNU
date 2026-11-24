@@ -782,7 +782,7 @@ extern "C" { extern volatile uint32_t native_a540_hbsub[6]; }
 /* H611: real a5xx 2D blit through CP_BLIT, reported every tenth beat. */
 extern "C" { extern volatile uint32_t native_a540_blit_diag[8]; }
 /* H612: real-size surface blit through the static GPU page table. */
-extern "C" { extern volatile uint32_t native_a540_surface_diag[10]; }
+extern "C" { extern volatile uint32_t native_a540_surface_diag[13]; }
 extern "C" void native_a540_hb_selftest(void);
 extern "C" void native_a540_hb_blit_selftest(void);
 extern "C" void native_a540_hb_surface_selftest(void);
@@ -1098,12 +1098,14 @@ heartbeatThread (void *, wait_result_t)
       IOLog ("NATIVE_A540_PWR: gx=%x cx=%x branch=%x rcg=%x\n",
              (unsigned) native_a540_pwr_state[0], (unsigned) native_a540_pwr_state[1],
              (unsigned) native_a540_pwr_state[2], (unsigned) native_a540_pwr_state[3]);
-      IOLog ("NATIVE_A540_SURFACE: sr=%x wr=%x f=%x n=%u match=%u bad=%x srcalloc=%u dstalloc=%u padclean=%u alphaclean=%u\n",
+      IOLog ("NATIVE_A540_SURFACE: sr=%x wr=%x f=%x n=%u match=%u bad=%x srcalloc=%u dstalloc=%u padclean=%u alphaclean=%u rowmask=%x badgot=%x badrowgood=%u\n",
              (unsigned) native_a540_surface_diag[0], (unsigned) native_a540_surface_diag[1],
              (unsigned) native_a540_surface_diag[2], (unsigned) native_a540_surface_diag[3],
              (unsigned) native_a540_surface_diag[4], (unsigned) native_a540_surface_diag[5],
              (unsigned) native_a540_surface_diag[6], (unsigned) native_a540_surface_diag[7],
-             (unsigned) native_a540_surface_diag[8], (unsigned) native_a540_surface_diag[9]);
+             (unsigned) native_a540_surface_diag[8], (unsigned) native_a540_surface_diag[9],
+             (unsigned) native_a540_surface_diag[10], (unsigned) native_a540_surface_diag[11],
+             (unsigned) native_a540_surface_diag[12]);
       IOLog ("NATIVE_A540_BLIT: sr=%x wr=%x f=%x n=%x match=%x bad=%x d0=%x s0=%x\n",
              (unsigned) native_a540_blit_diag[0], (unsigned) native_a540_blit_diag[1],
              (unsigned) native_a540_blit_diag[2], (unsigned) native_a540_blit_diag[3],
