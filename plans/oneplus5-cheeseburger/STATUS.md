@@ -29106,3 +29106,28 @@ AGENTS.md 里 `check-unixnu.py` 报 `FAIL: payload volume is reproducible` 就�
 
 **边界。** 仍是人工测试色块，`val=0 xf=0 fr=0` 未变，不接真实 CA。跨轮保持自 H630 起已通过，
 本轮未改任何写入行为（ring 回绕是越界防护，不改变正常路径的命令内容）。
+
+### §336 H632 持久环补证：case 结论在 23 个样本上逐字节重复，会话结束无内核异常记录（2026-11-24）
+
+**为什么补这一条。** CDC 本轮丢弃约 190 KB（设备侧 `dropped=235218`），case 数据只有 5 个样本。
+设备随后自行回到 recovery，正好可以拉持久环。
+
+**环日志。** boot `3aa2c22e`，覆盖 uptime 581..816 秒，runs 17..25，23 个 CASES 样本、23 个 FAULT 样本，
+**FAULT 去重后只有 1 种**，CASES 最后一条与 CDC 完全一致，只是累计量更大：
+`c0 unwritten=128 shortblk=1 rows=2 mask=…ffffffff/ffffffff ffffffff/ffffffff…`，
+`c1 words=43800 mismatch=0 subs=0`，`c3 hitrows=48 unexpected=0`，`smmu fsr=0 far=0 synr=0`，`wrap=0`。
+C1 的校验字数从 29,784 增至 43,800，`mismatch` 仍为 0，命令流一致性的证据强度提高。
+
+**会话结束这条独立线的新事实。** 环的最后一条记录在 816.588 秒，是普通的 NATIVE_IRQ/GIC 心跳，
+没有 `panic(`、没有 `Unaligned kernel`、没有 `watchdog timeout failed`、没有 `restart type`、
+也没有 `NATIVE_USB_CMD: executing`（本轮没有发过 COM 重启）。也就是说会话在 816 秒之后结束，
+而内核侧没有留下任何异常或计划内退出的记录。此前"iOS 会话几分钟后回 Android"仍缺结束原因证据，
+不能归因，也不能排除是用户手动重启。
+
+**顺带记录一个与面板无关的用户态问题。** 环末尾出现
+`mediaserverd[198] Corpse failure, too many 6` 与 `Process[198] crashed: mediaserverd. 
+Too many corpses being created.`，即 mediaserverd 在反复崩溃并被抑制。这属于第一帧主线上
+SpringBoard 之外的独立问题，本轮不处理，仅记录以免与面板缺陷混为一谈。
+
+**证据位置。** `logs/H632/ring-pull/report.txt`（410,942 字节）与 `tail32-h632.bin`；
+CDC 侧 `logs/H632/device/20261124-1850-H632/`，含 raw、snap、decoded log、frames、attribution.txt。
