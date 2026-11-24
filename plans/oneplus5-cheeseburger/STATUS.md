@@ -29274,3 +29274,25 @@ H634 的 drawable 探针这轮跑到了，结果是明确的：
 **日志通道本轮的新事实。** 三次 STAT 显示 `paused` 累计到 1105，`backoff=502`，`lock=172`，`dmashort=0 io=0`，15 条 FAIL 的 reason 仍然全是 4。也就是说：写失败的原因还是 try-lock，而**环里的缺口现在主要是 H410 规则故意暂停磁盘 sink 造成的**——USB 实时流健康时磁盘就不写，这是设计行为。结论是：**USB 可用时实时流才是权威来源，环只是补集**，两边必须合并看，不能只拉环。
 
 **下一步（H637）。** 先做同一镜像的重复启动，把 H598 的"到 did_finish、不到 complete_startup"从 1 个样本变成 2–3 个，确认这是稳定状态还是本轮噪声。同时离线比较 H635 与 H636 在 did_finish 之后 SpringBoard 发往 backboardd 的场景激活请求：H635 有对应的 `to=56` 发送与 `to=27` 投递，H636 的 `to=27` 投递只有 8 次。若重复轮次稳定复现，再在 `8e4ef56` 的五个调用点里逐个去掉，定位到底是哪一处改变了推进。
+
+### §344 H637 同镜像重复：停滞点现在可复现，H593 侧仍只有 1 个可比样本（2026-11-24）
+
+本轮没有代码或产物变量，跑的是 H636 的同一个 `H636-boot.img`（`4f89c0dd…`），目的是判断 §343 里"到 did_finish、不到 complete_startup"是稳定状态还是单轮噪声。
+
+结果落在稳定一侧。环 307.55 秒确认 `observer load process=SpringBoard pid=27 build=H598`，实时流与环两个独立来源都显示：`h557_ui_run_enter` 543.66 秒、`h541_did_finish_enter` 553.99 秒，之后到会话结束（1277 秒）没有 `h557_complete_startup_enter`，也没有 `h553_application_controller_init_enter` 和 `h589/h590/h591` 三个旁路。`val=0 xf=0 fr=0`。
+
+五轮对照：
+
+| 轮次 | 观察器 | 到 did_finish | 到 complete_startup |
+| --- | --- | --- | --- |
+| H633a | H593 | 否 | 否 |
+| H634 | H593 | 否 | 否 |
+| H635 | H593 | 是（474.79 秒） | 是（628.71 秒） |
+| H636 | H598 | 是（525.31 秒） | 否（至 1068 秒） |
+| H637 | H598 | 是（553.99 秒） | 否（至 1277 秒） |
+
+两点结论。**第一，H598 给出了一个可复现的停滞点**，H593 没有：它要么停在 did_finish 之前，要么走过 complete_startup，基线本身在漂。后续单变量实验因此有了固定起点。**第二，仍不能把差异归因于 `8e4ef56`**，因为 H593 侧"到了 did_finish"只有 1 个样本且它到了 complete_startup，1/1 对 0/2 在这个方差下不构成判定。
+
+日志通道再次自证：六次 STAT 的 `lock` 与 `errors` 逐次相等（107/148/167/175/189/203），`dmashort` 与 `io` 始终为 0，`paused` 累计 1175。写失败全部来自 H319 的单次 try-lock，环缺口主要来自 USB 实时流健康时按设计暂停磁盘。
+
+**H638 的设计。** 在 `8e4ef56` 的五个调用点里去掉 `did-finish-enter` 与 `did-finish-return` 两处（离停滞位置最近），其余输入逐字节不变。complete_startup 恢复则说明 `rearm_exception_reporters()` 在主线程上改变了后续行为，需要查它具体改了什么；不恢复则依次排除 `ui-run-enter` 与 complete-startup 两处，并把力气转到场景激活消息为什么没送到 pid 27。
