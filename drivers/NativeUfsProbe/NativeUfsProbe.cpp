@@ -1119,10 +1119,10 @@ heartbeatThread (void *, wait_result_t)
              (unsigned) native_a540_panel_diag[19],
              (unsigned) native_a540_panel_diag[33], (unsigned) native_a540_panel_diag[34],
              (unsigned) native_a540_panel_diag[35],
-             (unsigned) native_a540_panel_diag[25], (unsigned) native_a540_panel_diag[27],
-             (unsigned) native_a540_panel_diag[28],
              (unsigned) native_a540_panel_diag[36], (unsigned) native_a540_panel_diag[37],
              (unsigned) native_a540_panel_diag[35],
+             (unsigned) native_a540_panel_diag[25], (unsigned) native_a540_panel_diag[27],
+             (unsigned) native_a540_panel_diag[28],
              (unsigned) native_a540_panel_diag[26], (unsigned) native_a540_panel_diag[29]);
       IOLog ("NATIVE_PANEL_WRITES: progress=%llu@%llu/%llu-%llu panic=%llu@%llu/%llu-%llu blank=%llu@%llu/%llu-%llu copy=%llu@%llu/%llu-%llu\n",
              (unsigned long long) native_legacy_panel_writes[0][0],
