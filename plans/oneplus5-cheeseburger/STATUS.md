@@ -29131,3 +29131,44 @@ SpringBoard 之外的独立问题，本轮不处理，仅记录以免与面板�
 
 **证据位置。** `logs/H632/ring-pull/report.txt`（410,942 字节）与 `tail32-h632.bin`；
 CDC 侧 `logs/H632/device/20261124-1850-H632/`，含 raw、snap、decoded log、frames、attribution.txt。
+
+### §337 H633 页表范围数组越界，以及"H633 在 72 秒崩溃"这个说法的撤回（2026-11-24）
+
+**越界本身。** `ArmSmmu4KRange r[]` 的元素数在 H617 加面板范围项时从 `8 + kBoSlots` 提到 `9 + kBoSlots`，也就是 17。H633 又加了 case 专用 IB 的范围项，非 BO 项变成 10 个（ring、pm4、pfp、gpmu、rptr、surfSrc、surfDst、panel、caseIb、win），加上 8 个 BO 槽需要 18 个元素。`caseReady` 为真时 `nr` 走到 18，最后写入 trusted window 的那一项落在数组之外一格，`ArmSmmu4KBuild` 也按 18 多读一格。H632 没有 caseIb 这一项，所以这是 H633 独有的改动，而且它就在 C3 的执行路径上。
+
+**修法。** 范围数按名字写成常量（`kBringUpRanges` 等相加得到 `kFixedRanges`），数组用 `kFixedRanges + kBoSlots`，并在 `nr` 超出数组时显式 `fail(4, "range table overflow")`。提交 `27db0ad`，UniXNU 侧 `2564ada2`。
+
+**"H633 会话在 72.7 秒结束"是误读，现予撤回。** 环头部 `slots_written: 1`、`rounds: 1`、`uptime_s: 21`、`write_errors: 10`，而环里 `NATIVE_UFS_LOG_FAIL: slot=0 seq=0 errors=1..8` 每 2 秒递增一次，这就是持久环写入器自己在失败。对比 H632 的 `slots_written: 434`、`rounds: 434`。所以 72.7 秒是**日志停止落盘**的时刻，不是会话结束的时刻。我当时把"环里最后一条时间戳"当成"内核最后活着的时刻"，这个推断不成立。
+
+**由此产生的第二个纠正。** 那次会话里 `c3=0`、`lastput=0`、`mapped=0`、CASES 与 H633 行全零，只能说明**当时 C3 还没开始**（H633a 实测 C3 在 66.0 秒才 `thread start`，电源步进约每秒一步），不能说明 C3 失败，也不能说明页表越界已经发作。越界要等 C3 真正跑到 range build 才会触发。
+
+**仍然没有解释的部分。** H633 那次的环在 72.7 秒彻底停止落盘，而 C3 大约在 66 秒前后开始。两者时间上吻合，但"越界写坏栈导致日志写入器停摆"只是候选，没有证据。修正版 H633 与 H633a 都跑过了 C3 且会话正常，这至少说明越界修复之后 C3 能走完。
+
+**修正版产物。** boot `a691f7631cbadbee7842493534660f52653bb5c53805c98b63e5d183636168e8`，payload `13a89761b28576819aa0c67fe249b9dadb1e7cc33dba4ca514a215417f025635`，kernel `f961c73824da0e8c78c8065a8839bf839de4cc54e0ecdca7bdf835f1e3b90165`（树内与 payload 回读一致）。Data seed、trust、gpuaddon、UEFI gz-dtb、1000 字节启动参数逐字未变，`MATCHES_H610_ARGS True`。旧的三个产物已按各自哈希改名保留：`.regressed-18bfea32.bak`（真正上过机的那版）与 `.range-oob-2ded97dd.bak`。
+
+### §338 H633a：把 H630 的控制台让位打开，会话跑到 348 秒，R/C2 探针首次给出数据（2026-11-24）
+
+**为什么做这一版。** §336 之后仍然不知道上一次会话为什么停，而持久环只保留最后约 5 分钟，早期一次性事实永远抓不到。用户建议恢复屏幕上的内核文字，直接看启动过程。H633a 相对修正版 H633 只改一个变量：新增 `patches/xnu/console-panel-ownership-off-h633a.patch`，不再执行 H630 的 `vc_panel_handed_over = TRUE` 与 `gc_enable(FALSE)`，并用 `video_console_panel_counts[12] = 0` 记下"这一版没有让位"。build tag 改为 `H633a`。
+
+**踩到的工具链坑（已固化）。** `XNU_SKIP_PATCH_LOOP=1` 且 marker 存在时，`macos-build-kernel.sh` 走"reusing explicit patched xnu-work"分支，**完全不检查 series 里新增的补丁**。只把补丁写进 series 会静默失效。所以这一版同时做了两件事：把补丁直接应用到 Mac 上已打补丁的 `out/cheeseburger/tree/.cache/xnu-work`（用 `git apply --reverse --check` 验证补丁与实际改动逐字一致），并把同一份补丁追加进 series 留档。构建后 kernel 从 `f961c738` 变为 `a054df86`，证明改动确实进了二进制。
+
+**产物。** boot `7abacad701843960fba78bf360a40d4004519b1e857626c57d80ab00104fddaf`，payload `06f1e8258e71f16275d05c5cdead85b2265c1b58ac76f3e58ad2b9e202b77e71`，kernel `a054df86af7c611b62ac188c4bbf9fe981bda633f8b0999a2cb00e360a761c35`。
+
+**上机。** 先在 TWRP 把 `userdata_ios` 尾部 32 MiB 清零（toybox dd 不支持 `conv=notrunc`，改用不带 conv 的写法，写前后 `blockdev --getsize64` 都是 52840607744，回读全零确认），再 `fastboot boot`。本机这边 COM 口始终没出现，`adb`/`fastboot` 也没有设备描述符，所以这一轮只有持久环。用户确认屏幕一直在滚动日志、没有重启，最后手动进 TWRP 取环。
+
+**环的状态。** boot `6688284495`，`slots_written: 72`、`rounds: 72`、`uptime_s: 313`、`write_errors: 131`，日志一直记到 348.3 秒。写入器有错误但仍在轮转，与 H633 那次只完成 1 轮完全不同。
+
+**C3 第一次在这台机器上完整跑完并留下过程。** 66.028 `thread start`，66.206 `H617 console panel base=9d400000 len=8294400 1080x1920 row=4320 depth=32 display=1 -> iova 4000000`，66.665 `smmu setup`，67.311 `cp start`，67.281 `trust after auth=00000001`。会话末尾 348 秒处已经出现 `NATIVE_XPC: ports=3 [SpringBoard/r ...] [SpringBoard/q ...]` 与 `NATIVE_MTL: kind#81/#82 forward: copyFromTexture:...`，说明用户态已经跑到 SpringBoard 并在转发真实 Metal 调用。
+
+**R/C2 探针的首轮数据（331.997 与 332.069 两个样本逐字相同）。**
+
+`alloc=1/1`，`r1 rc=0/0 agree=64 usable=1`，`r2a rc=0/0 agree=64`，`r2b rc=0/0 agree=64`，`c2g rc=0/0 landed=64 sentinel=0`，`c2 rc=0/0 landed=64 sentinel=0`，`ring=4327->4377 fence=116->121`。
+
+- R1 成立，读回链路可用，这是允许解读 R2 的前提。
+- R2 两条坏行 `agree=64`，GPU 从面板 IOVA 读到的 64 列与 CPU 从非缓存面板窗口读到的逐列相同。按上机前写定的判据，这**只**说明这两个地址上两个视图一致，不能据此说原写入被硬件忽略。但它确实把"页表把目的 IOVA 指向另一块物理内存"这一支收窄了：同一张页表下 GPU 读到的就是 CPU 看到的那些字节。
+- C2 `landed=64`。同一构造、同一源行、同一 shift、同一声明 pitch，目的换成普通缓冲区里与面板行 386 相同的字节偏移，64 列全部落地。这说明命令构造、源数据、shift 与 pitch 都不是缺的那一步。
+- ring 增量 50 字、fence 增量 5，正好等于本轮 5 次提交（R1、R2a、R2b、C2g、C2），窗口内没有别的提交者。上机前写的"应为 40 字 / 4"是当时按 4 个 case 估的，实际实现是 5 个 case，判据的意图（只有一个提交者）成立。
+
+**这一轮的 C0 不能单独用。** `c0 unwritten=16 shortblk=1 rows=2 mask=…80808080/80808080 80808080/80808080…`，而 `finalkept=2944/3072`（缺 128）。控制台开着时 `before` 这个基准本身会被控制台改写，C0 的"写前不等于目标色"条件因此不再可靠，16 与 128 的差就是这么来的。`carry=0 kept=1023/3072` 同样符合"控制台重新覆盖了上一轮内容"。
+
+**待办。** 修正版 H633（控制台关闭、页表已修、R/C2 探针齐全）正在上机，用来在 `before` 不被控制台污染的前提下复现 R1/R2/C2g/C2。另外 SMMU 故障寄存器偏移仍未定案：本轮 PANEL 行 `fsr(pre=400 cleared=400 post=400)` 读的是 0x8058，CASES 行 `smmu fsr=0` 读的是 0x8078/0x807c/0x8080/0x8068，两组值不同，在拿到寄存器手册核对之前不能对"有无新增故障"下结论。
