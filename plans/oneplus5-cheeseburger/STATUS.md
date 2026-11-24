@@ -29172,3 +29172,15 @@ CDC 侧 `logs/H632/device/20261124-1850-H632/`，含 raw、snap、decoded log、
 **这一轮的 C0 不能单独用。** `c0 unwritten=16 shortblk=1 rows=2 mask=…80808080/80808080 80808080/80808080…`，而 `finalkept=2944/3072`（缺 128）。控制台开着时 `before` 这个基准本身会被控制台改写，C0 的"写前不等于目标色"条件因此不再可靠，16 与 128 的差就是这么来的。`carry=0 kept=1023/3072` 同样符合"控制台重新覆盖了上一轮内容"。
 
 **待办。** 修正版 H633（控制台关闭、页表已修、R/C2 探针齐全）正在上机，用来在 `before` 不被控制台污染的前提下复现 R1/R2/C2g/C2。另外 SMMU 故障寄存器偏移仍未定案：本轮 PANEL 行 `fsr(pre=400 cleared=400 post=400)` 读的是 0x8058，CASES 行 `smmu fsr=0` 读的是 0x8078/0x807c/0x8080/0x8068，两组值不同，在拿到寄存器手册核对之前不能对"有无新增故障"下结论。
+
+### §339 H634 上机不可判：持久环在 300–389 秒有硬洞，CDC 同时无法枚举（2026-11-24）
+
+H634 把 `probe_drawable` 挂进插件加载后 30/120/300/480 秒的观察块，用来回答"drawable 能不能拿到"。插件确认上了机（addon blob 396968 字节、`files=12 written=12 failed=0`、payload 内回读的 gpuaddon 与 trust 与新构建逐字节一致，新 CDHash `c3a7ba2e` 在 trust 中出现 1 次、旧 `93890b7b` 0 次）。
+
+但环（boot `8433565509`，34..438 秒）里没有任何 `builder`/`dev`/`queue`/`cmdbuf`/`encoder`/`kind` 行，也没有 `draw` 行。按每 30 秒分桶：270–299 有 473 行，300–389 为 0，390–419 恢复 110 行。H633a 的因果顺序是 backboardd exec 290.286s → 自己打开加速器 335.868s → `builder#1 load` 336.133s → `dev#14 initialize loaded=1` 336.989s。H634 里 backboardd exec 在 293.296s，预期约 339s 的那一步正好落进洞里。所以缺行是日志丢失，不是插件未加载，也不是 drawable 问题的答案。
+
+洞的机制是持久环写入器失败：`NATIVE_UFS_LOG_FAIL slot=41 errors=96` 在 258.5s，`slot=43 errors=128` 在 432.1s，174 秒只推进 2 个 slot；`NATIVE_UFS_LOG_STAT rounds=61 seq=22 errors=39 skips=151`。这与导致 §337 撤回"H633 在 72 秒崩溃"的是同一个失效模式。
+
+第二条通道同时不可用：COM 口未出现，环里 `CHEESEBURGER_USB: setup 80 06 value=0301/0302 index=0409 length=255` 反复重试并伴随 `control status start ep=0 data_in=1`，即主机卡在字符串描述符阶段，对应"无法识别的 USB 设备"。
+
+**因此本轮把"日志通道可靠性"提为第一优先事项。** 在 CDC 与持久环至少有一条能完整覆盖 backboardd 加载插件前后的时间窗之前，用户态观察实验无法判定。退化点在 H632 之后：H632 的 CDC 与环都可用。
