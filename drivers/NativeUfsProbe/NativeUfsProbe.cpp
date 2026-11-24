@@ -1108,7 +1108,7 @@ heartbeatThread (void *, wait_result_t)
       IOLog ("NATIVE_A540_PWR: gx=%x cx=%x branch=%x rcg=%x\n",
              (unsigned) native_a540_pwr_state[0], (unsigned) native_a540_pwr_state[1],
              (unsigned) native_a540_pwr_state[2], (unsigned) native_a540_pwr_state[3]);
-      IOLog ("NATIVE_A540_PANEL: mapped=%u runs=%u A(sr=%x wr=%x tilebits=%x bad=%x) B(submitbits=%x rectbits=%x match=%u/%u bad=%x sr=%x wr=%x) win=%u sent=%u carry=%x kept=%u/%u fsr(pre=%x cleared=%x post=%x) far(pre=%x post=%x)\n",
+      IOLog ("NATIVE_A540_PANEL: mapped=%u runs=%u A(sr=%x wr=%x tilebits=%x bad=%x) B(submitbits=%x rectbits=%x match=%u/%u bad=%x sr=%x wr=%x) win=%u sent=%u carry=%x kept=%u/%u final=%x finalkept=%u/%u fsr(pre=%x cleared=%x post=%x) far(pre=%x post=%x)\n",
              (unsigned) native_a540_panel_diag[2], (unsigned) native_a540_panel_diag[12],
              (unsigned) native_a540_panel_diag[20], (unsigned) native_a540_panel_diag[21],
              (unsigned) native_a540_panel_diag[31], (unsigned) native_a540_panel_diag[24],
@@ -1121,6 +1121,8 @@ heartbeatThread (void *, wait_result_t)
              (unsigned) native_a540_panel_diag[35],
              (unsigned) native_a540_panel_diag[25], (unsigned) native_a540_panel_diag[27],
              (unsigned) native_a540_panel_diag[28],
+             (unsigned) native_a540_panel_diag[36], (unsigned) native_a540_panel_diag[37],
+             (unsigned) native_a540_panel_diag[35],
              (unsigned) native_a540_panel_diag[26], (unsigned) native_a540_panel_diag[29]);
       IOLog ("NATIVE_PANEL_WRITES: progress=%llu@%llu/%llu-%llu panic=%llu@%llu/%llu-%llu blank=%llu@%llu/%llu-%llu copy=%llu@%llu/%llu-%llu\n",
              (unsigned long long) native_legacy_panel_writes[0][0],
