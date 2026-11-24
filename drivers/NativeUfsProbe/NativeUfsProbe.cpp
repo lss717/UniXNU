@@ -1120,7 +1120,6 @@ heartbeatThread (void *, wait_result_t)
              (unsigned) native_a540_panel_diag[25], (unsigned) native_a540_panel_diag[27],
              (unsigned) native_a540_panel_diag[28],
              (unsigned) native_a540_panel_diag[26], (unsigned) native_a540_panel_diag[29]);
-             (unsigned) native_a540_panel_diag[26], (unsigned) native_a540_panel_diag[29]);
       IOLog ("NATIVE_SCANOUT: phys=%llx len=%llx %ux%u rowbytes=%u base=%llx segments=%u first=%llx primary=%u\n",
              (unsigned long long) native_legacy_scanout[0], (unsigned long long) native_legacy_scanout[1],
              (unsigned) native_legacy_scanout[2], (unsigned) native_legacy_scanout[3],
