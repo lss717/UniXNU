@@ -1,0 +1,85 @@
+--- a/osfmk/console/video_console.c
++++ b/osfmk/console/video_console.c
+@@ -141,7 +141,21 @@
+  * [8] last scroll region bottom     [9] v_rows (text rows on the panel)
+  * [10] v_columns (text columns)     [11] ISO_CHAR_HEIGHT (glyph height, panel rows)
+  */
+-unsigned long long video_console_panel_counts[12] __attribute__((aligned(16))) = {0};
++unsigned long long video_console_panel_counts[16] __attribute__((aligned(16))) = {0};
++
++/*
++ * H630: H629 measured that the text console's own character drawing is what
++ * takes the A540 panel test's colours back off the scanout, in the same beat,
++ * with the replacement value equal to the console's default background of 0.
++ * The console and the scanout are one buffer, so this control hands the panel
++ * to the display path: the framebuffer console stops drawing and stays stopped
++ * even when a later screen operation would re-enable it. kprintf output still
++ * reaches the USB live log and the persistent ring, and the diagnostic cells
++ * keep drawing. [12] records that the control ran, [13] the last enable or
++ * disable argument, [14] how many times gc_enable was called, and [15] counts
++ * the times a later re-enable was suppressed (from gc_enable or gc_pause).
++ */
++static boolean_t vc_panel_handed_over = FALSE;
+ 
+ static boolean_t gc_enabled     = FALSE;
+ static boolean_t gc_initialized = FALSE;
+@@ -369,6 +383,16 @@
+ 	uint32_t buffer_columns = 0;
+ 	uint32_t buffer_rows = 0;
+ 	uint32_t buffer_size = 0;
++
++	video_console_panel_counts[13] = enable ? 1 : 0;
++	video_console_panel_counts[14] = video_console_panel_counts[14] + 1;
++
++	if (enable && vc_panel_handed_over) {
++		/* The panel belongs to the display path now. Stay off. This also
++		 * skips the whole-screen clear at the end of gc_enable(TRUE). */
++		video_console_panel_counts[15] = video_console_panel_counts[15] + 1;
++		return;
++	}
+ 
+ 	if (enable == FALSE) {
+ 		// only disable console output if it goes to the graphics console
+@@ -2806,7 +2830,12 @@
+ 	VCPUTC_LOCK_LOCK();
+ 
+ 	disableConsoleOutput = (pause && !console_is_serial());
+-	gc_enabled           = (!pause && !graphics_now);
++	/* H630: kPEEnableScreen would otherwise turn the drawing back on. Count
++	 * only the cases where it really would have been re-enabled. */
++	if (vc_panel_handed_over && !pause && !graphics_now) {
++		video_console_panel_counts[15] = video_console_panel_counts[15] + 1;
++	}
++	gc_enabled = (!pause && !graphics_now) && !vc_panel_handed_over;
+ 
+ 	VCPUTC_LOCK_UNLOCK();
+ 
+@@ -2837,6 +2866,12 @@
+ 	vinfo.v_rows = vinfo.v_height / ISO_CHAR_HEIGHT;
+ 	vinfo.v_columns = vinfo.v_width / ISO_CHAR_WIDTH;
+ 	vinfo.v_rowscanbytes = ((vinfo.v_depth + 7) / 8) * vinfo.v_width;
++
++	/* H630: H629 only stored the grid inside vc_scroll_down(), which never ran,
++	 * so grid printed 0x0. This is where the grid is actually computed. */
++	video_console_panel_counts[9] = vinfo.v_rows;
++	video_console_panel_counts[10] = vinfo.v_columns;
++	video_console_panel_counts[11] = ISO_CHAR_HEIGHT;
+ 	vc_uiscale = vinfo.v_scale;
+ 	if (vc_uiscale > kMaxProgressData) {
+ 		vc_uiscale = kMaxProgressData;
+@@ -3033,6 +3068,15 @@
+ 		if (graphics_now) {
+ 			gc_enable(TRUE);
+ 		}
++		/*
++		 * H630: take the panel away from the text console. The console drew
++		 * 68 million character cells during the H629 run and the panel content
++		 * changed in the same beat as its writes, so this is the control that
++		 * decides whether the console is the writer.
++		 */
++		vc_panel_handed_over = TRUE;
++		video_console_panel_counts[12] = 1;
++		gc_enable(FALSE);
+ #endif
+ 		break;
+ 

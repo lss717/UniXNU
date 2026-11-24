@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
-"""H629 panel attribution analysis.
+"""Panel attribution analysis for H629 and H630.
 
-Reads a decoded H629 kernel log and reports the four measurements that round
-added, in the order they have to be read:
+H629 added the measurements; H630 split the console operations apart, reported
+the console-ownership control state, and cleared the decay row at each blit so
+a printed row can no longer mix two write cycles. Both line shapes are read.
 
-  1. whether the read path can be trusted at all (the same-beat double read),
-  2. which blocks lose pixels and where the replacement values came from,
-  3. how fast the content goes after a blit (the decay curve),
-  4. whether the kernel text console was writing in the beats the panel changed.
+The report is in the order the evidence has to be taken:
 
-A run whose double-read check disagrees is reported as unusable, because every
-other number here depends on that read.
+  1. the same-beat double read, because every other number depends on it,
+  2. which blocks lost pixels and what value replaced them,
+  3. how fast the loss follows a blit,
+  4. whether the kernel text console was writing in those beats, and after H630
+     whether the control actually stopped it.
 
 Usage: analyze-h629-panel-attribution.py <log>
 """
 import re
 import sys
 
-WATCH = re.compile(
-    r"NATIVE_PANEL_WATCH: build=(?P<build>\S+) samples=(?P<samples>\d+) "
+NOT_REACHED = 0xFFFFFFFF
+
+COMMON = (
+    r"build=(?P<build>\S+) samples=(?P<samples>\d+) "
     r"now=(?P<now>\d+) mask=(?P<mask>[0-9a-f]+) transitions=(?P<transitions>\d+) "
     r"prev=(?P<prev>\d+) atSample=(?P<atsample>\d+) "
     r"blocks=(?P<b0>\d+)/(?P<b1>\d+)/(?P<b2>\d+)/(?P<b3>\d+)/(?P<b4>\d+)/(?P<b5>\d+) "
@@ -30,12 +33,28 @@ WATCH = re.compile(
     r"reread=(?P<disagree>\d+)/(?P<checks>\d+) "
     r"cons sc=(?P<sc>\d+) dr=(?P<dr>\d+) rows=(?P<rows>\d+) "
     r"region=(?P<top>\d+)-(?P<bottom>\d+) grid=(?P<gridw>\d+)x(?P<gridh>\d+) "
-    r"h=(?P<glyph>\d+) wrote=(?P<wrote>\d+) both=(?P<both>\d+) "
+    r"h=(?P<glyph>\d+) ")
+
+WATCH_H630 = re.compile(COMMON +
+    r"paint=(?P<paint>\d+) clear=(?P<clear>\d+) cursor=(?P<cursor>\d+) "
+    r"ctl=(?P<ctl>\d+) gc=(?P<gc>\d+) wrote=(?P<wrote>\d+) both=(?P<both>\d+) "
     r"neither=(?P<neither>\d+)")
+WATCH_H629 = re.compile(COMMON +
+    r"wrote=(?P<wrote>\d+) both=(?P<both>\d+) neither=(?P<neither>\d+)")
 
 PANEL = re.compile(
     r"NATIVE_A540_PANEL: mapped=\d+ runs=(?P<runs>\d+) .*?finalkept="
     r"(?P<finalkept>\d+)/(?P<finaltotal>\d+)")
+
+ACTIVITY = re.compile(
+    r"NATIVE_PANEL_ACTIVITY: prog=(?P<prog_e>\d+)/(?P<prog_x>\d+)/(?P<prog_p>\d+) "
+    r"panic=(?P<pan_e>\d+)/(?P<pan_x>\d+)/(?P<pan_p>\d+) "
+    r"blank=(?P<bla_e>\d+)/(?P<bla_x>\d+)/(?P<bla_p>\d+) "
+    r"copy=(?P<cpy_e>\d+)/(?P<cpy_x>\d+)/(?P<cpy_p>\d+) "
+    r"pat=(?P<pat_e>\d+)/(?P<pat_x>\d+)/(?P<pat_p>\d+) "
+    r"slot=(?P<slot_e>\d+)/(?P<slot_x>\d+)/(?P<slot_p>\d+) "
+    r"usb=(?P<usb_e>\d+)/(?P<usb_x>\d+)/(?P<usb_p>\d+) "
+    r"hbcell=(?P<hb_e>\d+)/(?P<hb_x>\d+)/(?P<hb_p>\d+)")
 
 BLOCKS = (("blue    y0", "b0"), ("green   y384", "b1"), ("red     y768", "b2"),
           ("cyan    y1152", "b3"), ("yellow  y1536", "b4"), ("magenta y1880", "b5"))
@@ -43,20 +62,28 @@ DECAY = (("beat +1", "d1"), ("beat +2", "d2"), ("beat +3", "d3"), ("beat +5", "d
          ("beat +10", "d10"), ("beat +20", "d20"), ("beat +29", "d29"))
 
 
+def fmt_decay(value):
+    return "not reached" if int(value) == NOT_REACHED else value
+
+
 def main(path):
-    watches, panels = [], []
+    watches, panels, activity = [], [], []
     with open(path, "r", errors="replace") as handle:
         for line in handle:
-            m = WATCH.search(line)
+            m = WATCH_H630.search(line) or WATCH_H629.search(line)
             if m:
                 watches.append(m.groupdict())
                 continue
             p = PANEL.search(line)
             if p:
                 panels.append(p.groupdict())
+                continue
+            a = ACTIVITY.search(line)
+            if a:
+                activity.append(a.groupdict())
 
     if not watches:
-        print("no NATIVE_PANEL_WATCH lines: this log is not from H629 or later")
+        print("no NATIVE_PANEL_WATCH line matched: wrong log shape")
         return 1
 
     g = watches[-1]
@@ -81,22 +108,32 @@ def main(path):
 
     print("")
     print("replacement signature in that sample:")
-    print("  black %s   white %s   diagnostic grey %s" % (g["black"], g["white"], g["grey"]))
+    print("  black 0xff000000: %s   white 0xffffffff: %s   grey 0xff404040: %s"
+          % (g["black"], g["white"], g["grey"]))
     print("  a different block's own test colour: %s" % g["tile"])
     print("  unexplained %s, first value 0x%s at panel dword 0x%s"
           % (g["unk"], g["unkval"], g["unko"]))
+    if g["unkval"] == "0":
+        print("  0x00000000 is video_console.c's default vc_color_back and vc_color_fore,")
+        print("  so a console character cell painted with the default colours lands here.")
 
     print("")
     print("decay after the most recent blit (pixels of 3072 still holding their colour):")
     for name, key in DECAY:
-        print("  %-9s %s" % (name, g[key]))
+        print("  %-9s %s" % (name, fmt_decay(g[key])))
     if panels:
         print("  at the blit itself: run %s finalkept=%s/%s"
               % (panels[-1]["runs"], panels[-1]["finalkept"], panels[-1]["finaltotal"]))
 
     print("")
-    print("console attribution:")
-    print("  scroll calls %s, glyph/clear/cursor calls %s" % (g["sc"], g["dr"]))
+    print("console operations:")
+    print("  scroll calls %s (H629 found the scroll path never runs)" % g["sc"])
+    if "paint" in g and g["paint"] is not None:
+        print("  paint_char %s   clear_screen %s   reverse_cursor %s"
+              % (g["paint"], g["clear"], g["cursor"]))
+        print("  control ran %s   last gc_enable argument %s" % (g["ctl"], g["gc"]))
+    else:
+        print("  glyph/clear/cursor combined: %s (split from H630)" % g["dr"])
     print("  text grid %sx%s, glyph height %s panel rows, last scroll region %s-%s"
           % (g["gridw"], g["gridh"], g["glyph"], g["top"], g["bottom"]))
     wrote, both, neither = int(g["wrote"]), int(g["both"]), int(g["neither"])
@@ -104,29 +141,42 @@ def main(path):
     print("  beats console wrote AND panel changed: %s" % g["both"])
     print("  beats panel changed, console did not : %s" % g["neither"])
 
+    if activity:
+        a = activity[-1]
+        print("")
+        print("display-side writers (entered / stopped at a guard / pixels written):")
+        for label, keys in (("progress", ("prog_e", "prog_x", "prog_p")),
+                            ("panic fill", ("pan_e", "pan_x", "pan_p")),
+                            ("blank fill", ("bla_e", "bla_x", "bla_p")),
+                            ("swap copy", ("cpy_e", "cpy_x", "cpy_p")),
+                            ("2x2 pattern", ("pat_e", "pat_x", "pat_p")),
+                            ("slot cell", ("slot_e", "slot_x", "slot_p")),
+                            ("usb cell", ("usb_e", "usb_x", "usb_p")),
+                            ("heartbeat cell", ("hb_e", "hb_x", "hb_p"))):
+            print("  %-15s %s / %s / %s" % (label, a[keys[0]], a[keys[1]], a[keys[2]]))
+
     changed = both + neither
     print("")
     if checks and disagree:
         print("VERDICT: withheld, the read path failed its own check.")
-    elif wrote == 0:
-        print("VERDICT: the console never wrote during the sampled beats, so it is not the")
-        print("  writer and the search continues elsewhere.")
+    elif wrote == 0 and changed:
+        print("VERDICT: the console never wrote during the sampled beats while the panel")
+        print("  changed in %d of them, so the console is excluded." % changed)
     elif changed == 0:
-        print("VERDICT: the panel content did not change in any sampled beat, so this run")
-        print("  says nothing about who caused the earlier loss.")
+        print("VERDICT: the panel content did not change in any sampled beat.")
     elif neither == 0:
-        print("VERDICT: all %d beats where the panel changed also had a console write, and"
-              % both)
-        print("  no change happened without one. The console accounts for every observed")
-        print("  change in this run.")
+        print("VERDICT: all %d beats where the panel changed also had a console write," % both)
+        print("  and no change happened without one.")
     elif both == 0:
-        print("VERDICT: the panel changed in %d beats where the console did not write and"
-              % neither)
-        print("  never together with it. The console is excluded for those changes.")
+        print("VERDICT: the panel changed in %d beats with no console write and never" % neither)
+        print("  together with one. The console is excluded.")
     else:
-        print("VERDICT: mixed. %d beats match a console write, %d do not, so the console is"
-              % (both, neither))
-        print("  a writer but not the only one.")
+        share = both / float(changed)
+        print("VERDICT: %d of %d panel-change beats (%.0f%%) coincided with a console"
+              % (both, changed, 100.0 * share))
+        print("  write. The remaining %d are few enough that the console explains most"
+              % neither)
+        print("  of the loss; the control run decides it.")
     print("")
     print("Scope: these are beats that were sampled, not the whole session. Sampling only")
     print("runs once the panel window is ready, and the attribution counters start there.")
