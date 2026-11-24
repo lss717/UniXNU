@@ -47,6 +47,26 @@ PANEL = re.compile(
     r"carry=(?P<carry>[0-9a-f]+) kept=(?P<kept>\d+)/(?P<kepttotal>\d+) .*?finalkept="
     r"(?P<finalkept>\d+)/(?P<finaltotal>\d+)")
 
+FAULT = re.compile(
+    r"NATIVE_PANEL_FAULT: build=\S+ blk=(?P<blk>\d+) y=(?P<y>\d+) x=(?P<x>\d+) "
+    r"dst=(?P<dst>[0-9a-f]+) aligned=(?P<aligned>[0-9a-f]+) shift=(?P<shift>\d+) "
+    r"srcrow=(?P<srcrow>\d+) rowbad=(?P<r0>[0-9a-f]+)/(?P<r1>[0-9a-f]+)/"
+    r"(?P<r2>[0-9a-f]+)/(?P<r3>[0-9a-f]+)/(?P<r4>[0-9a-f]+)/(?P<r5>[0-9a-f]+)/"
+    r"(?P<r6>[0-9a-f]+)/(?P<r7>[0-9a-f]+) othercol=(?P<othercol>\d+) "
+    r"odd=(?P<odd>\d+) v1=(?P<v1>[0-9a-f]+) o1=(?P<o1>[0-9a-f]+) "
+    r"v2=(?P<v2>[0-9a-f]+) o2=(?P<o2>[0-9a-f]+) "
+    r"surf0=(?P<surf0>[0-9a-f]+) surfX=(?P<surfX>[0-9a-f]+) surfEnd=(?P<surfEnd>[0-9a-f]+) "
+    r"panel0=(?P<panel0>[0-9a-f]+) panelX=(?P<panelX>[0-9a-f]+) "
+    r"panelEnd=(?P<panelEnd>[0-9a-f]+)")
+
+TEST_COLOURS = {"ff0000ff": "blue", "ff00ff00": "green", "ffff0000": "red",
+                "ff00ffff": "cyan", "ffffff00": "yellow", "ffff00ff": "magenta"}
+
+
+def colour_name(value):
+    return TEST_COLOURS.get(value, "0x" + value)
+
+
 ACTIVITY = re.compile(
     r"NATIVE_PANEL_ACTIVITY: prog=(?P<prog_e>\d+)/(?P<prog_x>\d+)/(?P<prog_p>\d+) "
     r"panic=(?P<pan_e>\d+)/(?P<pan_x>\d+)/(?P<pan_p>\d+) "
@@ -68,7 +88,7 @@ def fmt_decay(value):
 
 
 def main(path):
-    watches, panels, activity = [], [], []
+    watches, panels, activity, faults = [], [], [], []
     with open(path, "r", errors="replace") as handle:
         for line in handle:
             m = WATCH_H630.search(line) or WATCH_H629.search(line)
@@ -82,6 +102,10 @@ def main(path):
             a = ACTIVITY.search(line)
             if a:
                 activity.append(a.groupdict())
+                continue
+            fl = FAULT.search(line)
+            if fl:
+                faults.append(fl.groupdict())
 
     if not watches:
         print("no NATIVE_PANEL_WATCH line matched: wrong log shape")
@@ -157,6 +181,33 @@ def main(path):
                             ("usb cell", ("usb_e", "usb_x", "usb_p")),
                             ("heartbeat cell", ("hb_e", "hb_x", "hb_p"))):
             print("  %-15s %s / %s / %s" % (label, a[keys[0]], a[keys[1]], a[keys[2]]))
+
+    if faults:
+        fl = faults[-1]
+        print("")
+        print("short block geometry (H631):")
+        print("  block %s, row %s within it, first bad column %s"
+              % (fl["blk"], fl["y"], fl["x"]))
+        print("  destination 0x%s aligned 0x%s shift %s px, source row %s"
+              % (fl["dst"], fl["aligned"], fl["shift"], fl["srcrow"]))
+        print("  bad pixels per row: %s"
+              % " ".join("%s=%s" % (i, int(fl["r%d" % i], 16)) for i in range(8)))
+        print("  pixels holding another block's colour: %s   holding anything else: %s"
+              % (fl["othercol"], fl["odd"]))
+        print("  odd values 0x%s at dword 0x%s, 0x%s at dword 0x%s"
+              % (fl["v1"], fl["o1"], fl["v2"], fl["o2"]))
+        print("  surface words the blit reads : %s %s %s"
+              % (colour_name(fl["surf0"]), colour_name(fl["surfX"]),
+                 colour_name(fl["surfEnd"])))
+        print("  panel words at the same places: %s %s %s"
+              % (colour_name(fl["panel0"]), colour_name(fl["panelX"]),
+                 colour_name(fl["panelEnd"])))
+        if fl["surf0"] == fl["panel0"] and fl["surfX"] == fl["panelX"]:
+            print("  the panel matches the surface at the sampled places, so the row")
+            print("  content is right where it was read from and the failure is elsewhere")
+        elif fl["surf0"] != fl["panel0"]:
+            print("  the panel does not match the surface word the blit was told to read,")
+            print("  so the destination row or the read row is addressed wrongly")
 
     changed = both + neither
     samples = int(g["samples"])
