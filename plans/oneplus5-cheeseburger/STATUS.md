@@ -28784,3 +28784,112 @@ adb 句柄为空，命令静默失败，`fastboot boot` 被跳过，而我的 CO
 **边界。** 用户已确认 H626 六个色块可见，但那是写完瞬间的可见性；H628 证明内容按秒变化，所以
 "持续稳定显示"仍未通过。`val=0 xf=0 fr=0` 未变，不是真实 CA 桌面第一帧。回归保持：H615 surface
 `match=512 rowmask=ff`、H611 blit `match=400`、无 SMMU 新故障（`fsr 400→400`、`far 0→0`）、无 panic。
+
+### §330 H629：先纠正 H628 的时间推断，再把内核文本控制台纳入写入者（2026-11-24）
+
+**H628 的打印时刻不等于采样时刻，上一轮的两条结论要收回。** 心跳里 native_a540_hb_panel_selftest()
+在 beat % 30 == 27 调用，native_a540_hb_panel_watch() 每拍调用，而 NATIVE_A540_PANEL 与
+NATIVE_PANEL_WATCH 两行都在 beat % 10 == 0 打印。打印 WATCH 行的那一拍并不是刚写完的那一拍，两者
+相差最多 3 拍。所以 H628 并没有测到写后一秒的数值，它的时间分辨率是零，§329 里那句写完那一刻是对的、
+一秒之内就被改掉超出证据。能说的只有：写完统一读回 2944/3072，下一次打印时约 1050。
+
+**transitions=276 / samples=497 也不能读成持续双向写入。** 同一行里 prev 与 now 的差值只有个位到几十
+（1043/1044、1090/1095、1208/1242），量级远小于 2944 到约 1050 的那次跌落。H628 的字段无法区分
+一次性跌落后的小抖动和反复双向改写，而 §329 按后者表述了。
+
+**§329 说把误存的延续日志改名到了 H627 目录，实际没有。** 它当时仍在
+logs/H628/device/20261124-1525-H627-continuation，本轮已移到
+logs/H627/device/20261124-1525-H627-continuation。H628 目录下现在只剩 20261124-1540-H628，
+boot 212f276a，含 NATIVE_PANEL_WATCH，身份与内容一致。
+
+**本轮先做离线核实，不消耗启动，结果排除了几个候选。**
+
+一，boot_progress_active() 在没有定义 XNU_BOOT_PROGRESS 时是返回 0 的宏，boot_progress_putc 是空函数，
+所以 vcputc_options 走的是 XNU 原生 video_console 文本路径，不是 boot_progress 渲染器。屏幕上的
+NATIVE_* 文字由 video_console 画进面板。
+
+二，progress() 与 panicPaint() 里的 if(!PE_current_console(&video))return; 在本平台必然早退，这两个
+函数不写面板，它们的 panelWriteRecord 不可达。同文件的 blank 填充与 swap 拷贝用相反约定
+（if(PE_current_console(&blank) || ...)），会真的写。仓库内部这层约定不一致，计数点不能覆盖早退之前
+的任何写入，这一点与 §329 的判断相同。
+
+三，drawTestPattern()、drawSlotCell()、drawUsbCell()、drawHeartbeatCell() 四个 CPU 写入者此前完全不在
+计数里。它们的落点是左上角 x<96 与右上角 x>=824、y<256 的单元格，测试块在 x=480..543，几何上覆盖
+不到我们的块。这是一条不依赖计数的排除。
+
+四，当前 kernel_args 里没有 h103-hb-timer，所以 h103TimerCallFunc 那条每秒重绘诊断格的路径没有启动。
+h103-log-secs=60。
+
+五，IOVA 重叠假设不成立。kBoBase=0x2000000，心跳自检写 bo[3..7]，surfSrc 与 surfDst 在 0x3000000 和
+0x3100000，surfDst 的 10,444,800 字节止于 0x3AF5C00，面板在 0x4000000，区间互不重叠。
+
+**剩下的首要候选是 vc_scroll_down()。** 它按 ISO_CHAR_HEIGHT 逐行 bcopy 整个滚动区，滚动区大小由
+scrreg_top 与 scrreg_bottom 决定，日志每几行就滚一次。这是唯一既能大范围改写面板、又与可见日志节奏
+同源、且此前完全未插桩的路径。本轮把它列为首要被测对象，仍未证明。
+
+**H629 只改观测，不改任何写入行为。** 四项测量分别回答一个此前答不了的问题。
+
+分块计数回答损失是否覆盖整屏。一个总数分不清整屏写入者和只占上部若干行的文本区，六块各自的计数可以。
+
+替换像素的取值签名回答是谁写的。同一次读回顺手把不等于本块颜色的像素归类为黑、白、诊断深灰、另一块
+自己的测试色，或者尚未命名的值，并记录第一个未命名值及其面板偏移。测试色说明是我们的寻址错位，黑色
+说明是填充或控制台底色，深灰说明是诊断格。
+
+相对写入的衰减曲线回答何时。自测结束时把计数清零，之后在第 1、2、3、5、10、20、29 拍各记一次总数，
+把丢失定位到具体的拍，而不是定位到一次打印。
+
+同一拍内对 24 个固定探针点读两遍回答观测自己是否可信。面板窗口是 kIOMapInhibitCache 设备内存，两遍
+之间没有任何写入，若取值不一致，问题在读路径而不在写入者，上面的计数全部作废。
+
+**内核侧插桩。** 新增 patches/xnu/console-panel-write-accounting.patch，在 video_console.c 记录每次
+滚动（搬动的行数与字节数、当时的滚动区上下界与文本行列数）、每个字符格、每次清屏、每次光标反显。
+文件名按功能命名，顺序只由 patches/xnu/series 承担。驱动每拍读一次这组计数，并把三类拍数分别累加：
+控制台写了、面板变了、面板变了而控制台没写。第三类若不为零，说明还有别的写入者。
+
+**会话寿命也要纠正。** iOS 会话几分钟后回 Android 不是本轮实测结论。H627（boot 225224b6）日志跑到
+1309 秒仍在用户态，H628（boot 212f276a）到 602 秒。H624 的 419 秒掉线属于 CDC 中断，与内核会话是否
+结束是两件事，不能合并成一条。
+
+**边界。** val=0 xf=0 fr=0 未变，人工测试色块不计为桌面第一帧。持续稳定显示仍未达成，本轮不扩全屏、
+不接真实 CA。绿色块稳定的 128 像素缺漏与 sent=1 作为独立单变量问题保留，不与外部写入者混在一起处理。
+回归保持 H615 surface、H611 blit 与无新增 SMMU 故障。
+
+### §331 H629 构建与链接踩坑（2026-11-24）
+
+本轮为了加四个新计数器和一个内核插桩，连续四次构建失败，每次都烧掉一整轮构建时间。三个坑都是
+新知识，记下来。
+
+**坑一，volatile 计数器不能用 ++/--。** `NativeLegacyDisplay` 归档以 `-Werror` 编译，
+`-Wdeprecated-volatile` 把 `arr[i]++` 直接判为错误。同文件里已有的 `panelWriteRecord` 之所以
+没事，是因为它写的是 `entry[0] = entry[0] + 1`。本仓库新增 volatile 计数器一律用显式读—加—写。
+
+**坑二，失败的内核构建不会留下任何明显痕迹，而打包会照常使用旧内核。**
+`macos-build-kernel.sh` 编译归档失败时仍可能返回 0，而这次它是返回非 0 但脚本继续往下跑
+prelink，prelink 对着上一次成功的 `kernel.macho` 成功返回，日志末尾一片绿色。
+`h629-build.sh` 现在在 `bash scripts/macos-build-kernel.sh` 之后立刻取 `$?` 并非零即停，
+同时打印当前 kernel.macho 的哈希。以后所有构建脚本都应带这个门禁，不能只看 prelink 是否成功。
+
+**坑三，对全局数组用常量下标做 8 字节访问，会在链接期被拒绝。**
+报错是 `ld: fixup error (kind=arm64_lo12_addend) ... target _native_legacy_panel_activity
+not 8-byte aligned, which is required by LDR/STR instruction`。原因是 `panelEnter(4)` 被内联后
+clang 把下标折成符号自身的 12 位加数，链接器要求符号地址 8 字节对齐，而这两个计数器数组落在
+`__DATA,__common`，放置由链接器决定。踩过的无效修法：`__attribute__((aligned(16)))` 和
+`= {}` 初始化都没能把它从 `__common` 里挪出来。真正有效的是消除常量加数——把三个 helper 改成
+`noinline` 函数、下标留在寄存器里，以及打印侧先用 `volatile const uint64_t *p = &arr[0][0];`
+取指针再下标。同文件原有的 `panelWriteRecord` 就是这个形状，所以一直没出问题。
+新增 64 位全局计数器时，默认按"要么下标非常量、要么先取指针"来写，不要指望对齐属性能救。
+
+**坑四（我自己写错，不是工具链问题）。** 把 `gPanelBeatsSinceWrite = 0u;` 追加到自测函数末尾时
+锚点包含了函数的右花括号，结果语句落在函数外，报 `a type specifier is required`。用带右括号的
+多行锚点插入语句时，必须确认插入点在括号内。
+
+**坑五，打印行号错位。** 我用整段替换的方式改 `NATIVE_PANEL_WATCH` 的 IOLog，替换后残留了一行
+旧参数 `(unsigned) native_a540_panel_diag[42], ...[43]);`，形成悬空的一行。C++ 里这会被解析成
+表达式语句，不一定报错但会读错值。以后整段替换 IOLog 调用后必须回读该区并核对格式符数量与
+参数数量一致（本轮已用脚本核对：WATCH 39/39，ACTIVITY 24/24，WRITES 16/16）。
+
+**坑六，Windows 到 Mac 的补丁传输。** 用 PowerShell 管道把补丁文本写进文件会带上 CRLF，
+`git apply` 在 Mac 上会因此失败；而 `ssh mac "base64 ..."` 里带 `$`、`&&`、`;` 的命令会被
+PowerShell 层破坏。可靠做法是本地写脚本文件、`Get-Content -Raw file | ssh mac "python3 -"`
+传 stdin，二进制内容用 `base64 -i` 取回后本地解码并比对 sha256。本轮补丁两端哈希已核对一致。
+
