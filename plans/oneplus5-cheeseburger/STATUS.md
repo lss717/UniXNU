@@ -28260,3 +28260,54 @@ fence 从 `0x12` 递增到 `0x33`，说明每次都是新的提交而不是重�
 
 **下一步（Stage 2）。** 把这次真实 GPU 输出的那块 surface 接入显示 present，分别验证绘制、
 读回与扫描输出三件事，再谈真实 CA 请求。
+
+### §315 Stage 2 前置审计：GPU 地址空间是静态表，真实 surface 需要动态映射（2026-11-24）
+
+本轮不改代码，先把 Stage 2 依赖的四件事查清：正常 BO 分配能力、GPU VA 与 SMMU 映射、
+`'b3a8'` 的真实格式语义、显示 handoff 管道的现状。
+
+**`'b3a8'` 的真实语义已按接口核实。** `NativeLegacyRequest.h` 里
+`native_legacy_surface_widetype()` 判定 `format==0x62336138 && planes==2`，注释明确 plane 0 是
+32 位 BGRA、plane 1 是 8 位 alpha。限定 stride 访问器对这个格式报告的是**像素**而不是字节，
+`native_legacy_surface_bytestride()` 在 `stride < width*4` 时乘 4。桌面 1080 宽、stride 1088 px
+得到字节 stride 4352。`native_legacy_surface_bounds()` 要求 `stride >= width*4` 且
+`allocation >= stride*height` 且 `descriptorBytes >= allocation`。按此算 plane 0 为
+`4352*1920 = 8,359,680`，alpha plane 为 `1088*1920 = 2,088,960`，合计 `10,444,800`，与 AGENTS.md
+记录的 `alloc=10444800` 完全吻合，所以约 10 MiB 的估算成立且来源明确，不是猜测。拷贝只读
+plane 0，alpha plane 对不透明扫描输出无用，被有意留空。
+
+**GPU 地址空间目前是构建时一次成型的静态表。** `NativeA540C3.cpp` 的 C3 用
+`ArmSmmu4KRange r[6 + kBoSlots]`（14 项）调 `ArmSmmu4KBuild`，要求 IOVA 升序且不重叠。BO 是
+`kBoSlots=8`、`kBoPage=0x1000`、`kBoBase=0x2000000`，即固定 8 个 4 KiB 槽，`bo[i].init(kBoPage)`。
+表里另有 ring、pm4、pfp、gpmu、rptr 和 `0xE9000000` 的 trusted window，**没有面板 framebuffer，
+也没有任何可容纳真实 surface 的区间**。`Alloc::init()` 本身用
+`IOBufferMemoryDescriptor::inTaskWithPhysicalMask` 带 `kIOMemoryPhysicallyContiguous`，尺寸参数是通用的，
+但受 `physicalMask=0x0000000ffffff000` 和 `phys+size <= 0x10000000000` 约束，所以 8 MiB 级的物理连续
+分配可行但不保证。
+
+**动态映射能力在套件里已存在，只是驱动没用。** `kits/ArmSmmu4K/ArmSmmu4KLive.h` 提供
+`ArmSmmu4KLiveUpdate`、`ArmSmmu4KLiveUpdateContext` 和 `ArmSmmu4KLiveUpdateContextBatch`，语义是把一段
+完全无效的区间增量映射、或把一段完全匹配的已映射区间解除映射，替换需要先 unmap 再 map，
+批量接口按原生 IOVA 排序且互不相交。头文件同时说明成功 unmap 只移除翻译，不会自己产生
+GPU fence。驱动侧 `grep` 确认 `NativeMobileDisplay` 里没有任何 `ArmSmmu4KLive*` 引用，C3 只用到
+Build/Config/Context/Program/Streams。所以 Stage 2 缺的是我们这层的用法，不是底层能力。
+
+**显示 handoff 管道已经建好。** `NativeGOPresenter.cpp` 有
+`offer(display, memory, stride, width, height)`，只在 `gpuMode && online && gpuClient && !swap.offered`
+时接受，否则返回 false 让显示驱动走自己的路径并按 fallback 计数。`waitSwap()` 会把被 offer 的
+surface 经 `createMappingInTask` 映射进客户端地址空间，返回 address/bytes/stride/width/height 与
+`NGP_BGRX8888`。`completeSwap()` 最终调 `native_legacy_gpu_complete(display, status)` 完成或失败原始
+swap。对外还有 `native_gop_handoff_call(op,...)` 走已授权的 Adreno accelerator 连接，op 0 取 mode、
+2 等帧、3 完成帧，另有 `native_gop_handoff_memory()` 把扫描输出本身作为可写描述符交出。
+注意 `transfer()` 在 `gpuMode` 下直接返回 `kIOReturnUnsupported`，注释写明 GPU 模式下不存在 CPU
+拷贝，两种模式互斥。计数已有 `gpu_offers/gpu_completions/gpu_failures/gpu_abandoned` 和
+`wait_stats[7]`。
+
+**Stage 2 的最小实现路径据此确定。** 第一步不是把 4 KiB 测试池简单放大，而是用
+`ArmSmmu4KLiveUpdateContext` 给一块真实尺寸、来自正常分配的缓冲区建立 GPU VA 映射，
+再让 blit 的目的区指向它。验收顺序按用户要求分两步：先证明分配、映射、尺寸与双平面布局
+能被 `native_legacy_surface_bounds()` 和 `validateSwap` 真实接受，再证明 GPU 写入的内容与读回一致
+（覆盖行边界、stride 填充和两个平面），之后才把同一缓冲区交给现有 present 路径。
+本轮同时记录一个仍未解决的输入风险：`seed-data-skip-setup.py` 现在产出 921,696 字节而历史镜像
+一直是 725,088 字节，H611 靠显式传 `--data-ramdisk` 固定，任何一次不传该参数的完整 payload
+重建都会换掉 Data seed。
