@@ -28515,3 +28515,46 @@ C3 时刻可读，后者要满足单一已启用 region、独占 bank/ASID/strea
 **回归全部保持。** 同一轮 `NATIVE_A540_SURFACE sr=0 wr=0 match=512 bad=ffffffff rowmask=ff
 padclean=1 alphaclean=1`、H611 blit `match=400 bad=ffffffff`、无 panic。输入未变：trustcache、
 gpuaddon、Data seed、args 与 H610/H615 相同。
+
+### §321 H617-H619：面板纳入 GPU 映射并完成真实上屏写入（2026-11-24）
+
+**H617（boot `6f40bedd2454190aea0ae4f41c286db9fcce7ee932853355661a41b575f788cd`，kernel `7330fb2f`）。**
+在 C3 阶段调用 `PE_current_console` 取面板参数并纳入静态页表。结果暴露我自己的一个判断错误：
+`console=0`（返回 false）但结构体被完整填充，`base=09d400000 len=7e9000 1080x1920 row=4320
+depth=32 display=1`，与显示驱动随后报告的 `NATIVE_SCANOUT` 完全一致。该文件里 `startHardware`、
+blank 路径和 copy 路径三处都写成 `PE_current_console(&video) || ...`，即返回非零才放弃，而我照抄时
+把返回值当成了成功标志，导致 `accepted=0 mapped=0`，面板没被映射。另有两处扫描/panic 路径要求返回真，
+说明这层约定在本仓库内部并不一致，因此正确做法是以结构体内容为准，返回值只作记录。
+
+**H618（boot `1747571672075ccf8bddbfc094c46174ff323cc8ca09cacc8b02e1912a7b8b87`，kernel `2301a959`）。**
+门改为只看结构体后 `accepted=1 mapped=1 iova=4000000 win=1`。同时补上 Mesa 在每次 a5xx 2D blit 前
+都会发的 `emit_setup` 寄存器组（`RB_RENDER_CNTL`、`RB_2D_BLIT_CNTL`、`GRAS_2D_BLIT_CNTL`、
+`UNKNOWN_2184`、`RB_CNTL` bypass bit17、`RB_MODE_CNTL`、`SP_MODE_CNTL`、`TPL1_MODE_CNTL`、
+`HLSQ_MODE_CNTL`、`GRAS_CL_CNTL`），H612 到 H615 没发这些也通过，说明它们依赖了 C3 固件留下的未定义初值。
+面板行字节 4320 不是 64 的整数倍，`RB_2D_*_SIZE` 的 PITCH 字段按 >>6 存储无法精确表达，所以目的写入
+按行拆成 8 个单行 blit：单行拷贝不需要行步进，pitch 字段只要覆盖该行，目的地址向下取整到 64 字节边界、
+差值折进 X 坐标，这正是 Mesa 在 buffer 路径里说明并使用的做法。
+结果 `match=0 bad=34c00 sent=0`，且新出现 `fsr=80000402 far=9d4d3000`。
+`0x9d4d3000 - 0x9d400000 = 864256 = 200*4320 + 64*4`，正是第一个目的像素，说明我把**物理地址**当成了
+GPU 地址写进 `RB_2D_DST_LO/HI`，而 CP 需要的是映射后的 IOVA。
+
+**H619（boot `4d2777fee5b51076d0b76fadc83dc696198bfa7f6d68f138785ac696c248698c`，payload
+`ece21dc3fa641a17e686aecce98e726def708f58eff6e27f1b2f9dd44fec87d4`，kernel
+`3f6bcec58f061adc43cb41e6a0961e28849c4ed2d2e1942f850b7480171c5cd2`，设备 boot id `36867299`）。**
+只把目的基址换成 `kPanelIova`。结果 17 次运行一致：
+`sr=0 wr=0 match=512 bad=ffffffff win=1 sent=0`，fence 递增到 `0x49`。GPU 把 64x8 的可见图案写进面板，
+CPU 通过非缓存窗口读回 512 个像素全部一致，矩形外四个哨兵像素在拷贝前后未变。这是本项目第一次由
+GPU 写入并被扫描控制器实际读到的 framebuffer 内容。
+
+**图案定义。** BGRA，`0xff000000 | (x*4)<<16 | 0x80<<8 | y*32`：红色从左到右递增，蓝色从上到下递增，
+绿色恒定，alpha 不透明。位置在面板 x=64..127、y=200..207。
+
+**遗留的必须修项。** 同轮 `fsr=80000402 far=3001000`，`0x3001000 = 源基址 0x3000800 + ARRAY_PITCH 2048`，
+即硬件即便 depth=1 仍会探测 base+ARRAY_PITCH，越过了 4096 字节源映射的末尾一页。H615 的面板测试没触发
+这个，是因为那里源基址是 0x3000000，加 2048 仍在页内。H620 只把面板 blit 的源 ARRAY_PITCH 改成 64 字节
+（字段 1），使探测地址落在映射内，验证故障消失且 `match` 仍为 512。每次运行都产生 SMMU 故障这件事不能接受，
+即使 `continue_after_fault=1` 让它没有阻断拷贝。
+
+**回归与输入。** H611 blit `match=400`、H609 提交 `sr=0 wr=0 n=11`、H615 surface `match=512 rowmask=ff`
+全部保持；trustcache `d012ba8fad87`、gpuaddon `c8ad154c9123`、Data seed `0ef3db84e89b`、args 1000 字节
+与 H610 逐字相同，每轮只有一个功能变量。`val=0 xf=0 fr=0` 未变：这是测试图案，不是真实 CA 桌面第一帧。
