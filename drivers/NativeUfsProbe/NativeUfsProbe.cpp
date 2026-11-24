@@ -786,9 +786,10 @@ extern "C" { extern volatile uint32_t native_a540_surface_diag[13]; }
 /* H616: the scanout target as the display driver holds it. */
 extern "C" { extern volatile uint64_t native_legacy_scanout[10]; }
 /* H617: the panel the platform console reported at C3 time. */
-extern "C" { extern volatile uint32_t native_a540_panel_diag[40]; }
+extern "C" { extern volatile uint32_t native_a540_panel_diag[48]; }
 /* H625: which scanout writer ran, when and over which rows. */
 extern "C" { extern volatile uint64_t native_legacy_panel_writes[4][4]; }
+extern "C" void native_a540_hb_panel_watch(void);
 extern "C" void native_a540_hb_panel_selftest(void);
 extern "C" void native_a540_hb_selftest(void);
 extern "C" void native_a540_hb_blit_selftest(void);
@@ -1089,6 +1090,8 @@ heartbeatThread (void *, wait_result_t)
     /* H618: a fourth offset so the panel copy shares no beat with the tests
      * above it. */
     if ((beat % 30) == 27 && (native_a540_c3_state() & 4u)) native_a540_hb_panel_selftest();
+    /* H628: sample the panel blocks every beat, not just when the test redraws. */
+    native_a540_hb_panel_watch();
     if (beat == 1 || (beat % 10) == 0) {
       IOLog ("NATIVE_A540_BO: n=%u rc=%x ready=%u free=%u used=%x ok=%u sub=%x fence=%x c3=%x lastput=%x\n",
              (unsigned) native_a540_bo_diag[0], (unsigned) native_a540_bo_diag[1], (unsigned) native_a540_bo_diag[2],
@@ -1124,6 +1127,10 @@ heartbeatThread (void *, wait_result_t)
              (unsigned) native_a540_panel_diag[25], (unsigned) native_a540_panel_diag[27],
              (unsigned) native_a540_panel_diag[28],
              (unsigned) native_a540_panel_diag[26], (unsigned) native_a540_panel_diag[29]);
+      IOLog ("NATIVE_PANEL_WATCH: samples=%u now=%u mask=%x transitions=%u prev=%u atSample=%u\n",
+             (unsigned) native_a540_panel_diag[38], (unsigned) native_a540_panel_diag[39],
+             (unsigned) native_a540_panel_diag[40], (unsigned) native_a540_panel_diag[41],
+             (unsigned) native_a540_panel_diag[42], (unsigned) native_a540_panel_diag[43]);
       IOLog ("NATIVE_PANEL_WRITES: progress=%llu@%llu/%llu-%llu panic=%llu@%llu/%llu-%llu blank=%llu@%llu/%llu-%llu copy=%llu@%llu/%llu-%llu\n",
              (unsigned long long) native_legacy_panel_writes[0][0],
              (unsigned long long) native_legacy_panel_writes[0][1],
