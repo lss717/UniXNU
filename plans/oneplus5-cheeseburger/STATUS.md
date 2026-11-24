@@ -28394,3 +28394,41 @@ scratch-data `0ef3db84e89b` 与 H610、H611 完全相同，只有 kernel 和 adt
 **流程提醒。** `h410-cdc-console.ps1` 的默认输出路径仍指向日志调用者的当前目录，这次把两份
 `H410-live*` 文件写进了已废弃的 C: worktree。文件已移到
 `logs/H612/device/20261124-0911-H612/reboot-console/`。之后调用该工具要显式指定输出位置。
+
+### §318 H614：64 字节起点对齐假设被否定，失败带不变（2026-11-24）
+
+**镜像。** boot `cd65586e04c59f6eded9728224a4759db7cdf73b7bed3876befc592e1c760c34`，payload
+`99229e5675b67e2a645cbb639f1ad3eaad79e08c4d354ce072bf744e8fd8c894`，kernel
+`f1598ac5a70ff9a6d64720c1c6103cf5161d8141d1ac5eb60ae382b2214c9b96`，设备 boot id `353CBFB7`。
+H613 会话用 COM 普通重启结束（`executing normal reboot` → `ArmDTPlatform: restart type=1 via
+PSCI SYSTEM_RESET`），回 Android 后 `adb reboot bootloader`，`fastboot boot` 一次成功。
+采集 657,061 字节、3723 帧，crcErrors=0 sequenceGaps=0。
+
+**唯一改动** 是 `kDstOriginX` 从 1 像素改成 16 像素，使目的起点满足 Mesa 在
+`emit_blit_buffer` 注释里写的 64 字节地址规则。源几何、图案、矩形尺寸和所有寄存器写入都没变。
+
+**结果否定该假设。** 40 次采样完全一致：
+`match=320 bad=1110 srcalloc=1 dstalloc=1 padclean=1 alphaclean=1 rowmask=f1 badgot=1822111
+badrowgood=0`，fence 从 `0x16` 递增到 `0x41`。`rowmask` 仍是 `0xf1`，即依旧只有图案第
+0、4、5、6、7 行整行匹配，第 1、2、3 行整行失败。唯一变化是失败位置随起点平移，
+`bad` 从 `0x1101` 变成 `0x1110`（第 4 个目的行、第 16 个像素），说明读回索引与目的起点一致，
+观测本身没错。
+
+**同时排除另一条常见解释。** 若是目的行步进 stride 用错，失败会从第 1 行连续到最后，不会在第
+4 行之后恢复；若是 64 字节起点未对齐，本轮对齐后应当全部匹配。两者都不成立。
+
+**值得继续追的具体差异。** `badgot` 从 H613 的 `0x03822151` 变成 H614 的 `0x01822111`，两者字节
+（`51 21 82 03` 与 `11 21 82 01`）都不是图案缓冲在任何对齐下的内容，也不是零，所以失败行确实
+收到了来自别处的数据。与 Mesa `emit_blit` 相比，本轮还有两处间距字段没有按真实资源填写：源
+ARRAY_PITCH 我填了 128 字节，而该图案图像的层间距应是 `256*8 = 2048`；目的 ARRAY_PITCH 我填了
+行间距 4352，而真实 surface 的 plane 0 层间距是 8,355,840，超出该字段可表示上限
+`65535*64 = 4,194,240`。H615 的单变量测试是把源 ARRAY_PITCH 改成真实层间距 2048（字段 32），
+其余全部不动，看失败带是否移动或消失。
+
+**回归全部保持。** 同一轮 H611 blit `match=400 bad=ffffffff`、H609 内核提交 `sr=0 wr=0`、
+`FENCE done=1 to=0`、`GPU me=0`、`SMMU fsr=400 far=0` 与 H610 起完全一致、用户态
+`selftest hits=4/4`、无 panic、`val=0 xf=0 fr=0` 未变。
+
+**流程问题再次出现。** `h410-cdc-console.ps1` 又把默认输出写进已删除的 C: worktree 路径，
+该目录被重新创建。已把文件移到 `logs/H613/device/reboot-console/`。这个工具的默认输出路径
+需要显式覆盖，后续调用一律带输出参数。
