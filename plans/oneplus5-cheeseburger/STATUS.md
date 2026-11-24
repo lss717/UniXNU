@@ -28432,3 +28432,42 @@ ARRAY_PITCH 我填了 128 字节，而该图案图像的层间距应是 `256*8 =
 **流程问题再次出现。** `h410-cdc-console.ps1` 又把默认输出写进已删除的 C: worktree 路径，
 该目录被重新创建。已把文件移到 `logs/H613/device/reboot-console/`。这个工具的默认输出路径
 需要显式覆盖，后续调用一律带输出参数。
+
+### §319 H615：源层间距修正后，真实尺寸 surface 的 GPU blit 全 512 像素匹配（2026-11-24）
+
+**根因确认。** H612 到 H614 的失败来自源 `RB_2D_SRC_SIZE` 的 ARRAY_PITCH 字段填了 128 字节，而该
+图案图像是 8 行、每行 256 字节，真实层间距是 2048。H615 只把这一个字段改成 2048（寄存器值 32），
+其余全部不动，问题即消失。这也解释了为什么失败是第 1、2、3 行而第 4 行之后恢复正常：源地址按
+声明的层间距回卷，不是均匀步进错误，也不是起点对齐问题，与 §317、§318 两次排除一致。
+
+**镜像。** boot `2ce53c7cbd03b3515c28da1c917755e728e72163ff90928d92b39821b3710d11`，payload
+`f63d6c7ed37ce79efb79959bb92b4fe76133cfbeb60a9948544b8b8d29b79d1c`，kernel
+`5dee3ca9658d3b9f469c6719908428008be7349638a7eb3862e6787818a5475c`，adt
+`b2348c3391252767f305bd93d78a6e15a2c8097d08281e4dfa8eedf238e58009`。设备 boot id `3644FC9E`。
+H614 会话由 COM 普通重启结束，`fastboot boot` 一次成功。采集 715,218 字节、4471 帧，
+crcErrors=0 sequenceGaps=0。
+
+**结果。** 从 285 秒到 697 秒所有采样一致：
+`sr=0 wr=0 match=512 bad=ffffffff srcalloc=1 dstalloc=1 padclean=1 alphaclean=1 rowmask=ff
+badgot=0`，fence 从 `0x16` 递增到 `0x45`。`match=512` 即 64x8 图案全部 512 个像素匹配，
+`rowmask=ff` 表示 8 行全部整行匹配，`bad=ffffffff` 表示不存在任何失败位置。
+
+**这一轮证明了什么。** 一块正常分配的、10,444,800 字节的真实桌面尺寸 surface（plane 0
+`4352*1920 = 8,355,840` 加 alpha plane `1088*1920 = 2,088,960`，2550 页）经 C3 静态页表映射到
+GPU VA `0x3100000`，由 GPU 的 2D blit 写入了携带位置与颜色信息的图案，CPU 在 fence 完成后读回，
+逐像素全部一致；同时 plane 0 每行 4320 可见字节与 4352 stride 之间的填充在整个 1920 行里保持
+为零，`8,355,840` 之后的整个 alpha plane 保持为零。目的区在提交前由 CPU 全零，而图案像素最高
+字节是 `ff`，所以这些值只可能来自 GPU。
+
+**边界，不外推。** 这是二维矩形拷贝，验证的是真实分配、GPU 映射、双平面布局、行边界与 stride
+填充下的真实 GPU 写入与读回。它不是 shader、光栅或纹理采样，也不是桌面第一帧：同一轮
+`val=0 xf=0 fr=0`。"二维复制不需要 shader"这个结论只适用于本条已验证的 blit 路径，不能推广为
+桌面渲染不需要 shader。测试图案上屏与真实 CA 桌面第一帧仍须分别验收。
+
+**回归全部保持。** H611 blit `match=400 bad=ffffffff`、H609 内核提交 `sr=0 wr=0 n=14`、
+用户态 `selftest hits=4/4`、无 panic。输入未变：trustcache `d012ba8fad87`、gpuaddon
+`c8ad154c9123`、Data seed `0ef3db84e89b`、args 1000 字节与 H610 逐字相同。
+
+**下一步（Stage 2 剩余部分）。** 把这块由 GPU 写入的同一缓冲区交给现有显示路径，先确认
+`completeSwap` 之前究竟由谁完成扫描目标的写入与切换，再验证屏幕内容与 GPU 写入一致。
+handoff 接口存在不等于上屏已通，需要单独证明。
