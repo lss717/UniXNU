@@ -30222,3 +30222,23 @@ rep=bb Q backboardd/56 H0/0 id=0x52…
 **结果二，插桩路线被本轮证伪（连同历史反证）**：所有发布均为 `of=0 mm=0 ok=0`。SpringBoard 在采集窗口内每毫秒都在做 mach 发送，而 `h672_count_send` 连 `gH672MachTotal` 都保持 0，说明三个新插桩（`CFRunLoopObserverCreate`/`bootstrap_look_up`/`mach_msg`/`mach_msg_overwrite`）**一个绑定都没被换过**。交叉验证：现有 4 个历史插桩项（BYSetupAssistant 等）在全部 `logs/` 里从未产生过 `h548` 类命中行。**结论：在本配置里，注入 dylib 的 `__DATA,__interpose` 对共享缓存镜像的调用者不生效**——缓存镜像的绑定在缓存构建期已固化，dyld 不会按插桩表重绑。H672 的主判据因此按预定规则落"不可判"，这不是又一次通道损失，而是机制排除，和 §378（constructor 期输出不可送达）、§381（ObjC 公共入口不是发送边界）、§383（内联页补丁必炸）一起把可行的观测面收窄到最后一类：**运行时重绑调用者 GOT 槽**。
 
 **H673 提案（fishhook 式 GOT 重绑，零文本写入）**：调用者镜像（QuartzCore/CoreFoundation/IOKit 等）的 `__got`/`__auth_got` 数据页在链式修复后是每进程私有的。用 `_dyld_image_count` 遍历镜像，`vm_protect` 仅对数据段开写（不碰任何文本页、不依赖 VM_PROT_COPY），把指向 `dlsym(RTLD_DEFAULT,"mach_msg")`、`mach_msg_overwrite`、`CFRunLoopObserverCreate`、`bootstrap_look_up` 的槽替换为观察器内包装函数指针，并记录**每个符号换成的槽数**作为安装证明（slot 文本扩 `sw=<obs>,<boot>,<msg>,<ow>` 计数）。命中统计沿用 H672 的 of/mm/mt/ok 语义；正对照 = 发布路径自身的 IOConnect 调用必须让 mt>0，否则全部记不可判。判据不变：of>0 ⇒ runloop 提交在发生；of>0 且 mm=0（sw 对应槽>0 且对照成立）⇒ 提交未向渲染服务发包；mm>0 ⇒ 发包发生、断点移到收包侧。服务端与内核继续零改动。
+
+
+### §385 H673 实测：GOT 重绑写成功了，但改写命中的槽不是热路径；观测面需要扩段扫描+归属记录+mach_msg2（2026-11-26）
+
+**构建（同步规）**：子模块 `5ff62e4`（GOT 扫描+四个包装器+每符号交换计数）与 `256acd4`（include 行修复）先推，主仓指针 `ccce4b5e`/`3d6613b2` 后推；中途 AdrenoMetal 推送遇到一次 GitHub 500，重试成功，两端一致后才构建。观察器 SHA-256 `3426d024b781b8379c713c90e1350552965eaf05bbd74a71a91d41306b2017ef`、CDHash `9c21609f40f12a702e1989d2576e2d57d43f1eab`（替换 `72b1748a…`），插件/内核/args 未动。`H673-boot.img` SHA-256 `aca0fb162d0f9c48987ef00e9f48d947d2e1435affcdb76c7894d7a5f58555fb`，本机取回复核一致。（另记一笔：Mac 为 x86_64，arm64 dylib 无法本机 dlopen 预检；符号可解析性沿用 H671 已在设备上跑通同组导入的先例。）
+
+**实测**：一次 `fastboot boot`（OKAY）。CDC 23:58:21（uptime ~301 秒），USB 00:08:50 掉线（error 203，uptime ~930 秒），1027367 字节。日志 `logs/H673/device/H673-live.raw.bin`，SHA-256 `E36746207387994228911A409A21A76DC7CD0E4C7D521E36498617ADB1C0D03E`。
+
+**关键读数**：四次发布（618/758/767/776 秒）全部 `tx=1/0 c=1 of=0 mm=0 ok=8`，发布行 `sw=10/3/8/0`（`CFRunLoopObserverCreate` 10 槽、`bootstrap_look_up` 3 槽、`mach_msg` 8 槽、`mach_msg_overwrite` 0 槽）。SpringBoard pid 27 全程无退出，无 SIGBUS——**GOT 数据页重绑对系统稳定无害，机制本身成立**；`ok=8` 证明扫描确实改写了 21 个槽。但没有任何一个被改写的槽被真实调用过（`mt=0` 连证明位都没触发）。
+
+**为什么空转（按现有证据的排序解释）**：
+1. iOS 17 的重度 IPC 路径不走 `mach_msg` 导出符号：CoreFoundation/libdispatch 的 runloop 与 XPC 走 `mach_msg2`/`mach_msg2_trap`（本轮未纳入目标）；`mach_msg_overwrite` 全缓存零 importer（sw=0 吻合）。被换的 8 个 `mach_msg` 槽属于低频调用方，且 QuartzCore 自己的那 1 个槽只在真实发包时经过——而本轮（同 H670/H672）本来就没有发包，所以它静默既可能是"槽没热"也可能"确实没发"，不可区分。
+2. runloop 观察器注册早于换槽或不经 `__got`：`of=0` 加捕获位未置，说明 QuartzCore 调 `CFRunLoopObserverCreate` 时没有经过被换的 10 个槽（缓存镜像的函数调用也可能走 stub island 之外的间接表）。
+3. 本轮没有记录每个交换发生在哪个镜像/哪个段，无法证伪 2——这是观测设计缺口。
+
+**另一个独立读数**：本轮四个桌面 context 全部 `d1=0`（H670/H672 首轮为 d1=1），且窗口内只出现 1 次非 nil 的 `ca_context_set_layer`。结合无重启、其余节奏正常，这是一次"更早掉出场景装配"的启动变体，记录不并入判据。
+
+**判据落点**：按 §384 预定规则，`ok` 有 8 但对照位（`mt>0`）未成立 ⇒ 本轮 of/mm 全部不可判。产出是三条硬信息：GOT 重绑安全可行、`__got` 单段扫描覆盖不足、缺归属与入口计数。
+
+**H674 设计（单变量：把扫描面从命名段扩到全部可写数据段，并让每个包装器带无条件入口计数与归属记录）**：目标扩为 6 项（`mach_msg`、`mach_msg2`、`mach_msg2_trap`、`mach_msg_overwrite`、`CFRunLoopObserverCreate`、`bootstrap_look_up`），对每个镜像的全部 `__DATA*` 段（不限段名）做槽值匹配；每包装器无条件计数（入口数与命中数分开）；发布行带前 6 条交换归属（镜像基名+段名+序号）。判据不变：入口计数>0 而命中=0 ⇒ 提交确实没发生/没外发；命中>0 ⇒ 断点移到收包侧；入口=0 ⇒ 覆盖不足，记不可判。服务端与内核仍零改动。
