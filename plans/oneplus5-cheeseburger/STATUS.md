@@ -29742,3 +29742,50 @@ delay=15 同上
 4. 正对照：同一轮里 `h585_bs_message_send_sync_enter/return` 已经能给出 XPC 同步调用的对象与返回状态；若 `msgh_id` 指向 XPC 而这两条事件在该线程上没有配对，需要记为矛盾而不是忽略。
 5. 判据 2/3 成立后，下一步是把 `msgh_remote_port` 与"我能命名的端口"对齐：优先在 SpringBoard 里对 `com.apple.CommCenter`、`com.apple.telephonyutilities.callservicesd` 各做一次 `bootstrap_look_up` 并打印得到的端口名，用来比较**类型与可达性**，不是用来断言名字相等（端口名每次查找都不同）。
 6. 产物身份：`observer load … build=H657`，插件仍为 H652。
+
+
+### §367 H657 实测：telephony 等待会返回；主线程停在 `_mach_msg` 不是阻塞证据；桌面窗口本轮真的可见了（2026-11-25）
+
+boot `214ed323`，kernel/插件/启动参数未变，观察器 CDHash `6297949609ecd319961c09d3128390cfc988a026`。COM 16:04:33 出现（本轮 USB 挂载偏慢），日志覆盖至 766.2 秒。
+
+**更正一：`pc=…b58` 不是"被卡住"的判据。** 本轮主线程在 delay=2/4/7/15/30/60/120 的采样里 `pc` 一直是同一个 `_mach_msg2_trap`，但 `sp/fp` 在 delay=60 之后变了，并且 `h552_telephony_shared_creating_return` 在 delay=60 处出现了。也就是说同一个 `pc` 既覆盖"同步等待中"，也覆盖"run loop 正常等下一条消息"。§363 里我把四轮相同的 `pc` 读成"四轮主线程都被同步调用卡住"，这一步推不出来，作废。
+
+**更正二：telephony 的同步等待是有界的。** 本轮 611.4 秒进入、653 秒返回，之后 `create=0` 的几次进入都立即返回。H651 也返回过。所以它不是第一帧的必要条件。
+
+**寄存器与消息头探测按判据 3 记为失败。** `h657_stall_args` 在 delay=2 给出 `x0=0x16f79828e`，读出的 24 字节是 ASCII `"/System/Library/Priv…"`，是栈上的字符串而不是消息头；delay=7 给出 `bits=0 size=0 remote=0xb403`，同样不是合法头。`_mach_msg2_trap` 的入口约定与我假设的 7 参数 `mach_msg` 不同，寄存器在 SVC 处已不是那组参数。这一条不能解释成"没有等待"，只能解释成探测方法选错，按观测失败处理。
+
+**本轮真正的新事实：桌面 UI 建立起来了。**
+
+```text
+489.4  h654_mirror n=1 id=0x19cc9e43 displayId=0x1 secure=1 valid=1     （创建时就是 1，不再是 0）
+632.1  uiwindow_set_hidden window=root delegate=SBRootSceneWindow visible=1
+635.1  ca_context_set_layer n=3 layer=UIWindowLayer  sublayers=1
+635.2  ca_host_context_bind host=0x9144489f
+638.8  ca_host_visible visible=1 host=0x9144489f window=root
+641.2  h557_complete_startup_enter（enter 1 次，return 0 次）
+644.4  h553_application_controller_init_enter / 646.2 return
+651.8  _SBWallpaperSecureWindow visible=1
+766.2  val=0 xf=0 fr=0
+```
+
+`window=root` 可见 3 次，宿主绑定成功，`sublayers=1`。这是本项目里第一次在同一轮日志中看到桌面根窗口可见 **且** `complete_startup` 进入 **且** 壁纸窗口可见。
+
+**渲染服务侧同时给出了缺口的形状。** backboardd 里：
+
+```text
+dev#210 newRenderPipelineStateWithDescriptor:error: vs=colorCubeVertex fs=cubeColorConvertFrag fmt0=70 samples=1
+draw#645 next observer comm=backboardd drawable=1 texture=1 1080x1920
+cmdbuf#178 renderCommandEncoderWithDescriptor: descriptor=1
+cmdbuf#181 blitCommandEncoder
+cmdbuf#192 dealloc binds=0 draws=0 dispatch=0
+queue#71 commandBuffer self-completing
+```
+
+渲染服务确实在向 Metal 要设备、要管线、要 1080x1920 的 drawable，而我们的插件对 `newRenderPipelineStateWithDescriptor:` 返回的是 `_MTLRenderPipelineState` 假对象，命令缓冲区是"自完成"。结果 `draws=0`，`presentSurface:withOptions:` 仍然 0 次命中，`xf=0 fr=0`。
+
+**这留下两种仍未分开的解释**，而且它们对应的后续工作量差别很大：
+
+1. 桌面图层的提交从未到达渲染服务，所以合成器面对的是空图层树，`draws=0` 是"没东西可画"。支持它的是 `setObject:forSlot:` 与 `waitForCommitId:timeout:` 全程 0 命中，而 `_didCommitLayer:` 的 1504 次命中是钩在 `CALayer` 上的，只反映 backboardd 自己的图层，不能当作客户端提交的证据。
+2. 提交到了，但因为没有可执行的着色器后端，合成器无法产出任何 draw。支持它的是 `newRenderPipelineStateWithDescriptor:` 确实被调用且拿到假对象。
+
+**H658 的任务就是把这两者分开**：先确定 backboardd 里代表客户端上下层树的那个服务端对象是什么（现有五个钩子里没有一个经过验证的事务接收边界），再对它记录一次带 contextId 的提交到达。判据：若同一轮里能看到 `id=0x9144489f`（或本轮的桌面 context id）的提交到达，则解释 2 成立，剩余工作是 GPU 后端；若始终没有任何带该 id 的到达，则解释 1 成立，先修提交通路。
