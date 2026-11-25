@@ -29502,3 +29502,17 @@ srvpos (540,60)   -> 0x0
 **另一条同时得到验证的方法结论。** H647 的实时流从 277 秒起连续无停摆，说明"重复探针"确实让最新读数始终可取；H646 的环则用 `paused=0` 一直到 rounds 1801，从设备侧独立证实那 2335 秒里 USB 实时流从未健康过。
 
 **桌面进度不变。** `h541_did_finish_enter` 510.86 秒，到 694 秒无 `h557_complete_startup_enter`，`val=0 xf=0 fr=0`。
+
+### §355 更正：所谓"已有文件通道"是死代码，真正每轮都在用的跨进程通道是加速器 ABI（2026-11-25）
+
+H648 原计划复用插件里写 `/private/var/keybags/persona.kb` 的先例，把它当作"已验证的安全通道"。核查后这个前提**不成立**，两处都要更正。
+
+**一、该路径从未执行过。** 把 `logs/` 下全部 `report.txt`、`*.raw.bin`、`*.log` 扫一遍，`persona` 相关观测**零条**。原因在源码里：`fix_persona()` 与 `probe_services()` 都带 `__attribute__((unused))`，即编译进去但没有任何调用点。注释写的是 H236ir 时期"仅在缺失时写入、绝不覆盖"，但那段代码始终没有被接上。**所以不能把它当作现成可用的通道。**
+
+**二、真正每轮都被两个进程使用的通道是加速器 ABI。** 日志里持续出现 `NATIVE_A540_ABI: method=17 selector=0 in=200 comm=SpringBoard`，同时 backboardd 与 mediaserverd 也在走同一条 `externalMethod` 路径；内核侧 `AGXDeviceUserClient::externalMethod()` 已经在读取 `input[1]` 作为 method，并且已经能把标量结果回传（日志里就有 `sel=%u s%u=%llx` 与 `w=%08x %08x`）。也就是说**双向标量通道在这台设备上每轮都在被实际使用**，与那条从未跑过的文件路径性质完全不同。
+
+**三、因此 H648 的通道选择改为：** 在内核 `AGXDeviceUserClient` 的探测面上增加两个选择子，一个把桌面 context id 存入内核全局，一个把它读回。观察器（SpringBoard）在 `remoteContextWithOptions:` 成功之后写入一次；插件（backboardd）在探针轮次里读一次，并立刻用**同一个** `taskNamePortOfContextId:` 查归属 pid。这样同 boot 的 id 传递走的是已被反复验证的通道，而不是新造的、结果未知的路径。
+
+代价要说清：这会改动内核（内核哈希不再是 `add66248…`）以及两个用户态组件。但**改的是通道而不是实验变量**——本轮唯一要判的科学命题仍然是"该查询接口能否解析外部进程的 context id"，A2 的判据、census 三档对照、位置查询读数全部保持不变。若通道本身失败（写入或读取返回错误），本轮按"通道未建立"记录，不得据此对 A2 作任何结论。
+
+**四、H647 的结论不受影响。** 位置查询路线已经因为"返回 0 有两种不可区分解释"而关闭，这条判断只依赖 H647 自己的读数。
