@@ -449,7 +449,7 @@
  
  struct native_ipc_event {
  	uint64_t serial;
-@@ -11398,2 +11398,46 @@
+@@ -11398,4 +11398,48 @@
  static uint64_t native_bks_request_port;
  static uint64_t native_bks_reply_port;
 +/* H682: third bind path, layout-free.  The first real message from
@@ -496,6 +496,8 @@
 +	native_render_evt_ctx = (unsigned long long)hdr->msgh_id;
 +}
 +
+ static unsigned native_bks_msg_id;
+ static int native_bks_responder_pid;
 @@ -11609,6 +11609,7 @@
  	e->bits = hdr ? (unsigned)hdr->msgh_bits : 0;
  	e->kind = kind;
