@@ -1,6 +1,6 @@
 --- a/osfmk/console/video_console.c
 +++ b/osfmk/console/video_console.c
-@@ -3074,9 +3074,11 @@
+@@ -3074,8 +3074,10 @@
  		 * changed in the same beat as its writes, so this is the control that
  		 * decides whether the console is the writer.
  		 */
