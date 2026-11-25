@@ -29886,3 +29886,29 @@ H660 改动：插件不再用日志行传结果，而是在 `probe_display_frame
 1. `A540TracePlugin.mm` 里被 here-string 结束符污染的那几行（`'@ -replace ...` 被当正文写入）已用 `git checkout --` 回滚重做，坏内容没有进入任何提交。
 2. H660 第一版把摘要挂在 `disp observe-only` 行尾，并引入了 `hostClassSummary()` 辅助函数；改用 metadata 槽后这个函数变成未使用函数会触发 `-Werror`，已连同全局变量一起删除，`observe-only` 恢复原样。
 3. 发布文本一开始会覆盖 SpringBoard 的 `sb … id=0x…`，破坏 A2 查询解析的字段；改为把最后读到的桌面 id 一起带在 `bb` 文本里。
+
+
+### §372 H661 实测：入口发布仍然没生效，§371 的两支判据都不成立，原因收窄到方法本身（2026-11-25）
+
+H661 把 `SetMetadata` 发布移到 `probe_display_frame` 的**最开头**，在任何分支之前，只在前两次通过时发。插件 CDHash `6f9093dc52dedcf107b39945f81b36cd6918b396`，镜像 `c18b2ea381c176459d55d9b10982ca2487502fc645e0a4353efcd8ed14a9ae46`（本机回读一致），观察器与 kernel 未变。
+
+**结果。** uptime 676 秒：`rep=sb` 8 次，`rep=bb` **0 次**。
+
+**这把 §371 写定的两支判据都否证了。**
+
+- 不是"函数中间提前返回"：发布已经在函数第一行之前，仍然无效。
+- 也不是"这个函数没被调用"：同一个函数里的 `srv state`、`srv ctx` 每轮都出现，函数确实在跑。
+
+**现在唯一还站得住的解释**：`SetMetadata`（方法 9）在插件这条连接上被拒绝或不被支持，而我把返回状态丢了——H661 用的是 `(void) abi_call_rc(...)`，状态没有进任何地方。H660 曾把状态放进 `host# publish` 行，但那条行和之前的日志行一样没出现，所以状态至今未知。
+
+**下一轮（H662）用一条已知能到的行来判定，不再依赖新行。** `srvpub ... read ... text=` 这类行在 H657 里确实出现过（`srvpub#531`、`srvpub#659 read position read st=0x0 handle=4 bytes=35 text=sb n=4 …`），它打印的就是从槽里读回的原文。做法：插件先尝试 `SetMetadata("bb …")`，紧接着用已经在正常工作的 `GetMetadata`（方法 10）读回，并把读到的文本交给那条 `srvpub read` 行输出。
+
+- 若读回是 `bb …` ⇒ set 成功，问题在内核 `rep=` 只打印特定来源的文本，需要改内核侧；
+- 若读回仍是 `sb …` ⇒ set 被拒绝，方法 9 在插件连接上不可用，需要换载体（例如让 SpringBoard 侧代报，或走内核新增字段）。
+
+两种结果都只依赖一条已被证明能到达的行，不再新增观测通道。
+
+**本轮另外两处要记的。**
+
+1. 用 COM 让 iOS 会话退出是有效的：`h410-cdc-console.ps1 -Reboot -RequestId 661` 打出 `ArmDTPlatform: restart type=1 via PSCI SYSTEM_RESET`，设备随后回到 Android。前提是先把占着 COM8 的采集进程停掉，否则端口被锁。
+2. 那次调用的 `-FrameOutput` 用了脚本默认值，帧文件落到了 C 盘工作树（`H410-live.frames.bin`），文本日志才在 E 盘。下次必须两个输出路径都显式写成 E 盘。
