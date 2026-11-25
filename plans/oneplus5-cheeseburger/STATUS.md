@@ -30331,3 +30331,17 @@ B. **回到用户态最后一条未试路线**：单页文本入口补丁的 can
 **判据**：`bound via=ctxport` 出现且 NATC 控制自证（ctrl_state=ok，Q/D 有对照增长）⇒ 管线有效；此后桌面 ctxid 对应端口的 `sb_att/enq/deq` 若为 0 ⇒ SpringBoard 在窗口内确实一次都没把事务发往渲染服务（结合 telephony 卡点，指向主线程从未走到提交）；若 enq>0 而 bb 侧无合成 ⇒ 断点移到接收/合成；若 `send 失败/dead` 增多 ⇒ 事务发出但目标端口失效（bb 崩溃后的状态）。**bound 缺失或控制无效 ⇒ 本轮一律记不可判，不得据零计数下结论。**
 
 **执行序**：子模块（NativeMetal observer + NativeMobileDisplay 探针）先提交推送 → 主仓 xnu 补丁（Mac 上改 xnu-work 后用 genpatch.py 重生成 native-render-ipc.patch）+ gitlink → Mac 拉取核对 SHA → observer 打包（addon）→ 内核构建（补丁序列有改动，需重建）→ prelink2 → pack-round H680 → 上机一轮 → 解码判读 → 设备留 TWRP。
+
+### §390 H680/H680b 真机：CARenderServer 查找在窗口内完成、绑定自证成立、服务端不收件；ctxport 路径暴露 CAMachPort 截断（2026-11-26）
+
+**H680（boot `798fb05c…`，内核 `448430a5`）**：CDC 约 400 秒才出现（waiter 因 UTF-8 无 BOM 解析坏路径没接上，手动补采）。窗口 400-613 秒：探针已绑（`reg=27`），控制消息自证 `att=1 enq=1`，**`deq=0`**（无人收件）、`sb=0`。backboardd 走同谱系死法：613.16 秒 `Corpse failure, too many 6` → SIGKILL → bb/190 复活；**两次启动的 USB 掉线都贴着 bb 死亡秒点（633/613）**，掉线可能非纯随机。教训：waiter 脚本必须带 BOM 或纯 ASCII 路径（已修）。
+
+**H680b（boot `db9bc86f…`，内核 `9dc3c431`=v6）**：采集全程 286.9-635 秒（356310 字节，SHA 记录见 builds）。关键读数：
+
+- **318.99 秒起三条 `ctxport ... name=0x... no-entry`**：值形如 0xe97ed280/0x5d5d7b90——是**指针低 32 位**。核实：`CARenderContextGetServerPort` 反汇编返回 `w21=[x19+0xd0]`（32 位截断），字段实际存 **CAMachPort 对象指针**；正解是读 8 字节指针再用已导出 `_CAMachPortGetPort` 解出端口名。对象/偏移本身是对的（值全在 SB 堆指针段）。
+- **探针在窗口内经 bootstrap 路径完成绑定（reg=27）**：`NATIVE_RENDER: sample=9060 att=1 sb=0 enq=1 deq=0 ctrl=1 dead=0 reg=27 drop=0` 持续到窗口尾。与 H679"整窗零 NATIVE_RENDER"不同——本轮 SB 的 CARenderServer **look-up 在窗口内走完**（launchd 回包带端口，binder=27）。bound/lookup 事件行未入流（与 SBPC 头行同类丢行，记录在案）。
+- 服务端侧：控制消息在队列里躺了 235+ 秒无人出队（`deq=0`），而 bb/56 同期活着（`rep=bb Q ... t=5`，327 秒还盘点了自己 2 个 ctx 与 1080x1920 图层树）。**"bb 进程活着"与"渲染服务收取循环在跑"是两件事，后者被证伪。**
+- 注意判定边界：本窗口绑定的是 **服务端口**（look-up 回复里的那个 right）。CA 事务若走 per-context 连接端口，服务端口 `sb=0` 不能单独断言"从未提交"。§381 早先的 d1/lc 证据链与本轮共同收敛后，剩下唯一未闭环的问题就是"SB 在 per-context 端口上发没发"——H680c 修好解柄后即可回答。
+- hb 槽 id 与 observer ctxid 存在 `0x20000000` 位差（slot id=0x20527964 vs ctx=0x527964），系 h652 侧加了显示标志位；对绑定无影响（按名解析），记录防混淆。
+
+**H680c 设计（单变量，仅 observer）**：`h680_emit` 改为 `void *h = *(void **)((char *)context + 0xd0); name = h ? CAMachPortGetPort(h) : 0;`（dlsym 两个符号都留失败行），行文本加 `h=0x%llx` 备核。内核 v6 不动（重绑逻辑已在位），addon 重打（新 observer CDHash）→ 新 trust → pack-round H680c → 上机。判据：`bound via=ctxport ctx=0x...` 出现 ⇒ 按代际端口看 `sb/enq/deq`；重绑行给出上一代终局；`deq=0`+`sb=0` ⇒ 客户端从未向该 ctx 端口提交；`sb>0` 而 bb 无合成 ⇒ 断点在接收侧循环（回到 bb 插件层追）。
