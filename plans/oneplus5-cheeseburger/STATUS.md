@@ -30378,3 +30378,22 @@ B. **回到用户态最后一条未试路线**：单页文本入口补丁的 can
 3. 工具性补账：SBPC 的 6xxx/头行在 quiet=2 窗口内全部缺席（连 miss 行也没有）——不是采样缺失而是该 printf 段的流内丢失，v8 把 miss 行并入 NATIVE_RENDER emit（同一条已验证可达的行）里带 `sbpcmiss=NN` 字段，绕开丢失面。
 
 **工件登记**：H682 boot `cfb6ed0d…`/payload `—`；H683 boot `24d3a745…`；H683b boot `27a2cb6d…`（本机 builds/H683b/device，SHA 复核一致）。observer dd513d42、addon 549dd47c、trust=H683-trust。内核 v7d=89ede49b 通用于 82/83/83b。设备终态 TWRP。日志：logs/H682（344830B live）、logs/H683（359507B）、logs/H683b（364117B live + 1021B 尾窗无正文）。
+
+### §393 H684/H684b 验证轮：绑定端口身份存疑（'w00t'，非数字MIG）、显示对象无 ObjC 层绑字段、vsync 计数器无打印面——三条判定按证据重分类（2026-11-26）
+
+**执行**：内核 v8e（`de4d3114`：sample 行加 `bctx/rcv`，receiver 用本 XNU 的 `ipc_port_get_receiver_task` 直接返回 pid 的原型——上一版按 task_t 接是编译错误）+ 插件 v9（H684b：全量 ivar 转储）。三轮上机：H684 首启 23 秒短窗（CDC 278.9-301.6 后掉，无 panic 征候，判为开机彩票，与 H674 首装同类）；H684 复跑与 H684b 全窗。boot：H684=`cb9c6f05`（两次），H684b=`75d6409b`。
+
+**验证一：traffic 绑定端口身份（rcv=56，bctx='w00t'）**。两轮一致：`sample=9030..9150 att=1 sb=0 enq=2 deq=2 ctrl=1 dead=0 reg=27 bctx=0x77303074 rcv=56`。rcv=56 确认接收方是 backboardd 无误；但 bctx=0x77303074 是 ASCII 魔数 **'w00t'**——IOKit 电源域唤醒消息的 tag（IOPMRootDomain 注册通知的 msgh_id 家族），**不是 CAWindowServer 的数字 MIG id**。也就是说 traffic 路线绑到的是"SB 发给 bb 的第一个非 BKS 端口"= 一条电源/唤醒注册类消息的端口，**并非确证的 CA 渲染连接**。结论降级：H682/83b/84 的 `sb=0` 只能证明"该 w00t 通道上 SB 沉默"，**不能证明 CA 事务通道沉默**——事务通道的绑定要靠 ctxport 路线（读对 _impl 层级）或按 CAWindowServer MIG id 范围过滤 traffic（离线拿 id 基值后可行，H686 候选）。附带正面收获：SB 确实向 bb 发出过 'w00t' 唤醒注册且 bb 收件（deq=2 里含它——bind 消息自身入队被取走）——SB 在**等待显示唤醒事件**，这与无 vsync 源的假设方向一致，但同属间接证据。
+
+**验证二：显示对象绑定字段语义（d0ctx 彻底否定）**。H684b `d0#357..364` 全量转储：CAWindowServerDisplay 只有 7 个 ivar——`_impl`(^{ @0x8，v=0x143f05780)、`_mirroringEnabled`(B)、`_panelPointsPerInch/_minimumFrameTime/_maximumFrameTime/_minimumVRRVBLDelta/_maximumVRRVBLDelta`(Q×5)。**ObjC 对象层没有任何 context/layer 绑定位**；`name=0x1e8eee7c0` getter 指针有效（读路径正对照）。因此历史所有 `d0ctx=0/d0layer=-` 都是 getter 不存在时的观测伪影，**"显示未被绑定"至今没有直接观测证据**——真绑定位在 `_impl` 的 C++ 对象内（CA::Render::Display），离线反汇编 `clientPortOfContextId:` 未能定位字段偏移（该函数在缓存里是跳板壳）。下一步要么在 bb 进程内对 `_impl+0..0x180` 做 vm_read 式扫描找"看起来是 CA::Render::Context 的指针"（对照 srv#369 ctx[0] id=0xe8ac78cb 的已知对象），要么用 `clientPortOfContextId:` 直接以已知桌面 contextId 查询端口——**后者零布局依赖**：返回非 0 端口即"该 ctx 已注册进此 display"，返回 0 即"未绑定"，正对照用 bb 自有 ctx（ctxs=2 的两个 id）。
+
+**验证三：vsync 判别的前置观测面（现状不可见）**。`NATIVE_LEGACY_PREPARE`（唯一打印 vsync 计数器的行）只在 legacy RAW kick 路径触发——H680b/681/682/683b **四轮窗口内 0 次出现**：现版系统根本不走该路径。因此 H685 若直接开 `sheng-vsync=60`，将无法证明它触发过。前置工作：把 vsyncEvents[0..5]/vsyncHz 的周期性打印挂到已在流里稳定出现的行（建议 NATIVE_UFS_ALIVE 追加 `vsync=hz/sent/arms/idle` 字段，NativeUfsProbe extern 读 LegacyDisplayProbe 计数器，零新行、零配额）。做完这步，"开 vsync→计数器走动→是否唤醒合成"才是可判实验。
+
+**三条证据链现状重分类**（IPC/呈现/锁屏，按用户要求分列）：
+- **IPC**：桌面 ctx 端口沉默——未证实（w00t 端口沉默已证实）；SB→bb 的 CAWindowServer 通道是否建立过，未观测。
+- **呈现**：scanout 无写入、无合成帧、hbcell=0——已证实（PANEL_WRITES/PANEL_ACTIVITY 行，四轮一致）。
+- **真实锁屏**：从未出现——已证实（无任何一帧来自合成器；面板内容全为诊断绘制）。
+
+**工件**：内核 `de4d3114`（v8e，通用 H684/H684b）；observer `aed54d4a`；trace bundle H684=`7e66aecc` / H684b=`4d333989`；boot H684=`cb9c6f05`、H684b=`75d6409b`（本机 builds/ 下，SHA 复核一致）。提交链：内核 f63dfc02→696e6676（v8e），插件 5f2c49f→65eabfa→3425cd7→e82df40。日志 logs/H684（两次，319811+319811? 首 78086/复跑 319811 已并入同名文件——首窗数据在第二次 boot 前已改名保留于 H684b-live.raw.bin 之前的 H684-live 首采；正式两份：H684 复跑=本目录 H684-live.raw.bin 319811B、H684b=373539B）。尾窗 sink 依旧无正文。设备 TWRP。
+
+**H685 排序（更新）**：① 插件加 `clientPortOfContextId:` 判定行（已知桌面 ctxid 查询 + bb 自有 ctxid 正对照）——零布局依赖，直接回答"绑定存在吗"；② UFS_ALIVE 挂 vsync 计数器；③ 之后才轮到 `sheng-vsync=60` 判别实验与 traffic 按 MIG id 过滤的 CA 通道绑定。
