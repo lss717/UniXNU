@@ -30089,3 +30089,25 @@ rep=bb Q backboardd/56 H0/0 id=0x52…
 **结论：枚举通道到此为止，不再修。** 类清单原本只是为了"选出服务端承载客户端根图层的那个类名"，现在这条路被 API 能力封住。按审阅意见改走已有确定性证据：用本轮已知的桌面 context id（`id=0x52…`，槽里已带、且 `same=1` 证明读写一致）配合已验证的 `clientPortOfContextId:` / `taskNamePortOfContextId:` 正对照，去定位真实的事务接收/合成入口；不再依赖类名猜测。
 
 **顺带值得记一笔**：`objc_copyClassList` 返回 NULL 本身是一个未解释的运行时事实，可能与该 bundle 的加载方式（在 backboardd 里以插件形式注入、libobjc 的 image 状态）有关。它不影响主线，但如果以后还需要类枚举，得先解决这个，而不是绕过去反复试。
+
+
+### §379 只读核实：客户端事务发送是 C++ 路径，五个 ObjC 钩子在结构上不可能是发送边界（2026-11-25）
+
+按新同步规则（细则已写入 `display-first-frame/HANDOFF.md` 与根 `HANDOFF.md`：Windows 提交推送 → 先子模块后主仓指针 → Mac 经 `ssh mac` 从 Git 远程 fetch/pull → 核对主仓 SHA 与子模块指针 → 才编译；源码禁止 scp 直传，产物取回不受限），本轮先做离线只读核实，不花上机。
+
+**核实对象**：本机 21H461 解包出的 QuartzCore。
+
+**发现一：发送路径不是 ObjC 选择子。** 镜像里存在 C++ 符号字符串 `CA::Transaction::Context::destroy`、`CA::Transaction::sync_replies`，而选择子表里与提交相关的只有 `_didCommitLayer:`、`commit`、`commitAndWaitUntilSubmitted`、`commitId`、`commitDeadline`、`committingContexts`、`setCommitHandler:` 等。也就是说 SpringBoard 把事务交给渲染服务走的是 `CA::Transaction` 的 C++ 实现，不是某个可被 `method_setImplementation` 替换的方法。
+
+**这直接给出覆盖结论**：现有五个 srv 钩子（`_didCommitLayer:`、`setLayer:`、`setObject:forSlot:`、`waitForCommitId:timeout:`、`presentSurface:withOptions:`）都是 `method_setImplementation`，只在安装它的进程内生效，且都挂在 ObjC 方法上。因此其中**没有任何一个可以作为"客户端事务已发出"的证据**；`_didCommitLayer:` 的 1504 次命中只反映 backboardd 自己的 `CALayer`，`waitForCommitId:timeout:` 与 `setObject:forSlot:` 的 0 命中也不能推断"服务端没收到"，因为发送根本不经过它们。
+
+**发现二：可校验的 ObjC 入口确实存在。** 选择子表里有 `commit` 与 `flush`，即 `+[CATransaction commit]` / `+[CATransaction flush]` 是真实方法，可以作为客户端侧的观测点；`commitAndWaitUntilSubmitted` 与 `CA::Transaction::sync_replies` 同时存在，说明同步等待回复的路径在 ObjC 层有可见入口。
+
+**H670 设计（单变量，双端最小观测，主键为同一 boot 的桌面 context id）**：
+
+- 客户端（SpringBoard 观察器）：钩 `+[CATransaction commit]` 与 `+[CATransaction flush]`，每次命中记录 PID、线程、单调序号与时刻，并记录该进程当前已知的桌面 context id；
+- 本地正对照（必须，否则命中与否都不可判）：观察器自己在安装成功后调用一次 `+[CATransaction commit]`，若这条不出现，说明钩子未生效，本轮所有"未命中"一律记为不可判；
+- 服务端（backboardd 插件）：沿用 H668/H669 已验证可送达的 `srvpub` 通道，记录同一 boot 内 `commitAndWaitUntilSubmitted` 与 `waitForCommitId:timeout:` 的命中与返回，不新增日志量；
+- 判据：客户端有发送且服务端有对应接收 ⇒ 事务通路成立，下一步查它是否进入合成与真实绘制；客户端有发送、服务端无接收**且正对照有效** ⇒ 才可以说接收侧缺失；任一侧正对照缺失 ⇒ 记不可判。
+
+端口查询只证明注册，`setLayer:`/`hasCommitted` 只作关联，都不代替事务收包。类枚举支线已按 §378 关闭，不再回到它。
