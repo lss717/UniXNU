@@ -29815,3 +29815,29 @@ layer#387 tree depth=2 class=CALayer frame=0x0     subs=0 contents=- context=1
 **SpringBoard 侧本轮已经完成的事情**（同一轮日志）：4 个远程 context 创建、根图层 `setLayer:`、`ca_host_context_bind`、`ca_host_visible window=root` 三次、`SBRootSceneWindow` 可见、壁纸窗口可见、`complete_startup` 进入。`h654_mirror n=1` 这次创建时 `displayId` 就是 1。
 
 **下一轮（H658）要回答的唯一问题**：backboardd 里代表"某个客户端的根图层被挂到显示上"的对象是什么。做法是只读枚举 backboardd 进程里类名包含 `Host`、`RenderServer`、`Scene`、`Window` 的类，并对每个候选类打印它是否有 `contextId`/`remoteLayerID`/`layerID` 这类属性；不装任何新钩子，不改任何行为。拿到这份清单才能选对接收点，避免继续猜。
+
+
+### §369 H658 记为观测失败：类清单一条都没到，而日志通道当时正在丢（2026-11-25）
+
+boot（H658）插件身份为 `builder#2 build H658`，观察器未变（H657）。日志覆盖到 714 秒。
+
+**结果：`host#` 行 0 条。** 这不是阴性结论，是采集失败，理由有两条独立证据：
+
+1. 清单代码确实在上机产物里。`build/a540-trace/A540Trace.bundle/A540Trace`（160464 字节，与 `H658-gpuaddon.img` 内条目一致）里能取到 `inventory`、`classes=%u matched=%u`、`remoteLayerID`、`hostID` 这些字符串，`caller("builder","build","H658")` 也在设备日志里出现，所以跑的就是本轮代码。
+2. 同一时刻日志通道正在丢弃：`NATIVE_UFS_LOG_FAIL: slot=68 seq=68 errors=128 delta=5444 n=5444 blocks=2 reason=4`。`reason=4` 就是 §340 定名的 H319 单次 try-lock 抢不过主 I/O 队列。一次性打印 25 行（最多 24 个类 + 1 行汇总）正好是这个通道最扛不住的形状。
+
+因此**不能说"backboardd 里没有 Host/RenderServer 类"**，只能说本轮没拿到清单。教训要记成规则：这个通道上任何一次性超过几行的观测都必须改用 `caller_priority`（保留槽）并分次重复，否则结果不可判。
+
+**本轮仍然收到的事实**（这些是单行、挤进了未丢弃的窗口）：
+
+```text
+srv#482 ctx[0] id=0xf814927d displayId=0x1 mask=0xffffffff layer=CALayer subs=2 rootContents=- bounds=1080x1920
+srv#487 ctx[1] id=0x1b236ebb displayId=0x1 mask=0xffffffff layer=CALayer subs=2 rootContents=- bounds=1080x1920
+srv#599 state displays=6 d0id=0x1 d0bounds=1080x1920 d0ctx=0 ctxs=2
+h654_mirror n=1 id=0xa7d5acb4 displayId=0x1 secure=1 secureVal=1 valid=1 ownOptions=1
+uiwindow_set_hidden window=status visible=1
+```
+
+服务端依旧只有 backboardd 自己的 2 个 context（`allctx=2`，`pid=56`），桌面那个 `0xa7d5acb4` 这次创建时 `displayId` 就是 1，但到 714 秒日志里只出现状态栏窗口，没有 `window=root`。这与 §367/§368 一致，不构成新结论。
+
+**下一轮（H659）的做法已定**：同样的类清单，改成一行汇总 + 最多 4 个最相关类名，走 `caller_priority`，并在三个相隔的采样点各发一次，保证至少一次落在保留窗口内。
