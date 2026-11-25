@@ -29912,3 +29912,39 @@ H661 把 `SetMetadata` 发布移到 `probe_display_frame` 的**最开头**，在
 
 1. 用 COM 让 iOS 会话退出是有效的：`h410-cdc-console.ps1 -Reboot -RequestId 661` 打出 `ArmDTPlatform: restart type=1 via PSCI SYSTEM_RESET`，设备随后回到 Android。前提是先把占着 COM8 的采集进程停掉，否则端口被锁。
 2. 那次调用的 `-FrameOutput` 用了脚本默认值，帧文件落到了 C 盘工作树（`H410-live.frames.bin`），文本日志才在 E 盘。下次必须两个输出路径都显式写成 E 盘。
+
+
+### §373 H662 修复双重封包并验证通道，H663 的门槛从未满足：插件是多进程的（2026-11-25）
+
+**审阅指出的缺陷成立，并且有直接痕迹。** `abi_call_rc`（`A540TracePlugin.mm:2889`）自己就构造 `{magic, method, payload[512]}` 并以 `8 + inputSize` 送出；H660/H661 传进去的结构**又带了一遍 `magic`/`method`**。内核 `NativeA540AcceleratorProbe.cpp:296` 用 `input + 2` 按 `NativeAdrenoAbiMetadata` 解包，于是内层 `magic/method` 被当成 `handle`，内层那个全零 `handle` 的低 32 位被当成 `bytes = 0`，`memcpy(text, meta->text, 0)` 写入空串。
+
+痕迹核对（同一轮日志里）：H661 出现 **3 条空的 `NATIVE_A540_ABI: report`**，随后才是 SpringBoard 的 `sb n=1 …`；H660 只有 4 条 `sb`。这与"发布执行了但写空"完全一致，也顺带证明 **H661 里函数后半段是执行到的**，H659 缺的那些行确实是日志丢弃，不是提前返回。
+
+**H662 只修负载。** 改用 ABI 头里的 `NativeAdrenoAbiMetadata`，实测 `sizeof=80`、`offsetof(handle)=0`、`offsetof(bytes)=8`、`offsetof(text)=16`，方法号 9/10 与内核一致；`abi_call_rc(9, &meta, sizeof meta, NULL, 0)` 送出 `8+80=88`，正好等于内核要求的 `8 + sizeof(NativeAdrenoAbiMetadata)`。发布点移到 `query_published_desktop_context` 里已经解析出桌面 id 之后，文本形如 `bb H<matched>/<classes> id=0x<同一个 id>`，保留 `id=` 字段使 A2 查询继续可解析；Set 之后立刻在同一连接上用 Get 读回，两个返回码、内核里存的调用次数（`handle`）、长度和读回原文一起打在 `srvpub` 行上。
+
+**H662 实测（boot 见 `logs/H662`，uptime 674 秒）：**
+
+```text
+srvpub#419 roundtrip set=0x0 get=0x0 setBytes=21 count=2 got=21 text=bb H0/0 id=0x1964755e
+NATIVE_A540_ABI: report bb H0/0 id=0x1964755e
+rep=bb 10 次, rep=sb 1 次
+```
+
+`set=0x0`、`get=0x0`、读回文本与写入逐字相同，内核也打印了 `report bb …`。**通道问题到此结束**：负载修正后 Set→Get 闭环成立。
+
+**但 `H0/0` 说明发布时类清单还是空的。** H663 加了一道门槛（`gHostClassCount != 0` 才发布，并且 `publish_backboardd_summary` 内部同样拒绝空清单），结果到 uptime 797 秒：
+
+```text
+srvpub#320 read st=0x0 handle=0 bytes=0 text=            （还没有任何发布）
+srvpub#467/480/493 read st=0x0 handle=1 bytes=35 text=sb n=1 … id=0xa7ba9f51
+srv state 2 次, srv ctx 4 次
+roundtrip 0 次, rep=bb 0 次
+```
+
+`handle=1` 表示整轮只有 SpringBoard 写过一次槽，backboardd 从未写过。门槛从未满足。
+
+**最可能的解释，也是本轮才看清的结构性事实：这个插件同时被多个进程加载**（日志里明确有 `comm=backboardd` 和 `comm=mediaserverd` 两种来源）。`gHostClassCount` 是**每进程各自的全局变量**。`srv ctx` 那几行与 `srvpub` 那几行不一定来自同一个进程，所以"枚举跑过"和"发布点看到非零计数"之间存在进程边界。这一点此前没有被纳入任何判据，H658/H659 的"清单行收不到"也可能同样混入了进程因素（某个宿主进程的日志连接尚未建立或预算已耗尽）。
+
+**下一步（H664）要做的仍是单变量**：在枚举里同时记录 `getpid()`/`getprogname()`，并把进程名一起放进 `bb` 文本，使"谁枚举到了"和"谁发布了"能在同一条 `srvpub` 行上对齐；不引入别的改动。在此之前，不能把 H663 的 `roundtrip 0 次` 解释为"枚举没有执行"。
+
+**本轮同时纠正一条旧判断。** §371 写的"唯一还站得住的解释是方法 9 在插件连接上被拒绝"是错的，真实原因是我自己引入的双重封包。§372 那条推断随之作废，已在本节更正。
