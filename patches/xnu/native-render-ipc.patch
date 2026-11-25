@@ -8,6 +8,16 @@
  void native_xpc_track_exec(int pid, const char *comm);
  void native_ipc_event_note(unsigned kind, ipc_kmsg_t kmsg, ipc_port_t port,
      int from_pid, int to_pid, uint64_t receiver_tid, unsigned result);
+@@ -10797,6 +10797,9 @@
+ 	proc_iterate(1U | 4U, native_sb_collect, NULL, NULL, NULL);
+ 	{
+ 		extern void native_lsd_gate(uint32_t);
+ 		native_lsd_gate(sample);
+ 	}
++	if (native_sb_pid <= 0) {
++		printf("NATIVE_SBPC: sample=%u miss name=%s\n", sample, name);
++	}
+ 	if (native_sb_pid > 0) {
 @@ -11175,6 +11175,7 @@
  			    waiter_state, waiter_rname);
  		}
@@ -16,7 +26,7 @@
  		native_xpc_register(native_sb_rcv.port, native_sb_pid, name, 'r');
  		native_xpc_register(native_sb_req.port, native_sb_pid, name, 'q');
  		native_xpc_dump(sample);
-@@ -11349,6 +11349,299 @@
+@@ -11349,6 +11349,372 @@
  		native_xpc_pids[3] = pid;
  	}
  }
@@ -68,6 +78,7 @@
 +static unsigned native_render_evt_lookup;
 +static unsigned native_render_evt_lkp;
 +static unsigned native_render_evt_dead;
++static unsigned long long native_render_evt_ctx;
 +
 +#define NATIVE_RENDER_CTRL_ID 0x4E415443u
 +
@@ -292,9 +303,9 @@
 +	    native_render_regpid, native_render_rec_drop);
 +	if (native_render_evt_bound) {
 +		native_render_evt_bound = 0;
-+		printf("NATIVE_RENDER: bound via=%s pid=%u port=0x%llx\n",
++		printf("NATIVE_RENDER: bound via=%s pid=%u ctx=0x%llx port=0x%llx\n",
 +		    native_render_evt_via, native_render_evt_pid,
-+		    native_render_evt_port);
++		    native_render_evt_ctx, native_render_evt_port);
 +	}
 +	if (native_render_evt_lookup) {
 +		native_render_evt_lookup = 0;
@@ -312,6 +323,78 @@
 +		    native_render_rec[u].ctx);
 +	}
 +}
++
++/* H680: second bind path.  The SpringBoard observer reports the
++ * desktop CAContext's render-server connection port (the value
++ * CA::Render::Context::server_port keeps at +0xd0 on 21H461,
++ * verified by disassembly) through the accelerator line channel;
++ * NativeA540AcceleratorProbe calls this when it sees the line.
++ * Resolving the name inside SpringBoard's own space binds the
++ * probe on a port that is observable inside the USB window,
++ * covering the case where the bootstrap registration itself
++ * happened before USB enumerated and its ring region is lost.
++ * First bind wins; a zero port is a verdict, printed once, not a
++ * bind.  Prints here are off the IPC hot path (driver thread). */
++void
++native_render_report_ctxport(int pid, unsigned long long ctxid,
++    unsigned name)
++{
++	ipc_space_t space;
++	ipc_entry_t entry;
++	ipc_port_t port = IP_NULL;
++	struct proc *p;
++	struct task *t;
++
++	if (native_render_port) {
++		return;
++	}
++	if (name == 0) {
++		printf("NATIVE_RENDER: ctxport pid=%d ctx=0x%llx no-port\n",
++		    pid, ctxid);
++		return;
++	}
++	p = proc_find(pid);
++	if (p == NULL) {
++		printf("NATIVE_RENDER: ctxport pid=%d no-proc\n", pid);
++		return;
++	}
++	t = proc_task(p); /* borrowed: proc_find pins it */
++	if (t == TASK_NULL) {
++		proc_rele(p);
++		printf("NATIVE_RENDER: ctxport pid=%d no-task\n", pid);
++		return;
++	}
++	space = t->itk_space;
++	if (space == IS_NULL) {
++		proc_rele(p);
++		printf("NATIVE_RENDER: ctxport pid=%d no-space\n", pid);
++		return;
++	}
++	is_write_lock(space);
++	entry = ipc_entry_lookup(space, (mach_port_name_t) name);
++	if (entry != IE_NULL &&
++	    !(entry->ie_bits & MACH_PORT_TYPE_PORT_SET) &&
++	    (entry->ie_bits & (MACH_PORT_TYPE_SEND |
++	        MACH_PORT_TYPE_SEND_ONESHOT | MACH_PORT_TYPE_RECEIVE)) != 0 &&
++	    entry->ie_object != IP_NULL) {
++		port = (ipc_port_t) entry->ie_object;
++		ip_reference(port);
++	}
++	is_write_unlock(space);
++	proc_rele(p);
++	if (!IP_VALID(port)) {
++		printf("NATIVE_RENDER: ctxport pid=%d ctx=0x%llx name=0x%x no-entry\n",
++		    pid, ctxid, name);
++		return;
++	}
++	native_render_bind_descriptor(port, IPC_PORT_NULL, pid, "ctxport");
++	if (native_render_port) {
++		native_render_evt_ctx = ctxid;
++		native_xpc_pids[0] = pid;
++	}
++	ip_release(port);
++}
++
 +
  
  struct native_ipc_event {
