@@ -16,7 +16,7 @@
  		native_xpc_register(native_sb_rcv.port, native_sb_pid, name, 'r');
  		native_xpc_register(native_sb_req.port, native_sb_pid, name, 'q');
  		native_xpc_dump(sample);
-@@ -11349,6 +11349,272 @@
+@@ -11349,6 +11349,299 @@
  		native_xpc_pids[3] = pid;
  	}
  }
@@ -58,6 +58,16 @@
 +static struct native_render_rec native_render_rec[8];
 +static unsigned native_render_rec_n;
 +static unsigned native_render_rec_drop;
++/* bind/lookup/dead events are recorded here and printed by the
++ * sampler: the note path runs under the destination port lock and must
++ * never print (STATUS 387/388 lock-order rule). */
++static unsigned native_render_evt_bound;
++static const char *native_render_evt_via;
++static unsigned native_render_evt_pid;
++static unsigned long long native_render_evt_port;
++static unsigned native_render_evt_lookup;
++static unsigned native_render_evt_lkp;
++static unsigned native_render_evt_dead;
 +
 +#define NATIVE_RENDER_CTRL_ID 0x4E415443u
 +
@@ -87,8 +97,10 @@
 +	ip_mq_unlock(p);
 +	native_render_port = recv;
 +	native_render_regpid = (unsigned)binder_pid;
-+	printf("NATIVE_RENDER: bound via=%s pid=%d port=0x%llx\n",
-+	    via, binder_pid, (unsigned long long)(uintptr_t)recv);
++	native_render_evt_bound = 1;
++	native_render_evt_via = via;
++	native_render_evt_pid = (unsigned)binder_pid;
++	native_render_evt_port = (unsigned long long)(uintptr_t)recv;
 +}
 +
 +static void
@@ -139,7 +151,8 @@
 +	} else if (from == native_xpc_pids[0] && to == 1) {
 +		native_render_pending = 1;
 +		native_render_lookpid = (unsigned)from;
-+		printf("NATIVE_RENDER: lookup-request pid=%d\n", from);
++		native_render_evt_lookup = 1;
++		native_render_evt_lkp = (unsigned)from;
 +	} else if (native_render_pending && from == 1 &&
 +	    to == (int)native_render_lookpid && !native_render_port &&
 +	    (hdr->msgh_bits & MACH_MSGH_BITS_COMPLEX)) {
@@ -184,8 +197,7 @@
 +	}
 +	if (!native_render_dead && !ip_active(port)) {
 +		native_render_dead = 1;
-+		printf("NATIVE_RENDER: dead port=0x%llx\n",
-+		    (unsigned long long)(uintptr_t)port);
++		native_render_evt_dead = 1;
 +	}
 +	hdr = kmsg ? ikm_header(kmsg) : NULL;
 +	switch (kind) {
@@ -278,6 +290,21 @@
 +	    native_render_enq, native_render_deq,
 +	    native_render_ctrl_state, native_render_dead,
 +	    native_render_regpid, native_render_rec_drop);
++	if (native_render_evt_bound) {
++		native_render_evt_bound = 0;
++		printf("NATIVE_RENDER: bound via=%s pid=%u port=0x%llx\n",
++		    native_render_evt_via, native_render_evt_pid,
++		    native_render_evt_port);
++	}
++	if (native_render_evt_lookup) {
++		native_render_evt_lookup = 0;
++		printf("NATIVE_RENDER: lookup-request pid=%u\n",
++		    native_render_evt_lkp);
++	}
++	if (native_render_evt_dead) {
++		native_render_evt_dead = 0;
++		printf("NATIVE_RENDER: dead\n");
++	}
 +	for (unsigned u = 0; u < native_render_rec_n; u++) {
 +		printf("NATIVE_RENDER: sample=%u send from=%u id=0x%x size=%u ctx=0x%x\n",
 +		    sample, native_render_rec[u].from,
