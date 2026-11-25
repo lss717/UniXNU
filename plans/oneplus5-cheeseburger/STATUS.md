@@ -30164,3 +30164,5 @@ rep=bb Q backboardd/56 H0/0 id=0x52…
 2. 断点位置收敛：ctx#1 从 518 秒起带着 UIWindowLayer 且在 display 1 上存在了约 150 秒，期间服务端对它零接收。结合 `tx=1/0 c=1`，缺失发生在客户端 **C++ 发送路径**（公共 ObjC 入口之外），位于 context churn 之前。churn 本身（18–150 秒换一次桌面 context，且第二次起 displayId 从 0x1 变 0x0）是一条独立的、尚未解释的异常，不并入本判据。
 
 **下一轮（H671）单变量提案**：在 SpringBoard 侧对 QuartzCore 的 C++ 发送入口做符号解析挂钩（候选：`CA::Transaction::commit()`、`CA::Transaction::flush_as_runloop_observer(bool)` 等导出符号，用 dyld 导出表按 mangled name 解析，不依赖 `objc_copyClassList`），正对照与安装状态**全部改经 A2 查询路径发布**（H668 已验证可达通道），槽文本沿用现格式扩字段。服务端本轮不再改动。判据：挂钩有效（对照命中）且 C++ 发送计数>0 ⇒ 发送发生、断点在服务端接收；对照命中且计数恒为对照值 ⇒ SpringBoard 连 C++ 公共提交都没走，转查它自己的提交代理。
+
+**尾窗补采结果（追加）**：按 H571 先例做了一次只读 TWRP 尾窗拉取（`logs/H670/device/H670-tail32.bin`，脚本 `scripts/h103-log-pull.py`，窗口 first_lba=29755387 count=8192）。头部属于本轮（uptime_s=859、rounds=128、slot_boot=3ca942db），但 `msg_bytes=0`、`write_errors=162`：与 H635 以来磁盘 sink 持续输掉 try-lock（reason=4）的记录一致，本轮尾窗里没有可解码的正文，970 秒之后的窗口无法从盘上找回。会话结束方式因此只能由"设备自行回到 Android"这一外部事实推断，1500 秒级 abort 窗口的直接证据本轮缺失。
