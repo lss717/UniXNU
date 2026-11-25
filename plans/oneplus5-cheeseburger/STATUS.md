@@ -30360,3 +30360,21 @@ B. **回到用户态最后一条未试路线**：单页文本入口补丁的 can
 4. 内核解析失败行（no-entry/no-port）继续作为交叉校验；重绑逻辑不动。
 
 **判据不变**（§390）：绑定行出现 ⇒ 看每代端口的 `sb/enq/deq`；`deq` 钩子覆盖已核实（ipc_mqueue 的 post-直投与 receive-取队两条路径都注 'D'/'R'），`enq>0 deq=0` 即"无人收件"是有效证据。绑定缺失或控制不自证 ⇒ 记不可判。
+
+### §392 H682/H683/H683b 三连：绑定管线全自证、telephony 门用真 label 拆除、主线程首次全程无阻塞——sb=0 的原因改写成"显示从未绑定上下文"（2026-11-26）
+
+**H682（boot `cfb6ed0d…`，内核 `89ede49b`=v7d）**：traffic 绑定路线一击成功。窗口 335-575 秒每 60 秒一条 `NATIVE_RENDER: sample att=1 sb=0 enq=2 deq=2 ctrl=1 dead=0 reg=27 drop=0`——`deq=2` 证明**服务器在这条连接上真实收件**（H680b 的 deq=0 疑点排除，当时是绑到了被换掉的旧代 context 端口）。发送侧 `sb=0`：SpringBoard 在自己的桌面连接上零提交。掉线 613s 又贴着 bb corpse（608s）——四次上机，USB 死点全部跟随 backboardd 死亡秒。工具坑记录：这台 Mac 自带的 `/usr/bin/patch`(2.0-12u11) 拒绝**无尾随上下文**的插入 hunk（连三行示例都拒），`git apply` 在同环境对任意文件全线失败（系统 git 2.50.1，疑与该会话 ssh 非交互环境有关）——genpatch 生成的 hunk 从此一律带尾随上下文；校验以 `patch -p1 --dry-run` 全绿为准。
+
+**H683（boot `24d3a745…`）**：boot-arg 试验第一轮。踩了三个坑：payload 有缓存（改 board.toml 后必须 `rm -rf out/cheeseburger/payload`）；1000 字节 args 硬限（溢出报 "kernel command line is 1024 bytes"）；**标签猜错**——exec 行揭示真 label 是 `com.apple.telephonyutilities.callservicesd`（315.5s 照常起动）。本轮等同基线复跑（sb=0、telephony 仍卡 28s+），无回归。顺带确证两个参数是代码默认值可安全释放：`native-ufs-probe=0`、`h103-load-iogpu=0`（H683 前删）。
+
+**H683b（boot `27a2cb6d…`）**：真 label 进 `sheng-disable-jobs`（994/1000 字节），`h103-slot=1`（默认值）让位。**这是本路线走得最深的启动**：callservicesd 零 exec；telephony 创建 302.2s 进、330.3s 出（28 秒，无 exec 即快速失败路径，且此后所有 sharedManager 调用毫秒级返回）；主线程 337.5s completeStartup、342s icon-controller-init、343s chrono subscribe 按 h577 跳过返回 nil、343.5-344s SBUIController 反复就绪——**h657 停滞采样自 308 秒后再无任何 stall 行，主线程在窗口内（至 640 秒）从未阻塞**。h585 同步 XPC 全在 main=0 后台线程。桌面 rep=sb n=4 d1=1 稳定。
+
+**但 `sb=0` 依旧**。合流解释浮现：同一窗口 `srv#362/#500 state observer` 两次报 **`d0ctx=0`**（主显示 id=0x1 上没有任何渲染 context 绑定，scale=4294967295 即 -1 读数）。无 display-ctx 绑定 ⇒ 渲染服务器不跑帧循环 ⇒ 无 vsync/首次提交驱动（H27x 已证 vsyncTimer 结构死亡、`sheng-vsync` 从未进现行 boot-args；`NATIVE_LEGACY_PREPARE vsync hz=0 sent=0 arms=0` 是当时记录）⇒ CA 的 update cycle 永不启动 ⇒ **SB 连一个事务都不会开**。"没有事务"从"客户端病"重新定性为"显示绑定缺位"。
+
+**下一轮 H684 提案（观测优先，两项合一）**：
+
+1. **bb 插件侧**：在 srv 状态行补 d0 的两项内省——display 对象的 bound-context 字段（读法仿 h639 ctx 普查，vm_read 风格或运行时 getter）与 `-[CAWindowServerDisplay ...]` 可用 selector 清单（enc#282 已在 dump，扩一条精确名单即可），确认 iOS17 究竟期望谁来绑（backboardd 自动、frontboard、还是首个 secure=1 ctx 的 create 消息自带 displayId=1 就该绑——h654 已证明请求里 displayId=1/secure=1 齐全）。
+2. **显示侧**：`sheng-vsync=60` 试验（NativeLegacyDisplay 已有该门），预算从再删默认值参数里挤（候选 `h103-log-secs=60`→默认 10，或 `offline-mobile-graphics-load=1` 之类**必须先查默认值**再动）。判据：加 vsync 后 `fr`/`xf`/`val` 是否离开 0、`sb` 是否破零。
+3. 工具性补账：SBPC 的 6xxx/头行在 quiet=2 窗口内全部缺席（连 miss 行也没有）——不是采样缺失而是该 printf 段的流内丢失，v8 把 miss 行并入 NATIVE_RENDER emit（同一条已验证可达的行）里带 `sbpcmiss=NN` 字段，绕开丢失面。
+
+**工件登记**：H682 boot `cfb6ed0d…`/payload `—`；H683 boot `24d3a745…`；H683b boot `27a2cb6d…`（本机 builds/H683b/device，SHA 复核一致）。observer dd513d42、addon 549dd47c、trust=H683-trust。内核 v7d=89ede49b 通用于 82/83/83b。设备终态 TWRP。日志：logs/H682（344830B live）、logs/H683（359507B）、logs/H683b（364117B live + 1021B 尾窗无正文）。
