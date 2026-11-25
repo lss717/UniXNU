@@ -375,7 +375,7 @@
 +	if (entry != IE_NULL &&
 +	    !(entry->ie_bits & MACH_PORT_TYPE_PORT_SET) &&
 +	    (entry->ie_bits & (MACH_PORT_TYPE_SEND |
-+	        MACH_PORT_TYPE_SEND_ONESHOT | MACH_PORT_TYPE_RECEIVE)) != 0 &&
++	        MACH_PORT_TYPE_SEND_ONCE | MACH_PORT_TYPE_RECEIVE)) != 0 &&
 +	    entry->ie_object != IP_NULL) {
 +		port = (ipc_port_t) entry->ie_object;
 +		ip_reference(port);
