@@ -29395,3 +29395,27 @@ srvq objectonly insecureProcessIds present=1 enc=@16@0:8 called=0
 **进度。** ui_run 459.23 秒，did_finish 524.63 秒，到 686 秒无 complete_startup，也无 `uiwindow_scene_visible`、`ca_host_visible`；`val=0 xf=0 fr=0` 到 642.8 秒。与 H636/H637/H640 同形，与 H635/H638 不同形，符合 §347 的方差结论。
 
 **H644。** 普查现在能安全跑完，可以在同一位置真正调用 `insecureProcessIds`（对象返回，`@16@0:8`）。若其中出现 56 以外的 pid，就证明服务器维护跨进程的 per-pid 状态，A2 有了着落；若只有 56 或调用失败，改试 `isSlotValid:`（布尔 `B20@0:8I16`）与逐 slot 探测。仍是单变量、纯观测。
+
+### §350 H644：按标签 dump 修好后，跨进程正对照第一次有了不依赖文件与内核的路线（2026-11-25）
+
+`dump_class`/`dump_methods` 各自只有一个被所有标签共用的 `static bool done`，构造函数第一次 dump server 之后，`disp`、`ctxcls`、`ctxmaker`、`d0`、`c0` 全部直接返回。这就是历史日志里从来没有 CAContext 与 CAWindowServerDisplay 选择器清单的原因。改成按标签并新增实例方法清单后，本轮第一次拿到：
+
+```text
+dump#18 count ctxmaker total=15
+dump#29 count ctxinst  total=53
+dump#273 methods disp own=243
+```
+
+**关键发现一：`+[CAContext contextWithId:]` 存在**，与 `allContexts`、`remoteContext`、`currentContext`、`localContextWithOptions:`、`objectForSlot:`、`setClientPort:` 并列在 CAContext 的 15 个类方法里。它是按 id 取回单个 context 的入口，不是那份进程私有列表。
+
+**关键发现二：`CAWindowServerDisplay` 的 243 个方法里同时有** `clientPortOfContextId:`、`taskNamePortOfContextId:`（与服务器实例上同名的两个查询）、`clientPortAtPosition:`、`contextIdAtPosition:excludingContextIds:`、`convertPoint:toContextId:`、`convertPoint:fromContextId:`、`transformFromLayerId:inContextId:`、`presentSurface:withOptions:`、`postSyncNotification:payload:`、`acquireFrozenSurface`、`freeze`、`addFramePresentationTimestamp:`。
+
+**由此修正 §348 的一条说法。** §348 写"`-[CAWindowServerDisplay presentSurface:withOptions:]` 零命中"容易被读成选择器可疑。实测它确实存在、钩子也确实装上，零命中的含义是**从来没有 surface 被呈现**，与 `xf=0` 一致。
+
+**A2 的可行路线因此改变。** 之前判断跨进程正对照必须先把 SpringBoard 的 id 传给 backboardd（文件通道或内核 scratch）。现在 `contextIdAtPosition:excludingContextIds:` 是**在 backboardd 内部就能列出挂在该显示上的 context id** 的入口：取回 id 集合，逐个喂给 `taskNamePortOfContextId:`，只要有一项解析到 pid≠56，就是同一查询接口上的跨进程正对照；若只列出 backboardd 自己的 id，那说明该接口只反映已挂载到显示的 context，需要换更晚的时机或退回显式传递。**两条结果都可判，且都不需要改内核、不需要文件通道、不需要盲扫 slot。**
+
+**H643 的三档对照在本轮保持不变且自洽**：`allctx=2`，两个有效 id 都解析到 pid=56、`st=0x0`，四个相邻 id 全为 `0x0`，`0xdeadbeef` 为 `0/0/0` 加 `st=0x5`。本轮有效 id 是 `0x347de23d`、`0x6e32ac8`，H643 是 `0x7e64dbfe`、`0xfcb7546e`，**id 每次启动重新分配，跨 boot 复用不成立**。
+
+**桌面进度。** ui_run 587.27 秒，did_finish 598.16 秒，SpringBoard 自己的 context id 为 `0xd85f91a2`（615.99 秒 `ca_context_remote_create pid=27`），到采集末尾仍无 `h557_complete_startup_enter`、无 `uiwindow_scene_visible`，`val=0 xf=0 fr=0`。`draw#` 6 条、`disp#` 28 条，定时器注册正常，H641 那类构造函数回归没有复发。
+
+**未解决项。** `clientPortOfContextId:` 的返回值没有 `mach_port_deallocate`，而它是否向调用方交出新发送权尚未确定，因此每次普查可能泄漏 2 个端口名。记为未验证，不当作已确认的缺陷，也不当作无害。
