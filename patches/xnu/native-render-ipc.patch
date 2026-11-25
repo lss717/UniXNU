@@ -28,7 +28,7 @@
  		native_xpc_register(native_sb_rcv.port, native_sb_pid, name, 'r');
  		native_xpc_register(native_sb_req.port, native_sb_pid, name, 'q');
  		native_xpc_dump(sample);
-@@ -11349,6 +11349,432 @@
+@@ -11349,6 +11349,430 @@
  		native_xpc_pids[3] = pid;
  	}
  }
@@ -298,11 +298,9 @@
 +		native_render_control_send();
 +	}
 +	if (native_render_bind_recv < 0) {
-+		task_t rt = ipc_port_get_receiver_task(native_render_port, NULL);
-+		native_render_bind_recv = rt != TASK_NULL ? task_pid(rt) : 0;
-+		if (rt != TASK_NULL) {
-+			task_deallocate(rt);
-+		}
++		/* this XNU returns the receiver pid directly */
++		native_render_bind_recv = ipc_port_get_receiver_task(
++		    native_render_port, NULL);
 +	}
 +	key = native_render_att ^ (native_render_enq << 10) ^
 +	    (native_render_deq << 3) ^ (native_render_ctrl_state << 20) ^
