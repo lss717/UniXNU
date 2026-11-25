@@ -29993,3 +29993,32 @@ H665 在 `publish_backboardd_summary` 开头加 `connectAccelerator()`（H664 �
 **下一轮（H666）先做一致性核对，不做新观测。** 用 `strings` 直接从**设备实际使用的 addon 容器**里取出 bundle 可执行文件，核对该文件里是否同时存在 `bb %.10s/%d H%u/%u`、`connectAccelerator` 调用点与本轮新增的 `host` 标签字符串，并把它的 CDHash 与 `H666-boot.json` 记录的值比对。只有确认设备上那份就是本轮源码编译出来的，才继续判断"枚举没执行"。
 
 **本轮的失败也要如实记下：H664 与 H665 两轮本可以避免。** 把发布从已经建立连接的函数移到未建立连接的函数时，我没有检查前置条件（连接），也没有把失败状态放进能收到的通道；这两条在移动代码时就该核对。
+
+
+### §376 H666 实测：同一标签的 srvpub read 正常到达，roundtrip 一次都没有（2026-11-25）
+
+先按审阅要求做只读核查：主仓库 `a55f30f7`、子模块 `7ca4b4c` 均无未提交改动，**H666 的失败尝试没有在工作树里留下任何东西**，未做回滚。
+
+**H666 改动（单变量）**：发布不再依赖"连写两次让心跳采样"，改为 H662 已验证的**单次 Set→同连接立即 Get**；在枚举处**无条件**调用（去掉 `classCount>0` 门槛）；文本加入阶段与每进程递增的 token（`bb E <proc>/<pid> H<m>/<c> id=0x.. t=<n>`）；`srvpub roundtrip` 行打印 `st / set rc / get rc / count / setBytes / got / same / want / got`；连接失败也改为打印 `abort=no-connection` 而不是静默返回。
+
+**打包前一致性核对（全部通过）**：boot.img 偏移 1525760 处内嵌 payload 与 `H666-payload.img` 逐字节相同；容器内 `A540Trace` 160496 字节，CDHash `aa7f6e2601dd60e900ae6d972d1447ff110762a7` 与打包记录一致；trust 中新哈希 1 次、上一轮 `8bd186d0…` 0 次；二进制内 `H666` 1 次、`H665` 0 次、`abort=no-connection` 1 次。
+
+**实测（uptime 670 秒）：**
+
+```text
+srv state 3 次, srv ctx 6 次
+srvpub 总计 17 次, 其中 read 5 次, query 若干
+srvpub#419 read … text=sb n=1 d1=1 lc=0 ct=0 id=0x4d38ddd5
+srvpub#420 query … published id=0x4d38ddd5 … pid=27 st=0x0
+roundtrip 0 次
+rep=sb 12 次, rep=bb 0 次
+```
+
+**这一轮把范围压缩到了一条路径。** `srvpub` 标签的 `read`/`query` 行本轮正常到达，说明该进程的插件日志通道此时是通的；同一标签下 `roundtrip` 却一次都没有，连 `abort=no-connection` 分支也没有。因此失败点只剩两处之一：
+
+1. `publish_backboardd_summary` 里唯一剩下的静默返回——`length <= 0 || length >= sizeof meta.text` 的格式检查；按文本估算约 46 字节，不应触发，但它是目前唯一没有任何输出的分支。
+2. `srv state`/`srv ctx` 与 `srvpub read` 并非来自同一进程或同一函数，即枚举块所在的 `probe_display_frame` 在真正发布的那个进程里并未走到该处。
+
+**下一轮（H667）就这两处一次判清，仍是单变量**：在格式检查的返回分支也打印一条 `srvpub roundtrip st=E abort=format len=%d`，并把 `getpid()` 追加到已有的 `srv state` 行尾（该行本轮到达 3 次）。这样同一条日志里就能对齐"谁走了枚举""谁走了 A2 查询""格式检查是否截断"，不需要再猜。
+
+**记录纪律**：本轮没有把 `roundtrip 0 次` 解释成"SetMetadata 被拒绝"——共享槽的读回与覆盖关系仍未验证，`rep=sb` 12 次说明 SpringBoard 一直在重写同一个槽。
