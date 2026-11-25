@@ -29429,3 +29429,27 @@ H644 实时流连续覆盖 292.65–1105.24 秒（启动标记 `3106921f`）。�
 这条否证连同 H633a/H634 在旧代码下连 did_finish 都没到一起说明：以单轮 complete_startup 有无作为判据的实验设计，在这台设备的启动方差下不具备判别力。后续实验要么改成同镜像重复多轮取分布，要么把判据换成不依赖"是否走到某一步"的观测（例如 §350 的 `contextIdAtPosition:excludingContextIds:` 列出的 id 集合与其归属 pid，这类观测每轮都有确定读数，不受走到哪一步影响）。
 
 H644 的主要产出（选择器清单、`+[CAContext contextWithId:]`、display 上的 `contextIdAtPosition:excludingContextIds:` 与两个同名端口查询、§348 的 presentSurface 修正）不受这条否证影响。
+
+### §352 H645 位置查询 ABI 核实成功但目标条件未测到，并更正 §350/§351 两处说过头的说法（2026-11-25）
+
+**先更正两处我自己的表述。**
+
+1. §350 末尾写"`presentSurface:withOptions:` 零命中的含义是从来没有 surface 被呈现"。这说过头了。准确的表述是：**该入口在本插桩下从未被观测到**。它只是 `CAWindowServerDisplay` 上的一个选择器，其它呈现路径（该 display 对象有 243 个方法，另有 `postSyncNotification:payload:`、`acquireFrozenSurface`、`addFramePresentationTimestamp:` 等）没有被观测，所以不能由它的沉默推出"全部呈现路径均未运行"。与 `xf=0` 一致，但不等于证明。
+2. §351 写"启动方差是原因"。单轮或几轮的成败只能否证某个具体归因，**不能确立方差就是原因**。准确表述是：去掉 did-finish 两处 rearm 后 complete_startup 的出现率为 1/4，与出现它时的 1/1 相比不足以支持因果结论，因此该假设不成立、不再沿它做实验；至于真正决定它是否出现的是什么，目前未知。
+
+**H645 实测。** 位置查询 `-[CAWindowServerDisplay contextIdAtPosition:excludingContextIds:]` 的 ABI 在设备上核实：
+
+```text
+enc=I40@0:8{CGPoint=dd}16@32 usable=1 bounds=1080x1920
+clientPortAtPosition: enc=I32@0:8{CGPoint=dd}16 called=0
+```
+
+返回标量 id、坐标按值 `{CGPoint=dd}`、排除参数为对象。`clientPortAtPosition:` 返回端口名而其在调用方的权利生命周期未确定，按判据只报编码不调用。位置查询不产生 mach 权利，没有返回值生命周期问题。
+
+探针可用，并与本地清单互证：`(1,1)` 处返回 `0xf8f7a18f`，`taskNamePortOfContextId:` 解析出 `pid=56 st=0x0`，而该 id 正是本轮 census 里 backboardd 自己 `allContexts` 的 `valid[1]`。两个独立入口对同一 id 与同一归属一致。另一个本地 id `0xe6af126b` 在四个采样点都没出现。
+
+**但目标条件没被测到。** 两次探针轮次都在 516–521 秒完成，而 SpringBoard 的 context 在 **582.99 秒**才创建（`ca_context_remote_create pid=27 contextId=0x1327a79b`）。664 秒那一轮 census 只打印三条 `encoding` 就停住，排在它后面的位置探针完全没执行。因此按上机前判据，本轮落在"采样位置未命中"一支：**不能认定接口作用域，不能认定外部 context 未注册，A2 未取得。**
+
+**代码次序缺陷。** 探针被放在同一观察块里、排在 census 之后，于是 census 一停，探针就轮不到。H646 的修法是把位置探针独立成块并排在 census 之前，同时确保至少一轮落在 SpringBoard 建 context 之后。
+
+**一个待查现象，暂不定论。** 664.37 秒后日志里再无任何 `NATIVE_MTL` 行，而内核侧 `NATIVE_DISPLAY_GATE`/`ACCEL_HB`/`NATIVE_UFS` 在 600 秒后仍有 41 条。候选解释是观察块的工作线程在 `allContexts` 处阻塞，从而抹掉了该进程后续全部观察输出（这也可能正是 §346 那个"插件输出中途永久静默"的机制）。但下一个计划轮次在 832 秒，而 CDC 在 819 秒断，两者无法区分，所以记为未定论。若它成立，影响面很大：此前所有"某进程不再产生观察输出"的记录都可能只是**一个工作线程被卡住**，而不是进程或系统状态变化。
