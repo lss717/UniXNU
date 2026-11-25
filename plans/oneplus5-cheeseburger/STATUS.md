@@ -30345,3 +30345,18 @@ B. **回到用户态最后一条未试路线**：单页文本入口补丁的 can
 - hb 槽 id 与 observer ctxid 存在 `0x20000000` 位差（slot id=0x20527964 vs ctx=0x527964），系 h652 侧加了显示标志位；对绑定无影响（按名解析），记录防混淆。
 
 **H680c 设计（单变量，仅 observer）**：`h680_emit` 改为 `void *h = *(void **)((char *)context + 0xd0); name = h ? CAMachPortGetPort(h) : 0;`（dlsym 两个符号都留失败行），行文本加 `h=0x%llx` 备核。内核 v6 不动（重绑逻辑已在位），addon 重打（新 observer CDHash）→ 新 trust → pack-round H680c → 上机。判据：`bound via=ctxport ctx=0x...` 出现 ⇒ 按代际端口看 `sb/enq/deq`；重绑行给出上一代终局；`deq=0`+`sb=0` ⇒ 客户端从未向该 ctx 端口提交；`sb>0` 而 bb 无合成 ⇒ 断点在接收侧循环（回到 bb 插件层追）。
+
+### §391 H680c 上机即回归（SB SIGSEGV 风暴）：hook 层对象是 ObjC CAContext，+0xd0 盲解引用不可行；H681 改安全内省（2026-11-26）
+
+**过程**：H680c（boot `637789d4…`，内核 `9dc3c431` 未变，observer CDHash `0cf3f20e…`）把 H680b 的"端口值像截断指针"解读为"`+0xd0` 存 CAMachPort 指针，解柄取名字段 `[handle+0x10]`"，在 observer 里直接 8 字节读+解引用。**设备上 SB 每次到桌面 context 创建点即 SIGSEGV**：窗口内 `sig=11 comm=SpringBoard` 自杀式三段（pid 124 于 356s、pid 157 于 376s，加上窗口前 pid 27 于 295s），`SpringBoard[...] Corpse failure, too many 6`（366/380s），473s USB 掉线（比常规更早）。h680 行零输出——崩在发出之前。**本轮全部观测作废，仅确立一条硬事实：record_created_context 拿到的 ObjC CAContext 实例的 +0xd0 不是可解引用的 CAMachPort 指针**（hook 目标是 `+[CAContext remoteContextWithOptions:]` 返回值；`CARenderContextGetServerPort` 的 C++ 接收者与它不同层）。
+
+**尾窗**：sink 本轮写出 2 行（1012 字节，384s 段），无可用窗口前现场。
+
+**H681 设计（单变量，仅 observer；内核 v6 复用）**：
+
+1. **零解引用**：一切跨对象读取走 `vm_read_overwrite(mach_task_self(), ...)`；坏指针返回 KERN_FAILURE，不产生异常。
+2. 首次触发时 `class_copyIvarList` 转储 CAContext 的 ivar（`h680_ivars`/`h680_ivar` 行：名字/类型编码/偏移），随后按候选名（context/impl/renderContext/_context）取指针 ivar 值 P（safe read），回退顺序：P=ivar 指针 → P=对象本身。
+3. 对每个 P：safe read u64 H=P+0xd0；H 需满足 `0x100000000<=H<=0x8000000000 && (H&7)==0` 才继续；safe read u32 name=H+0x10（偏移来自 21H461 `CAMachPortGetPort` 反汇编 `ldr w0,[x0,#0x10]`）。输出 `event=h680_render_port pid= ctxid= port=0x... h=0x... via=ivar|obj`。
+4. 内核解析失败行（no-entry/no-port）继续作为交叉校验；重绑逻辑不动。
+
+**判据不变**（§390）：绑定行出现 ⇒ 看每代端口的 `sb/enq/deq`；`deq` 钩子覆盖已核实（ipc_mqueue 的 post-直投与 receive-取队两条路径都注 'D'/'R'），`enq>0 deq=0` 即"无人收件"是有效证据。绑定缺失或控制不自证 ⇒ 记不可判。
