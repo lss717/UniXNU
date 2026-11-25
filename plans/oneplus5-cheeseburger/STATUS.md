@@ -30242,3 +30242,28 @@ rep=bb Q backboardd/56 H0/0 id=0x52…
 **判据落点**：按 §384 预定规则，`ok` 有 8 但对照位（`mt>0`）未成立 ⇒ 本轮 of/mm 全部不可判。产出是三条硬信息：GOT 重绑安全可行、`__got` 单段扫描覆盖不足、缺归属与入口计数。
 
 **H674 设计（单变量：把扫描面从命名段扩到全部可写数据段，并让每个包装器带无条件入口计数与归属记录）**：目标扩为 6 项（`mach_msg`、`mach_msg2`、`mach_msg2_trap`、`mach_msg_overwrite`、`CFRunLoopObserverCreate`、`bootstrap_look_up`），对每个镜像的全部 `__DATA*` 段（不限段名）做槽值匹配；每包装器无条件计数（入口数与命中数分开）；发布行带前 6 条交换归属（镜像基名+段名+序号）。判据不变：入口计数>0 而命中=0 ⇒ 提交确实没发生/没外发；命中>0 ⇒ 断点移到收包侧；入口=0 ⇒ 覆盖不足，记不可判。服务端与内核仍零改动。
+
+
+### §386 H674 两试与 H674b：对齐崩溃修复成功；全段扫描+asm 桩仍然零入口——共享缓存导入走文本跳板，GOT 路线到此关闭（2026-11-26）
+
+**背景**：H673（§385）证明 GOT 数据槽重绑无害但 `__got` 覆盖不足。本轮按 §385 提案扩扫描面、扩目标、加入口计数与归属记录。
+
+**H674 首装（boot `069968a3…ba333`）第一次上机**：USB 从未枚举（主机侧"未知 USB 设备（设备描述符请求失败）"，内核尾窗 `NATIVE_USB_STATUS started=1 connected=0 fault=1` + `NATIVE_SBPC pid=-1`），属 §361 以来的 USB 三态；同镜像第二次上机（日志 `logs/H674/device/H674-live2.raw.bin`，1193154 字节，SHA-256 `49D9F3E9AB63CB09…`）暴露了真 bug：**每个 SpringBoard 实例在构造函数序 `ca_event_hooks` 完成后 ~1 秒 SIGBUS**：`exc=1 code=0x101 sig=10 far=0x20062384c esr=0x92000021`——arm64 对 4 字节对齐地址做 8 字节原子读的对齐异常。全段扫描假设所有数据段按 8 对齐切槽位，`__const`/混合负载段不满足。14+ 次循环后用 `h410-cdc-console -Reboot` 经 COM 正常退出会话（`ArmDTPlatform: restart type=1 via PSCI SYSTEM_RESET`）。
+
+**修复（`779a7b4`）**：`if ((base & 7) != 0) continue;`。重打为 `H674b`（boot `d5e0e2b18e07112ced063a367228f812cec0bb99ce85f78a91853bd1beccb17b`，本机取回复核一致；观察器 CDHash `7920b33500f642336b760597fa5dd62394102a8c`）。
+
+**H674b 实测**（CDC 00:58:07 枚举，01:07:26 USB error=203 掉线，915356 字节，SHA-256 `F8874D532FC906B5…`；TWRP 尾窗 `H674b-tail32.bin` 首次在本配置里拿到掉线后的可读正文，44 行到 uptime 858.09 秒，`panic=0/0/0`，无需再补 abort 窗——会话是 USB 掉线后自然结束的）：
+
+```text
+h513/h572 装载正常，SpringBoard 无退出（对比 H674 首装的 14+ 次循环，修复成立）
+h652_publish ok=8 sw=10/3/8/0/0/0        （o=10 b=3 m=8 w=0 msg2=0 trap=0）
+h674_state e=0,0,0,0 s=0,0 p=0x0         （四个入口计数全 0）
+report sb n=1 d1=1 id=0x58dd2549 tx=1/0 c=1 of=0 mm=0 ok=8
+h674_at 8 条全部落在 …/__got（AccessibilityUtilities、ContactsUI、Foundation、MediaPlayer、CoreMotion、ExtensionFoundation…）
+```
+
+**机制判定（本轮的核心产出）**：把扫描面从命名段扩到全部数据段后，交换计数没有增加一个（仍 10/3/8/0），`mach_msg2`/`mach_msg2_trap` 交换仍为 0、入口仍为 0。离线复核给出了解释：对本缓存镜像解引用 `CA::Render::Message::send_message` 的导入桩（`0x18da81454` 等），指令模式是 `adrp x8 / add x16, x8, #imm / br x16`——**目标地址直接编在文本跳板里，运行时不经过任何可写数据槽**（解出的 8 个跳板目标全部命中 libsystem_kernel 的 `_mach_msg`/`_voucher_mach_msg_set` 等函数体本身，而非 GOT 指针槽）。因此 fishhook 式槽替换在该 dyld 共享缓存上**原则上摸不到热路径**：被换的 21 个 `__got` 槽属于走常规惰性绑定的普通 dylib，而 SpringBoard 的事务与 runloop 提交来自缓存内镜像，绑定方式不同。GOT 路线到此关闭，判定依据充分（对照计数、归属日志、离线跳板解码三方一致）。
+
+**下一步二选一（需定夺）**：
+1. **内核侧计数（推荐）**：`mach_msg` 的接收/发送本来就经过我们的内核（`ipc_mach_send`/`port` 路径已有观测基础，`NATIVE_LAUNCHD_IPC` 同源）。在内核里对 "发送方 task=SpringBoard、接收 port=CARenderServer 连接端口" 计数，经既有 A2/心跳通道发布。不动 backboardd 插件与启动路径，规避全部用户态文本页风险；缺点是要改内核并重过打包门禁。
+2. **单页内文本入口补丁（次选，风险高）**：H671 的死因是跨页 `vm_protect` 拆散邻页映射；`_mach_msg` 函数体起点 `0x1cb783fa4`（页内偏移 0x1a4，16 字节不跨界）。单页 CoW 的可执行性从未在本配置验证过，需先设计一个可判的小实验（补丁装到非关键镜像的单页函数上自测），才谈上机。
