@@ -29841,3 +29841,22 @@ uiwindow_set_hidden window=status visible=1
 服务端依旧只有 backboardd 自己的 2 个 context（`allctx=2`，`pid=56`），桌面那个 `0xa7d5acb4` 这次创建时 `displayId` 就是 1，但到 714 秒日志里只出现状态栏窗口，没有 `window=root`。这与 §367/§368 一致，不构成新结论。
 
 **下一轮（H659）的做法已定**：同样的类清单，改成一行汇总 + 最多 4 个最相关类名，走 `caller_priority`，并在三个相隔的采样点各发一次，保证至少一次落在保留窗口内。
+
+
+### §370 H659 也是观测失败，而且失败范围比 H658 大；H660 已备好（2026-11-25）
+
+H659 身份确认：`builder#2 build H659`，日志覆盖到 801 秒，采集全程在增长。
+
+**结果仍然没有类清单，而且这次丢的不止清单。** 同一函数 `probe_display_frame` 里，`srv state`（#380）与 `srv ctx`（#389、#395）都到了，但函数尾部的两条 `disp observe-only` 和 `srv bind skipped-observer-only` **一条都没有**（全文匹配 0 次），而这两条在 H658 是有的。也就是说 H659 丢的是这段代码之后的一个连续区段，不只是我新加的那一行。
+
+**因此这两轮的失败原因还没有定论**，现有证据只支持"存在成段丢弃"，不支持"代码没执行"，也不支持"优先级通道无效"：
+
+- 上机产物里确实有本轮代码：`build/a540-trace/A540Trace.bundle/A540Trace` 里能取到 `pass=%u classes=%u matched=%u %s`，设备自报 `build H659`。
+- `emit_priority` 与 `emit` 的区别只在预算：`emit` 有 `gBudget`，耗尽后直接返回；`emit_priority` 不查预算。所以 H659 改成优先级单行，理论上不受预算影响。
+- 但 H659 连不受预算影响的行和同区段其它行一起消失，说明问题在通道或采集侧，不在这段代码本身。
+
+**H660 的做法**：不再单独发一行，而是把类清单摘要挂在 `disp observe-only` 这条每轮都出现的行尾（`hosts=...`）。镜像已打包并取到本机：`H660-boot.img` `9a97d3653187fe09830822c8458d935322db99832bf42813bd0581e864238cd6`，插件 CDHash `a6c0f7c6deb51db1590311245a67c84ead633292`（替换 `91407e47…`），观察器仍为 H657 的 `6297949609…`，kernel 仍为 `ced5ce9d…`。
+
+**如果 H660 仍然拿不到**，下一步不再猜通道，而是改用**内核发出的那行**做载体：`NATIVE_ACCEL_HB`/`NATIVE_DISPLAY_GATE` 里的 `rep=sb n=.. d1=.. lc=.. ct=.. id=0x..` 每一轮都稳定出现，由内核打印，不经插件的日志预算。把 `matched/classes` 两个数放进这段已发布文本，就能确定"到底能不能稳定带出一个数"。
+
+**本轮我自己造成的一个错误要记下来**：用 PowerShell here-string 写多行 C 代码时，结束符 `'@` 没有独占一行行首，导致 `'@ -replace ...` 被当成正文写进 `A540TracePlugin.mm`。用 `git checkout --` 回滚后改用字符串数组 `-join` 重做，才没把坏文件提交上去。这条坑之前已经记过一次（§344 的 CRLF 事故），这次是同一类问题的另一种表现：**在 PowerShell 里生成多行代码文本，必须避免 here-string，用数组加 `-join`。**
