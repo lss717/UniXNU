@@ -140,3 +140,4 @@ trap-state-image-naming.patch
 console-panel-write-accounting.patch
 console-panel-ownership-control.patch
 console-panel-ownership-off-h633a.patch
+native-render-ipc.patch

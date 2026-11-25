@@ -1,0 +1,283 @@
+--- a/osfmk/kern/task.c
++++ b/osfmk/kern/task.c
+@@ -10761,6 +10761,7 @@
+ static void native_xpc_emit(unsigned sample, unsigned budget);
+ static void native_ipc_focus_emit(unsigned sample, unsigned msg_id,
+     uint64_t remote_port, uint64_t local_port);
++static void native_render_emit(unsigned sample);
+ void native_xpc_track_exec(int pid, const char *comm);
+ void native_ipc_event_note(unsigned kind, ipc_kmsg_t kmsg, ipc_port_t port,
+     int from_pid, int to_pid, uint64_t receiver_tid, unsigned result);
+@@ -11175,6 +11175,7 @@
+ 			    waiter_state, waiter_rname);
+ 		}
+ 		native_ipc_focus_emit(sample, native_sb_hdr[5], native_sb_req.port, native_sb_local.port);
++		native_render_emit(sample);
+ 		native_xpc_register(native_sb_rcv.port, native_sb_pid, name, 'r');
+ 		native_xpc_register(native_sb_req.port, native_sb_pid, name, 'q');
+ 		native_xpc_dump(sample);
+@@ -11349,6 +11349,256 @@
+ 		native_xpc_pids[3] = pid;
+ 	}
+ }
++/* H675: kernel-side render port observation.
++ *
++ * Bind the CARenderServer receive right once per boot from real
++ * bootstrap traffic seen at ipc_kmsg_send: either the registration
++ * itself (complex message to launchd whose body carries the
++ * "CARenderServer" string and whose port descriptor resolves to the
++ * receiver) or SpringBoard's look-up request followed by the complex
++ * reply from launchd that carries the port.  After the bind, every
++ * message whose resolved destination equals the receiver is counted
++ * by event kind: 'S' = send attempt (reached ipc_kmsg_send with the
++ * port resolved and locked), 'Q'/'D' = actually enqueued or handed
++ * directly to a waiting receiver, 'R' = dequeued.  The sampler issues
++ * one kernel control send (id 'NATC'); when its own enq and deq bump,
++ * the counter pipeline is proven for this boot and a zero
++ * SpringBoard count becomes evidence instead of ambiguity.  Nothing
++ * prints from the IPC hot path; the sampler prints on change plus
++ * every 30th sample. */
++static ipc_port_t native_render_port;
++static unsigned native_render_regpid;
++static unsigned native_render_pending;
++static unsigned native_render_lookpid;
++static unsigned native_render_att;
++static unsigned native_render_sb_att;
++static unsigned native_render_enq;
++static unsigned native_render_deq;
++static unsigned native_render_dead;
++static unsigned native_render_ctrl_state; /* 0 pending, 1 ok, 2 failed, 3 gave up */
++static unsigned native_render_ctrl_try;
++static unsigned native_render_printed_key;
++struct native_render_rec {
++	unsigned from;
++	unsigned id;
++	unsigned size;
++	unsigned ctx;
++};
++static struct native_render_rec native_render_rec[8];
++static unsigned native_render_rec_n;
++static unsigned native_render_rec_drop;
++
++#define NATIVE_RENDER_CTRL_ID 0x4E415443u
++
++static void
++native_render_bind_descriptor(ipc_port_t p, int binder_pid, const char *via)
++{
++	ipc_port_t recv;
++
++	ip_mq_lock(p);
++	if (ip_in_a_space(p)) {
++		recv = p;
++	} else {
++		recv = ip_get_destination(p);
++	}
++	if (!IP_VALID(recv)) {
++		ip_mq_unlock(p);
++		return;
++	}
++	ip_reference(recv);
++	ip_mq_unlock(p);
++	native_render_port = recv;
++	native_render_regpid = (unsigned)binder_pid;
++	printf("NATIVE_RENDER: bound via=%s pid=%d port=0x%llx\n",
++	    via, binder_pid, (unsigned long long)(uintptr_t)recv);
++}
++
++static void
++native_render_body_note(ipc_kmsg_t kmsg, int from, int to)
++{
++	mach_msg_header_t *hdr = ikm_header(kmsg);
++	mach_msg_kbase_t *kbase;
++	const char *base = (const char *)hdr;
++	mach_msg_size_t msize = hdr->msgh_size;
++	mach_msg_size_t limit = msize < 512 ? msize : 512;
++	unsigned found = 0;
++
++	if (msize < 24) {
++		return;
++	}
++	for (unsigned off = 16; off + 14 <= limit; off++) {
++		if (memcmp(base + off, "CARenderServer", 14) == 0) {
++			found = 1;
++			break;
++		}
++	}
++	if (!found) {
++		return;
++	}
++	if (to == 1 && (hdr->msgh_bits & MACH_MSGH_BITS_COMPLEX) &&
++	    !native_render_port) {
++		kbase = mach_msg_header_to_kbase(hdr);
++		for (mach_msg_size_t i = 0; i < kbase->msgb_dsc_count; i++) {
++			mach_msg_kdescriptor_t *kd = &kbase->msgb_dsc_array[i];
++			if (mach_msg_kdescriptor_type(kd) !=
++			    MACH_MSG_PORT_DESCRIPTOR) {
++				continue;
++			}
++			if (!IP_VALID(kd->kdesc_port.name)) {
++				continue;
++			}
++			native_render_bind_descriptor(
++			    (ipc_port_t)kd->kdesc_port.name, from, "register");
++			return;
++		}
++	} else if (from == native_xpc_pids[0] && to == 1) {
++		native_render_pending = 1;
++		native_render_lookpid = (unsigned)from;
++		printf("NATIVE_RENDER: lookup-request pid=%d\n", from);
++	} else if (native_render_pending && from == 1 &&
++	    to == (int)native_render_lookpid && !native_render_port &&
++	    (hdr->msgh_bits & MACH_MSGH_BITS_COMPLEX)) {
++		kbase = mach_msg_header_to_kbase(hdr);
++		for (mach_msg_size_t i = 0; i < kbase->msgb_dsc_count; i++) {
++			mach_msg_kdescriptor_t *kd = &kbase->msgb_dsc_array[i];
++			if (mach_msg_kdescriptor_type(kd) !=
++			    MACH_MSG_PORT_DESCRIPTOR) {
++				continue;
++			}
++			if (!IP_VALID(kd->kdesc_port.name)) {
++				continue;
++			}
++			native_render_bind_descriptor(
++			    (ipc_port_t)kd->kdesc_port.name, to, "lookup-reply");
++			native_render_pending = 0;
++			return;
++		}
++	}
++}
++
++static void
++native_render_note(unsigned kind, ipc_kmsg_t kmsg, ipc_port_t port,
++    int from, int to)
++{
++	mach_msg_header_t *hdr;
++
++	(void)to;
++	if (!IP_VALID(port)) {
++		return;
++	}
++	if (!native_render_port) {
++		if (kind == 'S') {
++			native_render_body_note(kmsg, from, to);
++		}
++		return;
++	}
++	if (port != native_render_port) {
++		return;
++	}
++	if (!native_render_dead && !ip_active(port)) {
++		native_render_dead = 1;
++		printf("NATIVE_RENDER: dead port=0x%llx\n",
++		    (unsigned long long)(uintptr_t)port);
++	}
++	hdr = kmsg ? ikm_header(kmsg) : NULL;
++	switch (kind) {
++	case 'S':
++		native_render_att++;
++		if (from == native_xpc_pids[0]) {
++			native_render_sb_att++;
++		}
++		if (hdr != NULL) {
++			if (native_render_rec_n < 8) {
++				unsigned u = native_render_rec_n++;
++				native_render_rec[u].from = (unsigned)from;
++				native_render_rec[u].id = (unsigned)hdr->msgh_id;
++				native_render_rec[u].size = (unsigned)hdr->msgh_size;
++				native_render_rec[u].ctx =
++				    hdr->msgh_size >= 32 ?
++				    (unsigned)((uint32_t *)hdr)[7] : 0;
++			} else {
++				native_render_rec_drop++;
++			}
++		}
++		break;
++	case 'Q':
++	case 'D':
++		native_render_enq++;
++		break;
++	case 'R':
++		native_render_deq++;
++		break;
++	default:
++		break;
++	}
++}
++
++static void
++native_render_control_send(void)
++{
++	mach_msg_header_t ctl;
++	ipc_kmsg_t kmsg = IKM_NULL;
++	mach_msg_return_t mr;
++
++	native_render_ctrl_try++;
++	if (native_render_ctrl_try > 8 || native_render_dead) {
++		native_render_ctrl_state = 3;
++		return;
++	}
++	ctl.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_MOVE_SEND, 0);
++	ctl.msgh_size = sizeof(ctl);
++	ctl.msgh_remote_port = (mach_port_t)native_render_port;
++	ctl.msgh_local_port = MACH_PORT_NULL;
++	ctl.msgh_id = NATIVE_RENDER_CTRL_ID;
++	ip_reference(native_render_port);
++	mr = ipc_kmsg_get_from_kernel(&ctl, sizeof(ctl), MACH_SEND_MSG, &kmsg);
++	if (mr != MACH_MSG_SUCCESS) {
++		ip_release(native_render_port);
++		native_render_ctrl_state = 2;
++		return;
++	}
++	mr = ipc_kmsg_send(kmsg, MACH_SEND_MSG | MACH_SEND_TIMEOUT, 100);
++	if (mr != MACH_MSG_SUCCESS) {
++		ipc_kmsg_destroy(kmsg, IPC_KMSG_DESTROY_ALL);
++		native_render_ctrl_state = 2;
++		return;
++	}
++	native_render_ctrl_state = 1;
++	printf("NATIVE_RENDER: control enqueued id=0x%x\n",
++	    NATIVE_RENDER_CTRL_ID);
++}
++
++static void
++native_render_emit(unsigned sample)
++{
++	unsigned key;
++
++	if (!native_render_port) {
++		return;
++	}
++	if (native_render_ctrl_state == 0) {
++		native_render_control_send();
++	}
++	key = native_render_att ^ (native_render_enq << 10) ^
++	    (native_render_deq << 3) ^ (native_render_ctrl_state << 20) ^
++	    (native_render_sb_att << 6) ^ (native_render_dead << 28);
++	if (key == native_render_printed_key && (sample % 30) != 0) {
++		return;
++	}
++	native_render_printed_key = key;
++	printf("NATIVE_RENDER: sample=%u att=%u sb=%u enq=%u deq=%u ctrl=%u dead=%u reg=%u drop=%u\n",
++	    sample, native_render_att, native_render_sb_att,
++	    native_render_enq, native_render_deq,
++	    native_render_ctrl_state, native_render_dead,
++	    native_render_regpid, native_render_rec_drop);
++	for (unsigned u = 0; u < native_render_rec_n; u++) {
++		printf("NATIVE_RENDER: sample=%u send from=%u id=0x%x size=%u ctx=0x%x\n",
++		    sample, native_render_rec[u].from,
++		    native_render_rec[u].id, native_render_rec[u].size,
++		    native_render_rec[u].ctx);
++	}
++}
++
+ 
+ struct native_ipc_event {
+ 	uint64_t serial;
+@@ -11609,6 +11609,7 @@
+ 	e->bits = hdr ? (unsigned)hdr->msgh_bits : 0;
+ 	e->kind = kind;
+ 	e->result = result;
++	native_render_note(kind, kmsg, port, from_pid, to_pid);
+ }
+ 
+ static void
