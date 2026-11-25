@@ -30166,3 +30166,26 @@ rep=bb Q backboardd/56 H0/0 id=0x52…
 **下一轮（H671）单变量提案**：在 SpringBoard 侧对 QuartzCore 的 C++ 发送入口做符号解析挂钩（候选：`CA::Transaction::commit()`、`CA::Transaction::flush_as_runloop_observer(bool)` 等导出符号，用 dyld 导出表按 mangled name 解析，不依赖 `objc_copyClassList`），正对照与安装状态**全部改经 A2 查询路径发布**（H668 已验证可达通道），槽文本沿用现格式扩字段。服务端本轮不再改动。判据：挂钩有效（对照命中）且 C++ 发送计数>0 ⇒ 发送发生、断点在服务端接收；对照命中且计数恒为对照值 ⇒ SpringBoard 连 C++ 公共提交都没走，转查它自己的提交代理。
 
 **尾窗补采结果（追加）**：按 H571 先例做了一次只读 TWRP 尾窗拉取（`logs/H670/device/H670-tail32.bin`，脚本 `scripts/h103-log-pull.py`，窗口 first_lba=29755387 count=8192）。头部属于本轮（uptime_s=859、rounds=128、slot_boot=3ca942db），但 `msg_bytes=0`、`write_errors=162`：与 H635 以来磁盘 sink 持续输掉 try-lock（reason=4）的记录一致，本轮尾窗里没有可解码的正文，970 秒之后的窗口无法从盘上找回。会话结束方式因此只能由"设备自行回到 Android"这一外部事实推断，1500 秒级 abort 窗口的直接证据本轮缺失。
+
+
+### §382 H671 离线核实与构建：C++ 提交入口与真实发送边界的内联计数钩（2026-11-25）
+
+**离线核实（21H461 全缓存，Mac 侧 inputs/ipsw/21H461/dsc-extracted + analysis-inputs）**：
+
+- 导出结论：`CA::Transaction::commit()`、`flush()`、`flush_as_runloop_observer(bool)` 在全部 2933 个解包镜像里**零 importer**，两棵解包树的 export trie 均为空。名字解析（dlsym）路线不成立，钩子必须走"21H461 静态 VM 地址 + 运行时 slide + 序言字节指纹"。
+- 提交入口收敛：`+[CATransaction commit]`（0x189544e70）和 `+[CATransaction flush]`（0x189510748）都先过线程局部事务守卫（TPIDRRO_EL0+0x240，transaction->0x68 计数非零才继续），分别尾分支 `CA::Transaction::pop()`/`flush()`；`CA::Transaction::flush()`（0x1894bb3b0）尾分支 `commit()`；`CA::Transaction::observer_callback`（0x189452974）校验触发者是自己后尾分支 `flush_as_runloop_observer(true)`，后者（0x1894bb29c）直接调用 `commit()` 与 `flush()`。**所以 H670 的 ObjC 公共钩子对 runloop 观察器路径天然失明**——那才是 tx=1/0 与"服务端零接收"之间缺的一环。
+- 真实发送边界：`commit()`（0x189473ffc）调 `CA::Context::commit_transaction()`（0x1894f890c），后者含一次 `CA::Render::Encoder::send_message()`，Encoder 汇到 `CA::Render::Message::send_message()`（0x1894dfcd4）后经桩发往内核。提交入口与发送边界分别是这两个地址。
+- 序言指纹（解包二进制逐字读出，全部位置无关，可安全重定位）：
+  `commit = d10383ff 6d062beb 6d0723e9 a9086ffc`；`Message::send_message = d10183ff a90357f6 a9044ff4 a9057bfd`。
+
+**H671 改动（单变量：把"有没有事务提交/发出"从推断变成计数）**：
+
+- 观察器新增两个 arm64 内联计数桩（`h671_commit_stub`/`h671_send_stub`，手写 asm：计数、存调用者 x30、重放被替换的 4 条序言指令、经 `gH671Sites[4]/[5]` 跳回 site+16）。安装时用 `vm_protect(VM_PROT_COPY)` 只影响本进程的共享缓存页副本；**写入前逐字核对 16 字节序言，写入后读回核对，任何一步不符就不装**；`br` 字最后写。写入后 `sys_dcache_flush + sys_icache_invalidate`。
+- 正对照（构造可信性）：两处装好后立刻 `CATransaction begin + flush` 一次。commit 计数增加 ⇒ `pf` 置 0x100（cf）。对照不过 ⇒ 本轮计数一律不可判。
+- 安装状态、计数经 H668 验证的 A2 通道发布：sb 槽文本改为 `sb n=.. d1=.. id=0x.. tx=.. c=.. cc=<commit> mm=<send> pf=<bits>`（去掉被证伪为时序快照的 lc/ct 腾出空间，计数钳位防溢出，保留 `id=0x` 不动 A2 解析）。`pf` 位：1=commit 已装、2=send 已装、256=对照通过。`h652_publish` 行同时带 `clr/slr`（两个桩最后一次的调用者 LR，离线可对回 21H461 静态地址做调用方归因）。
+- 服务端（backboardd 插件）零改动，沿用 H670 基线。内核零改动。
+- 构建链上唯一的自身失误：首版把计数数组写成 `extern "C" ... gH671Sites[8];`（声明而非定义），链接失败暴露，随即修复（`24f809a`）。没有进产物。
+
+**构建与核对（同步规全程）**：子模块 `codex/h572-terminate-observer` `bfb8cf4 → 5a1d808 → 24f809a`；主仓 `3f4ecf16 → 6f23a22b`；均先子模块后指针推送。Mac 经 `ssh mac` 从远程拉取核对：主仓 `6f23a22`、子模块 `5a1d808`、两端一致，全程未用 scp 传源码。产物：观察器 143232 字节、SHA-256 `d013a59ce3a7dff39a68cfb9339b6638825221ec983556cd76edd6907cee15ed`、CDHash `98effe80739669452cc9d0d12627f3d5d3afbe2a`（替换 `fa52adf4…`）；84 项门禁标记全过；`_h671_*` 桩与 `LC_CODE_SIGNATURE` 在产物内反汇编核对。gpuaddon `e519199e…`、trust `8abe264a…`、payload `bca3daf0…`，roundtrip 全符；内核仍是 `ced5ce9d…`；启动参数仍是 1000 字节、`MATCHES_H610_ARGS True`（本轮重建了被 /tmp 清理掉的 `h610-args.txt` 基线，取自上一轮已验证的 H670-payload 的 unixnu.toml）。`H671-boot.img` SHA-256 `368f31d49e1477ed3ff8a40478f003a64414d47cf92f336b8012aaa943dac1bc`，已取回本机复核一致（81217536 字节）。
+
+**上机判据**：`pf` 含 0x100 且 `cc` 大于对照数 ⇒ SpringBoard 确实在提交事务，转查 `mm` 与服务端接收；`pf=0x103` 且 `cc==对照、mm==0` ⇒ 本轮没有任何事务提交（与主线线程阻塞假设吻合），断点在提交入口之前；`pf` 缺 1 ⇒ 内联补丁未装成（slide 不符、序言不符或 vm_protect 被拒），本轮全部不可判；`cc>对照` 而 `mm==0` ⇒ 提交全部空转（无负载），下一轮查 commit_transaction 内的门。
