@@ -16,7 +16,7 @@
  		native_xpc_register(native_sb_rcv.port, native_sb_pid, name, 'r');
  		native_xpc_register(native_sb_req.port, native_sb_pid, name, 'q');
  		native_xpc_dump(sample);
-@@ -11349,6 +11349,256 @@
+@@ -11349,6 +11349,272 @@
  		native_xpc_pids[3] = pid;
  	}
  }
@@ -62,9 +62,16 @@
 +#define NATIVE_RENDER_CTRL_ID 0x4E415443u
 +
 +static void
-+native_render_bind_descriptor(ipc_port_t p, int binder_pid, const char *via)
++native_render_bind_descriptor(ipc_port_t p, ipc_port_t locked,
++    int binder_pid, const char *via)
 +{
 +	ipc_port_t recv;
++
++	/* The note fires from ipc_kmsg_send with the destination port
++	 * already locked; re-locking it here would self-deadlock. */
++	if (p == locked) {
++		return;
++	}
 +
 +	ip_mq_lock(p);
 +	if (ip_in_a_space(p)) {
@@ -85,13 +92,18 @@
 +}
 +
 +static void
-+native_render_body_note(ipc_kmsg_t kmsg, int from, int to)
++native_render_body_note(ipc_kmsg_t kmsg, ipc_port_t dest_port,
++    int from, int to)
 +{
++	if (kmsg == IKM_NULL) {
++		return;
++	}
 +	mach_msg_header_t *hdr = ikm_header(kmsg);
 +	mach_msg_kbase_t *kbase;
 +	const char *base = (const char *)hdr;
 +	mach_msg_size_t msize = hdr->msgh_size;
 +	mach_msg_size_t limit = msize < 512 ? msize : 512;
++
 +	unsigned found = 0;
 +
 +	if (msize < 24) {
@@ -109,7 +121,8 @@
 +	if (to == 1 && (hdr->msgh_bits & MACH_MSGH_BITS_COMPLEX) &&
 +	    !native_render_port) {
 +		kbase = mach_msg_header_to_kbase(hdr);
-+		for (mach_msg_size_t i = 0; i < kbase->msgb_dsc_count; i++) {
++		for (mach_msg_size_t i = 0; i < kbase->msgb_dsc_count && i < 64;
++		    i++) {
 +			mach_msg_kdescriptor_t *kd = &kbase->msgb_dsc_array[i];
 +			if (mach_msg_kdescriptor_type(kd) !=
 +			    MACH_MSG_PORT_DESCRIPTOR) {
@@ -119,7 +132,8 @@
 +				continue;
 +			}
 +			native_render_bind_descriptor(
-+			    (ipc_port_t)kd->kdesc_port.name, from, "register");
++			    (ipc_port_t)kd->kdesc_port.name, dest_port, from,
++			        "register");
 +			return;
 +		}
 +	} else if (from == native_xpc_pids[0] && to == 1) {
@@ -130,7 +144,8 @@
 +	    to == (int)native_render_lookpid && !native_render_port &&
 +	    (hdr->msgh_bits & MACH_MSGH_BITS_COMPLEX)) {
 +		kbase = mach_msg_header_to_kbase(hdr);
-+		for (mach_msg_size_t i = 0; i < kbase->msgb_dsc_count; i++) {
++		for (mach_msg_size_t i = 0; i < kbase->msgb_dsc_count && i < 64;
++		    i++) {
 +			mach_msg_kdescriptor_t *kd = &kbase->msgb_dsc_array[i];
 +			if (mach_msg_kdescriptor_type(kd) !=
 +			    MACH_MSG_PORT_DESCRIPTOR) {
@@ -140,7 +155,8 @@
 +				continue;
 +			}
 +			native_render_bind_descriptor(
-+			    (ipc_port_t)kd->kdesc_port.name, to, "lookup-reply");
++			    (ipc_port_t)kd->kdesc_port.name, dest_port, to,
++			        "lookup-reply");
 +			native_render_pending = 0;
 +			return;
 +		}
@@ -159,7 +175,7 @@
 +	}
 +	if (!native_render_port) {
 +		if (kind == 'S') {
-+			native_render_body_note(kmsg, from, to);
++			native_render_body_note(kmsg, port, from, to);
 +		}
 +		return;
 +	}
