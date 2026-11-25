@@ -29516,3 +29516,32 @@ H648 原计划复用插件里写 `/private/var/keybags/persona.kb` 的先例，�
 代价要说清：这会改动内核（内核哈希不再是 `add66248…`）以及两个用户态组件。但**改的是通道而不是实验变量**——本轮唯一要判的科学命题仍然是"该查询接口能否解析外部进程的 context id"，A2 的判据、census 三档对照、位置查询读数全部保持不变。若通道本身失败（写入或读取返回错误），本轮按"通道未建立"记录，不得据此对 A2 作任何结论。
 
 **四、H647 的结论不受影响。** 位置查询路线已经因为"返回 0 有两种不可区分解释"而关闭，这条判断只依赖 H647 自己的读数。
+
+### §356 H648 跨进程正对照成立：服务器表能看到别的进程的 context，桌面问题因此改写（2026-11-25）
+
+**结论先说：A2 成立。** SpringBoard 通过早已存在的 `SetMetadata` 把本轮 context id 交给内核，backboardd 用新实现的 `GetMetadata` 读回，再交给 H643 标定过的查询接口：
+
+```text
+[506.240442] h648_publish id=0x87f560e3 bytes=16 st=0x0
+[506.240498] ca_context_remote_create pid=27 contextId=0x87f560e3
+[518.012283] srvpub read st=0x0 handle=1 bytes=16 text=sbctx=0x87f560e3
+[518.012406] srvpub query published id=0x87f560e3 client=0xd507 task=0x2703 host=0x0 pid=27 st=0x0
+[518.012455] srvpub adjacent id=0x87f560e3 ntask=0x0 ptask=0x0
+```
+
+`pid_for_task` 得到 **27**，`st=0x0`，相邻 id 仍为 0，518/575/641 三轮一致，census 三档对照同时自洽。传递链两端与同一 boot 的原始 id 逐字相同；更早两轮读到 `handle=0 bytes=0`，说明内核返回的长度与 handle 计数能区分"无人发布"与"有值"，读回的 0 不是假象。
+
+**由此确立两条必须分清的语义。**
+
+1. `taskNamePortOfContextId:` 与 `clientPortOfContextId:` 查的是**服务器全局表**，能解析属于其它进程的 context id。
+2. `+[CAContext allContexts]` 仍然是**进程私有**列表（H640 结论不变；本轮 `allctx=2` 全是 pid=56 就是同一事实的另一面）。
+
+此前所有用 `allContexts` 推断服务器状态、或用服务器查询推断进程可见性的记录，都要按这两条重新区分。
+
+**桌面问题被改写而不是缩小。** 本轮位置探针 20 次读数里 `0x87f560e3` 一次都没出现，而它已证明存在于服务器表。于是"位置查询返回 0"的两种解释里，**"该 context 未注册到服务器"这一支被排除**，剩下的是：SpringBoard 的 context 已在渲染服务器注册，但**没有以覆盖所采样位置的方式挂载/定位到显示**。这与 `uiwindow_scene_visible`、`ca_host_visible` 全为 0、`val=0 xf=0 fr=0` 一致。
+
+问题从"内容有没有提交到服务器"前进为"**已注册的 context 为什么没有出现在显示的挂载与位置上**"。这是本轮的实际价值。
+
+**基线偏离。** 内核哈希从 H635 起的 `add66248…` 变为 `ced5ce9d…`，payload 内回读与树内一致。改动仅为新增一个此前落到 `kIOReturnUnsupported` 的 switch 分支，不触碰 GPU 寄存器、不改变任何既有方法语义。两个用户态组件的 CDHash 同步更新，旧值在 trust 里为 0 次。
+
+**待办。** `clientPortOfContextId:` 的返回值仍未 `mach_port_deallocate`（§349 记的未验证项，本轮又多了一个使用点）。另外本轮再次出现 CDC 在 uptime 约 676 秒读失败退出（`error=203`），而内核心跳在 644 秒仍正常，符合 §346 的"COM 断不等于内核死"。
