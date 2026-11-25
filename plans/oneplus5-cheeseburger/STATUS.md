@@ -29564,3 +29564,21 @@ H648 原计划复用插件里写 `/private/var/keybags/persona.kb` 的先例，�
 **H652。** 服务器侧对象取不到，但客户端侧属性本地可读。让观察器在每次 `remoteContextWithOptions:` 之后把**每一个** context 的 `contextId`、`displayId`、`layer` 类名、`layer.contents` 类名、`sublayers` 数一并发布，替换"只发第一个"。这不需要新的私有调用、不改内核，能直接回答：SpringBoard 建的这些 context 里有没有哪个 `displayId` 指向显示 1、有没有哪个 layer 已带 contents。
 
 **工具层面。** `pack-round.sh` 的断言抓到一次真实失误：首次调用时 `$(codesign …)` 被本地 PowerShell 展开，参数错位使 `TNEW` 为空，`assert trace_new == 1` 当场中止，未产出镜像；改用字面 CDHash 后全部断言通过。
+
+### §358 H652 把桌面阻塞点具体化：context 的 displayId 是 0，且没有根图层（2026-11-25）
+
+观察器在 SpringBoard 本地读取每个新建 context 的字段：
+
+```text
+[539.340996] h652_ctx n=1 idval=0xbe3d561c display=1 displayId=0x0 layer=nil contents=nil subs=0 d1=0 lc=0 ct=0
+```
+
+`displayId` 属性可读但**值为 0**，而显示对象的 `displayId` 是 `0x1`；`layer` 为 nil，没有根图层。backboardd 侧新摘要格式端到端可用（`bytes=35 text=sb n=1 d1=0 lc=0 ct=0 id=0xbe3d561c`），端口表查询仍解析到 pid=27（A2 第四次复现），`contextWithId:` 仍返回 nil。
+
+这一条把三个长期悬着的观察连起来：位置查询查不到它（因为不指向显示 1）、scene/host 可见事件为零（因为没有根图层）、`presentSurface:` 零命中（因为没有图层就没有 surface）。
+
+**桌面第一帧的阻塞点因此从"内容有没有提交"具体化为两个可分别验证的缺陷：** A 是 `displayId` 为 0 而非 1（要分清是 `remoteContextWithOptions:` 的参数、FrontBoard 的 scene 连接、还是服务器默认值），B 是根图层从未 `setLayer:` 到这个 context 上。H647 曾看到 SpringBoard 里 `ca_context_set_layer` 先 nil 后有 UIWindowLayer，但那可能属于另一个 context；本轮 `n=1` 且 layer 仍为 nil，说明此刻只有这一个 context 且它没有图层。
+
+另外修正 H651 记下的自身局限：发布改为累计计数加最后一个 id，"只发第一个"造成的含糊不再存在。context 数量本身随启动时序变化（H651 是 3 个，H652 到 654 秒是 1 个），读数要连着 `n` 一起看。
+
+**打包工具的第二次拦截。** 插件在 e0d62af 改了代码却没动自报 build 号，`addon-trace-round.py` 直接拒绝产出无法自我识别的产物（`compiled bundle does not contain the round tag H652`）。改的是插件的号而不是放宽检查，见 `a34e06e`。
