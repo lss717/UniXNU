@@ -29582,3 +29582,15 @@ H648 原计划复用插件里写 `/private/var/keybags/persona.kb` 的先例，�
 另外修正 H651 记下的自身局限：发布改为累计计数加最后一个 id，"只发第一个"造成的含糊不再存在。context 数量本身随启动时序变化（H651 是 3 个，H652 到 654 秒是 1 个），读数要连着 `n` 一起看。
 
 **打包工具的第二次拦截。** 插件在 e0d62af 改了代码却没动自报 build 号，`addon-trace-round.py` 直接拒绝产出无法自我识别的产物（`compiled bundle does not contain the round tag H652`）。改的是插件的号而不是放宽检查，见 `a34e06e`。
+
+### §359 H653 推翻 §358 对缺陷 A 的归因：请求的是 displayId 1，回来的是 0（2026-11-25）
+
+观察器在真实方法执行前读出 SpringBoard 传给 `+[CAContext remoteContextWithOptions:]` 的字典：`secure=1`、**`displayId=1`**、`displayable=1`。而同一时刻 `h652_ctx` 显示这个 context 的 `displayId` 属性读回来是 `0x0`，`layer=nil`。
+
+所以 §358 写的"桌面 context 的 displayId 是 0 而不是 1，要分清是谁该设这个值"里，**请求侧已经被排除**：SpringBoard 请求的就是显示 1。
+
+剩下两种解释本轮还分不开：(1) 这个端口的实现没有把 options 的 `displayId` 落到 context 上；(2) `-[CAContext displayId]` 读的不是 options 里那个字段所指的同一事物，即判据字段选错。**第 (2) 种必须先排除**，否则 §358 的整条"displayId=0 所以不指向显示 1"的推理不成立。区分办法是把 context 自己的 options 与 `displayId` 并排读出来：若回读的 options 里 `displayId` 仍是 1 而属性为 0，是第 (1) 种；若 options 里该键消失或变 0，是第 (2) 种或传递被改写。
+
+缺陷 B（根图层从未 `setLayer:`）不依赖这个争议，保持独立成立。
+
+**工具层面本轮记三条。** `addon-observer-round.py` 之前假设输出标签等于 build 字符串且有一处 `a.tag.decode()` 崩溃，已拆成 `--build`/`--out-tag`。`pack-round.sh` 现在允许"插件未改动"的轮次（`trace_old 1 unchanged`），并在末尾加了产物存在性检查——第一次运行时 CRLF 混入使 mcopy 全部失败，脚本却照样打印了 `DONE_PACK_H653`，这个假成功现在会被拦下。另外子模块单独提交修复后必须同步主仓 gitlink，否则 Mac 的 `git submodule update` 仍检出旧提交，本轮为此多跑了一次。
