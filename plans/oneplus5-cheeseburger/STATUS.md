@@ -30267,3 +30267,22 @@ h674_at 8 条全部落在 …/__got（AccessibilityUtilities、ContactsUI、Foun
 **下一步二选一（需定夺）**：
 1. **内核侧计数（推荐）**：`mach_msg` 的接收/发送本来就经过我们的内核（`ipc_mach_send`/`port` 路径已有观测基础，`NATIVE_LAUNCHD_IPC` 同源）。在内核里对 "发送方 task=SpringBoard、接收 port=CARenderServer 连接端口" 计数，经既有 A2/心跳通道发布。不动 backboardd 插件与启动路径，规避全部用户态文本页风险；缺点是要改内核并重过打包门禁。
 2. **单页内文本入口补丁（次选，风险高）**：H671 的死因是跨页 `vm_protect` 拆散邻页映射；`_mach_msg` 函数体起点 `0x1cb783fa4`（页内偏移 0x1a4，16 字节不跨界）。单页 CoW 的可执行性从未在本配置验证过，需先设计一个可判的小实验（补丁装到非关键镜像的单页函数上自测），才谈上机。
+
+
+### §387 H675 内核侧观测三轮上机：暴露"提交序列 ≠ 冻结内核谱系"的基础设施断裂（2026-11-26）
+
+**背景与授权**：用户选定方案 1（内核侧 IPC 观测）。补丁 `native-render-ipc.patch`（提交 7c370d5d，series 末位）实现：从真实 bootstrap 流量绑定 CARenderServer 接收端口对象（注册消息或 SpringBoard look-up 应答的 OOL 端口描述子，锁内 `ip_in_a_space/ip_get_destination` 解析 + `ip_reference` 钉住），按事件类计数（S=到达 ipc_kmsg_send 目的口已解析加锁的发送尝试，Q/D=真实入队或直接交接，R=出队），采样器发一枚内核控制消息（id=NATC）作正对照，掉线经 NTL 通道发布。服务端插件、观察器、Data seed、args 与 H674b 完全一致。
+
+**先修了两个存量缺陷**：(a) `console-panel-ownership-off-h633a.patch` 的 hunk 头声明 9/11 行、正文只有 8/10 行，git apply 永远拒绝（提交时即如此，dd1b6f0）——修正为 8/10（提交 1423d97b）。这使 clean 构建第一次真正打上该补丁，随即发现它改变面板所有权语义，与任何运行过的内核都不一致，故在 H675 工作树里 `--reverse` 回退（行为保持"交还面板"），仓库侧待用户对"是否采纳 H633a 行为"单独定夺。(b) `macos-build-kernel.sh:177` 默认 `XNU_OWNER_DATA_VOLUME_UUID=1A4CE9DF-...` 是过期值；字符串取证确认冻结内核内嵌的是 `09FB365F-2D06-48E5-A8DE-AA0CCF86BB74`，构建必须显式导出该环境变量。
+
+**三轮上机（每轮一次 fastboot boot，无分区写入）**：
+
+- 尝试一（boot `61997cb7…`，内核 `4bf2f48a`）：无 CDC，设备回 Android。尾窗（`logs/H675/device/H675-tail32.bin`，SHA-256 `04CE336E…`）抓到 panic：`rootvp not authenticated after mounting @bsd_init.c:1103`（boot=406c7388）。归因：首次 bootstrap 的 LATE-反打循环把 `root-auth-bypass` 等 10 个后续补丁从工作树反打掉，而正向重放被上面 (a) 的坏补丁截断（它排在 series 里 root-auth-bypass 之后）。
+- 尝试二（boot `48ff77ba…`，内核 `cf0705fa`；`--clean` 全新克隆 + 完整序列 + off-h633a 回退）：无 CDC。尾窗（`H675-tail32b.bin`，`9E13EB37…`）panic：`offline scratch Data mount failed: 60 @kern_exec.c:8832`（boot=422dbcef）。归因：上面 (b) 的旧默认 UUID。
+- 尝试三（boot `57548fd3…`，内核 `91322ef3`，UUID 正确）：无 CDC，设备回 Android。尾窗（`H675-tail32c.bin`，窗口仅 901 字节、`write_errors=48/48`）**无 panic 串**，最后记录停在 uptime 193.6 秒（launchd 已起、usbmuxd 62078 已监听，比历史上任何候选都早），随后无踪迹重启。boot=47dc090b。
+
+**核心结论（本轮真正的产出）**：`--clean` 之后也证明，**已提交的 patches/xnu 序列无法复现冻结内核 `ced5ce9d` 的可启动谱系**——运行树是当年逐补丁增量叠加的产物，其中至少某些 11 月 24-25 日提交的补丁从未进入任何真机内核（off-h633a 是已被证实的一例，尝试三的死因说明还不止一例）。在补齐"序列 ↔ 冻结二进制"的逐补丁对账之前，任何内核侧重构建都无法判定单变量。顺带损失：原工作树已被 `--clean` 删除，但其行为定义可由 `/tmp/frozen-k`（从 H674b payload 提取的 `ced5ce9d`）+ 本轮修复经验重建；已把冻结内核回放到 `out/cheeseburger/kernel/kernel.macho`，H67x 打包链恢复可用（下一候选照旧复用冻结内核）。
+
+**待用户定夺（两条路线选一）**：
+A. **谱系对账工程**（推荐先做小步）：用 `nm/strings` 对冻结内核逐个检测 11 月 24-25 提交补丁的标记符号，把"确实在冻结内核里"的补丁列入一个显式 `series-bootable` 列表，clean 构建只按该列表打补丁 + native-render-ipc；一次干净重建 + 一次上机即可验证对账是否完备。
+B. **回到用户态最后一条未试路线**：单页文本入口补丁的 canary 实验（先在不启动路径上的函数自测 CoW 可执行性），完全避开 xnu 重建；代价是覆盖面仍受跳板直达限制，大概率拿不到发送计数。
