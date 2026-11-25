@@ -29612,3 +29612,59 @@ H648 原计划复用插件里写 `/private/var/keybags/persona.kb` 的先例，�
 **本轮踩的坑（编译期）。** H654 第一次提交把 `describe_context_options` 的前置声明放在了 `record_created_context` **之后**，而调用点在 `record_created_context` 内部，编译报 `use of undeclared identifier`。声明必须在使用它的函数之前。第二次提交 `d5dbb5c` 把声明移到 `record_created_context` 上方并删掉原来那段无效声明，主仓 gitlink 同步提交为 `b874a711`。
 
 **基线哈希。** kernel `ced5ce9d55d8514ac30b8cdba68662c7d8748e8942f477b68d9ee41c88d7f8e9`（未变）；Data seed `0ef3db84…`、1000 字节启动参数 `MATCHES_H610_ARGS True`；插件条目 `990ce517…` 未变（`trace_old 1 unchanged`）；观察器新 CDHash `2894b771d1bfd133051b0b821b1edf14846f5537`（替换 `77f3d775…`）；`H654-gpuaddon.img` `c027634ca535d96d0eb7c9c4aa8a171e64b51b9a0c5946703105f50b389cc59d`；`H654-trust.bin` `ed4876eb9043a1b0d68074d4a61f5cecf7f94fc8d026063f37f7f91d550ba985`；`H654-boot.img` `ff9c084928786e82de57af3b3231e6cc0f35c8444ed67e6121e868b343e0ce46`，Windows 侧回读哈希一致。
+
+
+### §361 H654 实测：displayId 和根图层都是"在创建瞬间读取"造成的假象，真正的终点是 SpringBoard 被 runningboardd 杀掉（2026-11-25）
+
+boot `29e8e214`，kernel `ced5ce9d…` 未变，插件未变（`builder#2 build H652`），观察器身份由 `event=h654_mirror` 直接证明。COM 在 273 秒出现，日志覆盖 273–767 秒。
+
+**本轮时间线。**
+
+```text
+598.510  h653_options src=request  entries=3  secure=1 displayId=1 displayable=1
+600.106  h654_mirror  n=1 id=0x496ca388 displayId=0x0 secure=1 secureVal=1 valid=1 ownOptions=1
+600.106  h653_options src=context   entries=3  secure=1 displayId=1 displayable=1   （与请求逐字相同）
+600.107  ca_context_set_layer  layer=nil
+600.207  ca_context_set_layer  layer=UIWindowLayer
+600.215  h639_ctx_entry site=set-layer  id=0x496ca388 displayId=0x1 layer=UIWindowLayer subs=0
+604.394  uiwindow_set_hidden window=status visible=1
+606.413  h546_setup_manager_init_enter
+609.249  h546_setup_manager_init_return
+611.274  h552_telephony_shared_enter  receiver=SBTelephonyManager
+612.016  h552_telephony_shared_creating_enter create=1     （此后无 return）
+764.700  NATIVE_EXEC pid=176 comm=backboardd                （backboardd 重新 exec）
+767.383  NATIVE_SIG pid=27 sig=9 comm=SpringBoard sender=26/runningboardd caller=0xfffffff00786701c
+767.425  CDC 关闭，设备回到 Android
+```
+
+**§359 留下的两种解释，按上机前写定的判据落在第 (1) 种**：context 自己保存的 options 与请求逐字相同（`displayId=1` 仍在），`isSecure` 如实报出请求的 `secure=1`，`valid=1`，而 `-[CAContext displayId]` 读回 0。
+
+**但本轮还给出了判据里没有预料到的事实，它把这条线整体作废。** 600.207 秒 `setLayer:` 一发生，600.215 秒同一个 context 的 `displayId` 就变成 `0x1`。所以 `displayId` 不是"永远没被应用"，而是"在挂上根图层之前一直是 0"。
+
+因此要更正两处：
+
+- §358 的"缺陷 A：桌面 context 的 displayId 是 0，所以不指向显示 1"整条推理作废。它是**在创建瞬间读取**造成的时序假象，不是故障。
+- §358/§359 反复说"根图层从未 `setLayer:` 到该 context"（缺陷 B）同样作废：本轮明确看到 `setLayer:` 传入 `UIWindowLayer`，且 `hasCommitted=1`。
+
+仍然成立、且仍然是问题的是：挂上之后 `sublayers=0`，`val=0 xf=0 fr=0` 一直到会话结束。
+
+**真正的终点是启动被杀。** 主线程从 613.677 秒起停在 `pc=0x1d51f0b58 lr=0x1d51f4224`，delay=4/7/15/30 四次采样 `sp`、`fp` 完全不变；154 秒后 runningboardd 用 SIGKILL 结束 SpringBoard。在此之前 backboardd 自己也在 764.7 秒被重新拉起。
+
+**跨轮核对，避免把电话栈当根因。** H651/H652/H653/H654 四轮都有同一种 SIGKILL（740.1 / 742.4 / 802.7 / 767.4 秒）。其中 **H651 的 `h552_telephony_shared_creating_return` 是有的**，仍然被杀 ⇒ 电话创建挂起不是 SIGKILL 的充分条件。四轮里停车点满足 `lr - pc = 0x36cc`，且低位固定为 `…b58` / `…224`（H651 `0x1e68e4b58`/`0x1e68e8224`，H652 `0x1d92b4b58`/`0x1d92b8224`，H653 `0x1e048cb58`/`0x1e0490224`，H654 `0x1d51f0b58`/`0x1d51f4224`）⇒ 是同一镜像内同一处调用，只是每轮 slide 不同。
+
+**观测限制本轮再次证实。** 观察器自身输出在 640 秒后静默（最后一条 `h572_observer_alive sample=330` 在 619.3 秒），所以采样器 delay=60/120 两次从未落地。任何"没看到"的结论都必须先确认静默时刻。
+
+**UFS 侧同时记录**：`lock_wait_max_ms=25435`、`lock_waiters=21`、`watchdog_seen` 1320→1380，而 `timeout=0 ocs_err=0 dbto=0 recover=0`。单次最长锁等待 25 秒是事实，它与主线程挂起之间目前没有证据链。
+
+### §362 H655 设计与上机前判据：把停车地址变成镜像名和偏移（2026-11-25）
+
+**唯一功能变量**：观察器在既有主线程采样器里，当同一个 `pc` 连续两次相同（即确认停车）时做一次栈回溯，并在 delay=30 仍未重复时补一次。回溯用 `vm_read_overwrite` 读栈帧记录（`fp[0]` 上一帧、`fp[1]` 返回地址），最多 10 帧，每帧用 `dladdr` 打印 `镜像路径+偏移`；`pc` 与 `lr` 也各打印一条同样格式的归属。地址先按 48 位掩码去掉指针签名。
+
+**上机前写定的判据。**
+
+1. 每轮 `pc`/`lr` 的 `image+offset` 必须一致（跨 delay 与跨轮），否则说明停车点本身在变，§361 的"同一处调用"结论要收回。
+2. 若 `pc` 落在 `libsystem_kernel` 一类的系统库 ⇒ 是真正的内核等待，栈回溯应给出等待对象（`mach_msg`、`psynch_*`、`kevent`）；若落在某个框架内部 ⇒ 是用户态自旋或同步调用，等待对象要从上一帧找。
+3. 上一帧（`i=1`，即 `lr` 的归属）与 `i=2` 必须一起看：`lr` 是 `pc` 所在函数的返回地址，只有当它属于另一帧时才能说明调用关系；若 `lr` 与 `pc` 同镜像且偏移差恒为 `0x36cc`，则 `lr` 就是同一镜像内的调用点。
+4. 正对照：`dladdr` 对已知地址（例如 `&line` 自身或某个已加载类的方法）必须返回正确镜像，否则本轮"unmapped"不能解释为地址无效。
+5. 阴性处理：若观察器在回溯之前就静默，本轮按证据不足记录，不得据此改变方向。
+6. 产物身份：设备日志必须出现 `observer load … build=H655`；插件仍为 H652。
