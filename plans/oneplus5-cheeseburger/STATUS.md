@@ -29545,3 +29545,22 @@ H648 原计划复用插件里写 `/private/var/keybags/persona.kb` 的先例，�
 **基线偏离。** 内核哈希从 H635 起的 `add66248…` 变为 `ced5ce9d…`，payload 内回读与树内一致。改动仅为新增一个此前落到 `kIOReturnUnsupported` 的 switch 分支，不触碰 GPU 寄存器、不改变任何既有方法语义。两个用户态组件的 CDHash 同步更新，旧值在 trust 里为 0 次。
 
 **待办。** `clientPortOfContextId:` 的返回值仍未 `mach_port_deallocate`（§349 记的未验证项，本轮又多了一个使用点）。另外本轮再次出现 CDC 在 uptime 约 676 秒读失败退出（`error=203`），而内核心跳在 644 秒仍正常，符合 §346 的"COM 断不等于内核死"。
+
+### §357 H650-H651：显示对象没有挂载 context 的入口，contextWithId: 也是进程私有的（2026-11-25）
+
+**H650** 把显示选择器清单真正取全（`total=243 matched=243 filter=off`，240 个唯一项）。H649 的改动无效——它改在构造函数里，而那时 `displays=0`；是清单自己打印的 `filter=on` 暴露了这点。完整清单里与挂载有关的只有 clone 与通知注册（`addClone:`、`addClone:options:`、`removeClone:`、`removeAllClones`、`registerFor…Notifications:`、`overscanAmount(s)`、`acquireFrozenSurface`、`freeze`），**没有任何 addContext/attachContext/hostContext 入口**。"把 context 挂到显示上"不是显示对象提供的操作。
+
+**H651** 测 `+[CAContext contextWithId:]`（形状 `@20@0:8I16` 检查通过后才调用）：
+
+```text
+[567.741144] srvpub query published id=0x14430e3d client=0x10003 task=0x2403 host=0x0 pid=27 st=0x0
+[567.815572] srvpub serverview byid obj=0 cls=- id=0xffffffff displayId=0xffffffff layer=- contents=- subs=0
+```
+
+567.7／612.4／672.5 三轮一致。**A2 第三次复现**（端口表查询解析到 pid=27、`st=0x0`），跨进程正对照现在有三个 boot 支撑。同时 **`contextWithId:` 对外部 id 返回 nil**，说明它和 `allContexts` 一样是进程私有的——"用它取服务器侧对象再读 displayId/contents"这条路线关闭。
+
+**必须记下的自身局限。** 本轮 SpringBoard 在 515.4／654.0／663.0 秒连续创建了三个 remote context（`0x14430e3d`、`0x703635e9`、`0x73dc93b3`），而 H648 的发布设计是"只发第一个"。因此已证明的是"SpringBoard 的某个 context 在服务器端口表里"，**不能**断言它是桌面场景那个 context。
+
+**H652。** 服务器侧对象取不到，但客户端侧属性本地可读。让观察器在每次 `remoteContextWithOptions:` 之后把**每一个** context 的 `contextId`、`displayId`、`layer` 类名、`layer.contents` 类名、`sublayers` 数一并发布，替换"只发第一个"。这不需要新的私有调用、不改内核，能直接回答：SpringBoard 建的这些 context 里有没有哪个 `displayId` 指向显示 1、有没有哪个 layer 已带 contents。
+
+**工具层面。** `pack-round.sh` 的断言抓到一次真实失误：首次调用时 `$(codesign …)` 被本地 PowerShell 展开，参数错位使 `TNEW` 为空，`assert trace_new == 1` 当场中止，未产出镜像；改用字面 CDHash 后全部断言通过。
