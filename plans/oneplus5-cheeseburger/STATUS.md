@@ -30189,3 +30189,23 @@ rep=bb Q backboardd/56 H0/0 id=0x52…
 **构建与核对（同步规全程）**：子模块 `codex/h572-terminate-observer` `bfb8cf4 → 5a1d808 → 24f809a`；主仓 `3f4ecf16 → 6f23a22b`；均先子模块后指针推送。Mac 经 `ssh mac` 从远程拉取核对：主仓 `6f23a22`、子模块 `5a1d808`、两端一致，全程未用 scp 传源码。产物：观察器 143232 字节、SHA-256 `d013a59ce3a7dff39a68cfb9339b6638825221ec983556cd76edd6907cee15ed`、CDHash `98effe80739669452cc9d0d12627f3d5d3afbe2a`（替换 `fa52adf4…`）；84 项门禁标记全过；`_h671_*` 桩与 `LC_CODE_SIGNATURE` 在产物内反汇编核对。gpuaddon `e519199e…`、trust `8abe264a…`、payload `bca3daf0…`，roundtrip 全符；内核仍是 `ced5ce9d…`；启动参数仍是 1000 字节、`MATCHES_H610_ARGS True`（本轮重建了被 /tmp 清理掉的 `h610-args.txt` 基线，取自上一轮已验证的 H670-payload 的 unixnu.toml）。`H671-boot.img` SHA-256 `368f31d49e1477ed3ff8a40478f003a64414d47cf92f336b8012aaa943dac1bc`，已取回本机复核一致（81217536 字节）。
 
 **上机判据**：`pf` 含 0x100 且 `cc` 大于对照数 ⇒ SpringBoard 确实在提交事务，转查 `mm` 与服务端接收；`pf=0x103` 且 `cc==对照、mm==0` ⇒ 本轮没有任何事务提交（与主线线程阻塞假设吻合），断点在提交入口之前；`pf` 缺 1 ⇒ 内联补丁未装成（slide 不符、序言不符或 vm_protect 被拒），本轮全部不可判；`cc>对照` 而 `mm==0` ⇒ 提交全部空转（无负载），下一轮查 commit_transaction 内的门。
+
+
+### §383 H671 实测：内联补丁本身是回归，共享缓存页跨页 CoW 在本内核上必炸（2026-11-25）
+
+**流程与合规**：镜像 `368f31d49e1477ed3ff8a40478f003a64414d47cf92f336b8012aaa943dac1bc` 本机复核一致后一次 `fastboot boot`（OKAY，无写入）。CDC 22:56:24 枚举（uptime ~302 秒），采集到 23:06:41 USB 掉线（error 203，uptime ~919 秒），落盘 1082281 字节。日志 `logs/H671/device/H671-live.raw.bin`，SHA-256 `289FF57359DFEB371297193D388BD06AB4C63B6206D3DF35CEA939C52AE75417`。会话结束后设备自行回到 Android（`adb devices` 显示 `16149951 device`），本轮判读完成前不做其它设备操作。
+
+**实测摘要**：采集窗口内 SpringBoard 实例 116/128/135/140/146 各自装载观察器，五次 `h671_patch bits=3`（slide `0x1903c000`，两处补丁的 16 字节序言逐字核对通过、写后读回通过）、五次 `h671_control before=0 after=0 control=0`。**零 report sb、零 h652_publish、srvpub 仅 5 条**。H670 里 pid 27 进入 ui-run 后 515 秒建出桌面 context 并持续存活到 915 秒；本轮从 pid 27（补丁发生在采集开始前）起，每个实例都在 `site=ui-run-enter` 后 4–20 秒内以 `status=0xa`（SIGBUS）退出，共 14 次 NATIVE_EXIT，直到窗口结束仍在线性重启。
+
+**根因（有直接痕迹，不是猜测）**：pid 116 的 fatal trap：`exc=1 code=0x2 sub=0x1a24b0cc8 sig=10 esr=0x8200000f far=pc`。`0x8200000f` = 取指路径的 L3 translation fault。崩溃地址静态 = `0x189474CC8`，与被补丁的 `CA::Transaction::commit()`（静态 `0x189473FFC`）**同页相邻的下一页**：commit 入口偏移 0xFFC，16 字节补丁横跨页界，我的 `vm_protect` span 因此盖了两页；同一秒内核日志 `SpringBoard[116] triggered unnest of range 0x1a2400000->0x1a2600000 of DYLD shared region` 正是这次 CoW 把 2MB 嵌套映射拆散的直接痕迹。拆分后邻页失去了可执行的映射项，commit() 函数体跨页执行时取指缺页 → SIGBUS。**结论：本内核上，跨页的内联补丁必炸；且单页 CoW 的可执行性也从未被证明过——这条路整体废弃。**
+
+**正对照为什么为 0**：`+[CATransaction begin]` 尾分支 `CA::Transaction::begin_transaction()`（构造函数线程上 TLS 事务要靠 `create()` 现场建立），而 `CA::Transaction::flush()`（`0x1894bb3b0`）开头还有独立门：`[state+0xbc] bit0` 未置位就直接返回——构造函数期没有活跃 runloop observer，这个位没被置起，所以 begin+flush 的对照在守卫层就短路，从未到达补丁点。`control=0` 是**对照设计依赖了尚未初始化的机制**，不是钩子没装上（bits=3 已证写入成功）。这同时再次确认：想靠 ObjC 公共入口在早期线程做自测，本身就不成立。
+
+**判据落点**：按 §380/§382 的预定规则，`cf=0` ⇒ 本轮全部计数不可判。本轮唯一有价值的产出是把"内联补丁在 21H461+本内核上不可行"变成了有 trap 级证据的事实，连同对照的失败机制一起记下。H671 不重跑同一补丁。
+
+**H672 设计（回滚补丁，全走 DYLD 插桩，零页写入）**：观察器 dylib 里已有 4 项 `__DATA,__interpose` 且本机验证过可用，本轮沿用该机制：
+1. 插桩 `CFRunLoopObserverCreate/...WithAttributes`：识别 callback == `CA::Transaction::observer_callback`（静态 `0x189452974`+slide，只读比较），命中则把回调换成计数包裹（包裹内原样调用真回调）。计数 `of` = runloop 驱动的真实提交次数，正面覆盖 H670 的盲区。捕获标志位证明覆盖，未捕获 ⇒ 相关零计数记不可判。
+2. 插桩 `bootstrap_look_up`：服务名含 `CARenderServer` 时记下返回的发送权 name（`cs` 目标端口）。
+3. 插桩 `mach_msg`/`mach_msg2`/`mach_msg_overwrite`/`mach_msg_simple`：仅统计 `msgh_remote == 该 name` 的发送数 `mm`；未拿到端口名 ⇒ `mm` 的零值同样按不可判处理。
+4. 发布仍走 A2 槽：`sb n=.. d1=.. id=0x.. tx=.. c=.. of=.. mm=.. ok=..`（ok 位：1=observer 捕获，2=mach 插桩生效（发布自身的 IOConnect 调用会触发计数）,4=render 端口已捕获）。
+5. 服务端与内核零改动，观察器先回滚 `5a1d808/24f809a` 的内联补丁再叠加插桩。判据：`ok` 全位且 `of>0` ⇒ runloop 提交在发生；`of>0` 而 `mm=0` ⇒ 提交未向渲染服务发包，边界收敛到 commit 内部；`mm>0` 而服务端零接收 ⇒ 断点真正在收包侧。
