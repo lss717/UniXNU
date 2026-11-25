@@ -30303,3 +30303,31 @@ B. **回到用户态最后一条未试路线**：单页文本入口补丁的 can
 **H679 的观测判定（本轮的正题）**：整窗（uptime 至 633 秒）零 `NATIVE_RENDER` 行——探针从未见到含 "CARenderServer" 的内联 bootstrap 消息（既无 backboardd 注册、也无 SpringBoard look-up）；对照基线 H676 同样零 BOOTSTRAP/look-up 记录，且窗内 SBPC 采样目标 599 秒时是 containermanagerd 线程——**不是探针漏看，是该启动阶段根本还没有走到渲染服务连接**。结合 §381（ObjC 入口零命中）与 §386（GOT 槽零流量），三轮独立证据收敛同一结论：**SpringBoard 在 stall 期间从未把任何 CoreAnimation 事务发往渲染服务；"发送/接收"断链问题在此线路上不成立，真正的断点在上游的启动等待链（lsd/ContainerManagerD 同步 XPC 等待）。** 内核探针基础设施已就绪且无害，未来任何把用户推进到 CA 提交阶段的改动，都能用它直接给出 bound/att/enq/deq 与控制证明。
 
 **设备状态**：TWRP（轮前状态）。无分区写入。
+### §389 H679/H676 深度解码：containermanagerd 实为空闲（更正 §388），真实卡点收敛到 backboardd 窗口前崩溃环与观测盲区（2026-11-26）
+
+**观测面修正**：H679 live 流为二进制 UXL1 帧（魔数 UXL1，32 字节头：boot@8、seq@12、build@20、len@24、CRC32@28），本轮写了离线解码器 `tmp/uxl-decode.py`，H679 解出 927 帧/330704 字节，boot `0x54030430`。H676 同法解出 945 帧。
+
+**SBPC 采样语义修正（推翻 §388 的断点位置）**：把 H679 的 pc/lr 经共享缓存 slide（H679=0x8ad4000、H676=0x18ab4000，由 mediaserverd 崩溃行的 CoreFoundation 基址锚定）还原到 21H461 dsc-extracted 符号后：
+
+- containermanagerd 两条被读作"阻塞"的线程 pc 全在 `___workq_kernreturn`（libsystem_kernel+0x18e8，lr 落在 `__pthread_wqthread`/`_start_wqthread`）——这是**空闲的 libdispatch worker**，不是等待回复的请求线程；
+- containermanagerd 主线程（tid 368/468）回溯 `__containermanagerd_main → _CFRunLoopRun → ___CFRunLoopRun → CFRunLoopRunSpecific → mach_msg2_trap`，是**正常 runloop 等待**；两个实例（sample 8xxx/9xxx 为 quiet=2 名单里 containermanager 实例 0/1）都健康；
+- 因此 §388"断点在上游 lsd/ContainerManagerD 同步 XPC 等待"表述不成立：容器链没有卡死。
+
+**真实窗口内卡点**：observer 事件链（pid=27，主线程 0x1fd31cd40）显示 SB 310s 进 UI runloop、335s 桌面 ctx `0x6c7dd66f` 建立并挂 UIWindowLayer、341.75s 进入 `+[SBTelephonyManager sharedManager]` 创建后，H679 窗口内**至 633 秒未返回**（h657_stall 采样显示主线程 mach_msg2 等待回复端口 0xef07，size=0、id=0，即等一条从未到达的回复）；H676 同路径 412.13s 进、441.86s 返回（~30 秒），随后 451s 走完 SBApplicationController init 就再无 pid=27 事件。**telephony 创建是同步 XPC，等待 callservicesd/CommCenter 侧回复，方差 30s~>290s**；这解释了窗口里 SB 活着却永不到达 CA 提交。
+
+**backboardd 崩溃环（更硬的墙）**：633.197s `NATIVE_EXIT pid=56 comm=backboardd status=0x9 ns=23`，紧跟 `backboardd[56] Corpse failure, too many 6`——boot 内 backboardd 作业已崩溃 5 次（全部早于 USB 上线 303s，原因从未采到），第 6 次被 launchd 限流击杀；MTLCompilerService、ACCHWComponentAuthService 同秒被 launchd 杀。桌面 context 随 pid 56 死亡。H676 同谱同型（窗口尾 705s）。mediaserverd 侧 9 次 SIGBUS（崩溃行 TRAP_IMAGE 命名到 libdispatch `0x19808acc0/0x1980323f8/0x198032e74/0x19803c794`、MetalFilter `+0x46cc/+0x4988/+0x1b50`、CMImaging、CMCapture `+0x221430`），与 §HANDOFF 记录的既有开放问题一致，本轮确认与探针无关（H676 基线全同）。
+
+**观测盲区量化**：USB 枚举 ~300s（boot 起点）+ 磁盘环 sink 停摆（sheng-data-persist=1 在位，但窗口 `winBytes=4.9GB`、`winReq=392849` 的 UFS 高压下 100ms try-lock 从未赢过；H679-tail32 只有工具前言 692 字节、零槽）。0-300s 的 backboardd 崩溃现场、CARenderServer bootstrap 注册（都发生在窗口前）在两条通道上都拿不到。**§388 "整窗零 NATIVE_RENDER 行"因此只约束 303-633s，不能推定"从未注册"。**
+
+**quiet=2 采样名单异常（记录待查）**：late sampler 每 60s 调 SpringBoard(6xxx)/lsd(7xxx)/installd(11xxx)/containermanager 双实例(8xxx/9xxx)。窗口内只有 9xxx 与一次 8160 出现输出，SpringBoard 实例连 `pid=-1` 的头行都没有——与 SB 明明存活矛盾，v5 补丁加一行 miss 输出用于定位。
+
+**H680 设计（单变量：把内核 render 探针改绑到同 boot 可观测的桌面 context 端口，窗口内即可判定发送/入队）**：
+
+1. 离线核实（21H461 dsc-extracted QuartzCore）：`_CARenderContextGetServerPort` 是 `CA::Render::Context::server_port()` 的薄壳；反汇编确认端口名就在对象 **+0xd0**（`ldr w21,[x19,#0xd0]`，成功路径直接返回该值；port==0 时走 Server::port_set 新建，所以读取无副作用、0 本身有诊断意义）。
+2. observer（NativeMetal）：桌面 mirror（h654_mirror，secure=1/displayId=0x1）建立后，读 `*(uint32_t *)((uintptr_t)context + 0xd0)`，每个 ctxid 一次发 `NATIVE_MTL` 行 `event=h680_render_port pid=<getpid> ctxid=0x... port=0x...`（纯文本通道，零 ABI 风险，h652/h654 已验证可达）。
+3. 加速卡探针（NativeMobileDisplay）：行匹配 `event=h680_render_port port=0x` → 解析 pid/name → 调内核新导出 `native_render_bind_ctxport(pid, name)`：在目标 task 的 itk_space 按名解析出 ipc_port（复用 native_sb_probe_name 模式），置 `native_render_port + evt_bound(via="ctxport")`。**计数、采样器打印、NATC 控制证明管线全部沿用 v4 现有代码**，发送尝试(S)/入队(Q)/直投(D)/出队(R)/失效(dead) 语义不变；若 [0xd0]==0 则端口行报 0，内核不绑（这本身就是"连接从未建立"的证据）。
+4. log-process-state 区域加一行 `NATIVE_SBPC: sample=%u miss name=%s`（native-render-ipc.patch 尾 hunk，避免动序列中早补丁的行偏移）。
+
+**判据**：`bound via=ctxport` 出现且 NATC 控制自证（ctrl_state=ok，Q/D 有对照增长）⇒ 管线有效；此后桌面 ctxid 对应端口的 `sb_att/enq/deq` 若为 0 ⇒ SpringBoard 在窗口内确实一次都没把事务发往渲染服务（结合 telephony 卡点，指向主线程从未走到提交）；若 enq>0 而 bb 侧无合成 ⇒ 断点移到接收/合成；若 `send 失败/dead` 增多 ⇒ 事务发出但目标端口失效（bb 崩溃后的状态）。**bound 缺失或控制无效 ⇒ 本轮一律记不可判，不得据零计数下结论。**
+
+**执行序**：子模块（NativeMetal observer + NativeMobileDisplay 探针）先提交推送 → 主仓 xnu 补丁（Mac 上改 xnu-work 后用 genpatch.py 重生成 native-render-ipc.patch）+ gitlink → Mac 拉取核对 SHA → observer 打包（addon）→ 内核构建（补丁序列有改动，需重建）→ prelink2 → pack-round H680 → 上机一轮 → 解码判读 → 设备留 TWRP。
