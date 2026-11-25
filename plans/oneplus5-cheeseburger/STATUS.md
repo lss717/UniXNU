@@ -30022,3 +30022,44 @@ rep=sb 12 次, rep=bb 0 次
 **下一轮（H667）就这两处一次判清，仍是单变量**：在格式检查的返回分支也打印一条 `srvpub roundtrip st=E abort=format len=%d`，并把 `getpid()` 追加到已有的 `srv state` 行尾（该行本轮到达 3 次）。这样同一条日志里就能对齐"谁走了枚举""谁走了 A2 查询""格式检查是否截断"，不需要再猜。
 
 **记录纪律**：本轮没有把 `roundtrip 0 次` 解释成"SetMetadata 被拒绝"——共享槽的读回与覆盖关系仍未验证，`rep=sb` 12 次说明 SpringBoard 一直在重写同一个槽。
+
+
+### §377 H667/H668 实测：发布通道恢复，但读回的计数是 H0/0，且阶段只有 Q 没有 E（2026-11-25）
+
+**H667（uptime 673 秒）** 先做了两件定位：`srv state` 行尾加 `pid`，发布函数的格式检查分支也改为打印。结果：
+
+```text
+srv#387 state … ctxs=2 pid=56
+srv#486 state … ctxs=2 pid=56
+srvpub read 5 次, srvpub roundtrip 0 次
+```
+
+`pid=56` 把枚举归属钉在 backboardd，与 `srvpub read` 同进程；该进程日志通道当时是通的。源码再逐行核对：`caller("srv","ctx", line)` 之后到 `publish_backboardd_summary("E")` 之间**没有任何 return/分支**。所以"没输出"不能用提前返回解释。
+
+**根因是我自己在 H664 引入的回归。** `probe_display_frame` 会从 bundle 构造函数被驱动，那远早于加速器连接建立；`emit()` 在无连接时只进 `gPending` 队列，队列满即静默丢弃。而 `hostedClassPasses < 3` 把三次额度全部花在这些**必然送不出去**的早期通过上，等通道可用时门槛已经永久关闭。H664–H666 三轮因此都读不到任何东西，我却一直在往"代码没执行"方向找。
+
+**H668 把发布调用放回 H662 已验证可采集的那条路径**（`query_published_desktop_context`，阶段标记 `Q`），枚举处的调用保留。产物核对：bundle CDHash `b07fd4d7156e604a6a271c095f6e5fa2fd5dd54b` 与记录一致，trust 新哈希 1 次、上一轮 0 次，`H668` 标记在二进制内。实测（uptime 661 秒）：
+
+```text
+srvpub#304 roundtrip st=Q set=0x0 get=0x0 count=2 setBytes=41 got=41 same=1 want=bb Q backboardd/56 H got=bb Q backboardd/56 H
+srvpub#395 roundtrip st=Q … count=3 … same=1
+srvpub#437 roundtrip st=Q … count=4 … same=1
+rep=bb 8 次, rep=sb 2 次
+```
+
+`set=0x0 get=0x0 same=1`，内核 `rep=bb` 稳定出现。**通道问题到此彻底关闭**，且 `same=1` 说明读回与本次写入逐字一致，没有并发覆盖。
+
+**但心跳里完整的 31 字符暴露了真正还没解决的点：**
+
+```text
+rep=bb Q backboardd/56 H0/0 id=0x86…
+```
+
+- 阶段只有 `Q`，**没有 `E`**：枚举处的发布仍然没有发生；
+- `H0/0`：`matched=0` 且 `classCount=0`。
+
+这两条合起来说明：恢复的只是"送得出去"，类清单本身在 backboardd 里依然没被取到。目前无法区分"`objc_copyClassList` 在 backboardd 返回 0/NULL"与"枚举块仍未执行"，因为两者都会得到 `H0/0`，而 `E` 阶段缺席更倾向于后者。
+
+**下一轮（H669）就此单点判定**：在 `srvpub roundtrip` 的 detail 里把 `m=%u c=%u` 作为独立数值字段打印（不再依赖被截断的 `want=` 文本），并把 `E` 阶段的发布改为不受 `hostedClassPasses` 限制的"每次通过都发"，使 `E` 与 `Q` 在同一轮里可比。若 `E` 出现且 `c>0` ⇒ 之前的门槛是唯一障碍；若 `E` 出现而 `c=0` ⇒ 是 `objc_copyClassList` 在 backboardd 真的取不到；若 `E` 仍不出现 ⇒ 枚举块所在的执行路径本身有问题，需要换到那条路径上另设观测点。
+
+**要如实记下**：H663–H666 四轮的"清单收不到"，成因是我 H664 的搬迁加上一个早已写在 `emit()` 里的队列上限，而不是设备或内核的问题。这四轮的判据设计都没有覆盖"输出通道在该时刻尚不存在"这一种失败，属于我的观测设计缺陷。
