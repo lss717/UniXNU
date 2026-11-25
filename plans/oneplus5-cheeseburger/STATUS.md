@@ -30111,3 +30111,23 @@ rep=bb Q backboardd/56 H0/0 id=0x52…
 - 判据：客户端有发送且服务端有对应接收 ⇒ 事务通路成立，下一步查它是否进入合成与真实绘制；客户端有发送、服务端无接收**且正对照有效** ⇒ 才可以说接收侧缺失；任一侧正对照缺失 ⇒ 记不可判。
 
 端口查询只证明注册，`setLayer:`/`hasCommitted` 只作关联，都不代替事务收包。类枚举支线已按 §378 关闭，不再回到它。
+
+
+### §380 H670 构建完成并核对；同步新规生效；本轮未上机（2026-11-25）
+
+**同步新规已按用户要求落地并验证。** 顺序为：Windows 编辑 → 子模块提交并推送分支 → 主仓提交 gitlink 并推送 → Mac 经 `ssh mac` 从远程 `git pull` + `git submodule update` → 核对两端 SHA → 才编译。本轮实测两端一致：主仓 `63e265ce`、子模块 `bfb8cf4`。源码全程未用 scp。规则已写入 `display-first-frame/HANDOFF.md` 与根 `HANDOFF.md`。
+
+**H670 改动（单变量：客户端事务发送的真实入口与覆盖）**
+
+- 离线核实发现：既有钩子挂在 `+[CATransaction flushAsRunLoopObserver]`（私有选择子）上，因此它 0 命中**从来不能证明"没有事务被 flush"**，只能证明那一条内部路径没走。这是覆盖缺口，不是证据。
+- 本轮钩 `+[CATransaction flush]` 与 `+[CATransaction commit]`（21H461 解包里确认这两个选择子真实存在），无条件计数。
+- 本地正对照：钩子装好后立刻直接调用一次 `+[CATransaction flush]`，若计数不增加则 `control=0`，此后所有"未命中"一律记为不可判。
+- 计数通过 **H668/H669 已验证可达的通道**送出：观察器发布到共享 metadata 槽的摘要文本扩展为 `sb n=.. d1=.. lc=.. ct=0 id=0x.. tx=<flushes>/<commits> c=<control>`，由内核心跳 `rep=` 打印；钩子安装状态另用 `line_reserved` 输出。槽文本仍保留 `id=0x`，不破坏 backboardd 的 A2 解析。
+
+**构建与核对**：观察器 CDHash `fa52adf4770bf856b737844439d22c3eb95f0430`（替换 `6297949609…`），插件本轮未改（仍 `7043f49e…`），kernel `ced5ce9d…` 未变，Data seed 与 1000 字节启动参数未变。`H670-boot.img` = `bb6fe7766adcabe3900ab39b389c2b3f21d4823b7e3d5dcf94eaae4d32b286a3`，已取回本机并哈希校验一致。
+
+**本轮没有上机，原因要说清**：会话剩余容量已不足以安全监督一次完整启动轮次（约 12 分钟采集加判读）。此前我已经在容量耗尽时产生过一次误操作，所以这次把镜像准备好、核对完、记录清楚后停下，而不是开始一个可能中途失控的轮次。设备仍在本轮开始前的状态，未做任何新操作。
+
+**我造成的一个实际失误（未修复，需人工处理）**：一次 PowerShell 改动里我用相对路径调用 .NET `WriteAllText`，而 .NET 的当前目录不跟随 `Set-Location`，结果在 `C:\Users\ls\.codex\worktrees\h467-ufs-observability\UniXNU\SpringBoardSceneObserver.mm` 创建了一个 78 字节的垃圾文件。它不是任何仓库跟踪的路径，主线工作树（E 盘）完好无损（128003 字节，git 干净）。删除命令被审批策略拒绝（当前策略为 never，无法申请提权），所以该文件仍在原地，需要手工删除。此后所有文件读写一律用绝对路径。
+
+**下一轮（上机）判据**：`c=1` 且 `tx>0` ⇒ 客户端确实在发送事务，转去核服务端接收与合成；`c=1` 且 `tx=0` ⇒ 在正对照有效的前提下，可以说 SpringBoard 本轮没有走公共 flush/commit 路径，需要另找发送入口；`c=0` ⇒ 钩子未生效，本轮全部结果记不可判。端口查询只证明注册，`setLayer:`/`hasCommitted` 只作关联，都不代替事务收包。
