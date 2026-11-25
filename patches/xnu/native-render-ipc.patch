@@ -26,7 +26,7 @@
  		native_xpc_register(native_sb_rcv.port, native_sb_pid, name, 'r');
  		native_xpc_register(native_sb_req.port, native_sb_pid, name, 'q');
  		native_xpc_dump(sample);
-@@ -11349,6 +11349,372 @@
+@@ -11349,6 +11349,419 @@
  		native_xpc_pids[3] = pid;
  	}
  }
@@ -78,6 +78,9 @@
 +static unsigned native_render_evt_lookup;
 +static unsigned native_render_evt_lkp;
 +static unsigned native_render_evt_dead;
++static unsigned native_render_evt_rebind;
++static unsigned long long native_render_evt_oldport;
++static unsigned long long native_render_evt_oldctx;
 +static unsigned long long native_render_evt_ctx;
 +
 +#define NATIVE_RENDER_CTRL_ID 0x4E415443u
@@ -307,6 +310,13 @@
 +		    native_render_evt_via, native_render_evt_pid,
 +		    native_render_evt_ctx, native_render_evt_port);
 +	}
++	if (native_render_evt_rebind) {
++		native_render_evt_rebind = 0;
++		printf("NATIVE_RENDER: rebind pid=%u ctx=0x%llx oldctx=0x%llx port=0x%llx old=0x%llx\n",
++		    native_render_evt_pid, native_render_evt_ctx,
++		    native_render_evt_oldctx, native_render_evt_port,
++		    native_render_evt_oldport);
++	}
 +	if (native_render_evt_lookup) {
 +		native_render_evt_lookup = 0;
 +		printf("NATIVE_RENDER: lookup-request pid=%u\n",
@@ -387,12 +397,49 @@
 +		    pid, ctxid, name);
 +		return;
 +	}
-+	native_render_bind_descriptor(port, IPC_PORT_NULL, pid, "ctxport");
-+	if (native_render_port) {
-+		native_render_evt_ctx = ctxid;
-+		native_xpc_pids[0] = pid;
++	if (!native_render_port) {
++		native_render_bind_descriptor(port, IPC_PORT_NULL, pid, "ctxport");
++		if (native_render_port) {
++			native_render_evt_ctx = ctxid;
++			native_xpc_pids[0] = pid;
++		}
++		ip_release(port);
++		return;
 +	}
-+	ip_release(port);
++	/* H680v6: generation rebind.  The desktop context churns when
++	 * the render server restarts; each fresh CAContext reports a new
++	 * port here.  The old port is drained by nobody after its
++	 * context dies, so counting it forever would be a silent dead
++	 * end.  Print the final state of the outgoing generation, swap
++	 * to the new port, and arm a fresh control send. */
++	if (port == native_render_port) {
++		ip_release(port);
++		return;
++	}
++	printf("NATIVE_RENDER: gen att=%u sb=%u enq=%u deq=%u dead=%u ctx=0x%llx port=0x%llx\n",
++	    native_render_att, native_render_sb_att, native_render_enq,
++	    native_render_deq, native_render_dead,
++	    native_render_evt_ctx,
++	    (unsigned long long)(uintptr_t)native_render_port);
++	ip_release(native_render_port);
++	native_render_port = port; /* our own reference, taken above */
++	native_render_evt_oldport = (unsigned long long)(uintptr_t)port;
++	native_render_evt_oldctx = native_render_evt_ctx;
++	native_render_evt_ctx = ctxid;
++	native_render_evt_rebind = 1;
++	native_render_evt_pid = (unsigned) pid;
++	native_render_evt_port = (unsigned long long)(uintptr_t)port;
++	native_xpc_pids[0] = pid;
++	native_render_att = 0;
++	native_render_sb_att = 0;
++	native_render_enq = 0;
++	native_render_deq = 0;
++	native_render_dead = 0;
++	native_render_rec_n = 0;
++	native_render_rec_drop = 0;
++	native_render_ctrl_state = 0;
++	native_render_ctrl_try = 0;
++	native_render_printed_key = 0;
 +}
 +
 +
