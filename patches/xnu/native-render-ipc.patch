@@ -107,7 +107,7 @@
 +native_render_body_note(ipc_kmsg_t kmsg, ipc_port_t dest_port,
 +    int from, int to)
 +{
-+	if (kmsg == IKM_NULL) {
++	if (kmsg == IKM_NULL || kmsg->ikm_type != IKM_TYPE_ALL_INLINED) {
 +		return;
 +	}
 +	mach_msg_header_t *hdr = ikm_header(kmsg);
