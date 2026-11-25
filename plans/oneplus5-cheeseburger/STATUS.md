@@ -29419,3 +29419,13 @@ dump#273 methods disp own=243
 **桌面进度。** ui_run 587.27 秒，did_finish 598.16 秒，SpringBoard 自己的 context id 为 `0xd85f91a2`（615.99 秒 `ca_context_remote_create pid=27`），到采集末尾仍无 `h557_complete_startup_enter`、无 `uiwindow_scene_visible`，`val=0 xf=0 fr=0`。`draw#` 6 条、`disp#` 28 条，定时器注册正常，H641 那类构造函数回归没有复发。
 
 **未解决项。** `clientPortOfContextId:` 的返回值没有 `mach_port_deallocate`，而它是否向调用方交出新发送权尚未确定，因此每次普查可能泄漏 2 个端口名。记为未验证，不当作已确认的缺陷，也不当作无害。
+
+### §351 H644 会话结束：rearm 假设被否证，桌面停滞不由它决定（2026-11-25）
+
+H644 实时流连续覆盖 292.65–1105.24 秒（启动标记 `3106921f`）。到 1105 秒没有 `h557_complete_startup_enter`、没有 `h553_application_controller_init_enter`、没有 `uiwindow_scene_visible`、没有 `ca_host_visible`，`h589/h590/h591` 也都没命中，`val=0 xf=0`。did_finish 在 598.16 秒。
+
+把"去掉 did-finish 两处 rearm"这一族累计起来看：H638 到 complete_startup，H640、H643、H644 都没到，**1/4**。§344 当时是 2/3，§345 更进一步写成"判据成立、因果成立"。现在这个假设**被否证**：能否走到 complete_startup 主要由启动时序决定，不是那两处 `rearm_exception_reporters()` 的位置。H638 属于落在噪声里的一次成功。
+
+这条否证连同 H633a/H634 在旧代码下连 did_finish 都没到一起说明：以单轮 complete_startup 有无作为判据的实验设计，在这台设备的启动方差下不具备判别力。后续实验要么改成同镜像重复多轮取分布，要么把判据换成不依赖"是否走到某一步"的观测（例如 §350 的 `contextIdAtPosition:excludingContextIds:` 列出的 id 集合与其归属 pid，这类观测每轮都有确定读数，不受走到哪一步影响）。
+
+H644 的主要产出（选择器清单、`+[CAContext contextWithId:]`、display 上的 `contextIdAtPosition:excludingContextIds:` 与两个同名端口查询、§348 的 presentSurface 修正）不受这条否证影响。
