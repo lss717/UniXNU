@@ -30286,3 +30286,20 @@ h674_at 8 条全部落在 …/__got（AccessibilityUtilities、ContactsUI、Foun
 **待用户定夺（两条路线选一）**：
 A. **谱系对账工程**（推荐先做小步）：用 `nm/strings` 对冻结内核逐个检测 11 月 24-25 提交补丁的标记符号，把"确实在冻结内核里"的补丁列入一个显式 `series-bootable` 列表，clean 构建只按该列表打补丁 + native-render-ipc；一次干净重建 + 一次上机即可验证对账是否完备。
 B. **回到用户态最后一条未试路线**：单页文本入口补丁的 canary 实验（先在不启动路径上的函数自测 CoW 可执行性），完全避开 xnu 重建；代价是覆盖面仍受跳板直达限制，大概率拿不到发送计数。
+
+
+### §388 H676-H679：谱系对账成功、探针两处真 bug 修复、结论"事务发送从未被触发，断点在更上游"（2026-11-26）
+
+**对账（先证据后结论）**：series 逐补丁提交时间审计显示 1-141 全部早于冻结构建（Nov 25 12:26），142/143 为本人本日新增；冻结内核符号确认含 console-panel write-accounting/ownership-control；63e265ce..HEAD 的 gitlink 变化仅 drivers/NativeMetal（用户态）。修复后的 off-h633a 被证实**从未属于运行谱系**（原提交即损坏，git apply 从未成功），从 bootable 列表剔除（`patches/xnu/series-bootable`，2bedc943）。所有冻结产物只读归档：Mac `h468-build/ARCHIVE-FROZEN/{kernel.macho.ced5ce9d, kernel.macho.h676.f7425b39, H674b-boot.img}`，Windows `builds/FROZEN/kernel.macho.ced5ce9d`（只读属性）。现有各工作树均未删除。
+
+**H676 基线（clean bootable 序列、无探针、UUID=09FB365F 显式导出）**：boot `c58e3f88ae3b61c925e65cb569b5078adf0918815bd7e8c141382cfe11dc4770`，内核 `f7425b39`。上机：CDC 03:08:51 正常出现，report sb n=1..4 `tx=1/0 c=1` 逐字复刻 H672/H674b，零 SpringBoard 退出，USB 705 秒落点同谱系常态。日志 `logs/H676/device/H676-live.raw.bin`，SHA-256 `63D29C56C1C8C62F9E74DB02106FFA9E466F620EC5542E12A3ED8EABFAEA064C`。**结论：提交序列（bootable 列表）与冻结内核谱系等价，H675-attempt2 的死亡原因只有过期 UUID。**
+
+**探针调试链（两次真实死亡换到两个确切 bug）**：
+
+- H677（v2：加锁口自守 + NULL 保护）与 H678（v3：热路径 printf 全部改采样器打印）先后复现同一死法：uptime ~150-250 秒静默死亡、无 panic 串、尾窗无正文。v3 结果证伪"printf 锁序"主因。
+- 根因（代码审读定位，v4 证实）：`native_render_body_note` 沿 `msgh_size` 扫描字节到 512，**但非全内联 kmsg 的内核线性区只有头+描述符，正文不连续**——越界读。v4 加 `ikm_type != IKM_TYPE_ALL_INLINED` 即跳过（提交 83a999f6）。
+- H679（v4 全部护栏在位）：boot `0de908d8a62e3cdbdbecf2531dc5ffda4475bc30e4a83342a046a44c6dba8a9a`，内核 `4b64475f`。CDC 03:51:42 正常、report sb n=1..4 `tx=1/0 c=1` 基线一致、零退出、跑过既往全部死亡时点。**探针修复确认。**（H677/H678 boot 哈希 `3709ead9…`/`41feaeda…` 留档备查；其尾窗 `msg_bytes=0`。）
+
+**H679 的观测判定（本轮的正题）**：整窗（uptime 至 633 秒）零 `NATIVE_RENDER` 行——探针从未见到含 "CARenderServer" 的内联 bootstrap 消息（既无 backboardd 注册、也无 SpringBoard look-up）；对照基线 H676 同样零 BOOTSTRAP/look-up 记录，且窗内 SBPC 采样目标 599 秒时是 containermanagerd 线程——**不是探针漏看，是该启动阶段根本还没有走到渲染服务连接**。结合 §381（ObjC 入口零命中）与 §386（GOT 槽零流量），三轮独立证据收敛同一结论：**SpringBoard 在 stall 期间从未把任何 CoreAnimation 事务发往渲染服务；"发送/接收"断链问题在此线路上不成立，真正的断点在上游的启动等待链（lsd/ContainerManagerD 同步 XPC 等待）。** 内核探针基础设施已就绪且无害，未来任何把用户推进到 CA 提交阶段的改动，都能用它直接给出 bound/att/enq/deq 与控制证明。
+
+**设备状态**：TWRP（轮前状态）。无分区写入。
