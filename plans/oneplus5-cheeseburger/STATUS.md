@@ -29668,3 +29668,39 @@ boot `29e8e214`，kernel `ced5ce9d…` 未变，插件未变（`builder#2 build 
 4. 正对照：`dladdr` 对已知地址（例如 `&line` 自身或某个已加载类的方法）必须返回正确镜像，否则本轮"unmapped"不能解释为地址无效。
 5. 阴性处理：若观察器在回溯之前就静默，本轮按证据不足记录，不得据此改变方向。
 6. 产物身份：设备日志必须出现 `observer load … build=H655`；插件仍为 H652。
+
+
+### §363 H655 实测：主线程停在 `_mach_msg`，四轮地址全部对上同一处（2026-11-25）
+
+boot `28cbeabd`，kernel `ced5ce9d…` 未变，插件未变（H652），观察器 CDHash `ed29b4a1a313ece9a3bd5aa714d8985d87f63455`。COM 15:32:52 出现，日志覆盖至 785.7 秒。
+
+**停车点定名。** `dladdr` 给出四个地址同属 `/usr/lib/system/libsystem_kernel.dylib`，用 21H461 解包出的共享缓存镜像和 `scripts/symbolicate-pc.py` 符号化：
+
+```text
+i=0 addr=…+0x1b58  _mach_msg2_trap       (image+0x1b50, off 0x8)
+i=1 addr=…+0x5224  _mach_msg2_internal   (image+0x51d8, off 0x4c)
+i=2 addr=…+0x51b0  _mach_msg_overwrite   (image+0x4fc4, off 0x1ec)
+i=3 addr=…+0x4fb8  _mach_msg             (image+0x4fa4, off 0x14)
+h655_stall_walk delay=4 frames=4 stop=chain
+h655_stall_walk delay=7 frames=4 stop=chain
+```
+
+即主线程从 593.8 秒起阻塞在一次 Mach 消息接收上（`d=2/4/7/15/30` 五次采样 `pc`、`sp`、`fp` 完全相同），入口是 592.8 秒的 `+[SBTelephonyManager …]` 创建路径（`h552_telephony_shared_creating_enter create=1`，无 return）。
+
+**跨轮核对成立。** 把 H651–H654 的原始 `pc/lr` 减去 `libsystem_kernel` 的 `__TEXT` 偏移 `0x1b58/0x5224`，四轮都能得到同一镜像基址，且 `lr - pc = 0x36cc` 与 `_mach_msg2_internal(+0x4c) - _mach_msg2_trap(+0x8)` 的差完全一致。所以 §361 观察到的"四轮同一处调用"从规律升级为已命名事实：四轮主线程都停在 `_mach_msg`。
+
+**本轮没有发生 SIGKILL。** H654 在 767.4 秒被 runningboardd 杀掉，本轮到 785.7 秒日志结束时 SpringBoard 仍在（`h572_observer_alive sample=360` 在 633.4 秒），且 600–790 秒之间只有 launchd 的 `sig=20`。这说明"被杀"本身也有启动方差，不能把"没被杀"当进展，也不能把"被杀"当唯一终点。
+
+**我自己的缺陷。** 回溯在 `stop=chain` 处停在第 4 帧，没有走到 `_mach_msg` 的调用方。原因是 arm64e 上保存的帧指针本身带指针签名，我在连续性检查里用的是未掩码的值。这不是硬件限制，是实现错误，H656 单独修这一处。
+
+### §364 H656 改动与上机前判据：让回溯走过 `_mach_msg`，指名等待方（2026-11-25）
+
+**唯一功能变量**：`h655_walk` 里对 `fp[0]` 读出的下一个帧指针先做 48 位掩码，再做 `next <= fp` 与 `next - fp > 0x4000` 检查；帧上限从 10 提到 16。其余（内核、插件、启动参数、采样时机、`dladdr` 归属方式）逐字不变。
+
+**上机前写定的判据。**
+
+1. `stop` 必须不再是 `chain`（停在第 4 帧）。若仍为 `chain`，说明掩码假设错了，要改读 `ptrauth_strip` 而不是位掩码，本轮按观测失败处理。
+2. 掩码修正生效后，第 5 帧及以后应落在**非** `libsystem_kernel` 的镜像里；`_mach_msg` 的调用者通常在 CoreFoundation（`__CFRunLoopServiceMachPort`、`_CFRunLoopRunSpecificWithOptions`）、BaseBoard/XPC（`BSXPCMessage sendMessage…`）或某框架的同步包装里。落在哪个镜像决定下一步追谁。
+3. 若第 5 帧起给出的是 `CoreFoundation` 的 run loop 服务端口，那么"主线程停在 mach_msg"就只是普通等待消息，而不是同步调用挂起，§363 的解读需要相应降级；这条判据用来防止我把"线程在等"误当成"线程被卡"。
+4. 正对照：`dladdr` 对 `libsystem_kernel` 内已知函数（`_mach_msg` 系列）的归属与符号化结果必须与 §363 一致，否则本轮的地址归属整体不可信。
+5. 产物身份：设备日志必须出现 `observer load … build=H656`，插件仍为 H652。
