@@ -29789,3 +29789,29 @@ queue#71 commandBuffer self-completing
 2. 提交到了，但因为没有可执行的着色器后端，合成器无法产出任何 draw。支持它的是 `newRenderPipelineStateWithDescriptor:` 确实被调用且拿到假对象。
 
 **H658 的任务就是把这两者分开**：先确定 backboardd 里代表客户端上下层树的那个服务端对象是什么（现有五个钩子里没有一个经过验证的事务接收边界），再对它记录一次带 contextId 的提交到达。判据：若同一轮里能看到 `id=0x9144489f`（或本轮的桌面 context id）的提交到达，则解释 2 成立，剩余工作是 GPU 后端；若始终没有任何带该 id 的到达，则解释 1 成立，先修提交通路。
+
+
+### §368 H657 离线复核：服务端显示树里根本没有桌面内容，缺口在场景托管交接而不是 GPU（2026-11-25）
+
+用 H657 同一轮已有日志做两个互相独立的读取，不需要新实验。
+
+**读取一：渲染服务的图层树。** backboardd 的 `+[CAContext allContexts]` 始终是 2 个（`ctx[0] id=0x6466b82`、`ctx[1] id=0xfad25174`，都 `displayId=0x1 mask=0xffffffff`，owner=56）。插件里已有的 `dump_layer_tree` 从它们的根图层走：
+
+```text
+layer#384 tree depth=0 class=CALayer frame=1080x1920 subs=2 contents=- context=1
+layer#385 tree depth=1 class=CALayer frame=1080x1920 subs=0 contents=- context=1
+layer#386 tree depth=1 class=CALayer frame=1080x1920 subs=1 contents=- context=1
+layer#387 tree depth=2 class=CALayer frame=0x0     subs=0 contents=- context=1
+```
+
+4 个节点全是普通 `CALayer`，**没有一个宿主层，没有一个节点有 contents**。同一棵树在 424 秒、472 秒、635 秒之后重复采样都是这四行，桌面可见之后也没有变化。
+
+**读取二：显示上的命中测试。** `contextIdAtPosition:excludingContextIds:` 在 (1,1) 返回 `0xfad25174`（backboardd 自己的 context），在 (180,320)、(540,60)、(540,960) 全部返回 `0x0`；排除参数生效时 (1,1) 也返回 0。也就是说显示上能被命中到的只有渲染服务自己的内容，SpringBoard 的四个 context 一个都不在显示上。
+
+**两条独立证据一致**，因此 §367 的两种解释里，解释 1（提交从未到达渲染服务）得到支持，解释 2（到了但画不出来）目前没有任何支持证据。
+
+**同时要说清楚这两条读取的边界。** 服务端 `allContexts` 只有 2 个这一事实本身，不足以证明 iOS 17 的渲染服务会用 `CAContext` 承载客户端内容；如果客户端内容是通过别的对象挂到显示树上的，这两条读取都看不到它。所以正确的结论是：**桌面内容不在我们能看到的服务端显示树里**，而不是"服务端一定没有收到"。下一步要先把"服务端承载客户端根图层的那个对象/入口"找出来，再谈修。
+
+**SpringBoard 侧本轮已经完成的事情**（同一轮日志）：4 个远程 context 创建、根图层 `setLayer:`、`ca_host_context_bind`、`ca_host_visible window=root` 三次、`SBRootSceneWindow` 可见、壁纸窗口可见、`complete_startup` 进入。`h654_mirror n=1` 这次创建时 `displayId` 就是 1。
+
+**下一轮（H658）要回答的唯一问题**：backboardd 里代表"某个客户端的根图层被挂到显示上"的对象是什么。做法是只读枚举 backboardd 进程里类名包含 `Host`、`RenderServer`、`Scene`、`Window` 的类，并对每个候选类打印它是否有 `contextId`/`remoteLayerID`/`layerID` 这类属性；不装任何新钩子，不改任何行为。拿到这份清单才能选对接收点，避免继续猜。
