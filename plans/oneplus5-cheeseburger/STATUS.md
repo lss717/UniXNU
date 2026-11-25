@@ -30209,3 +30209,16 @@ rep=bb Q backboardd/56 H0/0 id=0x52…
 3. 插桩 `mach_msg`/`mach_msg2`/`mach_msg_overwrite`/`mach_msg_simple`：仅统计 `msgh_remote == 该 name` 的发送数 `mm`；未拿到端口名 ⇒ `mm` 的零值同样按不可判处理。
 4. 发布仍走 A2 槽：`sb n=.. d1=.. id=0x.. tx=.. c=.. of=.. mm=.. ok=..`（ok 位：1=observer 捕获，2=mach 插桩生效（发布自身的 IOConnect 调用会触发计数）,4=render 端口已捕获）。
 5. 服务端与内核零改动，观察器先回滚 `5a1d808/24f809a` 的内联补丁再叠加插桩。判据：`ok` 全位且 `of>0` ⇒ runloop 提交在发生；`of>0` 而 `mm=0` ⇒ 提交未向渲染服务发包，边界收敛到 commit 内部；`mm>0` 而服务端零接收 ⇒ 断点真正在收包侧。
+
+
+### §384 H672 构建与实测：回滚健康、内联补丁废弃；注入 dylib 的 __interpose 对共享缓存调用者整体无效（2026-11-25）
+
+**构建（同步规）**：子模块先回滚 H671 的两个内联补丁提交（`93244f0`/`ac53dc5` revert 到 `bfb8cf4` 内容），再叠加 DYLD 插桩（`4bf41c4`），修头文件（`2e5a478`）、修剪 SDK 不存在的 WithAttributes/mach_msg2 两项（`dcfba2c`，此编辑截断注释被 `96755d7` 修复并经括号深度机械校验）、按 SDK 原型重写 mach_msg/mach_msg_overwrite 包装（`d059fe6`）；主仓指针 `a5a454fc`。观察器 SHA-256 `7dba5b4dc43d683014a88a16d2441ba5d368b05bda6be29d1ade92c7568fe429`、CDHash `72b1748a9e5b16e0691a3fde79fd8f88311cac18`（替换 `98effe80…`）；插件与内核未动（`7043f49e…`/`ced5ce9d…`），args 1000 字节。产物 `H672-boot.img` SHA-256 `617317619c3815fe2db768020a458438f93d53a32cd66aaa5eb562189905ed2d`，本机取回复核一致。
+
+**实测**：一次 `fastboot boot`（OKAY）。CDC 23:30:33（uptime ~302 秒），USB 23:40:54 掉线（error 203，uptime ~922 秒），990403 字节，日志 `logs/H672/device/H672-live.raw.bin`，SHA-256 `BBF9FD3AE8106B730873DDEC3E95C773C493735708E944BCFA166CD4C95DD334`。
+
+**结果一，回滚验证成立**：pid 27 全程存活、无 NATIVE_EXIT、无 0xa；四次桌面 context 换发（567/692/712/725 秒）与 H670 同节奏，每次 `ca_context_set_layer=UIWindowLayer`（4 命中），`tx=1/0 c=1` 与 H670 逐字一致；服务端仍只有 backboardd 自有 context 的 8 次 `event_layer_commit`；`val=0 xf=0 fr=0`。**观察器回到 H670 行为基线，H671 的 SIGBUS 回归确认由内联补丁造成并随回滚消失。**
+
+**结果二，插桩路线被本轮证伪（连同历史反证）**：所有发布均为 `of=0 mm=0 ok=0`。SpringBoard 在采集窗口内每毫秒都在做 mach 发送，而 `h672_count_send` 连 `gH672MachTotal` 都保持 0，说明三个新插桩（`CFRunLoopObserverCreate`/`bootstrap_look_up`/`mach_msg`/`mach_msg_overwrite`）**一个绑定都没被换过**。交叉验证：现有 4 个历史插桩项（BYSetupAssistant 等）在全部 `logs/` 里从未产生过 `h548` 类命中行。**结论：在本配置里，注入 dylib 的 `__DATA,__interpose` 对共享缓存镜像的调用者不生效**——缓存镜像的绑定在缓存构建期已固化，dyld 不会按插桩表重绑。H672 的主判据因此按预定规则落"不可判"，这不是又一次通道损失，而是机制排除，和 §378（constructor 期输出不可送达）、§381（ObjC 公共入口不是发送边界）、§383（内联页补丁必炸）一起把可行的观测面收窄到最后一类：**运行时重绑调用者 GOT 槽**。
+
+**H673 提案（fishhook 式 GOT 重绑，零文本写入）**：调用者镜像（QuartzCore/CoreFoundation/IOKit 等）的 `__got`/`__auth_got` 数据页在链式修复后是每进程私有的。用 `_dyld_image_count` 遍历镜像，`vm_protect` 仅对数据段开写（不碰任何文本页、不依赖 VM_PROT_COPY），把指向 `dlsym(RTLD_DEFAULT,"mach_msg")`、`mach_msg_overwrite`、`CFRunLoopObserverCreate`、`bootstrap_look_up` 的槽替换为观察器内包装函数指针，并记录**每个符号换成的槽数**作为安装证明（slot 文本扩 `sw=<obs>,<boot>,<msg>,<ow>` 计数）。命中统计沿用 H672 的 of/mm/mt/ok 语义；正对照 = 发布路径自身的 IOConnect 调用必须让 mt>0，否则全部记不可判。判据不变：of>0 ⇒ runloop 提交在发生；of>0 且 mm=0（sw 对应槽>0 且对照成立）⇒ 提交未向渲染服务发包；mm>0 ⇒ 发包发生、断点移到收包侧。服务端与内核继续零改动。
