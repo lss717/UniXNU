@@ -30131,3 +30131,36 @@ rep=bb Q backboardd/56 H0/0 id=0x52…
 **我造成的一个实际失误（未修复，需人工处理）**：一次 PowerShell 改动里我用相对路径调用 .NET `WriteAllText`，而 .NET 的当前目录不跟随 `Set-Location`，结果在 `C:\Users\ls\.codex\worktrees\h467-ufs-observability\UniXNU\SpringBoardSceneObserver.mm` 创建了一个 78 字节的垃圾文件。它不是任何仓库跟踪的路径，主线工作树（E 盘）完好无损（128003 字节，git 干净）。删除命令被审批策略拒绝（当前策略为 never，无法申请提权），所以该文件仍在原地，需要手工删除。此后所有文件读写一律用绝对路径。
 
 **下一轮（上机）判据**：`c=1` 且 `tx>0` ⇒ 客户端确实在发送事务，转去核服务端接收与合成；`c=1` 且 `tx=0` ⇒ 在正对照有效的前提下，可以说 SpringBoard 本轮没有走公共 flush/commit 路径，需要另找发送入口；`c=0` ⇒ 钩子未生效，本轮全部结果记不可判。端口查询只证明注册，`setLayer:`/`hasCommitted` 只作关联，都不代替事务收包。
+
+
+### §381 H670 实测：正对照有效，公共 flush/commit 不是 SpringBoard 的发送入口；桌面 context 同 boot 换四次且每次都挂上了 UIWindowLayer（2026-11-25）
+
+**流程与合规**：本轮按新同步规无源码改动（HEAD 仍是 `4d7e92c6`，工作树干净）。设备上机用 §380 核对过的 `H670-boot.img`（`bb6fe7766adcabe3900ab39b389c2b3f21d4823b7e3d5dcf94eaae4d32b286a3`，本机复核一致）。TWRP 内唯一设备 `16149951` 经 `adb reboot bootloader` 转入 Fastboot，一次 `fastboot boot`（Sending/Booting 均 OKAY），无 flash/erase/format。CDC（COM8）在启动后约 302 秒枚举，`capture-raw-stream.ps1` 自动接管；USB 在 uptime 约 970 秒掉线（error 203），采集落盘 955807 字节。日志 `logs/H670/device/H670-live.raw.bin`，SHA-256 `1203F1436842A19FC37000B12BC452060490DC83052026C5131D869D95658F33`。会话结束后设备自行回到 Android（`adb devices` 显示 `16149951 device`），随后按既有授权 `adb reboot recovery` 恢复到本轮开始前的 TWRP 状态。
+
+**判据结果（§380 预定三分支）**：四次槽发布（uptime 517/668/682/697 秒）全部为 `tx=1/0 c=1`。
+
+- `c=1`：正对照通路有效，`+[CATransaction flush]` 钩子确实在拦截（对照调用把计数加到了 1）。
+- `tx=1/0`：从 517 秒到窗口结束（约 915 秒），除对照本身外公共 flush 零命中，公共 commit 零命中。
+- 判定落在"c=1 且 tx=0"分支：**SpringBoard 本轮没有走公共 ObjC flush/commit 发送路径**。这与 §379 离线核实（发送是 C++，ObjC 钩子不可能成为发送边界）在真机上互相印证。
+- 保留一条限定如实记录：`h670_tx_hooks`/`h670_tx_control` 两条安装状态行没有出现在日志里。原因是这两行是构造函数期经 `line_reserved` 发的——本流里 `H436_SBSCENE` 前缀 0 次（/dev/console 支路没到达），加速器通道当时还没连接。这正是 §378 规则（构造函数期代码不能依赖送出）的一次重复踩坑，安装状态按未证实记；commit 钩子机制与 flush 同路且 flush 已证实，故 commit 安装大概率成功，但不计为证据。
+
+**同 boot 事务/合成对齐（主键=四次桌面 context id）**：
+
+```text
+354/421/596s  backboardd 插件三次装载，srv#3 event_hooks 五位全 1（commitWait=1）
+438-441s      服务端命中：backboardd 自有 ctx 0x7a4594f3 / 0xb2319ae1 各 1 次
+              event_context_layer + 4 次 event_layer_commit，contents 全 -，与桌面 id 无关
+515.2s        pid27 桌面 ctx#1 0xeae99876 创建，h654 mirror displayId=0x1 secure=1 valid=1
+518.1s        ctx#1 setLayer=UIWindowLayer（h639 census site=set-layer count=1）
+668.3s        ctx#2 0x8b757a72 创建即 setLayer=UIWindowLayer，displayId 变为 0x0
+682.5s        ctx#3 0xa00ffe47 创建即 setLayer，displayId=0x0
+697.6-698.3s  ctx#4 0x5722df40 创建即 setLayer，displayId=0x0
+全程          四个桌面 id 的服务端接收/合成事件为 0；心跳 val=0 xf=0 fr=0，s345=0/0/0
+```
+
+**两个此前的结论需要更正**：
+
+1. "SpringBoard 没有给桌面 context 挂根图层"（H652 早期槽位 `lc=0`）不成立。真机显示每个桌面 context 创建后 0.1–0.7 秒内都执行了 `ca_context_set_layer layer=UIWindowLayer`；槽位 `lc=0` 只是扫描发生在 setLayer 之前的快照时序，且换 id 后没有再发布。场景门本身已经不是缺口。
+2. 断点位置收敛：ctx#1 从 518 秒起带着 UIWindowLayer 且在 display 1 上存在了约 150 秒，期间服务端对它零接收。结合 `tx=1/0 c=1`，缺失发生在客户端 **C++ 发送路径**（公共 ObjC 入口之外），位于 context churn 之前。churn 本身（18–150 秒换一次桌面 context，且第二次起 displayId 从 0x1 变 0x0）是一条独立的、尚未解释的异常，不并入本判据。
+
+**下一轮（H671）单变量提案**：在 SpringBoard 侧对 QuartzCore 的 C++ 发送入口做符号解析挂钩（候选：`CA::Transaction::commit()`、`CA::Transaction::flush_as_runloop_observer(bool)` 等导出符号，用 dyld 导出表按 mangled name 解析，不依赖 `objc_copyClassList`），正对照与安装状态**全部改经 A2 查询路径发布**（H668 已验证可达通道），槽文本沿用现格式扩字段。服务端本轮不再改动。判据：挂钩有效（对照命中）且 C++ 发送计数>0 ⇒ 发送发生、断点在服务端接收；对照命中且计数恒为对照值 ⇒ SpringBoard 连 C++ 公共提交都没走，转查它自己的提交代理。
