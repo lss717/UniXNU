@@ -29594,3 +29594,21 @@ H648 原计划复用插件里写 `/private/var/keybags/persona.kb` 的先例，�
 缺陷 B（根图层从未 `setLayer:`）不依赖这个争议，保持独立成立。
 
 **工具层面本轮记三条。** `addon-observer-round.py` 之前假设输出标签等于 build 字符串且有一处 `a.tag.decode()` 崩溃，已拆成 `--build`/`--out-tag`。`pack-round.sh` 现在允许"插件未改动"的轮次（`trace_old 1 unchanged`），并在末尾加了产物存在性检查——第一次运行时 CRLF 混入使 mcopy 全部失败，脚本却照样打印了 `DONE_PACK_H653`，这个假成功现在会被拦下。另外子模块单独提交修复后必须同步主仓 gitlink，否则 Mac 的 `git submodule update` 仍检出旧提交，本轮为此多跑了一次。
+
+
+### §360 H654 设计：把 §359 的两种解释分开，判据在上机前写定（2026-11-25）
+
+**本轮唯一功能变量**：观察器在 `record_created_context` 里并排读 context 自己的三个字段——`isSecure`、`valid`、`options`，事件名 `h654_mirror`；`describe_context_options` 增加 `source` 参数（`"request"` / `"context"`），使同一套字典描述既能打印请求原文也能打印 context 回读。内核、Data seed、启动参数、插件（`A540Trace.bundle`）全部未改。
+
+**上机前写定的判据。**
+
+1. `h654_mirror` 的 options 里 `displayId` 仍为 1（或该键存在且值为 1），而 `displayId` 属性读回 0 ⇒ §359 的解释 (1)：这个端口的实现没有把 options 的 `displayId` 落到 context 上。下一步转向服务器/QuartzCore 侧该键的应用路径。
+2. `h654_mirror` 的 options 里 `displayId` 消失或变成 0 ⇒ 解释 (2) 或传递被改写：`-[CAContext displayId]` 与 options 里的 `displayId` 不是同一事物，§358/§359 里"displayId=0 所以不指向显示 1"的推理必须撤回，改用别的判据字段重做桌面 context→显示的关联。
+3. `isSecure` 作为交叉校验：请求侧 `secure=1`（§359 实测）。若 context 的 `isSecure` 如实为 1，说明 context 确实保留了请求字典的内容，此时 `displayId` 为 0 才更能指向解释 (1)；若 `isSecure` 也是 0，则 context 的 options 根本不是那个请求字典，解释 (2) 成立且第 1 条判据同时作废。
+4. 阴性结论必须有正对照：`describe_context_options("request", …)` 已在 H653 实测打印出 3 个键，本轮同一函数用于 `"context"`，若 `"context"` 侧零输出而 `"request"` 侧正常，只能说明 `options` 取值失败或返回 nil，不能说明"options 里没有 displayId"。
+5. 产物身份：设备日志必须出现 `observer load process=SpringBoard pid=… build=H654`；插件未改，预期仍是 `builder#2 build H652`。
+6. 观测质量：插件输出会在会话中途永久静默（§341 起多次证实），所以任何"没看到 h654_mirror"的结论必须先确认静默时刻晚于首个 context 创建时刻，否则按证据不足处理。
+
+**本轮踩的坑（编译期）。** H654 第一次提交把 `describe_context_options` 的前置声明放在了 `record_created_context` **之后**，而调用点在 `record_created_context` 内部，编译报 `use of undeclared identifier`。声明必须在使用它的函数之前。第二次提交 `d5dbb5c` 把声明移到 `record_created_context` 上方并删掉原来那段无效声明，主仓 gitlink 同步提交为 `b874a711`。
+
+**基线哈希。** kernel `ced5ce9d55d8514ac30b8cdba68662c7d8748e8942f477b68d9ee41c88d7f8e9`（未变）；Data seed `0ef3db84…`、1000 字节启动参数 `MATCHES_H610_ARGS True`；插件条目 `990ce517…` 未变（`trace_old 1 unchanged`）；观察器新 CDHash `2894b771d1bfd133051b0b821b1edf14846f5537`（替换 `77f3d775…`）；`H654-gpuaddon.img` `c027634ca535d96d0eb7c9c4aa8a171e64b51b9a0c5946703105f50b389cc59d`；`H654-trust.bin` `ed4876eb9043a1b0d68074d4a61f5cecf7f94fc8d026063f37f7f91d550ba985`；`H654-boot.img` `ff9c084928786e82de57af3b3231e6cc0f35c8444ed67e6121e868b343e0ce46`，Windows 侧回读哈希一致。
