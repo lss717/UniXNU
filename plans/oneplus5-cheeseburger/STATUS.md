@@ -29704,3 +29704,41 @@ h655_stall_walk delay=7 frames=4 stop=chain
 3. 若第 5 帧起给出的是 `CoreFoundation` 的 run loop 服务端口，那么"主线程停在 mach_msg"就只是普通等待消息，而不是同步调用挂起，§363 的解读需要相应降级；这条判据用来防止我把"线程在等"误当成"线程被卡"。
 4. 正对照：`dladdr` 对 `libsystem_kernel` 内已知函数（`_mach_msg` 系列）的归属与符号化结果必须与 §363 一致，否则本轮的地址归属整体不可信。
 5. 产物身份：设备日志必须出现 `observer load … build=H656`，插件仍为 H652。
+
+
+### §365 H656 实测：掩码假设被否证，`stop=chain` 原样复现；离线发现 CommCenter 六轮从未启动（2026-11-25）
+
+boot `2152f6b8`，kernel/插件/启动参数均未变，观察器 CDHash `2d08e73f1232fa8c629d6a55c78d773ad6c7b0ac`。日志覆盖至 752.3 秒。
+
+**判据 1 命中，命中的是"仍然失败"这一支。** 两次回溯都是 `frames=4 stop=chain`，与 H655 逐字相同：
+
+```text
+delay=7  i=0 libsystem_kernel+0x1b58  i=1 +0x5224  i=2 +0x51b0  i=3 +0x4fb8  stop=chain
+delay=15 同上
+```
+
+这否证了 §364 的掩码假设，而且证据就在本轮之前：H655 未加掩码时前两跳（`i=2`、`i=3`）本来就已经成功，说明从 `fp[0]` 读出的保存帧指针在这两跳里并不需要去签名。真正的原因只能是 `_mach_msg` 的调用方没有留下可用的帧记录，fp 链在这里天然走不通。掩码改动本身无害（它没有让结果变坏），但它修的是一个不存在的问题，这条更正要记着。
+
+**离线核对的新事实（六轮日志 + 本机 21H461 解包）。**
+
+- `CommCenter` 在 H651–H656 六轮里 **一次都没有 exec**：`argv1=com.apple.CommCenter` 与 `comm=CommCenter` 均为 0，出现的只有 `CommCenterMobileHelper`（H656 pid 132，543.4 秒）。
+- `callservicesd`（H656 pid 141）在 543 秒前后启动，而主线程在 540.5 秒进入 `+[SBTelephonyManager …]` 创建路径后再没返回。两者时间相邻，但"相邻"不等于"就是它在等"，本轮没有端口级证据。
+- `mediaserverd` 崩溃循环：`Process[151] crashed: mediaserverd. Too many corpses being created.`；`ReportCrash[111] caught waking the CPU 45060 times over ~221 seconds`。这是用户态独立问题，与 §344 记录的 mediaserverd 抑制崩溃同源。
+- H655/H656 两轮都**没有** `sig=9 comm=SpringBoard`，H654 有。再次确认"是否被 runningboardd 杀掉"本身有启动方差。
+
+`val=0 xf=0 fr=0` 到 752 秒依旧。
+
+### §366 H657 改动与上机前判据：读采样瞬间的寄存器与 Mach 消息头（2026-11-25）
+
+**为什么换这条路。** fp 链到不了 `_mach_msg` 的调用方，但 `thread_get_state` 已经把全部 29 个通用寄存器取回来了，只是从没打印过。`_mach_msg` 的参数约定是 `x0` 消息缓冲、`x1` 发送长度、`x2` 接收长度、`x3` 选项、`x4` 接收端口名、`x5` 超时、`x6` 发送端口名，阻塞在 `SVC` 上时这些值仍然在寄存器里。`x0` 指向的就是 `mach_msg_header_t`，同进程内可以直接读。
+
+**唯一功能变量**：在每次回溯前打印 `x0..x6`，并读 `x0` 处 24 字节头（`bits/size/remote/local/reserved/id`）。不改动任何等待、超时或调用行为。
+
+**上机前写定的判据。**
+
+1. `x5`（超时）为 0 ⇒ 无限等待，这与"150 秒不动"一致；非 0 且接近实际挂起时长 ⇒ 是一次带截止时间的等待，超时后应当返回，那就要改问"为什么没返回"。
+2. `msgh_id` 是消息类型的判据：`0x10c`（268）是 XPC 消息的固定 id，落在 XPC 上就沿 `BSXPCServiceConnection`/`xpc_connection` 追；MIG 子系统的 id 是另一段，落在 MIG 上就沿对应的 `*_subsystem` 追。这条判据决定下一轮追 XPC 还是追 MIG，不接受"看起来像"。
+3. `msgh_remote_port` 与 `msgh_local_port` 必须是看起来有效的端口名（非 0、在合理范围内）。若为 0 或明显不是端口，说明 `x0` 不是消息头（例如调用方用的是 `mach_msg_overwrite` 的覆盖形式或寄存器已被覆盖），本轮按观测失败处理，不得据此下结论。
+4. 正对照：同一轮里 `h585_bs_message_send_sync_enter/return` 已经能给出 XPC 同步调用的对象与返回状态；若 `msgh_id` 指向 XPC 而这两条事件在该线程上没有配对，需要记为矛盾而不是忽略。
+5. 判据 2/3 成立后，下一步是把 `msgh_remote_port` 与"我能命名的端口"对齐：优先在 SpringBoard 里对 `com.apple.CommCenter`、`com.apple.telephonyutilities.callservicesd` 各做一次 `bootstrap_look_up` 并打印得到的端口名，用来比较**类型与可达性**，不是用来断言名字相等（端口名每次查找都不同）。
+6. 产物身份：`observer load … build=H657`，插件仍为 H652。
