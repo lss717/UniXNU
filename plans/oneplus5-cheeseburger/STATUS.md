@@ -29371,3 +29371,27 @@ H642 上机后本机 USB 器件控制器一直没起来（uptime 804 秒仍无�
 - **A2 外部已注册 id**：只有这一条能证明接口能跨进程解析。它需要把 SpringBoard 报出的 context id 传给 backboardd，而当前没有不改动内核、不新增组件就能完成的手段（共享文件受沙盒限制，未验证）。**在拿到 A2 之前，任何"服务端不认识桌面 context"的结论都不许写。**
 
 **H643 的设计**（不需要新通道，全部在同一个插件内）：在观察点同时跑 A1、A3、B，把三档结果一起打印；A2 留作显式的未证明项。这样一轮就能判定"返回 0"到底意味着什么，也能第一次真正给出本地已注册 id 的正对照。
+
+### §349 H643 测量仪器标定完成，跨进程正对照仍未取得（2026-11-25）
+
+H642 是未评估的一轮：iOS USB 器件控制器到 uptime 约 1163 秒仍未起来，没有实时流，也没有任何软件通道能让设备重启去读环；用户返回后只读取到的环只剩 1533.26–2007.40 秒（单一 boot `23df4728`，247 槽），普查那几条在窗口之外。H642 由 H643 取代。**顺带得到一条运维规律：USB 不健康时磁盘 sink 不暂停、刷写连续推进，环的保留窗口反而更短（958 轮 / 2007 秒 ≈ 每 2.1 秒一个槽，只留约 474 秒）。**
+
+H643 在 backboardd 里跑了三次普查（441.5、490.5、646.3 秒），三次一致：
+
+```text
+srvq count     allctx=2
+srvq valid[0]  id=0x7e64dbfe client=0x983b task=0x4a03 host=0x0 pid=56 st=0x0
+srvq adjacent  id=0x7e64dbfe next=0x7e64dbff ntask=0x0 prev=0x7e64dbfd ptask=0x0
+srvq invalid   id=0xdeadbeef client=0x0 task=0x0 host=0x0 pid=-1 st=0x5
+srvq objectonly insecureProcessIds present=1 enc=@16@0:8 called=0
+```
+
+**仪器已标定。** A1 成立：已注册 id 返回非 0 端口，`pid_for_task` 得 56 且 `st=0x0`。A3 成立：两个有效 id 的相邻值都返回 0，说明查询按 key 而非索引，因此针对具体 id 的 0 从此有了"表中没有"的含义。B 保持。`draw#` 8 条、`disp#` 40 条、`builder#2 build H643` 6 次，H641 的构造函数回归已消除。
+
+**发现一个仪器自身的误用点。** `contextIdHostingContextId:` 对**有效** id 也返回 `host=0x0`，所以它返回 0 不代表"无托管关系"。**只有 `clientPortOfContextId:` 和 `taskNamePortOfContextId:` 可用作存在性判据。** 此前把 `host=0x0` 当证据的说法一律作废。
+
+**A2 仍未取得。** 三次普查里所有能命名的 id 都解析到 pid=56（共 6 条，无一例外），没有一条解析到别的进程。所以现在的准确说法是：这张按 key 查询的表能解析本进程已注册的 id，但**尚未证明它会包含别的进程的 context**。在这个正对照拿到之前，"服务端不认识桌面 context"仍然不许写。本轮 SpringBoard 自己的 id 是 `0xd6e7ef11`（553.19 秒 `ca_context_remote_create pid=27`），与 backboardd 表里两个 id 不同，但按 §347，`allContexts` 是进程私有的，这个不同本身不说明问题。
+
+**进度。** ui_run 459.23 秒，did_finish 524.63 秒，到 686 秒无 complete_startup，也无 `uiwindow_scene_visible`、`ca_host_visible`；`val=0 xf=0 fr=0` 到 642.8 秒。与 H636/H637/H640 同形，与 H635/H638 不同形，符合 §347 的方差结论。
+
+**H644。** 普查现在能安全跑完，可以在同一位置真正调用 `insecureProcessIds`（对象返回，`@16@0:8`）。若其中出现 56 以外的 pid，就证明服务器维护跨进程的 per-pid 状态，A2 有了着落；若只有 56 或调用失败，改试 `isSlotValid:`（布尔 `B20@0:8I16`）与逐 slot 探测。仍是单变量、纯观测。
