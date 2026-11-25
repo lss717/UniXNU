@@ -28,7 +28,7 @@
  		native_xpc_register(native_sb_rcv.port, native_sb_pid, name, 'r');
  		native_xpc_register(native_sb_req.port, native_sb_pid, name, 'q');
  		native_xpc_dump(sample);
-@@ -11349,6 +11349,420 @@
+@@ -11349,6 +11349,432 @@
  		native_xpc_pids[3] = pid;
  	}
  }
@@ -84,6 +84,8 @@
 +static unsigned long long native_render_evt_oldport;
 +static unsigned long long native_render_evt_oldctx;
 +static unsigned long long native_render_evt_ctx;
++static unsigned native_render_bind_id;
++static int native_render_bind_recv = -1;
 +
 +#define NATIVE_RENDER_CTRL_ID 0x4E415443u
 +
@@ -295,6 +297,13 @@
 +	if (native_render_ctrl_state == 0) {
 +		native_render_control_send();
 +	}
++	if (native_render_bind_recv < 0) {
++		task_t rt = ipc_port_get_receiver_task(native_render_port, NULL);
++		native_render_bind_recv = rt != TASK_NULL ? task_pid(rt) : 0;
++		if (rt != TASK_NULL) {
++			task_deallocate(rt);
++		}
++	}
 +	key = native_render_att ^ (native_render_enq << 10) ^
 +	    (native_render_deq << 3) ^ (native_render_ctrl_state << 20) ^
 +	    (native_render_sb_att << 6) ^ (native_render_dead << 28);
@@ -302,11 +311,12 @@
 +		return;
 +	}
 +	native_render_printed_key = key;
-+	printf("NATIVE_RENDER: sample=%u att=%u sb=%u enq=%u deq=%u ctrl=%u dead=%u reg=%u drop=%u\n",
++	printf("NATIVE_RENDER: sample=%u att=%u sb=%u enq=%u deq=%u ctrl=%u dead=%u reg=%u drop=%u bctx=0x%x rcv=%d\n",
 +	    sample, native_render_att, native_render_sb_att,
 +	    native_render_enq, native_render_deq,
 +	    native_render_ctrl_state, native_render_dead,
-+	    native_render_regpid, native_render_rec_drop);
++	    native_render_regpid, native_render_rec_drop,
++	    native_render_bind_id, native_render_bind_recv);
 +	if (native_render_evt_bound) {
 +		native_render_evt_bound = 0;
 +		printf("NATIVE_RENDER: bound via=%s pid=%u ctx=0x%llx port=0x%llx\n",
@@ -429,6 +439,8 @@
 +	native_render_evt_oldport = (unsigned long long)(uintptr_t)port;
 +	native_render_evt_oldctx = native_render_evt_ctx;
 +	native_render_evt_ctx = ctxid;
++	native_render_bind_id = 0;
++	native_render_bind_recv = -1;
 +	native_render_evt_rebind = 1;
 +	native_render_evt_pid = (unsigned) pid;
 +	native_render_evt_port = (unsigned long long)(uintptr_t)port;
@@ -449,7 +461,7 @@
  
  struct native_ipc_event {
  	uint64_t serial;
-@@ -11398,4 +11398,48 @@
+@@ -11398,4 +11398,49 @@
  static uint64_t native_bks_request_port;
  static uint64_t native_bks_reply_port;
 +/* H682: third bind path, layout-free.  The first real message from
@@ -494,6 +506,7 @@
 +	native_render_evt_pid = (unsigned)from;
 +	native_render_evt_port = (unsigned long long)(uintptr_t)dest;
 +	native_render_evt_ctx = (unsigned long long)hdr->msgh_id;
++	native_render_bind_id = (unsigned)hdr->msgh_id;
 +}
 +
  static unsigned native_bks_msg_id;
