@@ -26,7 +26,7 @@
  		native_xpc_register(native_sb_rcv.port, native_sb_pid, name, 'r');
  		native_xpc_register(native_sb_req.port, native_sb_pid, name, 'q');
  		native_xpc_dump(sample);
-@@ -11349,6 +11349,419 @@
+@@ -11349,6 +11349,464 @@
  		native_xpc_pids[3] = pid;
  	}
  }
@@ -117,6 +117,50 @@
 +	native_render_evt_port = (unsigned long long)(uintptr_t)recv;
 +}
 +
++/* H682: third bind path, layout-free.  The first real message from
++ * SpringBoard to backboardd that is not on the BKS pair is the
++ * desktop context's CAWindowServer connection traffic (the create
++ * RPC itself); its destination port IS the per-connection receive
++ * right the render server drains.  pid[0]/pid[3] come from exec
++ * tracking, so this fires at context creation even when the
++ * bootstrap lookup and the observer-reported field layout both
++ * missed the window.  Bound port is locked by the caller
++ * (ipc_kmsg_send), so take the reference in place, no re-lock. */
++static void
++native_render_traffic_note(ipc_kmsg_t kmsg, ipc_port_t dest,
++    int from, int to)
++{
++	mach_msg_header_t *hdr;
++	uint64_t bks;
++
++	hdr = kmsg ? ikm_header(kmsg) : NULL;
++	if (hdr == NULL || hdr->msgh_size < 24 || from <= 0 || to <= 0) {
++		return;
++	}
++	if (from != native_xpc_pids[0] || to != native_xpc_pids[3]) {
++		return;
++	}
++	if (native_xpc_pids[3] <= 0) {
++		return;
++	}
++	bks = __atomic_load_n(&native_bks_request_port, __ATOMIC_RELAXED);
++	if ((uint64_t)(uintptr_t)dest == bks) {
++		return;
++	}
++	bks = __atomic_load_n(&native_bks_reply_port, __ATOMIC_RELAXED);
++	if ((uint64_t)(uintptr_t)dest == bks) {
++		return;
++	}
++	ip_reference(dest);
++	native_render_port = dest;
++	native_render_regpid = (unsigned)from;
++	native_render_evt_bound = 1;
++	native_render_evt_via = "traffic";
++	native_render_evt_pid = (unsigned)from;
++	native_render_evt_port = (unsigned long long)(uintptr_t)dest;
++	native_render_evt_ctx = (unsigned long long)hdr->msgh_id;
++}
++
 +static void
 +native_render_body_note(ipc_kmsg_t kmsg, ipc_port_t dest_port,
 +    int from, int to)
@@ -203,6 +247,7 @@
 +	if (!native_render_port) {
 +		if (kind == 'S') {
 +			native_render_body_note(kmsg, port, from, to);
++			native_render_traffic_note(kmsg, port, from, to);
 +		}
 +		return;
 +	}
