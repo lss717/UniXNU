@@ -30506,3 +30506,27 @@ B. **回到用户态最后一条未试路线**：单页文本入口补丁的 can
 **pre-CDC 日志通道现状（唯一缺口）**：CDC 231-285s 才枚举，bb 前 5 次死亡与首开序列全在盲区。`scripts/h103-log-pull.py` 拉取 userdata_ios 尾 32MiB：header 由本轮实时更新（uptime_s=582/rounds=294/write_errors=172），但**槽内容仍停在 boot=244fe4db build=H635**（247 个 SHLOGS stamp 全为该旧 boot），本 boot 一次成功槽写都没有；且 USB healthy 后 `gH103DiskPaused=1`（NATIVE_USB_DISK reason=usb-healthy，paused=269≈rounds）是设计行为——USB 接管后刻意让盘。**H693 方向（唯一变量：把 pre-USB 段槽写修通）**：先定 write_errors=172 的失败点（UFS 写请求在哪一层被拒；`NATIVE_H469_STATUS lock_ok/lock_wait` 与 slot 写路径的关系），修通后一次 boot 即可拿到 boot+40s 起的全程日志（含 bb 前 5 次崩溃的 exit 原因、首开 selector 时序、以及 stock H1/M2CLCD 匹配是否发生/返回码）。CDC 提前不动 USB 时序（牵涉 UFS 依赖，另案）。
 
 **工件登记**：kernel 链 `37d4a121`(H692)；boot H692=`8b3f1269`；payload=`59855b4a`；series 追加 `sbpc-inline-flush`(145)/`sbpc-rows48`(146)/`h692-iodwell`(147)。设备终态 TWRP（本轮收尾主动 reboot recovery，无分区写入；h103 拉取为只读）。日志：`logs/H692/device/H692-live.raw.bin`、`tmp/h692-decoded.txt`、`tmp/h692-h103.txt`、`tmp/h692-h103-window.bin`。backboardd 对照二进制：Mac `/tmp/sysroot21/usr/libexec/backboardd`（OS-SystemRoot.dmg 只读挂载于 /tmp/sysroot21，用完可 `hdiutil detach`）。
+
+
+### §400 H693-H696 journal 取证：h103 盘链本身健康（失败=锁让位 io=0），真实缺口是保留窗只有尾 ~200s；RAM journal 打通后 pre-CDC 全时序落地——backboardd 单一生命周期、241.071s open、16 selector 全成功，"bb 崩过 5 次"证伪（corpse 是全局 inflight 池）（2026-11-26）
+
+**H693 审计先行（按转达要求，先分清真实失败与解码问题）**：复核 h692 窗口头部与 247 个槽——**盘链是健康的**：(1) 槽其实每轮都在写，header write_errors=172 对应的是 NATIVE_UFS_LOG_STAT 的 **lock=167**（H317 try-lock 输给主 I/O 路径的设计让位）与个别 backoff，`io=0 dmashort=0`，真实存储错误为零；(2) 此前"槽停在 H635"是误读：`H103_BUILD` 常量从未升号（define 就是 "H635"），槽的 boot=244fe4db 是本 boot init 时刻的 cntpct 低 32 位（gH103BootId 用 ticks 当 boot 标识，非 uxl boot id）；`--slots 247` 全合并后成功取回 **345KB** 日志。(3) 但持久环的真实局限被证实：合并内容只覆盖 **415.9-612.0s**——flush 由 boot_flags&4（bb exec 时才置位）启动 + 环仅 247 槽，pre-CDC 段在写通之前就被 msgbuf 自身回绕与槽回绕双重冲掉。**结论：不是修盘的问题，是保留窗结构问题**，转达建议的固定小内存 RAM journal 正确。
+
+**H693 实施（kernel `a1d549ad`，boot `2157fe1e`）**：task.c 增加 192 项无锁 journal（40B/项：kind/ms/pid/4×aux/24B tag；kind1=exec 2=exit 3=iotime 4=panic 5=corpse 6=client-open 7=selector，各配预算上限；写路径纯 atomic，无日志无同步等待）；挂点 IOUserClient native_iotime、kern_exit、kern_exec、debug.c panic、corpse.c 双分支、LegacyDisplayProbe enter/wrappedExternal；驱动 beat 首部导出。首拍导出 40 行/0.4s 洪泛**又吞掉 n=0..39**（导出自洪泛），且 n=40 起全是 ms>278s 的 post-CDC 事件——KeyStore 重试风暴挤占 kind3 预算，但同段还给出新事实：**SB tid727 在 278.7s open AGXAccelerator 成功**、**SB tid291 在 304.6s match AppleCLCD=NotFound**。
+
+**H694（`b0f5e79c`/`d8a85bd2`）**：导出节流到 4 行/900ms、每拍 3×8。发现 beat0（283s）与 CDC attach（283.2s）撞车，n=0..19 仍落 void；n=20..23 起存活。补 IOSleep(40000) 推迟 beat0（`d8a85bd2`→H695 镜像）。
+
+**H695（kernel `b0f5e79c`，boot `d8a85bd2`，boot id 0x3b7b58ab）**：beat0@317.7 导出但 4 行窗口仍散丢 n=1,2,6,7,9-12；且该 boot **355s 早夭**（比既往 604-616s 早，非 bb 击杀形态）——只有 beat0 一次导出机会。改 2 行/1100ms。
+
+**H696（kernel `44b951fc`，boot `1ea7c5de`，boot id 0x347fd53e）**：**导出零丢失**——n=0..87 全部存活（88 行=当轮 journal 全量），pre-CDC 时序首次完整：
+- `107.977s` SpringBoard exec(pid=27)；`165.276s` **SB 主线程 tid=291：match IOAcceleratorES → open AGXAccelerator kr=0**（Metal 主路径 165s 即通，比 §395 看到的 306s 匹配早得多——那是重复轮询，不是首次）；
+- `196.206s` backboardd exec(pid=56，**本 boot 唯一 bb 实例**)；`201.676/201.691s` IOMFB_FDR_Loader(78)/IOMFB_bics_daemo(79) open；`239.587s` bb 侧 match_iter IOAccessoryManager；`240.330s` **两次 match_one kr=NotFound（tid=688，dict 无 IOProviderClass 串）**；
+- `241.071s` **bb open 显示 client**；`241.072s` open_ret NativeLegacyDisplay kr=0（tid=368）；`241.072s` 起 selector 连发（sel 88、57…；至 ~273s 共 16 个，与 H313 表吻合，全部 kr=0）；
+- **journal 里 n<88 无任何 kind=2/4/5**：bb 在 open 与 16 调用之前**从未死过、从未 panic、从未被拒 corpse**——§399 里"前 5 次崩在 pre-CDC"的说法**被本 boot 证据否定**：`backboardd[56] Corpse failure, too many 6` 是**全局 inflight_corpses 池**（mediaserverd 本 boot 就吃掉 5 个 allowed 名额）耗尽后对 bb 首份报告的拒绝，与 bb 历史无关；
+- 会话 604.5s 进入同形死亡序列（ACCHW 击杀+重拉；第七次复现，窗口 604-616s）。
+
+**剩余事实缺口收窄为**：bb 241s open 后到 ~611s 击杀之间**只有 16 次 selector**（无 swap、无 reg、无重开）——它在等谁把第一帧推起来；n=7/8 那两次空类名 NotFound 的 dict 内容与调用方（tid=688 属哪个线程组）可由下一轮 journal 的 tag 扩展（kind3 增记 IONameMatch 串）补上；355s 早夭形态（H695 boot）原因未定，暂不追。
+
+**判据核对（转达要求逐项）**：真实失败 vs 解码→已分（io=0，让位所致；合并方式已修）；reason 直方图 H635 已内建并被本轮引用（lock=167/paused=269/backoff=595）；RAM 固定小缓冲方案落地且按"覆盖能活到 CDC 的会话"定位，未扩大盘写范围、无分区写入；首条 fatal——本 boot 无 kernel panic 早于 604s 死亡序列，bb 无退出记录，16 selector 编号/返回值/时间如上，stock H1/M2CLCD：bb 侧未见（其真实路径=open_ret 直接成功 + 两次空类名 NotFound），SB 侧 AppleCLCD NotFound 见 304.6s。
+
+**工件登记**：kernel 链 `a1d549ad`(H693)→`b99807a4`(H694)→`44b951fc` 前实际 H695=`b0f5e79c`→H696=`44b951fc`；boot：H693=`2157fe1e`(id 0x43db390b)、H694=`e282695a`(id 0x3bb426bc)、H695=`d8a85bd2`(id 0x3b7b58ab)、H696=`1ea7c5de`(id 0x347fd53e)；payload 依次 `b9c8d950`/`cc0547bb`/`fa682077`/`81345360`；完整哈希见 builds/<tag>/device 与 h69x-boot.json。series 追加 145-149（inline-flush/rows48/iodwell/early-journal×2 pace/pace2）。trust=19b8efb9、addon=c47f86a7、observer/trace 沿用；boot-args 逐字节不变；子模块 NativeMobileDisplay `987fcb8`。设备终态：H696 死亡回 Android 后回 TWRP，无分区写入。日志：logs/H693..H696/device/*.raw.bin 与 tmp/h69*-decoded.txt、h692-h103-full.txt。
