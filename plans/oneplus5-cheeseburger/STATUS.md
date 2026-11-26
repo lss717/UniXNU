@@ -30423,4 +30423,4 @@ B. **回到用户态最后一条未试路线**：单页文本入口补丁的 can
 - IOKit match/open 步进计时：bb 打开 NativeLegacyDisplay/AGX 的 user client 序列每步耗时（现有 IOKIT/TC_QUERY 行时间戳已粗显 70-90s 间隔，需要更细的 gate 行）；
 - 保留既有计数/正对照管线：请求队列长度可由 enq-deq 差直接读出，无需新代码。
 
-**工件登记**：内核链 `89ede49b`(v8e)→`d9e807d`(v9d)→`5eb94568`(v9d+f2 复用)→`2624cb64`(v10=H686)；observer 链 `aed54d4a`→`c073101d`→`0cc32305`；boot：H685=`1dc8274b`、H685e=`fb1867a3`(f)、H685f=`4a8cda0a`、H685f2=`4b81889b`(wait——记录以本行日志为准)、H686=`4b81889b…` 见 builds/H686（live 364580B；tail 无正文，sink 依旧）。vsync 打印面按转达要求未与行为修正混做，留待单独候选；`sheng-vsync` 仍未启用。设备 TWRP，无分区写入。
+**工件登记**：内核链 `89ede49b`(v8e)→`d9e807d`(v9d)→`5eb94568`(v9d+f2 复用)→`2624cb64`(v10=H686)；observer 链 `aed54d4a`→`c073101d`→`0cc32305`；boot 全表（前 8 位，完整哈希见 builds/<tag>/device）：H685=ad99cb86（无CDC）、H685b=1345365f（无CDC）、H685c=ccbb1bc0、H685d=5f6add60、H685e=1dc8274b、H685f=4a8cda0a、H685f2=fb1867a3、H686=4b81889b（live 364580B；tail 无正文，sink 依旧）。vsync 打印面按转达要求未与行为修正混做，留待单独候选；`sheng-vsync` 仍未启用。设备 TWRP，无分区写入。
