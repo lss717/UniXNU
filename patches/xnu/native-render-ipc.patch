@@ -8,7 +8,7 @@
 +static void native_render_traffic_note(ipc_kmsg_t kmsg, ipc_port_t dest,
 +    int from, int to);
 +static void native_render_calib_note(unsigned kind, ipc_kmsg_t kmsg,
-+    ipc_port_t port, int from);
++    ipc_port_t port, int from, int to);
  void native_xpc_track_exec(int pid, const char *comm);
  void native_ipc_event_note(unsigned kind, ipc_kmsg_t kmsg, ipc_port_t port,
      int from_pid, int to_pid, uint64_t receiver_tid, unsigned result);
@@ -472,7 +472,7 @@
  
  struct native_ipc_event {
  	uint64_t serial;
-@@ -11398,4 +11398,83 @@
+@@ -11398,4 +11398,84 @@
  static uint64_t native_bks_request_port;
  static uint64_t native_bks_reply_port;
 +/* H682: third bind path, layout-free.  The first real message from
@@ -541,12 +541,13 @@
 + * port from the bound line is the identity verdict. */
 +static void
 +native_render_calib_note(unsigned kind, ipc_kmsg_t kmsg, ipc_port_t port,
-+    int from)
++    int from, int to)
 +{
 +	mach_msg_header_t *hdr;
 +
 +	if (native_render_calib_state != 1 || kind != (unsigned) 83 ||
-+	    from != native_render_calib_pid || !IP_VALID(port)) {
++	    from != native_render_calib_pid ||
++	    to != native_xpc_pids[3] || !IP_VALID(port)) {
 +		return;
 +	}
 +	hdr = kmsg ? ikm_header(kmsg) : NULL;
@@ -561,7 +562,7 @@
  	e->kind = kind;
  	e->result = result;
 +	native_render_note(kind, kmsg, port, from_pid, to_pid);
-+	native_render_calib_note(kind, kmsg, port, from_pid);
++	native_render_calib_note(kind, kmsg, port, from_pid, to_pid);
  }
  
  static void
