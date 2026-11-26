@@ -1,5 +1,5 @@
 --- a/osfmk/kern/task.c	2026-11-26 21:15:53
-+++ b/osfmk/kern/task.c	2026-11-26 21:15:53
++++ b/osfmk/kern/task.c	2026-11-26 21:25:17
 @@ -10501,6 +10501,18 @@
  #include <ipc/ipc_mqueue.h>
  
@@ -91,7 +91,7 @@
 +				ipc_port_t tp = (ipc_port_t)(uintptr_t)target.port;
 +				int kn = 0;
 +				if (tp != IP_NULL && ip_active(tp) &&
-+				    tp->ip_klist.kl_list != NULL) {
++				    tp->ip_klist.slh_first != NULL) {
 +					kn = 1;
 +				}
 +				printf("NATIVE_LSKNOTE: sample=%u port=0x%llx kn=%d "
@@ -107,11 +107,10 @@
  		}
  		native_ipc_focus_emit(sample, native_sb_hdr[5], native_sb_req.port, native_sb_local.port);
  		native_render_emit(sample);
-@@ -11341,6 +11413,93 @@
- 			    native_sb_req.queued, native_sb_req.sorights, native_sb_req.srights,
+@@ -11342,6 +11414,94 @@
  			    native_launchd_out, native_launchd_in,
  			    native_launchd_replies, native_launchd_other);
-+		}
+ 		}
 +		/* H701: two questions, one boot (STATUS 408).  (a) Which SpringBoard
 +		 * thread holds a parked send-with-reply, on which destination port,
 +		 * and did its ith state ever change (reply vs timeout vs frozen)?
@@ -173,7 +172,8 @@
 +						ipc_port_t pp =
 +						    (ipc_port_t)(uintptr_t)p2.port;
 +						if (ip_active(pp) &&
-+						    ip_kotype(pp) == IKOT_THREAD) {
++						    ip_kotype(pp) ==
++							    IKOT_THREAD_INSPECT) {
 +							okobj = (uint64_t)pp->ip_kobject;
 +							for (unsigned j = 0;
 +							    j < native_sb_count; j++) {
@@ -198,10 +198,11 @@
 +				native_journal_add(8, native_sb_pid, (uint32_t)r->tid,
 +				    (uint32_t)r->x1, cur, r->x2, "ulk");
 +			}
- 		}
++		}
  	}
  	if (native_sb_task != TASK_NULL) {
-@@ -11841,7 +12000,8 @@
+ 		task_deallocate(native_sb_task);
+@@ -11841,7 +12001,8 @@
  		}
  		return;
  	}
