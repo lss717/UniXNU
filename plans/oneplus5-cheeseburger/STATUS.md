@@ -30445,3 +30445,18 @@ B. **回到用户态最后一条未试路线**：单页文本入口补丁的 can
 **下一轮（H688，单变量：只改探针存活）**：quiet=2 循环在 bb walk 之前先 `flush+IOSleep(300)` 清环，walk 之后再 `flush+IOSleep(500)` 让 CDC 排空再进行下一组（已提交）。内核保持 v11 原样——match/open 取证已钉死，无需重取。判据：出现 `SBPC comm=backboardd` 行且 tid 与 883/1841 重合；落入 mach_msg2_trap 的线程带 SBMSG2（id/收口/timeout），看 pc/lr 是否落在 QuartzCore/CoreDisplay 的 match-open 间隙。若仍无行，记通道未确证再考虑削减每拍帧链深度，不动内核。
 
 **工件登记**：内核 v11=`d4dd9ab6`；boot H687=`583991ce`；payload=`98e57724`；trust=`19b8efb9`；addon=`c47f86a7`；observer `0cc32305`、trace `4d333989` 沿用。boot-args 与 H686 逐字节一致（pack 断言的 `/tmp/h610-args.txt` 是 H610 时代快照，H683/H683b 有意删除 `native-ufs-probe=0`/`h103-slot=1`/`h103-load-iogpu=0` 并加入 callservicesd，故 `MATCHES_H610_ARGS=False` 为预期值；H686↔H687 toml 集合差为空，无回归）。设备终态 Android（自行回连），无分区写入。日志：`logs/H687/device/H687-live.raw.bin`、解码 `tmp/h687-decoded.txt`。
+
+
+### §396 H688 采样存活轮：抓到内核 panic 正文（616s，exit_with_reason 内二次 abort）；bb 扫描定性为段内自毁——帧链挤掉段头，H689 缩段重试（2026-11-26）
+
+**执行**：单变量探针改动（c0f4fad7：bb walk 前 flush+IOSleep(300)，walk 后 flush+IOSleep(500)），内核逻辑不变（重编得 `eec90a0d`）。boot `66af17ef`（live 414752B，解码 3027 行，boot id 0x3a26e3af）。CDC 13:16:21 进、13:21:59 error=203 掉。
+
+**收获一，panic 正文首现**。日志尾 `NATIVE_PANIC_STR: Kernel data abort. at pc 0xfffffff00771be50, lr 0xfffffff00771b92c`@616.029s。两地址对 kernel.macho nm 符号化：均落在 **`_exit_with_reason`（+0x5d0/+0xac）**——内核已在带原因退出路径内又发生 data abort（二次故障；x1=`___doprnt.digits+0x5419`，abort 时正在格式化打印）。首要 fatal 字符串没进环。时序与 H687 同形：615.5-615.9s bb corpse-cap 第 6 次击杀（pid=190 重拉）、ACCHW/xpcproxy 重 exec → 616.03 exit 路径 abort → 复位 → 设备自行回 Android。两次 boot 都在"第 6 次击杀+重拉"后 5 秒内死亡（H687 611.6s / H688 616.0s），而 H686 同节奏后多活了 300s——**该序列方向可复现，属既有代码路径**（H688 未动内核逻辑），与探针无关。
+
+**收获二，bb walk 机制定性：每拍都跑完，段自己冲掉段头**。render 状态行按拍出现 bb 段索引 `sample=9330/9360/9390/9420/9450`（`native_render_emit` 在 sample_instance 段尾），且与同拍下一组行间隔恰 ~500ms（新增 sleep 生效）——**walk 完整执行**。但五拍下来段头（summary/miss/tid rows）全缺；同 boot 的 containermanager（n=2 的小段）正常存活。结论：bb 索引 9300%30==0 触发 8 线程帧链（另有 SBSTACK/SBSTRING），段内输出量在 flush 前就超环容量，**首尾同丢于自身洪泛**——H687 的"inermanager"残片与本轮"render 行存活、summary 行消失"互为印证。
+
+**修复（H689，已提交）**：bb 索引改 `9301+30n`（sample%30==1，帧链不触发），summary/rows/SBMSG2 全保留——tid/pc/lr/wait/cpu 加 mach_msg2_trap 线程的 SBMSG2（远端口、id、timeout）足以回答"bb 的线程在哪个调用里"，段体积缩一个量级。内核仍 v11。
+
+**判据**：出现 `NATIVE_SBPC: sample=93x1 pid=<bb pid> comm=backboardd n=` 与 tid 行；若 display 线程 `x16==-47` 有 SBMSG2，比对 rport 与 calibration 端口 cp/w00t/BKS；若无（全在忙循环），按 pc/lr 用 21H461 缓存符号化看落在哪个框架。再无行则通道判失败，转方案。
+
+**工件登记**：boot H688=`66af17ef`；payload=`0a853259`；kernel=`eec90a0d`（=d4dd9ab6 同源内核+H688 驱动排布）；trust=`19b8efb9`；addon=`c47f86a7`；observer/trace 沿用。boot-args 与 H687/H686 逐字节一致。设备终态 Android（panic 复位自行回连），无分区写入。日志：`logs/H688/device/H688-live.raw.bin`、`tmp/h688-decoded.txt`。
