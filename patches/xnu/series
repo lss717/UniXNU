@@ -145,3 +145,4 @@ native-iokit-timing.patch
 sbpc-inline-flush.patch
 sbpc-rows48.patch
 h692-iodwell.patch
+h693-early-journal.patch

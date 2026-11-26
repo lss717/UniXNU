@@ -866,6 +866,11 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
         // drain the ring BEFORE walking (flush plus a short sleep so CDC empties),
         // walk backboardd, then flush again and let CDC drain before the next
         // group starts.  9300 % 30 == 0 still triggers the frame-chain walk.
+        // H693: ship the pre-CDC RAM journal out first: two chunked
+        // exports (<=40 lines), each self-flushing, then drain as usual.
+        extern "C" void native_journal_export (void);
+        native_journal_export ();
+        native_journal_export ();
         native_log_flush_hook ();
         IOSleep (300);
         // H689: the H688 beats prove the segment destroys itself - the walk ran
