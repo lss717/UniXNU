@@ -149,3 +149,4 @@ h693-early-journal.patch
 h694-journal-pace.patch
 h696-journal-pace2.patch
 h698-bound-events.patch
+h699-pidpair-ring.patch

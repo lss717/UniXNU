@@ -756,6 +756,7 @@ h103MaybeKillExclavekit (unsigned seconds)
 extern "C" void native_sb_pc_sample (const char *name, unsigned sample);
 extern "C" void native_journal_export (unsigned budget);
 extern "C" void native_boundport_export (void);
+extern "C" void native_pairport_export (void);
 extern "C" void native_sb_pc_sample_instance (const char *name, unsigned sample,
                                               unsigned instance);
 extern "C" void native_sb_set_quiet (int on);
@@ -876,6 +877,7 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
         native_journal_export (6);
         native_journal_export (6);
         native_boundport_export ();
+        native_pairport_export ();
         native_journal_export (6);
         native_journal_export (6);
         native_log_flush_hook ();
