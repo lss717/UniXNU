@@ -1,7 +1,7 @@
 diff --git a/bsd/kern/kern_exit.c b/bsd/kern/kern_exit.c
 --- a/bsd/kern/kern_exit.c
 +++ b/bsd/kern/kern_exit.c
-@@ -1511,11 +1511,57 @@
+@@ -1511,11 +1511,61 @@
  /*
   * H103 diagnostic only: record selected process exits. This does not alter
   * exit status, signals, launchd behavior or any verification path.
@@ -29,23 +29,27 @@ diff --git a/bsd/kern/kern_exit.c b/bsd/kern/kern_exit.c
 +		return;
 +	}
 +	item = kcdata_iter_find_type(iter, KCDATA_TYPE_PID);
-+	size = kcdata_iter_size(item);
-+	if (kcdata_iter_valid(item) && size >= sizeof(*sender_pid)) {
-+		memcpy(sender_pid, kcdata_iter_payload(item), sizeof(*sender_pid));
++	if (kcdata_iter_valid(item)) {
++		size = kcdata_iter_size(item);
++		if (size >= sizeof(*sender_pid)) {
++			memcpy(sender_pid, kcdata_iter_payload(item), sizeof(*sender_pid));
++		}
 +	}
 +	item = kcdata_iter_find_type(iter, KCDATA_TYPE_PROCNAME);
-+	size = kcdata_iter_size(item);
-+	if (kcdata_iter_valid(item) && name_size != 0 && size != 0) {
-+		const char *data = (const char *)kcdata_iter_payload(item);
-+		unsigned limit = size < name_size - 1 ? size : name_size - 1;
-+		for (unsigned i = 0; i < limit; i++) {
-+			char c = data[i];
-+			if (c == 0) {
-+				break;
++	if (kcdata_iter_valid(item) && name_size != 0) {
++		size = kcdata_iter_size(item);
++		if (size != 0) {
++			const char *data = (const char *)kcdata_iter_payload(item);
++			unsigned limit = size < name_size - 1 ? size : name_size - 1;
++			for (unsigned i = 0; i < limit; i++) {
++				char c = data[i];
++				if (c == 0) {
++					break;
++				}
++				sender_name[i] = c;
 +			}
-+			sender_name[i] = c;
++			sender_name[limit] = 0;
 +		}
-+		sender_name[limit] = 0;
 +	}
 +}
 +
@@ -59,7 +63,7 @@ diff --git a/bsd/kern/kern_exit.c b/bsd/kern/kern_exit.c
  	const char *comm = p->p_comm;
  	if (!strcmp(comm, "SpringBoard")) native_boot_flags |= 32;
  	if (!strcmp(comm, "backboardd")) native_boot_flags |= 64;
-@@ -1528,6 +1574,8 @@
+@@ -1528,6 +1578,8 @@
  		ns = reason->osr_namespace;
  		code = reason->osr_code;
  	}
@@ -68,7 +72,7 @@ diff --git a/bsd/kern/kern_exit.c b/bsd/kern/kern_exit.c
  	/* H129: SpringBoard's exit status is the evidence for the missing UI.
  	 * H130: every exit that carries an os_reason is traced too (ObjC
  	 * exception, dyld abort, jetsam, exec failure), together with the
-@@ -1544,7 +1592,8 @@
+@@ -1544,8 +1596,9 @@
  		return;
  	}
 -	printf("NATIVE_EXIT: pid=%d ppid=%d comm=%s status=0x%x ns=%u code=0x%llx\n",
