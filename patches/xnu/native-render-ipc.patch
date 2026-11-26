@@ -472,7 +472,7 @@
  
  struct native_ipc_event {
  	uint64_t serial;
-@@ -11398,4 +11398,144 @@
+@@ -11398,4 +11398,83 @@
  static uint64_t native_bks_request_port;
  static uint64_t native_bks_reply_port;
 +/* H682: third bind path, layout-free.  The first real message from
@@ -519,6 +519,7 @@
 +	native_render_evt_ctx = (unsigned long long)hdr->msgh_id;
 +	native_render_bind_id = (unsigned)hdr->msgh_id;
 +}
++
 +void
 +native_render_calibration_started(int pid)
 +{
@@ -530,19 +531,21 @@
 +	    mach_absolute_time() + (8ULL * 19200000ULL);
 +	native_render_calib_state = 1;
 +}
++
 +/* H685d: pure-observation calibration. Runs under the destination
 + * port lock on the event-note path, so it only records values -
 + * no references, no releases, no rebinding (the H685 rebinding
-+ * under this lock was the boot hazard). The sample line then
-+ * reports whether the controlled commit produced a send, to
-+ * which port, and whether that is the port already bound. */
++ * under this lock was the boot hazard). The sample line reports
++ * whether the controlled commit produced a send, with which
++ * message id, and to which port; comparing cp against the bound
++ * port from the bound line is the identity verdict. */
 +static void
 +native_render_calib_note(unsigned kind, ipc_kmsg_t kmsg, ipc_port_t port,
 +    int from)
 +{
 +	mach_msg_header_t *hdr;
 +
-+	if (native_render_calib_state != 1 || kind != (unsigned char) 83 ||
++	if (native_render_calib_state != 1 || kind != (unsigned) 83 ||
 +	    from != native_render_calib_pid || !IP_VALID(port)) {
 +		return;
 +	}
@@ -550,70 +553,6 @@
 +	native_render_calib_state = 2;
 +	native_render_calib_id = hdr ? (unsigned)hdr->msgh_id : 0;
 +	native_render_calib_port = (uint64_t)(uintptr_t)port;
-+}
-+}
-+void
-+native_render_calibration_started(int pid)
-+{
-+	if (native_render_calib_state == 1 || pid <= 0) {
-+		return;
-+	}
-+	native_render_calib_pid = pid;
-+	native_render_calib_until =
-+	    mach_absolute_time() + (8ULL * 19200000ULL);
-+	native_render_calib_state = 1;
-+}
-+/* H685: the calibration verdict runs on the event-note path under the
-+ * destination port lock: no printing here; the recorded fields let the
-+ * sampler print the rebind with the outgoing generation totals. */
-+static void
-+native_render_calib_note(unsigned kind, ipc_kmsg_t kmsg, ipc_port_t port,
-+    int from)
-+{
-+	mach_msg_header_t *hdr;
-+	uint64_t bks;
-+	if (native_render_calib_state != 1 || kind != 'S' ||
-+	    from != native_render_calib_pid || !IP_VALID(port)) {
-+		return;
-+	}
-+	bks = __atomic_load_n(&native_bks_request_port, __ATOMIC_RELAXED);
-+	if ((uint64_t)(uintptr_t)port == bks) {
-+		return;
-+	}
-+	bks = __atomic_load_n(&native_bks_reply_port, __ATOMIC_RELAXED);
-+	if ((uint64_t)(uintptr_t)port == bks) {
-+		return;
-+	}
-+	hdr = kmsg ? ikm_header(kmsg) : NULL;
-+	native_render_calib_state = 2;
-+	native_render_calib_id = hdr ? (unsigned)hdr->msgh_id : 0;
-+	native_render_calib_port = (uint64_t)(uintptr_t)port;
-+	if (port == native_render_port) {
-+		return;
-+	}
-+	    (unsigned long long)(uintptr_t)native_render_port;
-+	if (IP_VALID(native_render_port)) {
-+		ip_release(native_render_port);
-+	}
-+	ip_reference(port);
-+	native_render_port = port;
-+	native_render_evt_bound = 1;
-+	native_render_evt_via = "calib";
-+	native_render_evt_pid = (unsigned)from;
-+	native_render_evt_port = (uint64_t)(uintptr_t)port;
-+	native_render_evt_ctx = hdr ? (unsigned long long)hdr->msgh_id : 0;
-+	native_render_bind_id = (unsigned)(hdr ? hdr->msgh_id : 0);
-+	native_render_bind_recv = -1;
-+	native_render_att = 0;
-+	native_render_sb_att = 0;
-+	native_render_enq = 0;
-+	native_render_deq = 0;
-+	native_render_dead = 0;
-+	native_render_rec_n = 0;
-+	native_render_rec_drop = 0;
-+	native_render_ctrl_state = 0;
-+	native_render_ctrl_try = 0;
-+	native_render_printed_key = 0;
 +}
  static unsigned native_bks_msg_id;
  static int native_bks_responder_pid;
