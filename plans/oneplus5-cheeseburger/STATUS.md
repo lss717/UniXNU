@@ -30397,3 +30397,30 @@ B. **回到用户态最后一条未试路线**：单页文本入口补丁的 can
 **工件**：内核 `de4d3114`（v8e，通用 H684/H684b）；observer `aed54d4a`；trace bundle H684=`7e66aecc` / H684b=`4d333989`；boot H684=`cb9c6f05`、H684b=`75d6409b`（本机 builds/ 下，SHA 复核一致）。提交链：内核 f63dfc02→696e6676（v8e），插件 5f2c49f→65eabfa→3425cd7→e82df40。日志 logs/H684（两次，319811+319811? 首 78086/复跑 319811 已并入同名文件——首窗数据在第二次 boot 前已改名保留于 H684b-live.raw.bin 之前的 H684-live 首采；正式两份：H684 复跑=本目录 H684-live.raw.bin 319811B、H684b=373539B）。尾窗 sink 依旧无正文。设备 TWRP。
 
 **H685 排序（更新）**：① 插件加 `clientPortOfContextId:` 判定行（已知桌面 ctxid 查询 + bb 自有 ctxid 正对照）——零布局依赖，直接回答"绑定存在吗"；② UFS_ALIVE 挂 vsync 计数器；③ 之后才轮到 `sheng-vsync=60` 判别实验与 traffic 按 MIG id 过滤的 CA 通道绑定。
+
+### §394 H685-H686 校准链：受控提交证明 SB 真的在发 CAWindowServer 请求，而 backboardd 一个都不收——首要卡点从客户端翻转到服务端（2026-11-26）
+
+**方法与迭代（按转达要求：受控图层更新校准、正对照未命中即不可判、端口查询只证实注册）**：
+
+- H685（v9 初版）：**启动失败无 CDC**。后台线程 begin/commit + 事件锁下端口交接双隐患并存；此后拆步归因。
+- H685b：主线程化后仍然无 CDC——二分（H685c=纯 v8e 内核+主线程校准）恢复健康启动，锁定 v9 内核侧在事件锁下 `ip_release` 旧端口为启动杀手；**v9d 起校准改为纯观测（记录值，不动端口），端口交接移到无锁的 sampler 上下文（v10）**。
+- H685d：main-runloop 观察者回调 5 分钟不足 3 次唤醒（主线程被 telephony 同步 XPC 长按住），cal=0 —— 按判据全窗记**不可判**。
+- H685e：dispatch_after(main) 同样饿死（310s 起 stall 至窗口尾），cal=0，不可判。
+- H685f/f2：把校准挪到 `-[SpringBoardApplication applicationWillFinishLaunching]` **入口**（任何启动阻塞之前的最后主线程同步窗口）。f2 成功：`committed 299.3 → control_ctx made=1 id=0xfa64627b → f_returned` —— **didFinish 入口的主线程同步 CA RPC 走通并拿到服务器分配的 contextId**。
+- H686（v10：sampler 采纳 cp 并重置计数）：**决定性**：
+  - `cal=4 bctx=0x9d0a rcv=56 cp=0xfffffff248b3bba0`（swap 成功，bctx 从 'w00t' 换成数字 MIG id 0x9d0a=40202，属 CAWindowServer 请求族）；
+  - 331s（刚换绑、计数清零）→ 391s：**`sb=3 att=11 enq=11 deq=0 drop=3`**，rec 行 `send from=27 id=0x9d0a size=132` ×3；另有 pid=157 的 `id=0x9d27/0x9d28` 请求 ×4 落在同一连接；
+  - 至 571s（窗口尾）计数不再增长：**11 条请求全部入队、零出队**；
+  - 同期 bb/56 活着且在忙：`rep=bb Q` 正常，367.5s/382.7s 仍在 `NATIVE_IOKIT op=match NativeLegacyDisplay / AppleM2ScalerCSCDriver`——**backboardd 卡在 IOMobileGraphicsFamily 的服务匹配/打开循环里，CAWindowServer 的接收循环从未建立绑定**；296→367→382 的 match 间隔 70-90s，疑似每一步都在等某个慢超时。
+
+**根因重排（推翻多条旧假设）**：
+1. "SB 从不提交事务" —— **错**。SB 有真实 CAWindowServer 请求（0x9d0a），只是此前所有观测都绑在 w00t 注册口上。
+2. "显示未绑定 ⇒ 无 vsync ⇒ 无事务" —— 因果链断在第一环之前：请求根本没有被服务端收取，谈不到 vsync/绑定。**w00t 不作 CA 证据（转达要求执行完毕）**。
+3. 首要卡点 = **backboardd 服务端收件循环缺位**，且 bb 主线程被显示驱动的匹配/打开序列长时间占据。这与此前"bb 反复 crash"可能是同一件事的另一面：bb 在崩溃前其实从未活到能服务 CA 请求的状态（或到达即被杀）。
+
+**下一轮（H687，服务端取证）**：
+- bb 线程态采样（quiet=2 名单已含 backboardd=index6 且 v5 已加 miss 行，但窗口内既无 backboardd 采样行也无它的 miss 行——先把这条观测通道打通并取证 `SBPC comm=backboardd` 的 tid/pc/wait：确认主线程在哪个调用里）；
+- IOKit match/open 步进计时：bb 打开 NativeLegacyDisplay/AGX 的 user client 序列每步耗时（现有 IOKIT/TC_QUERY 行时间戳已粗显 70-90s 间隔，需要更细的 gate 行）；
+- 保留既有计数/正对照管线：请求队列长度可由 enq-deq 差直接读出，无需新代码。
+
+**工件登记**：内核链 `89ede49b`(v8e)→`d9e807d`(v9d)→`5eb94568`(v9d+f2 复用)→`2624cb64`(v10=H686)；observer 链 `aed54d4a`→`c073101d`→`0cc32305`；boot：H685=`1dc8274b`、H685e=`fb1867a3`(f)、H685f=`4a8cda0a`、H685f2=`4b81889b`(wait——记录以本行日志为准)、H686=`4b81889b…` 见 builds/H686（live 364580B；tail 无正文，sink 依旧）。vsync 打印面按转达要求未与行为修正混做，留待单独候选；`sheng-vsync` 仍未启用。设备 TWRP，无分区写入。
