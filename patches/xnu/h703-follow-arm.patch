@@ -1,0 +1,160 @@
+--- a/osfmk/kern/task.c	2026-11-26 23:39:55
++++ b/osfmk/kern/task.c	2026-11-26 23:39:55
+@@ -10519,6 +10519,18 @@
+ extern mach_port_name_t ipc_entry_name_mask(mach_port_name_t name);
+ static ipc_port_t native_watch[6];
+ static unsigned native_watch_n;
++/* H703: LS reply-port dedicated slot, arming heartbeat, and the bounded
++ * transition follow (STATUS 411). native_ls_rep is armed only from the
++ * row whose ulock owner resolved (holder), so the bound ring keeps a
++ * guaranteed place for the reply path of THIS request. prev/same track
++ * the main thread's park identity across beats; lkf_left budgets the
++ * 2.5 s x 8 follow bursts. */
++static uint64_t native_ls_lock;
++static uint64_t native_ls_owner;
++static uint64_t native_sb_prevl;
++static uint32_t native_sb_prevp;
++static uint32_t native_sb_same;
++static unsigned native_lkf_left = 3;
+ 
+ struct native_sb_row {
+ 	uint64_t tid;
+@@ -10805,6 +10817,52 @@
+ 		native_sb_task = t;
+ 	}
+ 	return 1;
++}
++
++/* H703: bounded short-interval follow of the main thread and the current
++ * lock owner around a park transition (<=3 bursts per boot, 8 samples x
++ * 2.5 s each). Separates reply (owner leaves the wait before the main
++ * thread parks elsewhere), page-in stall (owner pc stays at the same
++ * non-syscall address with TH_WAIT and frozen cpu), and capture gaps.
++ * Re-acquires the task lock per sample; a failed try prints a miss row. */
++static void
++native_lkfollow(unsigned sample, unsigned maintid, unsigned otid)
++{
++	for (unsigned k = 0; k < 8; k++) {
++		IOSleep(2500);
++		if (native_sb_task == TASK_NULL ||
++		    !task_lock_try(native_sb_task)) {
++			printf("NATIVE_LKFOLLOW: sample=%u k=%u miss=locked\n",
++			    sample, k);
++			continue;
++		}
++		thread_t th;
++		queue_iterate(&native_sb_task->threads, th, thread_t,
++		    task_threads) {
++			unsigned tid = (unsigned)thread_tid(th);
++			if (tid != maintid && tid != otid) {
++				continue;
++			}
++			arm_saved_state_t *st = get_user_regs(th);
++			if (!st || !is_saved_state64(st)) {
++				continue;
++			}
++			printf("NATIVE_LKFOLLOW: sample=%u k=%u tid=%u "
++			    "pc=0x%llx lr=0x%llx wait=0x%llx cpu=%u state=0x%x "
++			    "x16=%u x1=0x%llx val=0x%llx kmsg=%u rname=0x%x\n",
++			    sample, k, tid,
++			    (unsigned long long)get_saved_state_pc(st),
++			    (unsigned long long)get_saved_state_lr(st),
++			    (unsigned long long)(uintptr_t)th->wait_event,
++			    th->cpu_usage, th->state,
++			    (unsigned)(uint32_t)get_saved_state_reg(st, 16),
++			    (unsigned long long)get_saved_state_reg(st, 1),
++			    (unsigned long long)get_saved_state_reg(st, 2),
++			    th->ith_kmsg != IKM_NULL ? 1u : 0u,
++			    th->ith_receiver_name);
++		}
++		task_unlock(native_sb_task);
++	}
+ }
+ 
+ static void native_xpc_register(uint64_t port, int pid, const char *owner, char role);
+@@ -11446,6 +11504,8 @@
+ 		 * holder hypothesis directly.  Read-only; copyinmap on the sampled
+ 		 * task map, same pattern as the H700 trap-block snapshot. */
+ 		if (strncmp(name, "SpringBoard", 11) == 0) {
++			unsigned curp = 0;
++			uint64_t curl = 0, curo = 0;
+ 			/* H702: the in-flight kmsg header has its port rights
+ 			 * consumed by the send, so the H701 mrport test never
+ 			 * fired and the lane never armed (STATUS 409 defect).
+@@ -11583,7 +11643,76 @@
+ 				    (unsigned long long)otid);
+ 				native_journal_add(8, native_sb_pid, (uint32_t)r->tid,
+ 				    (uint32_t)r->x1, cur, r->x2, "ulk");
++				if (otid && r->mksrp &&
++				    native_ls_rep == IP_NULL &&
++				    native_ls_lock == 0) {
++					/* H703: dedicated reply-port slot armed from
++					 * the row that ACTUALLY holds the first
++					 * observed ulock, not from the header
++					 * fields that the send consumed. */
++					native_ls_lock = r->x1;
++					native_ls_owner = otid;
++					native_ls_rep = (ipc_port_t)(uintptr_t)r->mksrp;
++					printf("NATIVE_LSARM: sample=%u sb=%d "
++					    "lock=0x%llx holder=%llu "
++					    "rep=0x%llx\n", sample,
++					    native_sb_pid,
++					    (unsigned long long)r->x1,
++					    (unsigned long long)otid,
++					    (unsigned long long)r->mksrp);
++				}
++				if (native_sb_count &&
++				    r->tid == native_sb_rows[0].tid) {
++					curp = 1;
++					curl = r->x1;
++					curo = otid;
++				}
++			}
++			if (native_ls_lock != 0) {
++				printf("NATIVE_LSARM-ST: sample=%u rep=0x%llx "
++				    "lock=0x%llx owner=%llu park=%u l=0x%llx "
++				    "o=%llu prevp=%u prevl=0x%llx\n", sample,
++				    (unsigned long long)(uintptr_t)native_ls_rep,
++				    (unsigned long long)native_ls_lock,
++				    (unsigned long long)native_ls_owner,
++				    curp, (unsigned long long)curl,
++				    (unsigned long long)curo,
++				    native_sb_prevp,
++				    (unsigned long long)native_sb_prevl);
++				if (native_lkf_left > 0 &&
++				    native_sb_count != 0) {
++					int go = 0;
++					unsigned ftid = 0;
++					if (native_sb_prevp && !curp) {
++						/* the main thread just left the
++						 * first lock: chase who woke it */
++						go = 1;
++						ftid = (unsigned)native_ls_owner;
++					} else if (native_sb_prevp && curp && curl != 0 &&
++					    curl != native_sb_prevl) {
++						/* new lock identity under the main
++						 * thread: chase its owner */
++						go = 1;
++						ftid = (unsigned)curo;
++					} else if (native_sb_prevp && curp && curl != 0 &&
++					    curl == native_sb_prevl &&
++					    curl == native_ls_lock &&
++					    (native_sb_same++,
++					     native_sb_same == 2)) {
++						go = 1;
++						ftid = (unsigned)(curo ? curo :
++						    native_ls_owner);
++					}
++					if (go) {
++						native_lkf_left--;
++						native_lkfollow(sample,
++						    (unsigned)native_sb_rows[0].tid,
++						    ftid);
++					}
++				}
+ 			}
++			native_sb_prevp = curp;
++			native_sb_prevl = curl;
+ 		}
+ 	}
+ 	if (native_sb_task != TASK_NULL) {

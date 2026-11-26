@@ -30713,3 +30713,18 @@ X 事件 = 0（无未读丢弃）
 **残留缺陷/盲区**:bound 环窗口内 0 行(watch 已 arm 于窗口外,但 R/D 依赖回复存在——零回复下无行为,不算故障也不算验证);LSWATCH armed 打印落在窗口外;SBLANE 的 rcv=0x0 与 SBMSG2 rcvname=0x2c03 不一致(ith_receiver_name 在该等待形态下为 0,记录语义);3007 的等待对象类型未判;cfprefsd 拍行未入窗;突发/accept/SAMPLE 连续两轮零覆盖(burst 依赖主线程推进,H702 主线程又被第二把锁拖住)。
 
 **H703 下一步(按证据顺位)**:(a) 判 3007 的 wait 对象类型(打印 wait_event 的内核类型/所属 zone——port? vm_page? clock?——同 boot 的 nanosleep 行可作参照),确定"runtime 持锁者为何在消息解析路径内核等待",若为页入则回到 UFS 读窗争用的老账;(b) 查 lsd 为何从不 receive 该端口:LSKN1 的 filter/kq 字段偏移需对齐 `event_private.h` 精确定位后重打(kn_kq 疑似在更后字),对 lsd kevent_id 线程解 x0 kqreg 与 knote kq 比对;(c) cfprefsd 拍行纳入本窗(缩短拍周期或提高导出预算);(d) burst 链继续保留观察,不加语义改动。
+### §411 §410 证据边界更正与 H703 设计:owner 直解仅在当轮成立、跨轮 tid 不同不构成推翻;"零回复/拆除告终/全局饥饿"收回为待定(66s 拍间隔盲区);bound 通道实际正常(此前按错误前缀 NATIVE_BOUND_EVT 误判为 0,真名 NATIVE_BND_EVT,H700/H701/H702 CDC 分别 32/38/38 行、盘窗内 12 行全部 render 端口)(2026-11-26)
+
+**更正一(owner 归属)**:H702 当轮第一锁 owner=tid689、第二锁 owner=tid3007 均为 `ipc_entry_name_mask`+kotype 直解命中,仅在 H702 内成立。H701 的 tid675 候选依据(当轮 rport=0xc203==sname、栈逐偏移一致)**未被推翻**——H701 轮 otid=0 是探针解码错误所致,不能以两轮 tid 数值不同相互否定。
+**更正二(LS 请求结局)**:H702 中 6390@1277.77(lsd 侧 cnt=1 seq=0)与 6420@1349.09(lsd 侧 check 行 port=0 entry 消亡、SB 侧 set 行不再出现)之间存在 66 秒无采样间隔;"回复后正常返回""超时放弃""连接被拆"三者在现有行下**不可区分**;iseq=0 检测器没有做过回复路径的当轮正对照(同 boot 的 pair D 正对照走的是另一条采集通路),故 §410 的"以连接拆除告终、全程零回复"与"~373s 后 SB 未收到任何同步 XPC 回复(全局饥饿)"收回,改记为**待定,待 H703 短间隔跟样判别**。
+**更正三(bound 通道)**:我此前统计 NATIVE_BOUND_EVT 得 0 属前缀写错;实际导出行是 `NATIVE_BND_EVT`,三轮 CDC 32/38/38 行、H702 盘窗内 12 行(serial 27-38,ms=1212.4s 的 mediaserverd→bb CA 消息 S→D→tid719)——通道在晚段亦工作正常,LS 回复端口零事件因此既可能真无回复、也可能端口未及 watch 名额(watch[6] 无保留位),须由 H703 的专用槽消除歧义。
+**更正四**:第二把锁仅一拍可见(6420),tid3007 的 wait=0xfffffff0072a6bb8 未定型,页入与内核对象两种解释都保留;"transient vs 长期阻塞"未判。
+
+**H703 观测(单补丁 h703-follow-arm,series 156,全在 task.c)**:
+1. `NATIVE_LSARM`:回复端口**专用槽**——只在 ulock owner 直解命中的那一行取 `ith_special_reply_port` arm(不再与通用 watch[6] 抢名额),打印 sb 代次、锁 VA、holder tid、回复端口。
+2. `NATIVE_LSARM-ST`:每 SB 拍心跳(rep/lock/owner + 主线程当前 park/锁/owner + 上一拍状态),arming 与状态不再可能被窗口挤掉。
+3. `native_lkfollow`:拍间转换触发有界跟样——三种条件任一(主线程离开第一锁;主线程换上新锁;主线程在同一锁上连续第 2 拍仍不变)启动 **8×2.5s** 的跟样(每点打印主线程与 owner 的 pc/lr/wait/cpu/state/x16/x1/val/kmsg/rname),预算 ≤3 次/boot。判据:owner 先离开等待且主线程前进=回复路径;owner pc 钉在同一非 syscall 地址、TH_WAIT、cpu 冻结=长期阻塞(页入候选);主线程 pc 系列跨过 libsystem_kernel 后进入 SB 二进制区=走过旧调用点的内核侧代理证据。
+4. LS 侧事件判别:回复/断连 → 专用端口上的 BND R/D 或 entry 消亡 + follow 的 iseq/kmsg 变化;采集缺口 → follow miss=locked 行或窗口空档,单列登记。
+5. 其余全保留(SBLOCK/SBLANE/LSKN1/TARGETPORT/driver accept+采样线),不扩全体 XPC 服务、不加语义改动。回调返回、真实图层、换帧、可见锁屏四项验收独立保留。
+
+**流程**:Windows 提交推送 → Mac 拉取核对构建 → 设备核验(TWRP 在位)→ fastboot boot → CDC 采集 + TWRP 盘环回捞。
