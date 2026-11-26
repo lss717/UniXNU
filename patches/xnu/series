@@ -143,3 +143,4 @@ console-panel-ownership-off-h633a.patch
 native-render-ipc.patch
 native-iokit-timing.patch
 sbpc-inline-flush.patch
+sbpc-rows48.patch

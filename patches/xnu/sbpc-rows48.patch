@@ -1,0 +1,11 @@
+--- a/osfmk/kern/task.c	2026-11-26 14:03:14
++++ b/osfmk/kern/task.c	2026-11-26 14:03:14
+@@ -10529,7 +10529,7 @@
+ 	uint32_t recv_name;
+ 	uint32_t recv_seqno;
+ };
+-static struct native_sb_row native_sb_rows[16];
++static struct native_sb_row native_sb_rows[48]; /* H691: 16 truncated backboardd before its display threads */
+ static unsigned native_sb_count;
+ static const char *native_sb_note;
+ static unsigned native_sb_match_index;
