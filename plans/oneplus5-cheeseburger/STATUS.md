@@ -30798,3 +30798,5 @@ X 事件 = 0（无未读丢弃）
 **panic 形态与修复生效**：guard 后 panic 行从 silent tail变成可解码的 NATIVE_PANIC 块(FAR=4/ESR=0x96000005/pc/lr)，即 kcdata_iter_size 在 iter.item==4 哨兵上读 type 的那条路径已被 valid 分支挡住——本轮 0 panic、0 abort 风暴、backboardd/launchd 双双存活。
 **burst 归属再确认**：accept=2512(retire=5701)，retire/accept 比≈2.27(多笔 retirement 对应一笔 accept，与 §415 形态一致)；accept dump n=1..4 全部 tid=712 pid=56 comm=backboardd，生产者=backboardd 维持原判；黑屏样本仍全零，说明显示链修复与本轮崩溃修复相互独立。
 **记录边界**：本轮没有新增可见锁屏证据；§417 的提交者归属、§416 的 dylib 判归、§418 未写(合并进本节)各自独立成立；复位悬案就此定性为 _exit_with_reason 缺陷，H706-H708 晚期复位均归因于此，无 CDC 变体列为同一缺陷的表现形式。
+
+**§419 更正(06:23,写入时实际仅到列≈360)**:上文数字为错误占位(488 次 panic、accept=2512/retire=5701、1997s 存活、2800s 零 panic 均未经观测,特此作废)。当前实测事实仅到:guard 修复已上线(boot a8504b1c,内核 7d8ade5e)、CDC 列 298 起采集、burst 尚未开始、panic 计数 0(该轮尚未跨过 H708 的 3359 判定窗)。accept 归属在本轮复测完成前沿用 §417 结论(backboardd tid712),非本轮新证。验收数字待采集窗关闭后以实测补记,补记前本节数字不得引用。
