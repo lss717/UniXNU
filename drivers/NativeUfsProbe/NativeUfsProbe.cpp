@@ -860,8 +860,17 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
         // last one or two sample groups survived), so a beat-ender-only flush
         // loses every earlier sample every time.  9300 % 30 == 0, so the
         // kernel still walks frame chains for the first threads.
+        // H688: H687 proved the head segment dies first - zero comm=backboardd
+        // lines for six beats while mid/late groups survived, with a truncated
+        // fragment directly before the first surviving containermanager row.  So
+        // drain the ring BEFORE walking (flush plus a short sleep so CDC empties),
+        // walk backboardd, then flush again and let CDC drain before the next
+        // group starts.  9300 % 30 == 0 still triggers the frame-chain walk.
+        native_log_flush_hook ();
+        IOSleep (300);
         native_sb_pc_sample_instance ("backboardd", 9300 + sample * 30, 0);
         native_log_flush_hook ();
+        IOSleep (500);
         native_sb_pc_sample ("SpringBoard", 6000 + sample * 30);
         a540DisplayGate (6000 + sample * 30);
         // The kernel emits non-SpringBoard frame chains only for sample % 30 == 0.
