@@ -1,5 +1,5 @@
---- a/osfmk/kern/task.c	2026-11-27 01:59:10
-+++ b/osfmk/kern/task.c	2026-11-27 01:59:10
+--- a/osfmk/kern/task.c
++++ b/osfmk/kern/task.c
 @@ -10925,20 +10925,25 @@
  	char tag[24];
  };
@@ -31,8 +31,8 @@
  		return;
  	}
  	if (__atomic_fetch_add(&native_journal_kind_n[kind], 1,
---- a/osfmk/kern/debug.c	2026-11-27 01:59:10
-+++ b/osfmk/kern/debug.c	2026-11-27 01:59:10
+--- a/osfmk/kern/debug.c
++++ b/osfmk/kern/debug.c
 @@ -1149,7 +1149,11 @@
  		 * hides the real reason.  Only use them from a normal context. */
  		if (get_preemption_level() == 0) {
@@ -46,7 +46,7 @@
  			va_copy(native_panic_args, *panic_args);
  			vsnprintf(native_panic_msg, sizeof(native_panic_msg),
  			    panic_format_str, native_panic_args);
-@@ -1157,6 +1161,98 @@
+@@ -1157,6 +1161,108 @@
  			printf("NATIVE_PANIC_STR: %s\n", native_panic_msg);
  			extern void native_journal_add(unsigned, uint32_t, uint32_t, uint32_t, uint32_t, uint64_t, const char *);
  			native_journal_add(4, 0, 0, 0, 0, 0, native_panic_msg);
@@ -56,8 +56,18 @@
 +				 * FP-chain walk inside the faulting kernel
 +				 * stack window (no page-walk, validated
 +				 * alignment/monotonicity/range, 12 frames). */
-+				const char *sp0 = strstr(native_panic_msg,
-+				    "saved state: 0x");
++				const char *hneed = "saved state: 0x";
++				const char *sp0 = NULL;
++				for (const char *hscan = native_panic_msg; *hscan; hscan++) {
++					unsigned hk = 0;
++					while (hneed[hk] && hscan[hk] == hneed[hk]) {
++						hk++;
++					}
++					if (!hneed[hk]) {
++						sp0 = hscan;
++						break;
++					}
++				}
 +				struct h706_state {
 +					uint64_t x[29];
 +					uint64_t fp, lr, sp, pc;
