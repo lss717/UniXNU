@@ -30478,3 +30478,31 @@ B. **回到用户态最后一条未试路线**：单页文本入口补丁的 can
 **解读**：§394/§395 的"bb 主线程忙轮询而非阻塞"现在有实体：**一条线程在 os_unfair_lock 上自旋-阻塞循环（88s CPU），同时另一条线程以 ~250Hz 非阻塞轮询一个 16KB 接收口**。这把锁把 bb 挡在 IOServiceOpen 之前（CA io 循环同被拖死 → deq=0），而 0xf517 轮询线程等的大概率是显示/唤醒侧的消息源。下一步 H691（rows 48）看 match 线程在哪个调用里，并确认 777/800/1736 与 1041/870 的分工；0xf517 的对端身份（peer pid、端口 owner）由 SBPORT 行补齐。
 
 **工件登记**：kernel 链 v11 `d4dd9ab6` →(H688 驱动排布) `eec90a0d` →(H689 index) `f479a7b4` →(H690 inline-flush) `4247546114c4` →(H691 rows48) `6f6487ba`；boot：H689=`0f086d5b`（boot id 0x34ac02dd）、H690=`d289013b`（boot id 0x34ad7752）、payload H689=`e6c982aa`/H690=`9922914f`；trust=19b8efb9、addon=c47f86a7 沿用；observer/trace 不变。boot-args 逐字节不变。设备两轮均 panic 序列后自行回 Android，无分区写入。日志 `logs/H689/device/H689-live.raw.bin`、`logs/H690/device/H690-live.raw.bin` 与对应 `tmp/h68*-decoded.txt`；符号化工具 `Mac:/tmp/h690-sym.py`（slide 由 CoreFoundation/libdispatch/CMImaging/MetalFilter 四基址一致推定）。
+
+
+### §398 H691 rows48 判定：bb 本轮共 13 个线程且无截断——两个 match 线程（889/1362）在匹配后自行退出，open 从未被同一工作项触达；轮询线程 cpu=330s 复现。H692 改为在 match 返回点现场走帧链（2026-11-26）
+
+**执行**：单变量=`sbpc-rows48.patch`（series 146，`native_sb_rows[16]→[48]`），kernel `6f6487ba`，boot `405c316b`（boot id 0x34a1753a，live 384353B，解码 2814 行）。
+
+**判定一，采集无截断、match 线程是短命工作项**。k=4（515.28s）与 k=5（576.14s）两拍完整落地：`n=13`/`n=14`——本轮 bb(pid=56) 在采样时只有 13-14 线程（低于 48 上限，无截断）。但本轮两个 match_one 线程 **tid=889（277.2s）与 tid=1362（367.9s）都不在行表里**：它们在匹配完成（t=0µs、ret=0）之后、下一拍采样之前已退出。**"match 成功→不 open→线程退出→约 90-130s 后新线程重来"**——open 的缺席不是等待，是工作项根本没走到那一步。
+
+**判定二，热点结构逐位复现**。tid=961：`mach_msg2_trap`，to=0 非阻塞 rcv 端口 0x2707（rcvsz=16384），**cpu=330403ms——boot 515s 内吃掉 64% 单核**（H690 的 tid=870 同位：80790ms@393.7s）；tid=891：`__ulock_wait`←`_dlock_wait+0x34`(libdispatch)，cpu=24750ms（H690 的 744 同位但 cpu 10ms，H690 的 88s 角色由 1041 `os_unfair_lock_lock_slow` 承担——本轮 n=13 里无此线程，锁竞争线程本身也在轮换）；tid=813：`mach_msg2_trap` 同步 RPC 发 72B→rport 0xe807、等 124B 回包、to=5000（H690 tid=677 同构）；其余为无限收口 worker 与 `__workq_kernreturn` 闲置组。**slide 换算已闭环**：H691 slide=0xB208000（由 H690 slide=0x95cc000 加镜像位移差 0x1C3C000 推得，dispatch/pthread 非滑移地址与 H690 逐一吻合）。
+
+**结论**：bb 侧不存在"卡在 open 里"——它卡在 **match 之后决定 open 之前的一段用户态逻辑**，该逻辑在线程退出前跑完（t=0µs 级别），重试由定时器驱动。谁在 0x2707/0xf517 这个 16KB 接收口上等消息、以及为什么 match 成功后代码不继续 open，需要 match 现场的调用栈。
+
+**H692（已实施，kernel 重建中）**：`h692-iodwell.patch`（series 147）——在 `internal_io_service_get_matching_service` 对 backboardd 且 IOProviderClass==NativeLegacyDisplay 且 kr=Success 的返回点，现场 `get_user_regs(current_thread())` 走 fp 链 14 帧（`NATIVE_IODWELL` 行，每 boot 上限 6 次；comm 过滤在 task.c 内）。判据：lr 序列按 DSC 符号化后应落在 CoreDisplay/QuartzCore/IOMobileFramebuffer 家族，指明"匹配后走 open 前"的判定函数；若帧链断裂（fp 无效）则记不可判并改用 pc 直方图。构建脚本已加 h692 的 -R/+ 幂等环与双文件 diff 断言。
+
+**工件登记**：kernel 链 … `4247546114c4`(H690) → `6f6487ba`(H691 rows48)；boot H691=`405c316b`；payload=`8588e124`；trust=19b8efb9、addon=c47f86a7 沿用；boot-args 逐字节不变。设备 615.9s 第四次同形死亡后自行回 Android，无分区写入。日志 `logs/H691/device/H691-live.raw.bin`、`tmp/h691-decoded.txt`。
+
+
+### §399 H692 dwell 链与 H313 客户端表双重修正：bb 在 CDC 前已打开显示 user client 并成功调用 16 个 selector（此前"从未 open"的结论只对 CDC 后窗口成立）；bb 前三次 match 循环实为 observer 重挂；swap 队列 req=0；pre-CDC 日志唯一通道 h103 槽已断供（2026-11-26）
+
+**H692（kernel `37d4a121`，boot `8b3f1269`，boot id 0x34a25041，live 392863B）**：`h692-iodwell.patch` 在 NativeLegacyDisplay match 成功返回点现场走帧链，三段 dwell（tid 729/1470/1846@284.4/390.3/550.7）链完全一致：`_start_wqthread → __pthread_wqthread → __dispatch_worker_thread2 → __dispatch_root_queue_drain → __dispatch_source_invoke → __dispatch_client_callout → [主程序区 0x10092aeb8] → IOServiceGetMatchingService+0xcc → io_service_get_matching_service_bin → mach_msg2_trap`（slide=0xE398000，由本轮 libdispatch 基址 0x19d8ec000 与 ext 树未滑移基址对算）。三段 lr 恒等=同一 dispatch source 重挂点。对照 iPhoneOS SystemRoot cryptex 的 stock backboardd（`/tmp/sysroot21/usr/libexec/backboardd`，May-1-2026 构建）：全文件只有两处 `bl _IOServiceGetMatchingService`（`0x10005893c/0x10005895c`），且其匹配类名字符串是 **AppleH1CLCD / AppleM2CLCD**（H1 命中后 cbnz 落到 M2 再试，成功跳 open 路径，其后即 `_IOMobileFramebufferOpen` stub）——0x10092aeb8 与任何对齐基址都推不出这两点。**结论：dwell 链不是 stock bb 的显示初始化，而是本项目注入/自建组件在 bb 进程内的 NativeLegacyDisplay 重挂循环**（observer 侧行为，与 H686 v10 采样器 adopt 校准端口同源）。
+
+**H313 客户端表推翻"从未 open"**：`NATIVE_LEGACY_CLIENTS` dump 的 n 是 dump 字节数（kSeenClients=8），续行完整读出：**C2 pid=56(backboardd) calls=16 fails=0 regs=0**（C0/C1=MobileGestaltHelper pid78/79 calls=0；C3 pid=88 calls=2）。selector 分布 6/8/12/15/17/22/27/29/33/50/57/74 各 1 次、79 两次、84/88 各 1 次，全部 status=0。**bb 在 pre-CDC 已打开显示 user client 并完成 16 次成功调用**；`s6#0 0 80000003 0 -> 0 [5820]=0 [5824]=0`（本驱动自定义 done/presented 快照）与族层 `NATIVE_LEGACY_SWAP: kick transferred=0 pending=0 / skip req=0 valid=0` 说明**帧提交从未到达 swap 队列**，且 **regs=0**——没有客户端在 user client 上注册任何 wake/vsync 通知口。
+
+**bb 生命周期修正**：本轮（与 H687/H690 同形）bb 第 6 实例 pid=56 存活 110s→614s；614.1s "Corpse failure, too many 6" 前无任何中间 Corpse-allowed 行——**前 5 次崩溃发生在 pre-CDC 窗口**（H680 的"bb died pre-window 5x"在当前构建仍存在，只是看不见）。窗口内看到的 match 循环、冻结 CA 队列、deq=0 全部来自第 6 实例：它 open 过、调用过 16 个 selector、然后停在"提交第一帧之前"。611-616s 的击杀/重拉/内核死亡序列第四次、第五次复现（H692 断流 608→614.1s 击杀→615.6s 断）。
+
+**pre-CDC 日志通道现状（唯一缺口）**：CDC 231-285s 才枚举，bb 前 5 次死亡与首开序列全在盲区。`scripts/h103-log-pull.py` 拉取 userdata_ios 尾 32MiB：header 由本轮实时更新（uptime_s=582/rounds=294/write_errors=172），但**槽内容仍停在 boot=244fe4db build=H635**（247 个 SHLOGS stamp 全为该旧 boot），本 boot 一次成功槽写都没有；且 USB healthy 后 `gH103DiskPaused=1`（NATIVE_USB_DISK reason=usb-healthy，paused=269≈rounds）是设计行为——USB 接管后刻意让盘。**H693 方向（唯一变量：把 pre-USB 段槽写修通）**：先定 write_errors=172 的失败点（UFS 写请求在哪一层被拒；`NATIVE_H469_STATUS lock_ok/lock_wait` 与 slot 写路径的关系），修通后一次 boot 即可拿到 boot+40s 起的全程日志（含 bb 前 5 次崩溃的 exit 原因、首开 selector 时序、以及 stock H1/M2CLCD 匹配是否发生/返回码）。CDC 提前不动 USB 时序（牵涉 UFS 依赖，另案）。
+
+**工件登记**：kernel 链 `37d4a121`(H692)；boot H692=`8b3f1269`；payload=`59855b4a`；series 追加 `sbpc-inline-flush`(145)/`sbpc-rows48`(146)/`h692-iodwell`(147)。设备终态 TWRP（本轮收尾主动 reboot recovery，无分区写入；h103 拉取为只读）。日志：`logs/H692/device/H692-live.raw.bin`、`tmp/h692-decoded.txt`、`tmp/h692-h103.txt`、`tmp/h692-h103-window.bin`。backboardd 对照二进制：Mac `/tmp/sysroot21/usr/libexec/backboardd`（OS-SystemRoot.dmg 只读挂载于 /tmp/sysroot21，用完可 `hdiutil detach`）。
