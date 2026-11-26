@@ -1,0 +1,14 @@
+--- a/osfmk/kern/task.c	2026-11-26 16:12:28
++++ b/osfmk/kern/task.c	2026-11-26 16:12:28
+@@ -10854,9 +10854,9 @@
+ 		    (unsigned long long) e->a4, e->tag);
+ 		native_journal_cur++;
+ 		emitted++;
+-		if ((emitted % 4) == 0) {
++		if ((emitted % 2) == 0) {
+ 			native_log_flush_hook();
+-			IOSleep(900);
++			IOSleep(1100);
+ 		}
+ 	}
+ 	native_log_flush_hook();
