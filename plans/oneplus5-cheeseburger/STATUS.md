@@ -30545,3 +30545,29 @@ B. **回到用户态最后一条未试路线**：单页文本入口补丁的 can
 **工件登记**：boot H697=`7ede1d8e`；payload=`d0874e49`；kernel `383097a7`（与 H696 代码等价的元数据漂移，记录在案）；NativeMetal gitlink `6b8bf06`（marker H697）；trust `5dab5c17`（trace 槽换 402b4be1）；addon `6cd7c4e5`。设备**仍在运行 UniXNU**（采集到 1230s 截止时未死，日志尾 1477s）——首次出现"需要人为处置"的存活会话；等用户目测实际画面并长按电源回 fastboot/Android 停靠，本轮无任何分区写入。日志：logs/H697/device/H697-live.raw.bin（963737B，解码 6842 行）、tmp/h697-decoded.txt。
 
 **§401 补充（会话终局，h103 环回捞，2026-11-26 17:47）**：设备后来自行复位回 Android（用户确认，现停靠 TWRP）。持久环尾部实测：UniXNU 会话真实运行到 **~1791s**（约 29.9 分钟，此前记录 616s 的 2.9 倍）后复位——**该环窗内 backboardd/56 零退出、零 ns=23、无 Corpse failure、无 panic 正文**（环每 2s 落笔，1790.86 仍是常规拍行，复位发生在一两秒内且未留正文；无 stall/logstop 戳）。旧击杀形态在存活全程未复现。新增下一层事实两条：(1) **SpringBoard 重启已发生**——1788.9-1789.5s 环尾出现新 SB（tid 5178/4783，线程号 5000+ 段）在做与旧 SB 同形态的 AppleKeyStore match+open(NotReady) 重试、IOPlatformExpertDevice match，UFS_ALIVE 的 rep 字段也从 `bb Q backboardd/56` 切到 `sb n=9 d1=0`——SB pid=27 于 1365s SIGSEGV 后被 launchd 重拉；(2) 面板通路证据更密但结论不变：A540_PANEL B(submit match=2944/3072)、PANEL_WATCH transitions=1、PANEL_H633 ring=3675→3725 fence 870→875、SCANOUT 1080x1920 正常、GPU rptr=wptr 空闲、**真实帧路径全零**（copy=0/blank=0/无 swap）。~1791s 复位方式登记为未定（非 guard 形态，无正文，回 Android 属既有复位路径行为），H697 两项结论不受影响：**生存=定论级（含死亡窗后 1000+ 秒存活），首帧=未达成，转 CA 提交链**。
+
+
+### §402 H698 首个完整轨迹：bb 收件循环被证明活着——0x9d0a 三条注册消息与 PB 七条全部 S→D 同刻直交 tid752（result=0），"runloop 不收件"正式证伪；deq=0 是 Q/D 合计数 + ctrl=1 仅证入队的读数假象；断点移到内容提交面：layer commit 全空 contents、绑定口 377.5s 后零新消息，回复端口不在观测面（2026-11-26）
+
+**审计先行（应用态代码，非补丁源）**：`native_render_note` 的 `case 'Q': case 'D': native_render_enq++` 与 `case 'R': deq++` 证实转达所指——**D（ipc_mqueue 直交给等待者，`ipc_mqueue.c:805` 带 receiver tid）不增 deq**；`native_render_control_send` 在 `ipc_kmsg_send` 返回成功即置 `ctrl_state=1`——**ctrl=1 只证明内核能把控制消息入队到绑定口，不证明有人取出**，此前把 ctrl=1 当"计数管线全通"的正对照强度虚高，已更正。`native_bks_peer` 只覆盖 SB↔launchd 对，通用 IPC 环被 launchd 洪泛（`lost=266366`），四份旧日志中 id=0x9d0a 的逐事件行 **0 条**——复用不足，触发"同镜像加专用环"分支。
+
+**H698 实施（kernel `128aec13`，boot `ef9cac4c`，boot id 0x44cd76b1）**：`h698-bound-events.patch`（series 150）——`native_ipc_event_note` 内对 **port==native_render_port** 的事件写独立环（128 项：serial/kind/ms/id/size/from/to/tid/result），拍内 6 行/900ms 节奏导出（`NATIVE_BND_EVT`）；H697 getter 隔离基线与 bundle(402b4be1)/trust 原样沿用。
+
+**首个完整轨迹（本 boot 唯一覆盖到死亡前）**：
+```
+258.056 Q  0x77303074(w00t)  27→56 → 258.058 R tid=565      （旧绑定口，被取走）
+342.782 S/Q NATC 控制消息（旧绑定口，只有 Q——无人等）
+343.286 S→D tid=752 NATC（calib-bind  adopted 后新口，752 已在等）
+350.087 S→D tid=752 0x9d0a size=132 27→56   （SB 注册 #1）
+355.326 S→D tid=752 0x9d0a                   （#2）
+357.906 S→D tid=752 0x9d0a                   （#3）
+375.140-377.531 S→D tid=752 0x9d27×1 + 0x9d28×6 （PosterBoard pid=146）
+377.531 → 1092.7s（会话尾） 绑定口 0 条新事件
+```
+**分流判定：确认"直接交付发生"** → 按预案查 handler/内容/首 swap，同时**排除**"排队待取才查等待线程"分支（752 正在消费）。bb 接收侧多线程活跃（R：565/961/746/819；D：752；至 1092s 会话末 bb 仍活着，899.7s 还在做 IOUSBHost 枚举匹配）。
+
+**首个可定位断点（限定表述）**：不在收件，在**内容提交面**——(a) 场景层事件 `srv#266-270`（299.5s）显示 `event_context_layer` + 三条 `event_layer_commit`（depth 0-2、root=0x1017a1e80、ctx=0x787db535、owner=56）**但所有 contents=- 全空**；(b) 注册消息被消费后，**绑定口再无 SB/PB 后续消息**（无第二轮注册、无事务）——是"SB 不再发"还是"SB 换了别的端口发"，当前观测面无法区分，因为 **bb 是否回了注册应答（MIG 复应答 id≈0x20000000 族）看不到**：BND 环未快照 `msgh_local_port`（应答权名在交递时刻可用，成本一行）。H699 定向：BND 环补 local-port 快照并把被快照的应答口纳入同环（同 serial 序列继续），一次上机即可判定断点在"bb 未回→SB 等应答"还是"bb 已回→SB 回后不发"。
+
+**按转达要求分开登记**：SB 换代（本 boot pid=27 全程存活，`NATIVE_EXIT: pid=27` 0 次——H697 的 1365s SIGSEGV 未在本案重现，换代非必然事件）；KeyStore 重试风暴本 boot 仅 290-360s 段；会话 1092.7s 无正文终结（第三次无 trace 复位，时刻 604/1093/1791 散布，**复位机制仍未定**，均与 ns=23 无关）；H697 归因仍限定 getter 组合与旧 guard。
+
+**工件登记**：boot H698=`ef9cac4c`；payload=`3d2639e9`；kernel `128aec13`（H697+仅 h698-bound-events.patch）；series 追加 150；bundle/trust/addon 与 H697 完全相同（402b4be1/5dab5c17/6cd7c4e5 复用）。设备 H698 会话无 trace 终结后应已回 Android（待确认停靠 TWRP）。日志：logs/H698/device/H698-live.raw.bin（659431B，解码 4620 行）、tmp/h698-decoded.txt。
