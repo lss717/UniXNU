@@ -1,14 +1,12 @@
 --- a/osfmk/kern/task.c
 +++ b/osfmk/kern/task.c
-@@ -10761,6 +10761,11 @@
+@@ -10761,6 +10761,9 @@
  static void native_xpc_emit(unsigned sample, unsigned budget);
  static void native_ipc_focus_emit(unsigned sample, unsigned msg_id,
      uint64_t remote_port, uint64_t local_port);
 +static void native_render_emit(unsigned sample);
 +static void native_render_traffic_note(ipc_kmsg_t kmsg, ipc_port_t dest,
 +    int from, int to);
-+static void native_render_calib_note(unsigned kind, ipc_kmsg_t kmsg,
-+    ipc_port_t port, int from);
  void native_xpc_track_exec(int pid, const char *comm);
  void native_ipc_event_note(unsigned kind, ipc_kmsg_t kmsg, ipc_port_t port,
      int from_pid, int to_pid, uint64_t receiver_tid, unsigned result);
@@ -30,7 +28,7 @@
  		native_xpc_register(native_sb_rcv.port, native_sb_pid, name, 'r');
  		native_xpc_register(native_sb_req.port, native_sb_pid, name, 'q');
  		native_xpc_dump(sample);
-@@ -11349,6 +11349,456 @@
+@@ -11349,6 +11349,430 @@
  		native_xpc_pids[3] = pid;
  	}
  }
@@ -88,18 +86,6 @@
 +static unsigned long long native_render_evt_ctx;
 +static unsigned native_render_bind_id;
 +static int native_render_bind_recv = -1;
-+static unsigned native_render_calib_state; /* 0 idle 1 armed 2 hit 3 expired */
-+static int native_render_calib_pid;
-+static uint64_t native_render_calib_until;
-+static unsigned native_render_calib_id;
-+static unsigned long long native_render_calib_port;
-+static unsigned native_render_evt_calib_rebind;
-+static unsigned long long native_render_evt_calib_oldport;
-+static unsigned long long native_render_evt_calib_oldctx;
-+static unsigned native_render_evt_calib_oldatt;
-+static unsigned native_render_evt_calib_oldsb;
-+static unsigned native_render_evt_calib_oldenq;
-+static unsigned native_render_evt_calib_olddeq;
 +
 +#define NATIVE_RENDER_CTRL_ID 0x4E415443u
 +
@@ -316,10 +302,6 @@
 +		native_render_bind_recv = ipc_port_get_receiver_task(
 +		    native_render_port, NULL);
 +	}
-+	if (native_render_calib_state == 1 &&
-+	    mach_absolute_time() > native_render_calib_until) {
-+		native_render_calib_state = 3;
-+	}
 +	key = native_render_att ^ (native_render_enq << 10) ^
 +	    (native_render_deq << 3) ^ (native_render_ctrl_state << 20) ^
 +	    (native_render_sb_att << 6) ^ (native_render_dead << 28);
@@ -327,14 +309,12 @@
 +		return;
 +	}
 +	native_render_printed_key = key;
-+	printf("NATIVE_RENDER: sample=%u att=%u sb=%u enq=%u deq=%u ctrl=%u dead=%u reg=%u drop=%u bctx=0x%x rcv=%d cal=%u cid=0x%x cp=0x%llx\n",
++	printf("NATIVE_RENDER: sample=%u att=%u sb=%u enq=%u deq=%u ctrl=%u dead=%u reg=%u drop=%u bctx=0x%x rcv=%d\n",
 +	    sample, native_render_att, native_render_sb_att,
 +	    native_render_enq, native_render_deq,
 +	    native_render_ctrl_state, native_render_dead,
 +	    native_render_regpid, native_render_rec_drop,
-+	    native_render_bind_id, native_render_bind_recv,
-+	    native_render_calib_state, native_render_calib_id,
-+	    native_render_calib_port);
++	    native_render_bind_id, native_render_bind_recv);
 +	if (native_render_evt_bound) {
 +		native_render_evt_bound = 0;
 +		printf("NATIVE_RENDER: bound via=%s pid=%u ctx=0x%llx port=0x%llx\n",
@@ -347,14 +327,6 @@
 +		    native_render_evt_pid, native_render_evt_ctx,
 +		    native_render_evt_oldctx, native_render_evt_port,
 +		    native_render_evt_oldport);
-+	}
-+	if (native_render_evt_calib_rebind) {
-+		native_render_evt_calib_rebind = 0;
-+		printf("NATIVE_RENDER: calib rebind id=0x%x port=0x%llx old att=%u sb=%u enq=%u deq=%u ctx=0x%llx p=0x%llx\n",
-+		    native_render_calib_id, native_render_calib_port,
-+		    native_render_evt_calib_oldatt, native_render_evt_calib_oldsb,
-+		    native_render_evt_calib_oldenq, native_render_evt_calib_olddeq,
-+		    native_render_evt_calib_oldctx, native_render_evt_calib_oldport);
 +	}
 +	if (native_render_evt_lookup) {
 +		native_render_evt_lookup = 0;
@@ -487,7 +459,7 @@
  
  struct native_ipc_event {
  	uint64_t serial;
-@@ -11398,4 +11398,118 @@
+@@ -11398,4 +11398,49 @@
  static uint64_t native_bks_request_port;
  static uint64_t native_bks_reply_port;
 +/* H682: third bind path, layout-free.  The first real message from
@@ -534,84 +506,14 @@
 +	native_render_evt_ctx = (unsigned long long)hdr->msgh_id;
 +	native_render_bind_id = (unsigned)hdr->msgh_id;
 +}
-+void
-+native_render_calibration_started(int pid)
-+{
-+	if (native_render_calib_state == 1 || pid <= 0) {
-+		return;
-+	}
-+	native_render_calib_pid = pid;
-+	native_render_calib_until =
-+	    mach_absolute_time() + (8ULL * 19200000ULL);
-+	native_render_calib_state = 1;
-+}
-+/* H685: the calibration verdict runs on the event-note path under the
-+ * destination port lock: no printing here; the recorded fields let the
-+ * sampler print the rebind with the outgoing generation totals. */
-+static void
-+native_render_calib_note(unsigned kind, ipc_kmsg_t kmsg, ipc_port_t port,
-+    int from)
-+{
-+	mach_msg_header_t *hdr;
-+	uint64_t bks;
-+	if (native_render_calib_state != 1 || kind != 'S' ||
-+	    from != native_render_calib_pid || !IP_VALID(port)) {
-+		return;
-+	}
-+	bks = __atomic_load_n(&native_bks_request_port, __ATOMIC_RELAXED);
-+	if ((uint64_t)(uintptr_t)port == bks) {
-+		return;
-+	}
-+	bks = __atomic_load_n(&native_bks_reply_port, __ATOMIC_RELAXED);
-+	if ((uint64_t)(uintptr_t)port == bks) {
-+		return;
-+	}
-+	hdr = kmsg ? ikm_header(kmsg) : NULL;
-+	native_render_calib_state = 2;
-+	native_render_calib_id = hdr ? (unsigned)hdr->msgh_id : 0;
-+	native_render_calib_port = (uint64_t)(uintptr_t)port;
-+	if (port == native_render_port) {
-+		return;
-+	}
-+	native_render_evt_calib_oldatt = native_render_att;
-+	native_render_evt_calib_oldsb = native_render_sb_att;
-+	native_render_evt_calib_oldenq = native_render_enq;
-+	native_render_evt_calib_olddeq = native_render_deq;
-+	native_render_evt_calib_oldctx = native_render_evt_ctx;
-+	native_render_evt_calib_oldport =
-+	    (unsigned long long)(uintptr_t)native_render_port;
-+	native_render_evt_calib_rebind = 1;
-+	if (IP_VALID(native_render_port)) {
-+		ip_release(native_render_port);
-+	}
-+	ip_reference(port);
-+	native_render_port = port;
-+	native_render_evt_bound = 1;
-+	native_render_evt_via = "calib";
-+	native_render_evt_pid = (unsigned)from;
-+	native_render_evt_port = (uint64_t)(uintptr_t)port;
-+	native_render_evt_ctx = hdr ? (unsigned long long)hdr->msgh_id : 0;
-+	native_render_bind_id = (unsigned)(hdr ? hdr->msgh_id : 0);
-+	native_render_bind_recv = -1;
-+	native_render_att = 0;
-+	native_render_sb_att = 0;
-+	native_render_enq = 0;
-+	native_render_deq = 0;
-+	native_render_dead = 0;
-+	native_render_rec_n = 0;
-+	native_render_rec_drop = 0;
-+	native_render_ctrl_state = 0;
-+	native_render_ctrl_try = 0;
-+	native_render_printed_key = 0;
-+}
++
  static unsigned native_bks_msg_id;
  static int native_bks_responder_pid;
-@@ -11609,6 +11609,8 @@
+@@ -11609,6 +11609,7 @@
  	e->bits = hdr ? (unsigned)hdr->msgh_bits : 0;
  	e->kind = kind;
  	e->result = result;
 +	native_render_note(kind, kmsg, port, from_pid, to_pid);
-+	native_render_calib_note(kind, kmsg, port, from_pid);
  }
  
  static void
