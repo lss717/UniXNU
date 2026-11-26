@@ -30686,3 +30686,19 @@ X 事件 = 0（无未读丢弃）
 3. lsd 检查块读 target 端口 `ip_klist.kl_list` 打 `NATIVE_LSKNOTE kn=`+journal kind=10——kn=0 且 cnt 恒 1 即证"lsd 分环从未在该连接端口挂 knote";同时 bound 环过滤从单端口扩为 render+ls_req+ls_rep 三端口,LS 通道的 D(取走)/R(回复)事件进环,与主线程恢复时刻(h557 无返回行、KeyStore 重试)做**时刻对齐**。
 驱动侧(GopFramebuffer c2ce817):accept dump(前 4 笔 validate-accepted 请求:提交线程 tid、surface 指针/IOSurfaceID/类名、792/804/816/17/81 偏移的图层 state/options/size/rect——与 reject 捕获同一组偏移);`NATIVE_LEGACY_SAMPLE`(64 点网格,源 surface 与 scanout **同位比对** same/diff/首个失配/两侧零计数+三点值——区分清屏、空 surface、有内容未呈现三态);retirement 行带 done/presented/frames;client io/fixup 行带 tid/kt。
 零语义改动、无新锁、热路径无分配;boot-args 与 H700 逐字一致(payload.json 实证),dylib 不变(trust 66d7ebd5、gpuaddon 0cbfc3b4、data 0ef3db84 复用)。
+### §409 H701 实测:LS 锁等待四拍全程复现,持锁线程 tid675 栈与 H700 tid692 逐偏移一致;lsd 端口"已挂 knote 仍无人取走"(新事实,排除未注册说);主线程 ~1311s 恢复后立刻卡进第二跳 cfprefsd 同步 XPC;mediaserverd trap 释锁说证伪;bb 突发未复现(2026-11-26)
+
+**工件登记**:kernel `c4844b18`(h701-lsd-watch 在列,series 154),driver 6e1efe8/4a25de0(accept dump、64点采样、retirement 代数、tid/kt),boot img `66f37843…`(81217536B,头部与 H700 逐字段同,ramdisk 换 payload `c7dcbbda`,trust 66d7ebd5/gpuaddon 0cbfc3b4/data 0ef3db84 复用),boot 时刻 21:52;盘环 slot_boot=408c972f(gH103BootId,与 h540 标记值两源);CDC 活到 1378.2s(error 203 无尾),盘窗 1132.7–1368.1(rounds=1177,write_errors=308,覆盖好于 H700 的 1132→1368 内含四个 SB 拍);sb=27、lsd=97、bb=56;复位数据点 +1378。
+
+**Q2 链(LS 等待,四拍 1139.7/1205.6/1277.0/1348.3)**:
+1. tid=291 与 tid=1337 同锁 parked:`NATIVE_SBLOCK op=544 lock=0x1fe5f4878 val=0x2302 cur=0x00002302 owner=0x8c0` **三拍全同**,cpu 冻结 1759413µs(1139→1277)。锁字实测成功,持锁者端口名=0x8c0。**name→tid 反查失败**(kobj=0 otid=0:0x8c0 在 SB space entry 查不到或 kotype 不匹配)——持锁者身份本轮改由三重旁证定名:见 2。
+2. tid=675 = 持锁发送方:`NATIVE_SBMSG2 comm=SpringBoard tid=675 rport=0x9507`(=TARGETPORT set 行的 sname)三拍在列、cpu=0、SBFRAME 栈与 H700 tid692 **逐偏移一致**:`_LSContextInitCommon+0x304 → __LSCopyServerStore+0x37c → ___LAUNCH_SERVICES_IS_RESEEDING_ITS_DATABASE_AND_MAY_BLOCK → NSXPCConnection 同步发送 → dispatch_mach_send_and_wait_for_reply → mach_msg2_trap`,入口同为 FBApplicationDataStoreRepositoryManager clearExpiredUninstalledApplicationsFromStoreIfNecessary block。
+3. lsd 侧新事实:`NATIVE_LSKNOTE port=0xfffffff572749b60 kn=1 cnt=1 seq=0 waiters=0`(1139/1205/1277 三拍同)——**knote 已挂**(排除"lsd 从未在该连接端口注册分发源"),但 imq 队列 cnt=1、seq=0、零接收线程、lsd 全线程等待态。请求"入队且无人取走"从推断升级为**带 knote 的直接观测**;剩余问题是"挂了的 knote 为什么没把 lsd 的任何 kevent 线程叫醒"(kn 的 kq 归属 vs lsd kevent_id 等待的 kq——H702 补读 kn_kq)。
+4. 恢复过程:1277.01 仍 parked;1311.84/1311.86 tid291 的 KeyStore match/open 重试回归(1367.9/1368.0 仍在);1348.34 拍上 tid=675 已从等待行消失、`TARGETPORT check` 显示 lsd 端口 entry 已消亡(port=0x0 peer=-1)、线程数 16→29、tid291 卡进**下一个同步 XPC**:`-[CFPrefsSearchListSource addPreferencesObserver:] / registerUserDefaultsInstance: → synchronouslySendSystemMessage → xpc 同步 → mach_msg2_trap`(目标 cfprefsd,本轮未采样)。即:SB 主线程在 completeStartup 内接连被"对端不应答的同步 XPC"接力卡死,第一跳 LS 等待 ~950s 级、连接随后消亡,第二跳 cfprefs 在采集末仍无应答。释锁机制未唯一化(回复/超时/拆除三者未能从现有行区分;rcv name=0x3503 曾出现 ms=1 q=0 的计数歧义,ip_mscount 语义待查)。
+5. mediaserverd trap 释锁说**证伪**:H701 同形 fatal trap(CMImaging←MetalFilter,SIGBUS,esr=0x92000021)发生在 1256.35,而 tid291 到 1277.0 拍仍 parked;H700 的"trap 后恢复"是窗口巧合。
+
+**Q1 链(1226 突发)**:本轮**未复现**——盘(1132–1368)与 CDC(380–1378)内 NATIVE_LEGACY client io / accept dump / NATIVE_LEGACY_SAMPLE / retirement / NATIVE_FRAME event=8 全零。H700 的 1226 全屏 copy 是当轮释锁后主线程推进的下游事件;本轮主线程 1311–1368 仍在重试+二跳卡死,未到那一步。驱动新线路(提交者 tid、surface 身份、图层状态、64 点同位采样)本轮为零覆盖运行,不算验证也不算证伪。
+
+**观测缺陷登记(带账修复)**:我新增的 `NATIVE_SBMSG` 行零出口——内核在飞 kmsg 头部 msgh_remote_port 在发送消费后已清零,取"发送方"该用既有 SBMSG2(读用户缓冲端口名)路线;`native_ls_rep`(特殊回复端口)挂在 SBMSG 循环内,因此从未 armed,LS 通道的 R/D 事件本轮不可见——H702 改从 `ith_special_reply_port`/`ith_receiver_name` 直接 arming。
+
+**H702 清单**:(a) 每行打印 tro 线程端口名(ip_get_receiver_name(tro_ports[FLAVOR_ID])),把 owner=0x8c0 直接钉到线程(验证 675);(b) SBMSG 路线改道 + LSLANE 从 ith 字段 arm,回复端口入 bound 环;(c) cfprefsd 入采样目标与焦点端口(现势卡点),(d) knote 的 kq 身份(读 kl_list→kn->kn_kq,对 lsd kevent 线程的 kq 参数),判"knote 挂了但投错了 kq / 或 lsd kq 线程另有阻塞";(e) 突发/accept 链等主线程推进常态化后再收。
