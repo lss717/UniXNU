@@ -30614,3 +30614,25 @@ X 事件 = 0（无未读丢弃）
 **下一步（两轨）**：(a) 离线优先——在 SpringBoard 二进制中枚举向 `[obj+0x10]` 写回调的站点及其调用条件（objdump 搜 str 指令 + 交叉引用 windowSceneDidConnect 上游），判定缺的前置是什么；(b) 上机可选——TRAP 现场对 pc=0 的 x0 做 isa→类名内核侧快照（copyinmap 纯读），把"空槽对象"点名。完成 (a) 再决定是否动 (b)。
 
 **工件登记**：boot H699=`e6dda2fc`；payload=`90e4dc64`；kernel `2649e385`；series 追加 152；bundle/trust/addon 沿用 H697/H698（402b4be1/5dab5c17/6cd7c4e5）。日志 logs/H699/device/H699-live.raw.bin(1077640B)+tmp/h699-decoded.txt(7809 行)。设备已回 Android，待停靠 TWRP。
+
+
+### §405 H699 调用点完全归因：崩的是 SB 主场景连接处理器对 `_completeStartupAfterMainSceneConnect:` 返回值的**无保护 block 调用**（block literal 的 invoke 指针在 +0x10，实测为 NULL）；同一函数体内就在建**锁屏幕帘窗**（`createSuperHighLevelCurtainWindowSceneWithDisplayConfiguration:`、lockScreenManager、setUILockStateProvider）——锁屏 UI 管道在这一刀处断裂（2026-11-26）
+
+把 SB+0x600658 的调用点函数从 0x1cff9c380 反汇编到 0x1cff9c678 逐段读通，序列如下：
+```
+...createHighLevelWindowSceneWithDisplayConfiguration:
+   createSuperHighLevelCurtainWindowSceneWithDisplayConfiguration:   ← 幕帘窗创建（锁屏的窗）
+   [x27 singleton] _completeStartupAfterMainSceneConnect:(windowScene)  @0x1cff9c39c
+   str x0, [sp, #0x20]                                              ← 返回值（被当 block 的对象）存栈
+   ... setWindowScene:×n、initWithWindowScene:×n、lockScreenManager
+   setUILockStateProvider:、setAmbientPresentationController:、
+   startObservingAmbientPresentation、startObservingLayoutStateTransitions、
+   transientOverlayPresentationManager 的 windowSceneDidConnect: 派发环 ...
+   （对 9 个单例逐个 _objc_msgSend$windowSceneDidConnect:）
+   ldr x0, [sp, #0x20]; ldr x8, [x0, #0x10]; blr x8                 ← @0x1cff9c658，无 nil/类型校验
+```
+`[obj+0x10]` 在 arm64 block literal 布局正是 invoke 指针（isa@0、flags@8、**invoke@0x10**）：返回值是堆上对象（三代 x0=0x13004c400/0x156058.. 等，非 nil），**invoke 槽为 NULL**——即 `_completeStartupAfterMainSceneConnect:` 返回了一个"形似 block 但函数指针空"的对象（或根本不是 block 的对象），调用方按契约盲调，SIGSEGV。此函数即 **SBWindowSceneClientNotifier/SBRootController 一系的主场景连接完成处理器**（H690 f0 名 `_configureForConnectingWindowScene:windowSceneContext:` 同链），**崩溃点正处于"主场景已连接、幕帘窗已建、锁屏 manager 已接线"之后最后一步回调**——与"真实锁屏可见"目标直接在管线上相邻。
+
+**与既有注入的关系（首要怀疑，未证）**：本项目在 SB 启动路径上有多处返回 nil 的跳过 hook（h577 chrono subscribe 返回 nil、h585 同步 XPC 旁路、SBUIController 就绪环）。`_completeStartupAfterMainSceneConnect:` 若其实现内任何前置被我们的旁路改写为 nil/替代对象，返回值即可能落成"invoke=NULL 的 block 壳"。**下一动作（离线，无 boot）**：在 SpringBoard 二进制里追该方法实现（selector 引用→方法表→函数体），列出它每条 return 路径的对象来源，与注入面比对；若静态不足，再上 isa/invoke 现场快照（H699 环已证明拍内节奏可行）。
+
+**边界不变**：注册/回复/接收全通（§404），bb 显示 client 16 调用后静默，swap/s6/panel 全零——**首帧缺位的直接上游现已具名：SB 主场景完成回调炸空指针，scene 之后的首个 CALayer 内容提交从未发生**。设备停靠 TWRP；本轮 kernel `2649e385`/boot `e6dda2fc`，工件登记见 §404。
