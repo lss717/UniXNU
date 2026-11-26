@@ -1,0 +1,131 @@
+diff --git a/iokit/Kernel/IOUserClient.cpp b/iokit/Kernel/IOUserClient.cpp
+--- a/iokit/Kernel/IOUserClient.cpp	2026-11-26 12:31:23
++++ b/iokit/Kernel/IOUserClient.cpp	2026-11-26 12:31:23
+@@ -2556,6 +2556,57 @@
+ 	return kIOReturnSuccess;
+ }
+ 
++/* H687: pair enter/return timing with a thread id for the IOKit entry points
++ * backboardd and SpringBoard use for the display, so the log answers "stuck
++ * inside a kernel call" versus "idle between calls".  Focused comms only,
++ * one line per call; the 19.2 MHz always-on timer converts to microseconds.
++ * proc_selfname, thread_tid and mach_absolute_time are declared here because
++ * this file sits above the H124 helpers and pulls none of their headers. */
++extern "C" void proc_selfname(char *, int);
++extern "C" uint64_t thread_tid(thread_t);
++extern "C" thread_t current_thread(void);
++extern "C" uint64_t mach_absolute_time(void);
++
++static void
++native_iotime(const char *op, const char *cls, uint64_t t0, unsigned ret)
++{
++	char comm[17] = {};
++
++	proc_selfname(comm, sizeof(comm));
++	if (strcmp(comm, "backboardd") != 0 && strcmp(comm, "SpringBoard") != 0) {
++		return;
++	}
++	IOLog("NATIVE_IOTIME: op=%s comm=%s cls=%s tid=%llu t=%lluus ret=0x%x\n",
++	    op, comm, cls ? cls : "-",
++	    (unsigned long long) thread_tid(current_thread()),
++	    (unsigned long long) ((mach_absolute_time() - t0) / 19200), ret);
++}
++
++/* H687: record which registry object a focused process pulls out of a match
++ * iterator, and when.  This separates iterator consumption from the match
++ * itself and names the entries behind backboardd's match lines. */
++static unsigned native_iter_logs;
++
++static void
++native_iter_trace(OSObject *obj)
++{
++	char comm[17] = {};
++	IORegistryEntry *entry;
++
++	proc_selfname(comm, sizeof(comm));
++	if (strcmp(comm, "backboardd") != 0 && strcmp(comm, "SpringBoard") != 0) {
++		return;
++	}
++	if (native_iter_logs++ >= 48) {
++		return;
++	}
++	entry = OSDynamicCast(IORegistryEntry, obj);
++	IOLog("NATIVE_IOTIME: op=%s comm=%s cls=%s id=%llu\n",
++	    obj ? "iter" : "iter_none", comm,
++	    obj ? obj->getMetaClass()->getClassName() : "-",
++	    entry ? (unsigned long long) entry->getRegistryEntryID() : 0ULL);
++}
++
+ /* Routine io_iterator_next */
+ kern_return_t
+ is_io_iterator_next(
+@@ -2581,8 +2632,10 @@
+ 	if (obj) {
+ 		*object = obj;
+ 		ret = kIOReturnSuccess;
++		native_iter_trace(obj);
+ 	} else {
+ 		ret = kIOReturnNoDevice;
++		native_iter_trace(NULL);
+ 	}
+ 
+ 	return ret;
+@@ -2822,6 +2875,7 @@
+ 	kern_return_t       kr;
+ 	OSObject *          obj;
+ 	OSDictionary *      dict;
++	const uint64_t      native_t0 = mach_absolute_time();
+ 
+ 	if (main_port != main_device_port) {
+ 		native_iokit_log("match", NULL, "badmaster", 0);
+@@ -2836,6 +2890,8 @@
+ 		*existing = IOUserIterator::withIterator(IOService::getMatchingServices( dict ));
+ 		native_match_trace(dict, *existing != 0);
+ 		kr = kIOReturnSuccess;
++		native_iotime("match_iter", native_dict_string(dict, "IOProviderClass"),
++		    native_t0, kr);
+ 	} else {
+ 		kr = kIOReturnBadArgument;
+ 	}
+@@ -2907,6 +2963,7 @@
+ 	kern_return_t       kr;
+ 	OSObject *          obj;
+ 	OSDictionary *      dict;
++	const uint64_t      native_t0 = mach_absolute_time();
+ 
+ 	if (main_port != main_device_port) {
+ 		native_iokit_log("match", NULL, "badmaster", 0);
+@@ -2921,6 +2978,8 @@
+ 		*service = IOService::copyMatchingService( dict );
+ 		native_match_trace(dict, *service != nullptr);
+ 		kr = *service ? kIOReturnSuccess : kIOReturnNotFound;
++		native_iotime("match_one", native_dict_string(dict, "IOProviderClass"),
++		    native_t0, kr);
+ 	} else {
+ 		kr = kIOReturnBadArgument;
+ 	}
+@@ -4527,6 +4586,7 @@
+ 	CHECK( IOService, _service, service );
+ 
+ 	const char *native_cls = service->getMetaClass()->getClassName();
++	const uint64_t native_open_t0 = mach_absolute_time();
+ 	native_iokit_log("open", native_cls, NULL, 0);
+ 
+ 	if (!owningTask) {
+@@ -4545,6 +4605,8 @@
+ #endif
+ 	do{
+ 		if (properties) {
++			native_iotime("open_ret", native_cls, native_open_t0,
++			    kIOReturnUnsupported);
+ 			return kIOReturnUnsupported;
+ 		}
+ #if 0
+@@ -4745,6 +4807,7 @@
+ 
+ 	*connection = client;
+ 	*result = res;
++	native_iotime("open_ret", native_cls, native_open_t0, res);
+ 
+ 	return err;
+ }

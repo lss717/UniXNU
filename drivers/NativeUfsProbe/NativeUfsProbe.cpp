@@ -851,6 +851,17 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
       IOLog ("NATIVE_SBPC: late sampler active (native-probe-quiet=2)\n");
       IOSleep (240000);
       for (unsigned sample = 0;; sample++) {
+        // H687: backboardd is the primary subject now (STATUS 394: it dequeues
+        // zero CAWindowServer requests while it re-matches the display every
+        // 70-90 s, and launchd measured it at 254 CPU wakes/s at 287 s).  The
+        // name was in a540SbNames but this loop never sampled it, which is why
+        // H686 had neither a hit line nor a miss line for it.  Sample it first
+        // in the beat: the H686 beats overflow the ring mid-list (only the
+        // last one or two sample groups survived), so a beat-ender-only flush
+        // loses every earlier sample every time.  9300 % 30 == 0, so the
+        // kernel still walks frame chains for the first threads.
+        native_sb_pc_sample_instance ("backboardd", 9300 + sample * 30, 0);
+        native_log_flush_hook ();
         native_sb_pc_sample ("SpringBoard", 6000 + sample * 30);
         a540DisplayGate (6000 + sample * 30);
         // The kernel emits non-SpringBoard frame chains only for sample % 30 == 0.
@@ -858,6 +869,7 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
         // Follow both per-user and system services; ordinal is not a fixed UID.
         native_sb_pc_sample_instance ("lsd", 10020 + sample * 30, 1);
         native_sb_pc_sample ("installd", 11010 + sample * 30);
+        native_log_flush_hook ();
         native_sb_pc_sample_instance ("containermanager", 8010 + sample * 30, 0);
         native_sb_pc_sample_instance ("containermanager", 9000 + sample * 30, 1);
         native_log_flush_hook ();
