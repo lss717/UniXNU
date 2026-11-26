@@ -30636,3 +30636,36 @@ X 事件 = 0（无未读丢弃）
 **与既有注入的关系（首要怀疑，未证）**：本项目在 SB 启动路径上有多处返回 nil 的跳过 hook（h577 chrono subscribe 返回 nil、h585 同步 XPC 旁路、SBUIController 就绪环）。`_completeStartupAfterMainSceneConnect:` 若其实现内任何前置被我们的旁路改写为 nil/替代对象，返回值即可能落成"invoke=NULL 的 block 壳"。**下一动作（离线，无 boot）**：在 SpringBoard 二进制里追该方法实现（selector 引用→方法表→函数体），列出它每条 return 路径的对象来源，与注入面比对；若静态不足，再上 isa/invoke 现场快照（H699 环已证明拍内节奏可行）。
 
 **边界不变**：注册/回复/接收全通（§404），bb 显示 client 16 调用后静默，swap/s6/panel 全零——**首帧缺位的直接上游现已具名：SB 主场景完成回调炸空指针，scene 之后的首个 CALayer 内容提交从未发生**。设备停靠 TWRP；本轮 kernel `2649e385`/boot `e6dda2fc`，工件登记见 §404。
+
+
+### §406 H700 根因修复与旁证剥落：h557 包装器以 void 丢弃 `_completeStartupAfterMainSceneConnect:` 的 block 返回值——历轮 pc=0 空跳转是**我们自己的签名违约**制造的旁象；修好契约后 SB 主线程改在**原实现内部无限阻塞**（356.5s 进、1228.8s 采集末仍未返回），首个真断点显形：completeStartup 同步等待某个永不到达的完成事件（2026-11-26）
+
+**静态定因（转达核对项逐一闭环）**：接收类与选择器在调用点反汇编可直接判定——调用方对返回值 `str x0,[sp,#0x20]` 随后 `ldr x8,[x0,#0x10]; blr x8` 无守卫，即 arm64 block literal 布局（isa@0/flags@8/**invoke@0x10**）；而 SpringBoardSceneObserver.mm 的 h557/h583 包装器签名是 `static void trace_springboard_complete_startup(id,SEL,id)`，成功路径把原函数返回值**整个丢弃**、异常路径吞掉后置 nil——x0 在包装器尾部的 msgSend 链后是**残留指针**，其 +0x10 恰为 0 时每代必炸（各代 x0=0x13004c400/0x156058.. 不同堆值、非原返回对象——"返回即异常 vs 保存期失效"二问当场有了第三答案：**返回值根本没被传回去**）。h700 探针块随之删除（同方法双包裹会串脏 original），仅保留返回值修复 + 返回时刻头部快照（`h700_return_snapshot`，进程内即时读、无 retain/无延迟，零生命周期扰动）。内核配套 `h700-trap-block.patch`（ux_exception.c，pc=0 时 copyinmap 三头部字，与快照按指针配对）。kernel `c107a53c`、dylib 重建 141312B **CDHash `7eab65e0…`**（标记含 build=H700/h700_return_snapshot，容器替换 replaced==1 往返校验过）、trust `--replace 0cc32305→7eab65e0`，boot `30cb4395`（H700 镜像另历 ux_exception.o 删除-审计死锁一次，按 h692 恢复流程独立 make 补回）。
+
+**上机实测（boot id 0x383fb3e9）**：
+1. `h557_complete_startup_enter pid=27 main=1 scene=0x101347270` @356.5s——此后**无 h557/h700 返回行、无 TRAP、无 SB 退出**：原实现自己把主线程吃住了 872 秒直到采集断流（1228.8s）。历轮的 blr 空跳转崩溃**消失**——证实那是违约旁象，不是原生行为。
+2. 配对时序澄清（两通道时钟基准不同，pair ms≈uptime）：0x9d0a 请求 #1/#2 于 296.6/303.4s 被 tid=712 收取，回复 0x9d6e 于 296.653（Q，**470s+ 无人取**）与 307.236（**D→SB 主 tid=291** ✓）——**注册在 completeStartup 进入之前已完成**，主线程 356.5s 进去时第二次回复已在手；它阻塞的位置**不是等回复**，是原实现后续的某个同步等待（scene 就绪/渲染完成一类，具体对象待追）。
+3. 验收四项如实分列：**回调完成=否**（被原实现吞住，未返回）；**带内容图层提交=无**（layer_commit 照旧 contents=-）；**真实 swap=无**（swap/s6/panel 全零）；**可见画面=无**。
+4. 会话 1228.8s 无 trace 终结（error 203），设备自行回 Android——无 trace 复位时刻序列现为 604/616/1003/1093/1230/1645/1791s，随主线程行为改变而漂移，复位机制仍列未知。
+
+**下一断点（明确）**：`-[SB… _completeStartupAfterMainSceneConnect:]` 原实现内部 356.5s 起在等什么。观测缺口与手段：本轮 SpringBoard 的 SBPC 行未出口（需查是否又被洪泛吞掉——拍内已有 journal+bound+pair 三段导出，SB 样本在组序中位，丢失概率高）；H701 候选：(a) 把 pair/bound 导出压缩、把 SB 主线程 tid 行提到拍首（观测排布，无内核语义变化）；(b) 内核侧直接读 tid=291 的 `thread->wait_event` 哈希 + ith_kmsg 收口（SBPC 已有等价管线，只需保证出口）。若等待对象指向某端口/信号量，即可与首帧事件源对上（渲染服务器完成信号 vs workspace 连接状态）。
+
+### §407 H700 TWRP 回捞补全:盘环 SBPC 全解码——SB 主线程在 completeStartup 内被 LaunchServices 上下文初始化锁 parked,持锁者 tid692 持锁向 lsd 发同步 XPC "RESEEDING" 请求无回,lsd 侧全线程空闲;尾段 2.6 秒前出现首个全屏 copy(8294400B)与 retirement,§406 "s6 全零"修正(2026-11-26)
+
+**回捞与归属**:TWRP 下只读 h103(窗口与报告本地留档:tmp/h700-tail32.bin(32MiB)、logs/H700/device/H700-h103-report.txt,logs/ 按惯例不入库)。header:slot_boot=27eda886、rounds=844、write_errors=271、msg_bytes=1310(仅进行中槽);247 槽合并后内容覆盖 **985.7–1157.67s**。归属确证:环内多行与 CDC 解码时间戳逐行一致(1115.884895 exec pid=205、1138.927542 exec pid=207 等),该环即 H700 本轮。命名消歧:slot_boot=`gH103BootId`(首用 tick 派生),§406 所记 boot id 0x383fb3e9 为 h540 标记值——两源不同,不构成矛盾。1157.67s 后零槽写,1228.8 断流至 ~1230 复位段盘上正文依旧不存在;pstore/last_log 空。
+
+**SB 主线程断点(环内 986.2/1052.2/1118.1 三拍完全一致)**:tid=291 `__ulock_wait2 ← __os_unfair_lock_lock_slow ← _LSContextInitCommon+0x2f8`,等待锁字用户态 VA 0xfffffff5019733e0,cpu 冻结 1755147µs。外栈:`___CFNOTIFICATIONCENTER_IS_CALLING_OUT_TO_AN_OBSERVER__ → -[SBHIconManager _iconModelDidLayout:] → -[SBHIconManager _precacheDataForRootIcons] → SBFolder enumerateAllIcons 链 → -[SBHWidget containerBundleIdentifier] → _SBHContainingBundleRecordForWidgetWithBundleIdentifier → -[LSApplicationExtensionRecord initWithBundleIdentifier:requireValid:platform:error:] → LaunchServices::Database::Context::_get → _LSContextInitCommon`。即吞住主线程的 completeStartup 内部同步等待=**LaunchServices 上下文初始化锁**。park 起点区间 (369.8, 986.2):tid291 最后可见活动=KeyStore 簇(356.5–369.8),环首拍已在等待。符号解析 slide=0x162ec000(本轮 libdispatch 锚 0x1a5840000 推导;工具 Mac:/tmp/h700-sym.py;镜像表 tmp/h700-image-rows.txt)。
+
+**持锁者与 lsd 侧**:tid=692 同在 `_LSContextInitCommon` 但返回位在锁获取段后的 **+0x304** 调用点,栈=`__LSCopyServerStore → ___LAUNCH_SERVICES_IS_RESEEDING_ITS_DATABASE_AND_MAY_BLOCK → -[NSXPCConnection _sendSelector:withProxy:arg1:] → __NSXPCCONNECTION_IS_WAITING_FOR_A_SYNCHRONOUS_REPLY → xpc_connection_send_message_with_reply_sync → dispatch_mach_send_and_wait_for_reply → mach_msg`,cpu 冻结 71025µs;外层入口=`-[FBApplicationDataStoreRepositoryManager clearExpiredUninstalledApplicationsFromStoreIfNecessary]` 的 dispatch block。tid=1328 同锁 parked(`+[AMSProcessInfo defaultMediaTypeForCurrentProcess] → +[LSBundleRecord bundleRecordForCurrentProcess] → _LSContextInitCommon+0x2f8`)。SB 16 线程其余:8×mach_msg2_trap、2×dlock_wait、2×nanosleep、1×psynch_cvwait、1×workq。lsd(pid 95)三拍 10 线程全部等待态(主线程 mach_msg2_trap+kevent_id/workq/dlock/semaphore),无处理该 reseed 请求迹象——请求未达或已排队未取(与 H686 显示服务同型形态)。SBPC 的 wait 字段对 mach_msg 线程为 0x0,端口身份未落——本环唯一剩余观测缺口。
+
+**锁释放与主线程后程**:释锁发生在 (1118.12, 1140.3);区间内唯一内核可见事件=mediaserverd[205] fatal TRAP @1127.688(**仅盘环有、CDC 无**;SIGBUS far=0x100554d35,CMImaging←MetalFilter←libdispatch 栈;1120.731 "Corpse released, count at 4")——因果未定,如实登记。随后 tid=291 进入 AppleKeyStore `match(ok=1)→open(ret=0xe00002d8)` 重试簇(1140.3×8、1146.1–1149.6×44、1162.9–1171.5×5、1178.8×16、1208.0–1209.2×23、1214.5×5;tid291 全程 116 次)。按 xnu IOReturn.h,0xe00002d8=**kIOReturnNotReady**(非权限拒绝),0xe00002bc=kIOReturnError。`h700_return_snapshot` 全程零行:主线程直到断流未从 completeStartup 返回。
+
+**尾段修正(§406 第 3 条注)**:1225.93–1226.25 bb(pid 56)打出本轮首个 NATIVE_LEGACY 突发(盘环 985–1157 内 NATIVE_LEGACY 零行佐证其为首现):sel68 fixup→sel4 status=0→`swap validate accepted=1`→`kick transferred=0 pending=1`→**NATIVE_LEGACY_COPY bytes=8294400(1080×1920×4)137.4ms 完成**→`transfer status=0`→`retirement observed`→`skip req=0 valid=0`;sel3 "No Default FB Surface"(kIOReturnError),sel6 in=1,1(§406 "s6 全零"更正:s6 于 1226.247 已发生);`NATIVE_FRAME event=d client=4 xfer=1 frames=0`。面板 WRITES/ACTIVITY 至 1222.8 末拍仍 copy=0/0/0,下一拍未及输出。验收四项结论不变(回调完成=否、带内容图层提交=无、真实 swap=无、可见画面=无),但断点由"无内容提交"收窄为"全屏 copy 已完成并 retirement、family swap 请求从未入队、随后 2.6s 断流"。
+
+**H701 修订方向**(tid291"等什么"已答,无需重跑):
+1. 锁字核对:copyinmap 读 wait VA 处 4 字节(_os_unfair_lock 字含持锁线程 port name),映射到线程,直接核对 tid692 假设;挂在既有 SBPC 拍或 TRAP 通道,低频。
+2. SBMSG2 端口解码:对 mach_msg2_trap 线程记 rcv-port 内核对象身份+msgh_id+发送目的,定位 tid692 的目的端口与 lsd 接收权,判"未送达"还是"入队未取"。
+3. 突发触发源:1225.9 突发与主线程释锁后进展的因果未立,单变量追。
+4. 复位机制仍无正文证据(序列 604/616/1003/1093/1230/1645/1791 不变)。
+
+**设备状态**:回捞后停在 TWRP(recovery),未写任何分区;Android 系统完好,下轮按既有授权 fastboot boot 或回 Android。
