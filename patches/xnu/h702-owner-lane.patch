@@ -1,0 +1,231 @@
+--- a/osfmk/kern/task.c	2026-11-26 22:50:17
++++ b/osfmk/kern/task.c	2026-11-26 22:50:17
+@@ -10513,6 +10513,12 @@
+ #include <ipc/ipc_object.h>
+ static ipc_port_t native_ls_req;
+ static ipc_port_t native_ls_rep;
++/* H702: ulock owner names rebuild with the kernel's own entry mask
++ * (bsd/sys/ulock.h ulock_owner_value_to_port_name), and the reply-port
++ * watch list armed from ith_special_reply_port (STATUS 409 defect). */
++extern mach_port_name_t ipc_entry_name_mask(mach_port_name_t name);
++static ipc_port_t native_watch[6];
++static unsigned native_watch_n;
+ 
+ struct native_sb_row {
+ 	uint64_t tid;
+@@ -11388,6 +11394,24 @@
+ 				    (unsigned long long)target.port, kn,
+ 				    (unsigned)target.msgcount, (unsigned)target.seqno,
+ 				    waiters);
++				if (tp != IP_NULL && kn) {
++					/* H702: which kqueue owns the armed
++					 * knote, is it KN_DISABLED, and what
++					 * filter/filtid: words 2,4,5,6,7,8,9
++					 * of event_private.h struct knote
++					 * (status@0x20, kn_kq_packed@0x28,
++					 * hook@0x30, fp@0x38, kei_ident@0x40,
++					 * filter byte@0x48). */
++					uint64_t *kw = (uint64_t *)
++					    tp->ip_klist.slh_first;
++					printf("NATIVE_LSKN1: sample=%u kn=0x%llx "
++					    "w2=0x%llx w4=0x%llx w5=0x%llx "
++					    "w6=0x%llx w7=0x%llx w8=0x%llx "
++					    "w9=0x%llx\n", sample,
++					    (unsigned long long)(uintptr_t)kw,
++					    kw[2], kw[4], kw[5], kw[6], kw[7],
++					    kw[8], kw[9]);
++				}
+ 				native_journal_add(10, native_sb_pid,
+ 				    (uint32_t)target.msgcount, (uint32_t)target.seqno,
+ 				    (uint32_t)((kn & 0xff) | ((waiters & 0xffffff) << 8)),
+@@ -11422,30 +11446,49 @@
+ 		 * holder hypothesis directly.  Read-only; copyinmap on the sampled
+ 		 * task map, same pattern as the H700 trap-block snapshot. */
+ 		if (strncmp(name, "SpringBoard", 11) == 0) {
++			/* H702: the in-flight kmsg header has its port rights
++			 * consumed by the send, so the H701 mrport test never
++			 * fired and the lane never armed (STATUS 409 defect).
++			 * Read the thread's own receive state instead:
++			 * ith_receiver_name, ith_seqno and the special reply
++			 * port. A delivered reply advances iseq; a timeout or
++			 * teardown leaves the lsd queue cnt=1 while the row
++			 * drops out; the armed reply-port watch catches R/D
++			 * directly. Control: the pair ring already proved D
++			 * delivery for the CA replies in the same boots. */
+ 			for (unsigned i = 0; i < native_sb_count; i++) {
+ 				struct native_sb_row *r = &native_sb_rows[i];
+-				if ((int32_t)(uint32_t)r->x16 != -47 ||
+-				    r->mrport == 0) {
++				if ((int32_t)(uint32_t)r->x16 != -47) {
+ 					continue;
+ 				}
+-				printf("NATIVE_SBMSG: sample=%u tid=%llu id=0x%x "
+-				    "size=%u rport=0x%llx lport=0x%llx srport=0x%llx "
+-				    "istate=0x%x iseq=%u\n", sample,
+-				    (unsigned long long)r->tid, r->mid, r->msz,
+-				    (unsigned long long)r->mrport,
+-				    (unsigned long long)r->mlport,
+-				    (unsigned long long)r->mksrp, r->recv_state,
+-				    r->recv_seqno);
+-				native_journal_add(9, native_sb_pid,
+-				    (uint32_t)r->tid, r->mid, r->msz, r->mrport, "m2");
+-				if (native_ls_rep == IP_NULL && r->mksrp &&
+-				    native_ls_req != IP_NULL &&
+-				    r->mrport == (uint64_t)(uintptr_t)native_ls_req) {
+-					native_ls_rep = (ipc_port_t)(uintptr_t)r->mksrp;
+-					printf("NATIVE_LSLANE: sample=%u tid=%llu "
+-					    "rep=0x%llx\n", sample,
+-					    (unsigned long long)r->tid,
+-					    (unsigned long long)r->mksrp);
++				printf("NATIVE_SBLANE: sample=%u tid=%llu rcv=0x%x "
++				    "istate=0x%x iseq=%u srport=0x%llx\n", sample,
++				    (unsigned long long)r->tid, r->recv_name,
++				    r->recv_state, r->recv_seqno,
++				    (unsigned long long)r->mksrp);
++				native_journal_add(11, native_sb_pid,
++				    (uint32_t)r->tid, r->recv_name,
++				    r->recv_seqno, r->mksrp, "lan");
++				if (r->mksrp && native_watch_n < 6) {
++					ipc_port_t wp =
++					    (ipc_port_t)(uintptr_t)r->mksrp;
++					unsigned w;
++					int dup = 0;
++					for (w = 0; w < native_watch_n; w++) {
++						if (native_watch[w] == wp) {
++							dup = 1;
++							break;
++						}
++					}
++					if (!dup) {
++						native_watch[native_watch_n++] = wp;
++						printf("NATIVE_LSWATCH: sample=%u "
++						    "armed reply tid=%llu "
++						    "p=0x%llx slot=%u\n", sample,
++						    (unsigned long long)r->tid,
++						    (unsigned long long)wp,
++						    native_watch_n);
++					}
+ 				}
+ 			}
+ 			for (unsigned i = 0; i < native_sb_count; i++) {
+@@ -11454,6 +11497,7 @@
+ 				uint32_t cur = 0;
+ 				uint32_t owner;
+ 				uint64_t okobj = 0, otid = 0;
++				uint32_t owner_alt = 0, kot = 0, found = 0;
+ 				if (op != 544 && op != 515) {
+ 					continue;
+ 				}
+@@ -11466,36 +11510,75 @@
+ 				    KERN_SUCCESS) {
+ 					cur = 0xdeadbeefU;
+ 				}
+-				owner = (uint32_t)((r->x2 >> 2) & 0x3fffffffULL);
++				/* H702: the owner field is a MACH port name
++				 * whose low flag bits userspace stole; the
++				 * kernel resolves it through
++				 * ulock_owner_value_to_port_name() ==
++				 * ipc_entry_name_mask(uval) and a miss there
++				 * means EOWNERDEAD. Rebuild the same way from
++				 * the LIVE word, try the set-low-bits
++				 * variant as candidate, and accept any
++				 * thread-port kotype (CONTROL/INSPECT/READ);
++				 * match the port object against the sampled
++				 * rows' thread pointers. */
++				owner = ipc_entry_name_mask(cur);
++				owner_alt = ipc_entry_name_mask(
++				    (uint32_t)(cur & ~3u) | 3u);
+ 				{
+ 					struct native_sb_probe p2;
+-					native_sb_probe_name(
+-					    native_sb_task->itk_space, owner, &p2);
+-					if (p2.seen && p2.port) {
+-						ipc_port_t pp =
+-						    (ipc_port_t)(uintptr_t)p2.port;
+-						if (ip_active(pp) &&
+-						    ip_kotype(pp) ==
+-							    IKOT_THREAD_INSPECT) {
+-							okobj = (uint64_t)pp->ip_kobject;
+-							for (unsigned j = 0;
+-							    j < native_sb_count; j++) {
+-								if (native_sb_rows[j].mth ==
+-								    okobj) {
+-									otid =
+-									    native_sb_rows[j].tid;
+-									break;
++					uint32_t cand[2];
++					cand[0] = owner;
++					cand[1] = owner_alt;
++					for (unsigned q = 0; q < 2; q++) {
++						if (q && cand[1] == cand[0]) {
++							break;
++						}
++						native_sb_probe_name(
++						    native_sb_task->itk_space,
++						    cand[q], &p2);
++						if (!p2.seen || !p2.port) {
++							continue;
++						}
++						{
++							ipc_port_t pp =
++							    (ipc_port_t)(uintptr_t)
++							    p2.port;
++							if (!ip_active(pp)) {
++								continue;
++							}
++							kot = (uint32_t)
++							    ip_kotype(pp);
++							if (kot == IKOT_THREAD_CONTROL ||
++							    kot == IKOT_THREAD_INSPECT ||
++							    kot == IKOT_THREAD_READ) {
++								okobj = (uint64_t)
++								    pp->ip_kobject;
++								for (unsigned j = 0;
++								    j < native_sb_count;
++								    j++) {
++									if (native_sb_rows[j].mth
++									    == okobj) {
++										otid = native_sb_rows[j].tid;
++										break;
++									}
+ 								}
+ 							}
++						}
++						if (kot) {
++							found = q + 1;
++							owner = cand[q];
++							break;
+ 						}
+ 					}
+ 				}
+ 				printf("NATIVE_SBLOCK: sample=%u tid=%llu op=%u "
+-				    "lock=0x%llx val=0x%llx cur=0x%08x owner=0x%x "
+-				    "kobj=0x%llx otid=%llu\n", sample,
++				    "lock=0x%llx val=0x%llx cur=0x%08x name=0x%x "
++				    "alt=0x%x hit=%u kot=%u kobj=0x%llx "
++				    "otid=%llu\n", sample,
+ 				    (unsigned long long)r->tid, op,
+ 				    (unsigned long long)r->x1,
+ 				    (unsigned long long)r->x2, cur, owner,
++				    owner_alt, found, kot,
+ 				    (unsigned long long)okobj,
+ 				    (unsigned long long)otid);
+ 				native_journal_add(8, native_sb_pid, (uint32_t)r->tid,
+@@ -12003,7 +12086,16 @@
+ 	}
+ 	if (port != native_render_port && port != native_ls_req &&
+ 	    port != native_ls_rep) {
+-		return;
++		int hw = 0;
++		for (unsigned w = 0; w < native_watch_n; w++) {
++			if (port == native_watch[w]) {
++				hw = 1;
++				break;
++			}
++		}
++		if (!hw) {
++			return;
++		}
+ 	}
+ 	if (!native_render_dead && !ip_active(port)) {
+ 		native_render_dead = 1;

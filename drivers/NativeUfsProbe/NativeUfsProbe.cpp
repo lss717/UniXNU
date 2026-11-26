@@ -771,6 +771,7 @@ extern "C" volatile uint64_t native_data_persist_first_lba, native_data_persist_
 // "containermanager" (not "containermanagerd"), which is why earlier rounds never matched it.
 static const char *const a540SbNames[] = {
   "SpringBoard", "lsd", "containermanager", "keybagd", "runningboardd", "usermanagerd", "backboardd",
+  "cfprefsd", /* H702: light control for the second sync-XPC lane (STATUS 409) */
 };
 
 extern "C" void native_log_flush_hook (void);
