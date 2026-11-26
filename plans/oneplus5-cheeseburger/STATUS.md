@@ -30424,3 +30424,24 @@ B. **回到用户态最后一条未试路线**：单页文本入口补丁的 can
 - 保留既有计数/正对照管线：请求队列长度可由 enq-deq 差直接读出，无需新代码。
 
 **工件登记**：内核链 `89ede49b`(v8e)→`d9e807d`(v9d)→`5eb94568`(v9d+f2 复用)→`2624cb64`(v10=H686)；observer 链 `aed54d4a`→`c073101d`→`0cc32305`；boot 全表（前 8 位，完整哈希见 builds/<tag>/device）：H685=ad99cb86（无CDC）、H685b=1345365f（无CDC）、H685c=ccbb1bc0、H685d=5f6add60、H685e=1dc8274b、H685f=4a8cda0a、H685f2=fb1867a3、H686=4b81889b（live 364580B；tail 无正文，sink 依旧）。vsync 打印面按转达要求未与行为修正混做，留待单独候选；`sheng-vsync` 仍未启用。设备 TWRP，无分区写入。
+
+
+### §395 H687 服务端取证：IOKit match/open 全部 µs 级返回，backboardd 三次 match NativeLegacyDisplay 而全程零 open 尝试——首个长等待坐实在 bb match 与 open 之间的用户态间隙；SBPC 的 bb 采样仍在拍头段丢失（2026-11-26）
+
+**执行**：内核 v11（`d4dd9ab6`，series 143/144 追加 `native-iokit-timing.patch`：IOUserClient 对 backboardd/SpringBoard comm 记录 NATIVE_IOTIME enter/return µs 配对（op=match_iter/match_one/open_ret，iter 全局 cap 48；µs=Δticks/19200））+ NativeUfsProbe quiet=2 循环改拍头先采样 backboardd（9300+30n，%30=0 触发帧链）并拍内三次 flush。boot `583991ce`（live 374730B，解码 2786 行，boot id 0x3c3d23d3），CDC 自 281.1s 起。
+
+**发现一，内核侧无等待**。73 行 NATIVE_IOTIME（281.3–374.7 主体 + 414.9/415.3/551.2 尾部）全部 t≤6µs。§394 记录的"70-90s 间隔"是 bb 用户态再入周期（本 boot 实测 132.7/135.9s），不是任何单次 IOKit 调用的耗时。open_ret 的正覆盖由 SpringBoard 的 AppleKeyStore/IOPMrootDomain 行成立，故"观测面内无 bb open 行"= 调用未发生，探针未死。
+
+**发现二，match 三次、open 零次**。bb 的 NativeLegacyDisplay match_one：282.6s（tid883，ret=0）、415.3s（tid883，与 414.9s AppleM2ScalerCSCDriver=NotFound `0xe00002f0` 同波，ret=0）、551.2s（tid1841，ret=0）；观测面内全 boot 无一次 NativeLegacyDisplay 的 IOServiceOpen（SB 仅 306.6s match AGXAccelerator 成功，同样无 open）。DICT 行含 IOServiceNotificationUser（OSBoolean）——这是异步匹配通知路径的调用。bb/56 自 boot 存活至 611.2s，display 线程反复"match 成功→约 133 秒用户态忙碌→再 match"，从未进入 open。launchd 290.4s 报 bb 46170 次/174s（263 wakes/s）仍在超限，且 wake 风暴是全系统性的：imagent 256、axassetsd 266、lsd 485、assistantd 214、logd_helper 190，lsd.real 被杀（458s 起 sampler 持续 `miss name=lsd`）。
+
+**发现三，冻结队列原样复现**。398.4→578.5s 五个 beat `enq=11 deq=0 drop=3 ctrl=1` 恒定：0x9d0a size132×3（pid27）+ 0x9d27×1 + 0x9d28 size48×3（pid156，H686 为 157），全部是 40000 基座控制面 MIG（H685 校准语义）。
+
+**发现四，611s 死亡序列与 USB**。611.2s bb/56 被 corpse-cap 第 6 次击杀（status=0x9），611.38s MTLCompilerServi/ACCHW 被杀，611.49s bb 重拉 pid=182，611.57s 日志断流、CDC 读 error=203；设备其后自行回 Android（13:0x 核实）。"击杀重拉风暴后复位"与 panic 看门狗方向一致，无 panic 正文，不可确证。H686 同节奏（606s kill）后又活了 300s+，故该复位非节奏必至。
+
+**发现五，SBPC 通道仍未打通（本轮唯一失手）**。六个 beat 的 9300 段既无 tid 行、无 miss 行、也无 summary 行；同拍的 cm 8040 tid 行与 lsd 10110-10170 的 miss+summary 行存活，且 cm 行前直接可见断行残片 `inermanager n=3 note=-`——证明拍头段输出存在环回绕丢失，beat 内 flush 排布不足以救回首段。"bb 主线程在哪个调用里"仍未取证，属**通道未确证**而非零命中。
+
+**定性**：首要卡点从 §394 的"bb 卡在 IOMobileGraphicsFamily open 路径内"细化为 **bb 用户态在 match 成功之后、IOServiceOpen 之前的等待**（约 133s 循环，主线程忙轮询而非阻塞）。CA 收件循环缺位与队列无人读同因（runloop 从未轮到）。本轮证据不支持也不否定 AppleM2ScalerCSCDriver 依赖——414.9s 的 NotFound 出现在再入波里，是再入的结果之一，非独立卡点。
+
+**下一轮（H688，单变量：只改探针存活）**：quiet=2 循环在 bb walk 之前先 `flush+IOSleep(300)` 清环，walk 之后再 `flush+IOSleep(500)` 让 CDC 排空再进行下一组（已提交）。内核保持 v11 原样——match/open 取证已钉死，无需重取。判据：出现 `SBPC comm=backboardd` 行且 tid 与 883/1841 重合；落入 mach_msg2_trap 的线程带 SBMSG2（id/收口/timeout），看 pc/lr 是否落在 QuartzCore/CoreDisplay 的 match-open 间隙。若仍无行，记通道未确证再考虑削减每拍帧链深度，不动内核。
+
+**工件登记**：内核 v11=`d4dd9ab6`；boot H687=`583991ce`；payload=`98e57724`；trust=`19b8efb9`；addon=`c47f86a7`；observer `0cc32305`、trace `4d333989` 沿用。boot-args 与 H686 逐字节一致（pack 断言的 `/tmp/h610-args.txt` 是 H610 时代快照，H683/H683b 有意删除 `native-ufs-probe=0`/`h103-slot=1`/`h103-load-iogpu=0` 并加入 callservicesd，故 `MATCHES_H610_ARGS=False` 为预期值；H686↔H687 toml 集合差为空，无回归）。设备终态 Android（自行回连），无分区写入。日志：`logs/H687/device/H687-live.raw.bin`、解码 `tmp/h687-decoded.txt`。
