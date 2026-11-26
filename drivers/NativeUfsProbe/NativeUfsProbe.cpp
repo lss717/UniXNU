@@ -868,7 +868,15 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
         // group starts.  9300 % 30 == 0 still triggers the frame-chain walk.
         native_log_flush_hook ();
         IOSleep (300);
-        native_sb_pc_sample_instance ("backboardd", 9300 + sample * 30, 0);
+        // H689: the H688 beats prove the segment destroys itself - the walk ran
+        // (its tail NATIVE_RENDER sample=9330..9450 rows survived 500 ms before the
+        // next group) while its head (summary, miss, tid rows) never appeared even
+        // with a fresh drain before it.  The frame chains printed between them
+        // exceed the ring, so the head is overwritten by the same call.  Use
+        // 9301 + 30n so sample % 30 != 0: no frame chains, but the rows and the
+        // SBMSG2 decode of threads inside mach_msg2_trap still print - the exact
+        // answer to which call backboardd sits in, in one tenth of the bytes.
+        native_sb_pc_sample_instance ("backboardd", 9301 + sample * 30, 0);
         native_log_flush_hook ();
         IOSleep (500);
         native_sb_pc_sample ("SpringBoard", 6000 + sample * 30);
