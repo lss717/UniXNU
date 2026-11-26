@@ -30752,3 +30752,21 @@ X 事件 = 0（无未读丢弃）
 **判读**:1) e8cbfcc 生效——accept dump 四次后不再碰对象,validate→kick→copy→retirement 循环连续 144s 无自伤 panic;本轮是 H700 之后首个把 family swap 队列跑满的启动(skip req=0 时代结束)。2) Q1 三态判别落地:**空 surface(黑幕)** 而非"清屏"或"有内容未呈现"——CA 侧没有向这些 swap 提交任何非零像素;要区分黑幕(锁屏 curtain 的正常首帧)与内容缺位,需要真实图层出现的对照(回调返回之后)。3) LS/第二锁链:owner 757 mach_msg parked 到 1234(第二锁 l=0x1f961d580,o=0 未解),1338 主线程已脱离等待(state=0x4、savedpc 迁移)——释锁窗口与 swap 循环起点(1268.3)交叠,bb 在主线程仍在方法内时就开始黑幕循环,与 H700 完全同型。4) 新死因:数据异常于内核 _memmove,现场 x2=0x1fe0(8160B 拷贝),x0/x1 为内核区指针,LR 已不可信(0xfffffff00b68971c 越出内核映像)——无法从本 dump 归因调用者;与 contactsd 等 exec 波并发,候选含 exec/ustate 钩子路径与面板读回路径,未定。panic 后 DarwinBoot 菜单 3s 自动重引导 UniXNU(盘环见第二段开机),之后某时刻回到 Android——"复位机制"对 panic 轮已明(panic→自动重启),对 H700/H701 仍无正文。
 
 **H706 顺位**:a) panic 现场扩容:在内核 panic hook 处增加**校验过的 FP 链回溯打印**(仅接受落在内核 text 区间的返回地址,≤16 帧)——下一例 panic 直接可归因;b) memmove 数据异常排查从 exec 波路径入手(先只读:在 ustate/exec 钩子中核对拷贝长度来源);c) 主线程"返回/走过旧调用点"仍未闭合——等待其在无 panic 干扰下跑到下一拍;swap 循环继续记录 SAMPLE,直到出现首个非黑 64 点(=真实图层)。工件:kernel `a906243b`(prelink)/构建系列同 H704,boot `2c45328e`,盘环 logs/H705/device/H705-h103-report.txt,CDC logs/h705/device/h705-live.raw.bin(1761619B,至 1412.702833)。设备现停 TWRP。
+
+### §415 H706 实测(kernel 337b944d prelink + 新 dylib 161024B/CDHash 93721feb + journal 域修复):首个无 panic 的持续启动(≥3200s),但显示链回归——SB-27 在 LS 锁挂起期 KeyStore 风暴后 5s 自毁 SIGABRT,journal ms=1233699,此后七代 SB 全部同签名自毁(寿命 44~380s 不等),burst 整轮未现(accept/copy/retirement/SAMPLE=0,H705 同期 788);bb-56 全程存活(2026-11-27)
+
+**构建链两个真实缺陷(已修,过程记录)**:a) h706 补丁 debug.c 调用了 strstr——osfmk 全树无声明亦无先例(subrs.c 不含该符号),02:01 首建死于隐式声明;改为局部有界扫描(2a9b3e8d)。b) make 失败会删除未编译成功的 debug.o,而 link.filelist 仍列它;corecrypto/libpthread 审计对缺文件 nm 直接失败(set -euo pipefail),02:19 重跑死在 "Unavailable real kernel imports: [_Assert,_panic]"——跳过缺文件让导出表反而缺真符号,属自伤方案;正确路径是先以临时去掉 archive 循环的构建跑一次 make 恢复 debug.o,再全量审计(a7056213 的容错只作过渡窗口兜底)。**教训:ios-obj 对象是审计输入,编译失败后必须先恢复对象再重跑管线。**
+
+**journal ms 时钟跨 boot 可比(exec27 H706=128621 vs H705=136352),本轮关键序列**:park(lan/ulk)=353.086-353.087 → SIGABRT+kind2 exit pid27=1233699(挂起 880.6s 后自毁,先于 H705 的释锁/burst 窗);后代 222(1267246→1340194)、234(1370821→1414894)、242(1440145→1565118)、247(1574107→1952741)、268(1958544→2280343)、275(2282816→2626814)、298(2629755→2942704)、313(2944238→仍在跑)。每代签名一致:自发送 sig=6、EXIT_DESC len=131(打印件仅可辨 namespace=6、code=0x9、串 "SpringBoard")、无 h578_abort_signal——观察者的 abort 钩子未命中,SB 自身 CrashReporter 路径接管。ns/code 语义待对 libplatform-316 的 os/reason.h(本机 SDK 无此头,登记待办)。
+
+**判别与关联**:KeyStore open 失败 ret=0xe00002d8 共 647 次(H705 132),main tid=291 与后代 tid=2842/2843 均在风暴内,最后风暴 1228.5→1233.7 自毁——相关但非因果:H705 tid291 在 1265.67 同样入风暴仍活到 burst。SBLIVE 606.8 parked=1(owner712,orep=0xfffffff390789880)→1244.46 parked=0 为进程死亡伪释,LS 锁本轮从未释。BND 导出 serial 1~92 覆盖 exec→exit:0x9d0a 族 S→D tid734/752、NATC 控制往返,均为 context RPC,无锁屏事务;无 h700/h704 行。
+
+**四项验收状态**:①SB 完成回调=未证——main 死于释锁前;且 complete_startup 钩子行 H705/H706 两轮均零命中,说明该方法在本 boot 路径从未被调用,§413 的死亡点定位来自栈/TRAP dump 而非包装器命中,表述需要按此收窄;②带内容图层=未达;③真实 swap=无;④可见锁屏=无。
+
+**复位问题全面收窄**:移除 H701-705 自伤 panic 后无 panic、无 DarwinBoot 重启、CDC 持续 3150s+——既往"复位悬案"(除 H700/H701 无正文两例,签名与同一 panic 相符)全部结案为自伤;H705 APFS memmove 死亡本轮未复现但未被测试(无 swap 拷贝压力),单列保留。
+
+**必须登记的三条缺陷/更正**:a) H701-704 journal kind 8-12 被 kind>=8 守卫静默丢弃(printf 线承担了分析,§406-414 结论不受影响,但"盘环应有行而缺"的解释自此成立);b) §414 引用 H705 "1338 拍 savedpc=0x1a4ff5ad0" 的模块归属用了猜测锚点 0x1a4f9c000,作废,须按当轮 TRAP_IMAGE_ROW 重推后方可再引;c) 本轮 kernel+dylib 双变量同改,违反单变量纪律,burst 回归的归因(新 dylib trampoline vs journal 域修复)待 H707 分离验证。
+
+**工件**:boot a9404a59ccc3(81217536B=H700 头 1525760B + payload bf736b39c3e4)、kernel 337b944d79fe(prelink)、trust 5acd70c72b5e(钉 CDHash 93721feb,dylib 161024B sha11d0afb8)、gpuaddon 2da840a30e00、data 种子 0ef3db84 不变。CDC:logs/h706/device/h706-live.raw.bin 1945225B + h706-live2.raw.bin(至列 3150s)。**盘环未回捞**——设备从未回 Android,需一次物理长按断电重启→TWRP 才能读取,已按授权边界报告用户。
+
+**H707 顺位**:① 回捞盘环(完整 EXIT_DESC 正文/kind5 corpse 行/ns=6 code=9 语义);② dylib 单独回退 H705 版(trust d7103ac5)+ 保留 H706 kernel——判定 burst 回归归属;若恢复 burst 则反汇编最终 dylib 验证 h704_stub 传参约定与 __DATA 表初值行为,若不恢复则回到 kernel 侧 journal 新写入(ulk/m2 路径)嫌疑排查;③ 追 1233.7s 自毁的发起线程与用户栈(H577 线程观测已具备);④ 首个非黑 SAMPLE 仍以 burst 恢复为前提。
