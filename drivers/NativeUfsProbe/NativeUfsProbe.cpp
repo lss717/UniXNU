@@ -761,6 +761,8 @@ extern "C" void native_sb_trace_start (void);
 extern "C" void native_sb_trace_dump (unsigned burst);
 extern "C" volatile uint32_t native_data_persist_state, native_data_persist_header;
 extern "C" uint32_t cs_text_fixup_parsed, cs_text_fixup_applied;
+extern "C" void native_legacy_vsync_counts(unsigned *, unsigned long long *,
+    unsigned long long *, unsigned long long *);
 extern "C" volatile uint64_t native_data_persist_first_lba, native_data_persist_present,
     native_data_persist_loaded, native_data_persist_writes, native_data_persist_errors;
 
@@ -1052,10 +1054,14 @@ heartbeatThread (void *, wait_result_t)
              (unsigned) native_legacy_frame_count);
     }
     if (beat == 1 || (beat % 10) == 0) {
+    unsigned vsyncHz = 0;
+    unsigned long long vsyncSent = 0, vsyncArms = 0, vsyncIdle = 0;
+    native_legacy_vsync_counts(&vsyncHz, &vsyncSent, &vsyncArms, &vsyncIdle);
     IOLog ("NATIVE_UFS_ALIVE: winFlight=%llu ufsFlight=%llu cmds=%llu "
            "winReq=%llu winBytes=%llu lastCmd=%llx/%llu req=%llx/%llu "
            "addon=%d/%d/%d/%d/%d/%d owner=%d/%d ext=%d/%d dm=%d/%d wp=%d/%d "
-           "abi=%d/%d/%d rep=%.31s gpup=%llx crcbad=%u accel=%u/%u/%u/%u\n",
+           "abi=%d/%d/%d rep=%.31s gpup=%llx crcbad=%u accel=%u/%u/%u/%u "
+           "vsync=%u/%llu/%llu/%llu\n",
            (unsigned long long) gWindowInFlight,
            (unsigned long long) gUfsInFlight,
            (unsigned long long) gUfsCommands,
@@ -1088,7 +1094,8 @@ heartbeatThread (void *, wait_result_t)
            (unsigned) native_a540_open_count,
            (unsigned) native_a540_open_type,
            (unsigned) native_a540_sel_count,
-           (unsigned) native_a540_sel_last);
+           (unsigned) native_a540_sel_last,
+           vsyncHz, vsyncSent, vsyncArms, vsyncIdle);
     }
     if ((beat % 30) == 0 && (native_a540_c3_state() & 4u)) native_a540_hb_selftest();
     /* H611: offset from the H609 submit test so the two never share a beat. */
