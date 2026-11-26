@@ -851,6 +851,9 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
     if (quiet == 2) {
       IOLog ("NATIVE_SBPC: late sampler active (native-probe-quiet=2)\n");
       IOSleep (240000);
+      // H695: CDC attaches at ~246-285 s; beat zero sat at 283 s and its
+      // first journal chunks printed into the pre-attach void. Wait longer.
+      IOSleep (40000);
       for (unsigned sample = 0;; sample++) {
         // H687: backboardd is the primary subject now (STATUS 394: it dequeues
         // zero CAWindowServer requests while it re-matches the display every
