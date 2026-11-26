@@ -754,7 +754,7 @@ h103MaybeKillExclavekit (unsigned seconds)
 // H236im: the sampling itself lives in the kernel (osfmk/kern/task.c, native_sb_pc_sample); the// driver only names the processes.  Kept in a dedicated thread exactly like il (which boots) and
 // only the name list grew, so a boot failure here points at the list, not at a new mechanism.
 extern "C" void native_sb_pc_sample (const char *name, unsigned sample);
-extern "C" void native_journal_export (void);
+extern "C" void native_journal_export (unsigned budget);
 extern "C" void native_sb_pc_sample_instance (const char *name, unsigned sample,
                                               unsigned instance);
 extern "C" void native_sb_set_quiet (int on);
@@ -869,8 +869,9 @@ a540SpringBoardSamplerThread (void *, wait_result_t)
         // group starts.  9300 % 30 == 0 still triggers the frame-chain walk.
         // H693: ship the pre-CDC RAM journal out first: two chunked
         // exports (<=40 lines), each self-flushing, then drain as usual.
-        native_journal_export ();
-        native_journal_export ();
+        native_journal_export (8);
+        native_journal_export (8);
+        native_journal_export (8);
         native_log_flush_hook ();
         IOSleep (300);
         // H689: the H688 beats prove the segment destroys itself - the walk ran
