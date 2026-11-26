@@ -30589,3 +30589,28 @@ B. **回到用户态最后一条未试路线**：单页文本入口补丁的 can
 **D→752 措辞收紧（按转达）**：所有 D 事件仅证明**内核把消息直交给了等待线程 752（交付成功）**，不证明用户态 handler 处理完成或语义正确；752 的收后行为未观测。
 
 **上机必要性判定：需要**。回捞+离线已把问题压成单点——"bb 是否对 0x9d0a/0x9d27/0x9d28 发回了 id=5 size=0x6c 的四端口复应答"。H699 设计（转达约束下）：在 native_ipc_event_note 增设**第二小环**——按 (from,to) **进程对+代次**过滤（bb 代 × SB 代全组合，端口指针仅记录不解引用、不比用户端口号、不持裸指针跨生命周期），捕获该对在**任意端口**上的 S/Q/D/R/X 事件（含 port 指针、id、size、tid、ms），请求侧 D/R 事件附带记录 `hdr->msgh_local_port` 数值（仅作对齐线索日志）；拍内节奏导出。一次 boot 即可把四类分岔各归其位。
+
+
+### §404 H699 双向代次环：注册四段证据链全通（0x9d0a S→D tid711，回复 0x9d6e=+0x64 两次直交 SB 主线程 tid292，X=0）——"缺回复"证伪；断点前移到 SB 场景管道的 windowSceneDidConnect 空回调槽（SB+0x600658 blr x8，x8=[obj+0x10]=NULL，跨轮同址复现）；核身尾与 SB 崩溃同刻（2026-11-26）
+
+**实施（kernel `2649e38577d6`，boot `e6dda2fc`，boot id 0x385902f1）**：`h699-pidpair-ring.patch`（series 152）——按 (from,to) ∈ {SB/bb/PB 代次两两组合} 过滤**所有端口、所有 id、所有长度**的 S/Q/D/R/X 事件（port 指针仅记录；`msgh_local_port/msgh_remote_port` 名字作对齐线索字段，不跨 task 比较、不解引用）；代次由 exec 追踪灌表（本轮实测 sb=27/222、bb=56、pb=156 ✓）；导出 16 行/拍（4 行/800ms 节奏），**lost 单列**（written=990 lost=734——导出速率落后于写入，属观测容量问题，已得数据足够完成判定；下轮可提额或加过滤器）。
+
+**协议修正（§403 撤回项落实）**：`__XRegisterClient` 复核结论——双下划线=服务端入口（尾部 `bl _CASRegisterClient` 证实解包后即调实现）；**"+0x18==5" 是 64 位用户态 complex message 的 `mach_msg_body_t.msgh_descriptor_count`**（4 个 `mach_msg_port_descriptor_t` 12B 步距、type 字节 +10=0x11 MACH_MSG_TYPE_MOVE_SEND + 1 个 OOL 字节描述符 type=0x01@+0x57），**0x6c=该入口期望的 REQUEST 尺寸（108）**，而线上请求为 132——若 0x9d0a 路由到此入口将触发 MIG shape 拒绝；**未发现任何入口按 132 校验**（qc/cg 全量 `cmp #0x84` 搜索 0 命中），且 H699 实测 **回复 id=0x9d6e = 0x9d0a+0x64** 完全符合 MIG 顺序应答规则（0x9d27→0x9d8b、0x9d28→0x9d8c 同律），说明 0x9d0a 的实际服务端入口在别处（demux 表未在这两份反汇编中定位到），§403"应答携带 4 端口、id=5"的解释**作废**：4 个 MOVE_SEND 端口在**请求**里（SB 交给服务器的连接材料），应答 68B 装的是结果与回带端口。
+
+**注册四段链实测（同 boot 内串起）**：
+```
+S 304.377s 0x9d0a 132B 27→56 (request)      D 304.377 交付 tid=711 (bb CA 接收线程, 阻塞态健康, cpu=0)
+S 304.382s 0x9d6e  68B 56→27 (reply→ln=0x6f3403e0 即请求携带的应答权) Q(彼时 SB 无等待者)
+S 310.0 请求#2 → 314.055 回复 D tid=292 (SB 主线程) ✓
+S 355.3 请求#3 → 359.487 回复 D tid=292 ✓ ; 362.1 请求#4 → D
+X 事件 = 0（无未读丢弃）
+```
+配合 0x11xxx 家族往返（回复 D 到 SB tid=1007）与 PB 全往返——**IPC 层请求/回复/交付/接收四要素全部有证，"真缺回复"与"探针漏记"两个假设同时出局**。
+
+**新的首个可定位断点（前移）**：注册在 314/359s 已让 SB 主线程拿到回复，但 SB 的场景管道仍然死在**同一个空回调槽**上——H699 内 pid=27 于 1298.6s、pid=222 于 1399.3s 先后 SIGSEGV，TRAP 链与 H698 三代逐段同构（`blr x8`@SB+0x600658，`x8=[x0,#0x10]` NULL；上游 `windowSceneDidConnect:` 派发环 + `_configureForConnectingWindowScene:windowSceneContext:` 返回点 SB+0x1F89BC；x0 每代不同堆对象、同字段空）。**"已定位的调用点"与此前一致；"槽为何没被填"仍未证**——这是当前唯一主线：谁负责在 scene-connect 前把回调写进 +0x10，其前置条件（display 能力/唤醒源/FBSWorkspace 注册回调）在本环境缺了哪一块。
+
+**会话终结登记**：本轮 TRAP@1399.266 即日志末行，CDC 随即断，设备回 Android（用户确认前已自查 COM8 消失）——核身终结与 SB 崩溃**同刻**（H698 为 +37s），复位机制保留未知但**时序线索强化**（疑与 SB 异常处理路径相关：h578 拦截 → corpse 生成 → 内核某出口）。bb 本轮至终结零退出；swap/s6 done/presented/panel copy 仍全零。
+
+**下一步（两轨）**：(a) 离线优先——在 SpringBoard 二进制中枚举向 `[obj+0x10]` 写回调的站点及其调用条件（objdump 搜 str 指令 + 交叉引用 windowSceneDidConnect 上游），判定缺的前置是什么；(b) 上机可选——TRAP 现场对 pc=0 的 x0 做 isa→类名内核侧快照（copyinmap 纯读），把"空槽对象"点名。完成 (a) 再决定是否动 (b)。
+
+**工件登记**：boot H699=`e6dda2fc`；payload=`90e4dc64`；kernel `2649e385`；series 追加 152；bundle/trust/addon 沿用 H697/H698（402b4be1/5dab5c17/6cd7c4e5）。日志 logs/H699/device/H699-live.raw.bin(1077640B)+tmp/h699-decoded.txt(7809 行)。设备已回 Android，待停靠 TWRP。
