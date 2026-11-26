@@ -1,0 +1,40 @@
+--- a/osfmk/kern/task.c	2026-11-26 13:44:21
++++ b/osfmk/kern/task.c	2026-11-26 13:44:21
+@@ -10886,8 +10886,17 @@
+ 		}
+ 	}
+ 	native_xpc_emit(sample, 25);
++	/* H690: the ~1.5KB log ring only ever delivers each call's last dozen
++	 * rows, so the head of the backboardd walk is evicted by the same
++	 * call's later flood (STATUS 396).  Drain while the rows are fresh;
++	 * only the backboardd walk pays the extra flushes. */
++	extern void native_log_flush_hook(void);
++	int bb_flush = native_sb_pid > 0 && strncmp(name, "backboardd", 10) == 0;
+ 	printf("NATIVE_SBPC: sample=%u pid=%d comm=%s n=%u note=%s\n", sample, native_sb_pid,
+ 	    name, native_sb_count, native_sb_note);
++	if (bb_flush) {
++		native_log_flush_hook();
++	}
+ 	for (unsigned i = 0; i < native_sb_count; i++) {
+ 		printf("NATIVE_SBPC: sample=%u comm=%s tid=%llu pc=0x%llx lr=0x%llx wait=0x%llx cpu=%u st=0x%x\n", sample, name,
+ 		    (unsigned long long)native_sb_rows[i].tid,
+@@ -10896,6 +10905,9 @@
+ 		    (unsigned long long)native_sb_rows[i].wait,
+ 		    (unsigned)native_sb_rows[i].cpu,
+ 		    (unsigned)native_sb_rows[i].state);
++		if (bb_flush && (i & 3) == 3) {
++			native_log_flush_hook();
++		}
+ 		int want = strncmp(name, "SpringBoard", 11) == 0 ||
+ 		    ((sample % 30) == 0 && i < 8);
+ 		/* H363: lsd blocks inside Security's code signing; its first argument is usually the
+@@ -10968,6 +10980,9 @@
+ 		    (unsigned)(uint32_t)vi, (unsigned)(uint32_t)(vi >> 32),
+ 		    (unsigned)(uint32_t)(dr >> 32), (unsigned)(uint32_t)rp,
+ 		    (unsigned long long)native_sb_rows[i].x7);
++		if (bb_flush) {
++			native_log_flush_hook();
++		}
+ 	}
+ 	if (strncmp(name, "SpringBoard", 11) == 0) {
+ 		uint64_t uniq[12];
