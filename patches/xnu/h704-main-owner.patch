@@ -1,0 +1,122 @@
+--- a/osfmk/kern/task.c	2026-11-27 00:28:01
++++ b/osfmk/kern/task.c	2026-11-27 00:28:01
+@@ -10531,6 +10531,17 @@
+ static uint32_t native_sb_prevp;
+ static uint32_t native_sb_same;
+ static unsigned native_lkf_left = 3;
++/* H704: the REAL main thread (task threads queue head) is sampled every
++ * beat even while it runs - a missing wait row proves nothing (STATUS
++ * 412). native_ls_rep_owner holds the lock HOLDER's own special reply
++ * port from its row, so "no R/D after registered arming" becomes a
++ * proof of "no reply" rather than a coverage gap. */
++static uint64_t native_sb_headtid;
++static uint32_t native_sb_headcpu;
++static uint32_t native_sb_headstate;
++static uint64_t native_sb_headpc;
++static uint32_t native_sb_head_done;
++static ipc_port_t native_ls_rep_owner;
+ 
+ struct native_sb_row {
+ 	uint64_t tid;
+@@ -10730,6 +10741,15 @@
+ 	}
+ 	thread_t th;
+ 	queue_iterate(&t->threads, th, thread_t, task_threads) {
++		if (!native_sb_head_done) {
++			native_sb_head_done = 1;
++			native_sb_headtid = (uint64_t)thread_tid(th);
++			native_sb_headcpu = th->cpu_usage;
++			native_sb_headstate = th->state;
++			arm_saved_state_t *hs = get_user_regs(th);
++			native_sb_headpc = (hs && is_saved_state64(hs)) ?
++			    (uint64_t)get_saved_state_pc(hs) : 0ULL;
++		}
+ 		if ((th->state & TH_WAIT) == 0) {
+ 			continue;
+ 		}
+@@ -11017,6 +11037,7 @@
+ 	char native_sb_service[80];
+ 
+ 	native_sb_count = 0;
++	native_sb_head_done = 0;
+ 	native_sb_note = "-";
+ 	native_sb_pid = -1;
+ 	native_sb_name = name;
+@@ -11557,6 +11578,7 @@
+ 				uint32_t cur = 0;
+ 				uint32_t owner;
+ 				uint64_t okobj = 0, otid = 0;
++				unsigned oj = 0;
+ 				uint32_t owner_alt = 0, kot = 0, found = 0;
+ 				if (op != 544 && op != 515) {
+ 					continue;
+@@ -11619,6 +11641,7 @@
+ 									if (native_sb_rows[j].mth
+ 									    == okobj) {
+ 										otid = native_sb_rows[j].tid;
++										oj = j + 1;
+ 										break;
+ 									}
+ 								}
+@@ -11660,14 +11683,41 @@
+ 					    (unsigned long long)r->x1,
+ 					    (unsigned long long)otid,
+ 					    (unsigned long long)r->mksrp);
++					if (oj &&
++					    native_sb_rows[oj - 1].mksrp != 0) {
++						native_ls_rep_owner = (ipc_port_t)
++						    (uintptr_t)native_sb_rows[oj - 1].mksrp;
++						printf("NATIVE_LSARM2: "
++						    "sample=%u t=%u lock=0x%llx "
++						    "holder=%llu rep_owner=0x%llx\n",
++						    sample,
++						    (unsigned)
++						    (mach_absolute_time() / 19200ULL),
++						    (unsigned long long)r->x1,
++						    (unsigned long long)otid,
++						    (unsigned long long)
++						    native_sb_rows[oj - 1].mksrp);
++					}
+ 				}
+-				if (native_sb_count &&
+-				    r->tid == native_sb_rows[0].tid) {
++				if (native_sb_headtid &&
++				    r->tid == native_sb_headtid) {
+ 					curp = 1;
+ 					curl = r->x1;
+ 					curo = otid;
+ 				}
+ 			}
++			printf("NATIVE_SBLIVE: sample=%u headtid=%llu "
++			    "state=0x%x cpu=%u savedpc=0x%llx parked=%u "
++			    "curlock=0x%llx o=%llu orep=0x%llx\n", sample,
++			    (unsigned long long)native_sb_headtid,
++			    native_sb_headstate, native_sb_headcpu,
++			    (unsigned long long)native_sb_headpc, curp,
++			    (unsigned long long)curl,
++			    (unsigned long long)curo,
++			    (unsigned long long)(uintptr_t)native_ls_rep_owner);
++			native_journal_add(12, native_sb_pid,
++			    (uint32_t)native_sb_headtid, native_sb_headstate,
++			    native_sb_headcpu, native_sb_headpc, "live");
+ 			if (native_ls_lock != 0) {
+ 				printf("NATIVE_LSARM-ST: sample=%u rep=0x%llx "
+ 				    "lock=0x%llx owner=%llu park=%u l=0x%llx "
+@@ -11706,7 +11756,7 @@
+ 					if (go) {
+ 						native_lkf_left--;
+ 						native_lkfollow(sample,
+-						    (unsigned)native_sb_rows[0].tid,
++						    (unsigned)native_sb_headtid,
+ 						    ftid);
+ 					}
+ 				}
+@@ -12214,7 +12264,7 @@
+ 		return;
+ 	}
+ 	if (port != native_render_port && port != native_ls_req &&
+-	    port != native_ls_rep) {
++	    port != native_ls_rep && port != native_ls_rep_owner) {
+ 		int hw = 0;
+ 		for (unsigned w = 0; w < native_watch_n; w++) {
+ 			if (port == native_watch[w]) {
