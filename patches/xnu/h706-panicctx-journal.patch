@@ -1,0 +1,147 @@
+--- a/osfmk/kern/task.c	2026-11-27 01:59:10
++++ b/osfmk/kern/task.c	2026-11-27 01:59:10
+@@ -10925,20 +10925,25 @@
+ 	char tag[24];
+ };
+ 
+-#define NATIVE_JRNL_MAX 192
++#define NATIVE_JRNL_MAX 256
+ /* kind caps: 1=exec 2=exit 3=iotime 4=panic 5=corpse 6=open 7=selector */
+ static struct native_journal_entry native_journal[NATIVE_JRNL_MAX];
+ static unsigned native_journal_next;
+-static unsigned native_journal_kind_n[8];
+-static const unsigned native_journal_kind_cap[8] = {
+-	0, 40, 40, 64, 4, 8, 12, 40
++/* H706 (STATUS 414 defect): the H701 additions used kinds 8-12 but the
++ * guard rejected everything >= 8, so those entries were silently dropped
++ * - the printf lines carried the analysis instead. Widen the domain and
++ * budget: 8=ulk 9=m2 10=lsq 11=lan 12=live 13=bt 14=regs. */
++static unsigned native_journal_kind_n[16];
++static const unsigned native_journal_kind_cap[16] = {
++	0, 40, 40, 64, 4, 8, 12, 40,
++	12, 16, 6, 16, 24, 16, 4, 4
+ };
+ 
+ void
+ native_journal_add(unsigned kind, uint32_t pid, uint32_t a1, uint32_t a2,
+     uint32_t a3, uint64_t a4, const char *tag)
+ {
+-	if (kind == 0 || kind >= 8) {
++	if (kind == 0 || kind >= 16) {
+ 		return;
+ 	}
+ 	if (__atomic_fetch_add(&native_journal_kind_n[kind], 1,
+--- a/osfmk/kern/debug.c	2026-11-27 01:59:10
++++ b/osfmk/kern/debug.c	2026-11-27 01:59:10
+@@ -1149,7 +1149,11 @@
+ 		 * hides the real reason.  Only use them from a normal context. */
+ 		if (get_preemption_level() == 0) {
+ 			va_list native_panic_args;
+-			char native_panic_msg[256];
++			/* H706: 256 bytes cut the panic_plain argument expansion
++			 * mid dump (H705 died with x5+esr+far never printed).
++			 * The SAME format+args produce the full text; 2200 B
++			 * covers the whole 40-register + esr/far/cpsr layout. */
++			char native_panic_msg[2200];
+ 			va_copy(native_panic_args, *panic_args);
+ 			vsnprintf(native_panic_msg, sizeof(native_panic_msg),
+ 			    panic_format_str, native_panic_args);
+@@ -1157,6 +1161,98 @@
+ 			printf("NATIVE_PANIC_STR: %s\n", native_panic_msg);
+ 			extern void native_journal_add(unsigned, uint32_t, uint32_t, uint32_t, uint32_t, uint64_t, const char *);
+ 			native_journal_add(4, 0, 0, 0, 0, 0, native_panic_msg);
++			{
++				/* H706: esr/far/sp/fp from the saved state the
++				 * text already names, then a bounded non-faulting
++				 * FP-chain walk inside the faulting kernel
++				 * stack window (no page-walk, validated
++				 * alignment/monotonicity/range, 12 frames). */
++				const char *sp0 = strstr(native_panic_msg,
++				    "saved state: 0x");
++				struct h706_state {
++					uint64_t x[29];
++					uint64_t fp, lr, sp, pc;
++					uint32_t cpsr, reserved;
++					uint64_t far;
++					uint32_t esr, exception;
++				} *hss = NULL;
++				if (sp0 != NULL) {
++					uintptr_t hptr = 0;
++					const char *cp = sp0 + 15;
++					while (*cp >= '0' && *cp <= '9') {
++						hptr = (hptr << 4) +
++						    (uint64_t)(*cp - '0');
++						cp++;
++					}
++					while (*cp >= 'a' && *cp <= 'f') {
++						hptr = (hptr << 4) +
++						    (uint64_t)(*cp - 'a' + 10);
++						cp++;
++					}
++					while (*cp >= 'A' && *cp <= 'F') {
++						hptr = (hptr << 4) +
++						    (uint64_t)(*cp - 'A' + 10);
++						cp++;
++					}
++					if (hptr != 0 && (hptr & 7) == 0 &&
++					    VM_KERNEL_ADDRESS((void *)hptr)) {
++						hss = (struct h706_state *)
++						    hptr;
++					}
++				}
++				if (hss != NULL) {
++					printf("NATIVE_PANIC_REGS: esr=0x%08x "
++					    "far=0x%016llx sp=0x%016llx "
++					    "fp=0x%016llx cpsr=0x%08x\n",
++					    hss->esr,
++					    (unsigned long long)hss->far,
++					    (unsigned long long)hss->sp,
++					    (unsigned long long)hss->fp,
++					    hss->cpsr);
++					native_journal_add(14, 0, hss->esr,
++					    hss->cpsr, 0, hss->far, "regs");
++					{
++						uint64_t fpc = hss->fp;
++						uint64_t spv = hss->sp;
++						printf("NATIVE_PANIC_BT: "
++						    "pc=0x%016llx",
++						    (unsigned long long)
++						    hss->pc);
++						native_journal_add(13, 0, 0, 0,
++						    0, hss->pc, "bt0");
++						for (unsigned f = 0;
++						    f < 12; f++) {
++							uint64_t *fr;
++							uint64_t nfp, lrf;
++							if (!VM_KERNEL_ADDRESS(
++							    (void *)fpc) ||
++							    (fpc & 15) != 0 ||
++							    fpc < spv ||
++							    fpc > spv + 0x6000) {
++								break;
++							}
++							fr = (uint64_t *)
++							    (uintptr_t)fpc;
++							nfp = fr[0];
++							lrf = fr[1];
++							printf(" f%u=0x%016llx",
++							    f,
++							    (unsigned long long)
++							    lrf);
++							native_journal_add(13,
++							    0, f, 0, 0, lrf,
++							    "bt");
++							if (nfp <= fpc ||
++							    !VM_KERNEL_ADDRESS(
++							    (void *)nfp)) {
++								break;
++							}
++							fpc = nfp;
++						}
++						printf("\n");
++					}
++				}
++			}
+ 			native_panic_flush();
+ 		}
+ 	}
