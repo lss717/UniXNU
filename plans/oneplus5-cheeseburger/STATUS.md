@@ -30434,7 +30434,7 @@ B. **回到用户态最后一条未试路线**：单页文本入口补丁的 can
 
 **发现二，match 三次、open 零次**。bb 的 NativeLegacyDisplay match_one：282.6s（tid883，ret=0）、415.3s（tid883，与 414.9s AppleM2ScalerCSCDriver=NotFound `0xe00002f0` 同波，ret=0）、551.2s（tid1841，ret=0）；观测面内全 boot 无一次 NativeLegacyDisplay 的 IOServiceOpen（SB 仅 306.6s match AGXAccelerator 成功，同样无 open）。DICT 行含 IOServiceNotificationUser（OSBoolean）——这是异步匹配通知路径的调用。bb/56 自 boot 存活至 611.2s，display 线程反复"match 成功→约 133 秒用户态忙碌→再 match"，从未进入 open。launchd 290.4s 报 bb 46170 次/174s（263 wakes/s）仍在超限，且 wake 风暴是全系统性的：imagent 256、axassetsd 266、lsd 485、assistantd 214、logd_helper 190，lsd.real 被杀（458s 起 sampler 持续 `miss name=lsd`）。
 
-**发现三，冻结队列原样复现**。398.4→578.5s 五个 beat `enq=11 deq=0 drop=3 ctrl=1` 恒定：0x9d0a size132×3（pid27）+ 0x9d27×1 + 0x9d28 size48×3（pid156，H686 为 157），全部是 40000 基座控制面 MIG（H685 校准语义）。
+**发现三，冻结队列原样复现**。398.4→578.5s 五个 beat `enq=11 deq=0 drop=3 ctrl=1` 恒定：0x9d0a size132×3（pid27）+ 0x9d27×1 + 0x9d28 size48×3（pid156，H686 为 157），全部是 40000 基座控制面 MIG（H685 校准语义）。pid156 经 EXEC 行核实为 **PosterBoard**（368.415s exec）——真实锁屏守护进程自己的 CAWindowServer 注册消息也在这条冻结队列里，与"锁屏可见"目标直接相关。
 
 **发现四，611s 死亡序列与 USB**。611.2s bb/56 被 corpse-cap 第 6 次击杀（status=0x9），611.38s MTLCompilerServi/ACCHW 被杀，611.49s bb 重拉 pid=182，611.57s 日志断流、CDC 读 error=203；设备其后自行回 Android（13:0x 核实）。"击杀重拉风暴后复位"与 panic 看门狗方向一致，无 panic 正文，不可确证。H686 同节奏（606s kill）后又活了 300s+，故该复位非节奏必至。
 
