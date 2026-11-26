@@ -30574,3 +30574,18 @@ B. **回到用户态最后一条未试路线**：单页文本入口补丁的 can
 
 **§402 补充（H698 resume 段，boot 1093-1444s，2026-11-26 18:25）**：首次采集到点关闭后 COM8 仍在——会话没死，重启 150s 流回补了后段，**更正上文"绑定口 377.5s 后至会话尾零新事件"：那是导出游标滞后（6 行/拍追不上写入），环里其实持续有账**。resume 段关键行：`serial=33-36 ms=1229.4s 0x9d28 from=210`（**PosterBoard 换代 146→210**）与 `serial=41/43 ms=1269.6/1270.5 0x9d0a from=27`（**SB 第一代在首波注册 900+ 秒后再次注册**），仍然全部 S→D tid=752 result=0。SB 换代经 exec/exit PID 核实：**pid=27 于 1319.43s SIGSEGV（status=0xb ns=2 自信号，Corpse allowed 3 of 5），1321.37s 重拉 pid=222，1436.65s 再次 SIGSEGV（Corpse allowed 2 of 5）**——SB 已进入数百秒一次的崩溃循环（H697 的 1365s SIGSEGV 非孤例，是周期行为；旧代次与 KeyStore 风暴无直接死亡关联）。bb/56 全程零退出、1444s 仍存活在干活。
 **修订后的首个可定位断点**：注册链路本身全通（两波 0x9d0a 全被 tid752 收取），但绑定口上从始至终**只出现过注册类消息（0x9d0a/0x9d27/0x9d28/w00t/NATC），无任何事务/内容类消息**，且 SB 每活一轮都止步于此、随后在 1200-1450s 带内 SIGSEGV。SB 900s 才二次注册（若 registerClient 是同步 RPC，不像短超时重试）——"bb 是否回了应答"仍是判定 (a)SB 卡等回复 vs (b)回复完好、SB 卡在后续场景构建 的唯一分岔，H699 的 msgh_local_port 快照（D 事件时刻即可采）是下一个决定性观测。会话当前仍活着（>1444s，历史最长），待用户处置停靠。
+
+
+### §403 H698 回捞与离线审计：sb 三代崩溃栈逐地址相同（pc=0x0 空指针调用，SpringBoard/UIKitCore/FrontBoard 链）；0x9d0a=_XRegisterClient 是同步 RPC，期望 id=5 size=0x6c 携带 4 个端口描述符的复应答——事务端口只在应答里；回复观测盲区确认，需 H699 上机定分岔（2026-11-26）
+
+**回捞保全**：logs/H698/device/H698-live.raw.bin(659431B, BB45578C40396B44) + H698-resume.raw.bin(215727B, A1C6317B2F24A6BD) 已哈希归档；h103 环 TWRP 只读全槽合并（--slots 247）得 tmp/h698-h103-full.txt(832073B) + 原始窗口 tmp/h698-h103-window.bin。设备终态 TWRP（用户确认自行重启回 Android 后进入）。
+
+**对齐**：环内 boot 与 H698 一致（BND 序列延续 live/resume 段的 serial 27→62）；header uptime_s=1574、环文行尾 1620.4、裸事件尾 timer=1645291ms≈1645.3s、slots_written=1144、write_errors=429（同前形态：lock 让位为主）。**COM 停止（1444s）后最后可证事件**：serial 53-62（事件时刻 1306-1317s，全部 S→D tid=752）；导出时刻最晚 1618.4s。1618→1645 环内为常规心跳（UFS_ALIVE rep=sb n=15、IRQ/GIC、A540 probe），**绑定口再无导出事件，但因会话在下一个拍点前终止，1317-1645 的事件存在与否记为"导出截断盲区"，不定论**。
+
+**进程生存/换代（exec/exit PID 为准）**：SB 三代：pid=27 exec(107.98, live 段)→SIGSEGV@1319.43；pid=222 exec@1321.37→SIGSEGV@1436.65；pid=237 exec@1448.37→SIGSEGV@1607.87。三代 status=0xb ns=2 code=0xb sender=自身，**崩溃栈逐地址全同**（同 boot 同 slide）：`pc=0x0, lr=SpringBoard+0x65C, f0-f2 SpringBoard(+0x1F89BC/+0x1F7C90/+0x600778 相对 unslid base 差值以镜像基址 0x1CF99C000 计), f3-f5 UIKitCore, f6 FrontBoard(____handleApplicationsRegisteredNotification_block_invoke 邻域), f7 FrontBoardServices, f8-f15 FrontBoard/BaseBoard`（符号为 strip 后最近名，**可信键是镜像+偏移**；三栈一致本身可判"同一处空指针回调"）。237 在 1477.18 已有一次同形 TRAP（疑似 h578 reporter 拦截存活），1607.87 再次命中后退出——登记。bb(pid=56)：环+两段 COM **零退出、零 guard、活到环尾**。复位正文：**无**（pstore 空，UniXNU 不写 ramoops；1645s 后无任何 NATIVE_PANIC_STR/exit-with-reason 行）——**复位机制维持未知**；长期存活：本会话 ≥1645s 为历史最长记录（无 trace 尾）。
+
+**离线协议核查（qc.dis，@__XRegisterClient）**：stub 校验 `(msgh_bits>>31)&1 == 1`（复应答）、`msgh_id == 5`、`msgh_size == 0x6c(108)`、四个 `MACH_MSG_PORT_DESCRIPTOR(0x11)`（偏移 0x26/0x32/0x3e/0x4a 类型字段）、尾字段与长度自校验，失败返 -0x135/-0x130（MIG 错误码）。**判定：0x9d0a(40202)=_XRegisterClient 为同步请求-应答 RPC，应答携带 4 个端口对象**（context/事务通道的协商起点）。**推论（限定为证据一致而非证明）**：绑定口只见注册类消息、无事务，与"应答从未交付"完全一致——事务端口在应答里，无应答则 SB 无处可发；SB 三代在 FrontBoard 场景生命周期链中空指针自毙，也与注册永不完成的下游故障相符。**不能排除**：bb 已应答、SB 消费后仍死——因为回复方向（bb→SB，任意端口）不在任何现有观测面：BND 环只盯绑定口；BKS 环只看 SB↔launchd 对；通用 IPC 环写入全但打印过滤窄。**四类可能（无回复权/探针漏记/真缺回复/回复后场景为空）当前无法区分。**
+
+**D→752 措辞收紧（按转达）**：所有 D 事件仅证明**内核把消息直交给了等待线程 752（交付成功）**，不证明用户态 handler 处理完成或语义正确；752 的收后行为未观测。
+
+**上机必要性判定：需要**。回捞+离线已把问题压成单点——"bb 是否对 0x9d0a/0x9d27/0x9d28 发回了 id=5 size=0x6c 的四端口复应答"。H699 设计（转达约束下）：在 native_ipc_event_note 增设**第二小环**——按 (from,to) **进程对+代次**过滤（bb 代 × SB 代全组合，端口指针仅记录不解引用、不比用户端口号、不持裸指针跨生命周期），捕获该对在**任意端口**上的 S/Q/D/R/X 事件（含 port 指针、id、size、tid、ms），请求侧 D/R 事件附带记录 `hdr->msgh_local_port` 数值（仅作对齐线索日志）；拍内节奏导出。一次 boot 即可把四类分岔各归其位。
