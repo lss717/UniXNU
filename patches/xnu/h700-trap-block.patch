@@ -1,0 +1,32 @@
+--- a/bsd/uxkern/ux_exception.c	2026-11-26 19:35:05
++++ b/bsd/uxkern/ux_exception.c	2026-11-26 19:35:05
+@@ -290,6 +290,29 @@
+ 	    exception_count ? exception_state.esr : 0,
+ 	    exception_count ? exception_state.exception : 0);
+ 	native_report_trap_image(p, (uint64_t)state.lr);
++	/* H700: the null-call faults (STATUS 404/405) jump to [x0+0x10], the arm64
++	 * block invoke slot.  When pc==0, snapshot the target's first three words so
++	 * the crash-side state pairs with the observer's at-return snapshot by object
++	 * pointer.  Read-only copyinmap on the faulting task map. */
++	if (state.pc == 0) {
++		uint64_t h700_obj = (uint64_t)state.x[0];
++		if (h700_obj >= 0x100000000ULL && h700_obj < 0x8000000000ULL) {
++			uint64_t h700_words[3] = { 0, 0, 0 };
++			task_t h700_task = get_threadtask(thread);
++			extern void *get_task_map(task_t);
++			extern kern_return_t copyinmap(void *, user_addr_t, void *, mach_vm_size_t);
++			if (h700_task != TASK_NULL &&
++			    copyinmap(get_task_map(h700_task), (user_addr_t)h700_obj,
++			    h700_words, sizeof(h700_words)) == 0) {
++				printf("NATIVE_TRAP_BLOCK: pid=%d obj=0x%llx isa=0x%llx "
++				    "w8=0x%llx invoke=0x%llx\n", proc_getpid(p),
++				    (unsigned long long)h700_obj,
++				    (unsigned long long)h700_words[0],
++				    (unsigned long long)h700_words[1],
++				    (unsigned long long)h700_words[2]);
++			}
++		}
++	}
+ 	fp = state.fp;
+ 	for (depth = 0; depth < 16 && fp; depth++) {
+ 		uint64_t frame[2];

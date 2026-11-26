@@ -141,7 +141,8 @@ def main() -> int:
         OBSERVER,
         (
             b"observer load process=",
-            b"build=H685f2",
+            b"build=H700",
+            b"event=h700_return_snapshot",
             b"event=h639_ctx_census site=",
             b"event=h639_ctx_entry site=",
             b"h587_activity_center_service_skip",
