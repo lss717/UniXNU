@@ -30669,3 +30669,20 @@ X 事件 = 0（无未读丢弃）
 4. 复位机制仍无正文证据(序列 604/616/1003/1093/1230/1645/1791 不变)。
 
 **设备状态**:回捞后停在 TWRP(recovery),未写任何分区;Android 系统完好,下轮按既有授权 fastboot boot 或回 Android。
+### §408 H701 设计与基线更正:1226 的请求确实入了队、被处理并 retirement(收回"从未入队"表述);H700 盘环本已含 TARGETPORT/TARGETWAIT/SBQ——LS 通道已证"在 lsd 端口排队、无人取走"(三拍 cnt=1、接收线程为零),本轮只补最后三块观测(2026-11-26)
+
+**基线更正(§407 表述收回)**:按源码复核 kickSwapQueue/kickOnce 语义,`kick transferred=0 pending=1` 即"踢时队列已有请求",该笔被 kickOnce 的 **surface 非空路径**处理(validate accepted=1→stage0→IOSurface 指针取自 request+2624→bounds/格式检查过→全屏 CPU copy 8294400B 137.4ms→transfer status=0→finishTransfer→retirement→再踢时队列已空→`skip req=0 valid=0` 只说明当时**没有第二笔**)。"swap 请求从未入队"错误。另 `NATIVE_FRAME event=d` 为位掩码 0xd=exec|IOMatch|client-open|**transfer 首次抵达 scanout**;`frames=0` 是 scanBudget 默认关(全帧扫描 68s/帧,sheng-fb-scan 显式开启)的副产品,不表内容;READBACK 四点黑不能推整帧(§407 已按 64 点采样改造方向)。1226.247 的 sel3 `No Default FB Surface`(0xe00002bc=kIOReturnError)是 copy 之后的独立查询,不倒推为上一笔失败。
+
+**H700 已有数据实证的 LS 通道状态(本轮新核对,未上机)**:盘环三拍(986.2/1052.2/1118.1)含
+- `NATIVE_TARGETPORT set sender=27/SpringBoard sname=0x6303 rname=0x510f sport=0xfffffff4f77f8380`(三拍同值)——tid692 同步 XPC 的目的端口已被既有管线**自动锁定**;
+- `check comm=lsd ... seen=1 q=1 cnt=1 qlim=6 port=0xfffffff4f77f8380 match=1 peer=95`(三拍 cnt 恒 1)——请求**已在 lsd 端口队列**(队头 `NATIVE_SBQ req_head0=0x40000000/537989649/272`:XPC 同步请求 msgh_id=0x40000000、272 字节);
+- `NATIVE_TARGETWAIT seen=0 count=0`(三拍)——lsd 无任何线程在该端口登记接收等待。
+"在途丢件"当场证伪:请求到了 lsd 的端口,没人取。§407 的"未送达或入队未取"收缩为后者(限该端口、该拍区间;1157.67s 后 lsd 行为未知)。pair 环末事件 `serial=208 kind=D ms=356531 id=0x20000000 size=216 from=56 to=27 tid=291`:356.531s 后 SB/bb/pb 的 CA 通道零事件,主线程被吞期间 CA 通道静默。
+
+**H701 最小观测三件(单启动同时回答两条链)**:
+内核 `h701-lsd-watch.patch`(series 154,task.c 七处,xnu-work 上 a/b 验证、dry-revert 过):
+1. SBPC 行新增 mth/mid/msz/mrport/mlport/mksrp(x16==-47 且 ith_kmsg 非空时读在飞头部)——每拍打 SpringBoard 各发送方 `NATIVE_SBMSG` 行+journal kind=9;发送方 rport==armed 目标端口时把其 ith_special_reply_port 登为 `native_ls_rep` 并打 `NATIVE_LSLANE`。
+2. ulock parked 行(x16==544/515):copyinmap 读 x1 用户锁字 4 字节、x2>>2 解 owner 线程端口名,经 space entry 反查 mth 得 owner tid,打 `NATIVE_SBLOCK`+journal kind=8——**直接核对 tid692 持锁假设**,不再依赖栈形状。
+3. lsd 检查块读 target 端口 `ip_klist.kl_list` 打 `NATIVE_LSKNOTE kn=`+journal kind=10——kn=0 且 cnt 恒 1 即证"lsd 分环从未在该连接端口挂 knote";同时 bound 环过滤从单端口扩为 render+ls_req+ls_rep 三端口,LS 通道的 D(取走)/R(回复)事件进环,与主线程恢复时刻(h557 无返回行、KeyStore 重试)做**时刻对齐**。
+驱动侧(GopFramebuffer c2ce817):accept dump(前 4 笔 validate-accepted 请求:提交线程 tid、surface 指针/IOSurfaceID/类名、792/804/816/17/81 偏移的图层 state/options/size/rect——与 reject 捕获同一组偏移);`NATIVE_LEGACY_SAMPLE`(64 点网格,源 surface 与 scanout **同位比对** same/diff/首个失配/两侧零计数+三点值——区分清屏、空 surface、有内容未呈现三态);retirement 行带 done/presented/frames;client io/fixup 行带 tid/kt。
+零语义改动、无新锁、热路径无分配;boot-args 与 H700 逐字一致(payload.json 实证),dylib 不变(trust 66d7ebd5、gpuaddon 0cbfc3b4、data 0ef3db84 复用)。

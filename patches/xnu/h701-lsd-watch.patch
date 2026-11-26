@@ -1,0 +1,213 @@
+--- a/osfmk/kern/task.c	2026-11-26 21:15:53
++++ b/osfmk/kern/task.c	2026-11-26 21:15:53
+@@ -10501,6 +10501,18 @@
+ #include <ipc/ipc_mqueue.h>
+ 
+ #include <ipc/ipc_port.h>
++
++/* H701: LaunchServices lane watch.  STATUS 407 pinned the SpringBoard main
++ * thread on the _LSContextInitCommon unfair lock while tid 692 holds it and
++ * waits for a synchronous XPC reply from launchservicesd whose request sits
++ * enqueued on the lsd port, never fetched (NATIVE_SBQ req_cnt=1, TARGETWAIT
++ * seen=0).  These two globals arm the existing per-port bound ring (see
++ * native_bound_note) on exactly that request port and the holder's special
++ * reply port, so S/Q/D/R events on the LS lane become visible.  Pointers
++ * only, never dereferenced by the note path, same rule as native_render_port. */
++#include <ipc/ipc_object.h>
++static ipc_port_t native_ls_req;
++static ipc_port_t native_ls_rep;
+ 
+ struct native_sb_row {
+ 	uint64_t tid;
+@@ -10524,6 +10536,13 @@
+ 	uint64_t x6;
+ 	uint64_t x7;
+ 	uint64_t x16;
++	/* H701: mach-call state of parked senders (STATUS 407 chain). */
++	uint64_t mth;
++	uint64_t mrport;
++	uint64_t mlport;
++	uint64_t mksrp;
++	uint32_t mid;
++	uint32_t msz;
+ 	uint32_t recv_state;
+ 	uint32_t recv_kmsg;
+ 	uint32_t recv_name;
+@@ -10743,6 +10762,32 @@
+ 			native_sb_rows[native_sb_count].recv_kmsg = th->ith_kmsg != IKM_NULL;
+ 			native_sb_rows[native_sb_count].recv_name = th->ith_receiver_name;
+ 			native_sb_rows[native_sb_count].recv_seqno = th->ith_seqno;
++			native_sb_rows[native_sb_count].mth =
++			    (uint64_t)(uintptr_t)th;
++			native_sb_rows[native_sb_count].mksrp =
++			    (uint64_t)(uintptr_t)th->ith_special_reply_port;
++			native_sb_rows[native_sb_count].mrport = 0;
++			native_sb_rows[native_sb_count].mlport = 0;
++			native_sb_rows[native_sb_count].mid = 0;
++			native_sb_rows[native_sb_count].msz = 0;
++			/* H701: a parked send-with-reply still owns its kmsg and
++			 * the in-flight header keeps the converted destination
++			 * and reply port pointers.  Pure receivers have a null
++			 * remote side, so mrport!=0 marks a sender. */
++			if ((int32_t)(uint32_t)
++			    get_saved_state_reg(state, 16) == -47 &&
++			    th->ith_kmsg != IKM_NULL) {
++				mach_msg_header_t *mh =
++				    ikm_header(th->ith_kmsg);
++				native_sb_rows[native_sb_count].mid =
++				    (uint32_t)mh->msgh_id;
++				native_sb_rows[native_sb_count].msz =
++				    (uint32_t)mh->msgh_size;
++				native_sb_rows[native_sb_count].mrport =
++				    (uint64_t)(uintptr_t)mh->msgh_remote_port;
++				native_sb_rows[native_sb_count].mlport =
++				    (uint64_t)(uintptr_t)mh->msgh_local_port;
++			}
+ 			native_sb_count++;
+ 		}
+ 	}
+@@ -11278,6 +11323,13 @@
+ 		    strncmp(native_sb_qname2, "lsd", 3) == 0) {
+ 			native_sb_target_rname = native_sb_req.rname;
+ 			native_sb_target_port = native_sb_req.port;
++			if (native_ls_req == IP_NULL && native_sb_req.port) {
++				native_ls_req = (ipc_port_t)(uintptr_t)
++				    native_sb_req.port;
++				printf("NATIVE_LSWATCH: sample=%u armed req=0x%llx\n",
++				    sample,
++				    (unsigned long long)native_sb_req.port);
++			}
+ 			printf("NATIVE_TARGETPORT: sample=%u set sender=%d/%s sname=0x%x rname=0x%x sport=0x%llx\n",
+ 			    sample, native_sb_pid, name, native_sb_hdr[2],
+ 			    native_sb_target_rname,
+@@ -11321,6 +11373,26 @@
+ 			    (unsigned long long)waiter_tid,
+ 			    (unsigned long long)waiter_pc,
+ 			    waiter_state, waiter_rname);
++			{
++				/* H701: the request is proven enqueued here; print and
++				 * journal whether the port carries any knote at all
++				 * (a dead reader loop explains "queued, never fetched"). */
++				ipc_port_t tp = (ipc_port_t)(uintptr_t)target.port;
++				int kn = 0;
++				if (tp != IP_NULL && ip_active(tp) &&
++				    tp->ip_klist.kl_list != NULL) {
++					kn = 1;
++				}
++				printf("NATIVE_LSKNOTE: sample=%u port=0x%llx kn=%d "
++				    "cnt=%u seq=%u waiters=%u\n", sample,
++				    (unsigned long long)target.port, kn,
++				    (unsigned)target.msgcount, (unsigned)target.seqno,
++				    waiters);
++				native_journal_add(10, native_sb_pid,
++				    (uint32_t)target.msgcount, (uint32_t)target.seqno,
++				    (uint32_t)((kn & 0xff) | ((waiters & 0xffffff) << 8)),
++				    (uint64_t)target.port, "lsq");
++			}
+ 		}
+ 		native_ipc_focus_emit(sample, native_sb_hdr[5], native_sb_req.port, native_sb_local.port);
+ 		native_render_emit(sample);
+@@ -11341,6 +11413,93 @@
+ 			    native_sb_req.queued, native_sb_req.sorights, native_sb_req.srights,
+ 			    native_launchd_out, native_launchd_in,
+ 			    native_launchd_replies, native_launchd_other);
++		}
++		/* H701: two questions, one boot (STATUS 408).  (a) Which SpringBoard
++		 * thread holds a parked send-with-reply, on which destination port,
++		 * and did its ith state ever change (reply vs timeout vs frozen)?
++		 * (b) For every ulock park, read the actual lock word and resolve the
++		 * owner thread port name to a sampled tid, to check the tid-692
++		 * holder hypothesis directly.  Read-only; copyinmap on the sampled
++		 * task map, same pattern as the H700 trap-block snapshot. */
++		if (strncmp(name, "SpringBoard", 11) == 0) {
++			for (unsigned i = 0; i < native_sb_count; i++) {
++				struct native_sb_row *r = &native_sb_rows[i];
++				if ((int32_t)(uint32_t)r->x16 != -47 ||
++				    r->mrport == 0) {
++					continue;
++				}
++				printf("NATIVE_SBMSG: sample=%u tid=%llu id=0x%x "
++				    "size=%u rport=0x%llx lport=0x%llx srport=0x%llx "
++				    "istate=0x%x iseq=%u\n", sample,
++				    (unsigned long long)r->tid, r->mid, r->msz,
++				    (unsigned long long)r->mrport,
++				    (unsigned long long)r->mlport,
++				    (unsigned long long)r->mksrp, r->recv_state,
++				    r->recv_seqno);
++				native_journal_add(9, native_sb_pid,
++				    (uint32_t)r->tid, r->mid, r->msz, r->mrport, "m2");
++				if (native_ls_rep == IP_NULL && r->mksrp &&
++				    native_ls_req != IP_NULL &&
++				    r->mrport == (uint64_t)(uintptr_t)native_ls_req) {
++					native_ls_rep = (ipc_port_t)(uintptr_t)r->mksrp;
++					printf("NATIVE_LSLANE: sample=%u tid=%llu "
++					    "rep=0x%llx\n", sample,
++					    (unsigned long long)r->tid,
++					    (unsigned long long)r->mksrp);
++				}
++			}
++			for (unsigned i = 0; i < native_sb_count; i++) {
++				struct native_sb_row *r = &native_sb_rows[i];
++				uint32_t op = (uint32_t)r->x16;
++				uint32_t cur = 0;
++				uint32_t owner;
++				uint64_t okobj = 0, otid = 0;
++				if (op != 544 && op != 515) {
++					continue;
++				}
++				if (r->x1 < 0x100000000ULL ||
++				    r->x1 >= 0x8000000000ULL) {
++					continue;
++				}
++				if (copyinmap(get_task_map(native_sb_task),
++				    (user_addr_t)r->x1, &cur, sizeof(cur)) !=
++				    KERN_SUCCESS) {
++					cur = 0xdeadbeefU;
++				}
++				owner = (uint32_t)((r->x2 >> 2) & 0x3fffffffULL);
++				{
++					struct native_sb_probe p2;
++					native_sb_probe_name(
++					    native_sb_task->itk_space, owner, &p2);
++					if (p2.seen && p2.port) {
++						ipc_port_t pp =
++						    (ipc_port_t)(uintptr_t)p2.port;
++						if (ip_active(pp) &&
++						    ip_kotype(pp) == IKOT_THREAD) {
++							okobj = (uint64_t)pp->ip_kobject;
++							for (unsigned j = 0;
++							    j < native_sb_count; j++) {
++								if (native_sb_rows[j].mth ==
++								    okobj) {
++									otid =
++									    native_sb_rows[j].tid;
++									break;
++								}
++							}
++						}
++					}
++				}
++				printf("NATIVE_SBLOCK: sample=%u tid=%llu op=%u "
++				    "lock=0x%llx val=0x%llx cur=0x%08x owner=0x%x "
++				    "kobj=0x%llx otid=%llu\n", sample,
++				    (unsigned long long)r->tid, op,
++				    (unsigned long long)r->x1,
++				    (unsigned long long)r->x2, cur, owner,
++				    (unsigned long long)okobj,
++				    (unsigned long long)otid);
++				native_journal_add(8, native_sb_pid, (uint32_t)r->tid,
++				    (uint32_t)r->x1, cur, r->x2, "ulk");
++			}
+ 		}
+ 	}
+ 	if (native_sb_task != TASK_NULL) {
+@@ -11841,7 +12000,8 @@
+ 		}
+ 		return;
+ 	}
+-	if (port != native_render_port) {
++	if (port != native_render_port && port != native_ls_req &&
++	    port != native_ls_rep) {
+ 		return;
+ 	}
+ 	if (!native_render_dead && !ip_active(port)) {
