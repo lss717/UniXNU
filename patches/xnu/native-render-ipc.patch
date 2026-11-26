@@ -30,7 +30,7 @@
  		native_xpc_register(native_sb_rcv.port, native_sb_pid, name, 'r');
  		native_xpc_register(native_sb_req.port, native_sb_pid, name, 'q');
  		native_xpc_dump(sample);
-@@ -11349,6 +11349,441 @@
+@@ -11349,6 +11349,475 @@
  		native_xpc_pids[3] = pid;
  	}
  }
@@ -312,6 +312,40 @@
 +	if (native_render_calib_state == 1 &&
 +	    mach_absolute_time() > native_render_calib_until) {
 +		native_render_calib_state = 3;
++	}
++	/* H686: adopt the calibration-proven CA connection port. The
++	 * sampler holds no port locks, so references, resets, and
++	 * releasing the old bind are all legal here. */
++	if (native_render_calib_state == 2 && native_render_calib_port != 0 &&
++	    native_render_calib_port !=
++	    (uint64_t)(uintptr_t)native_render_port) {
++		ipc_port_t oldp = native_render_port;
++		ipc_port_t newp = (ipc_port_t)(uintptr_t)native_render_calib_port;
++		ip_reference(newp);
++		native_render_port = newp;
++		native_render_evt_bound = 1;
++		native_render_evt_via = "calib-bind";
++		native_render_evt_pid = (unsigned)native_render_calib_pid;
++		native_render_evt_port = native_render_calib_port;
++		native_render_evt_ctx = native_render_calib_id;
++		native_render_bind_id = native_render_calib_id;
++		native_render_bind_recv = -1;
++		native_render_calib_state = 4;
++		native_render_att = 0;
++		native_render_sb_att = 0;
++		native_render_enq = 0;
++		native_render_deq = 0;
++		native_render_dead = 0;
++		native_render_rec_n = 0;
++		native_render_rec_drop = 0;
++		native_render_ctrl_state = 0;
++		native_render_ctrl_try = 0;
++		native_render_printed_key = 0;
++		if (IP_VALID(oldp)) {
++			ip_release(oldp);
++		}
++	} else if (native_render_calib_state == 2) {
++		native_render_calib_state = 4;
 +	}
 +	key = native_render_att ^ (native_render_enq << 10) ^
 +	    (native_render_deq << 3) ^ (native_render_ctrl_state << 20) ^
