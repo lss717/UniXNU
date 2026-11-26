@@ -9,6 +9,11 @@ def defined_names(paths, global_only):
     """Defined symbol names of Mach-O files and archives."""
     names = set()
     paths = [str(path) for path in paths]
+    # H706: an aborted kernel pass deletes objects (debug.o) while the old
+    # link.filelist still lists them; nm fails hard on missing inputs.
+    # Objects not yet built have no exports to avoid colliding with, so
+    # skip them and let the next complete pass refresh the filelist.
+    paths = [p for p in paths if Path(p).is_file()]
     for start in range(0, len(paths), 200):
         command = ['xcrun', 'nm', *(['-g'] if global_only else []), '-U', '-j', *paths[start:start + 200]]
         names |= {line.strip() for line in subprocess.check_output(command, text=True).splitlines() if line.startswith('_')}
