@@ -30460,3 +30460,21 @@ B. **回到用户态最后一条未试路线**：单页文本入口补丁的 can
 **判据**：出现 `NATIVE_SBPC: sample=93x1 pid=<bb pid> comm=backboardd n=` 与 tid 行；若 display 线程 `x16==-47` 有 SBMSG2，比对 rport 与 calibration 端口 cp/w00t/BKS；若无（全在忙循环），按 pc/lr 用 21H461 缓存符号化看落在哪个框架。再无行则通道判失败，转方案。
 
 **工件登记**：boot H688=`66af17ef`；payload=`0a853259`；kernel=`eec90a0d`（=d4dd9ab6 同源内核+H688 驱动排布）；trust=`19b8efb9`；addon=`c47f86a7`；observer/trace 沿用。boot-args 与 H687/H686 逐字节一致。设备终态 Android（panic 复位自行回连），无分区写入。日志：`logs/H688/device/H688-live.raw.bin`、`tmp/h688-decoded.txt`。
+
+
+### §397 H689/H690 传输与采样链打通：H690 首次拿到 backboardd 全线程表——主线程卡在 os_unfair_lock 慢路径（88s CPU），另一线程 250Hz 忙轮询端口 0xf517；615s 死亡序列第三次复现（2026-11-26）
+
+**H689（boot `0f086d5b`，index 9301）**：单变量=bb 索引取 9301+30n（%30==1，跳过帧链）。结果：段尾（SBMSG2/SBPORT/FOCUS/BKS/XPC）稳定存活，段头（summary/rows）仍全灭——排除"帧链洪泛"是主因，指向**每次调用的输出总量超过 CDC 排空窗口**：内核 printf 经小容量发送环，洪泛时只有最后 ~12-15 行能挤进环；同拍 cm/installd 小段存活为对照。615s 附近同形死亡（第 6 次 corpse 击杀后 0.2s 断流）。
+
+**H690（kernel `4247546114c4`，boot 0x34ad7752）**：单变量=`sbpc-inline-flush.patch`（series 145）——在 `native_sb_pc_sample_instance` 里对 backboardd 名加三处环排空（summary 后、rows 每 4 行、SBMSG2 后）。**生效**：k=2 拍（393.70s）完整落地 16 行 tid 表 + 10 行 SBMSG2 + BKS 焦点行；k=3 起仍偶发只回段尾（h103 管线有 backoff/skip：`NATIVE_UFS_LOG_STAT rounds=421 skips=864 paused=269 backoff=595`——排空节流是概率性的，多拍必有完整拍）。615.6s 第三次同形死亡（615.50s bb 重拉 pid=189、615.59s ACCHW 重 exec、断流）。
+
+**H690 bb(pid=56)@393.7s 全线程表（DSC slide=0x95cc000，经本轮 TRAP_IMAGE 四镜像基址一致推定，ext 提取树 nm 符号化）**：
+- tid=1041 `__ulock_wait2` ← `__os_unfair_lock_lock_slow+0xd4`，**cpu=87958ms**，wait=0xfffffff598fc5820——**bb 最热线程卡在 os_unfair_lock 慢路径（自适应自旋耗尽 88 秒 CPU）**；
+- tid=870 `mach_msg2_trap` to=0 非阻塞 rcv 端口 0xf517（rcvsz=16384，rport=0x15007），**cpu=80790ms**——launchd 254 wakes/s 的元凶：约 4ms 一次的接收轮询循环；
+- tid=1043/1044/1531 `__workq_kernreturn`（dispatch worker 闲置）；tid=358/897/898/899/900/901/905 `mach_msg2_trap` 无限收自己端口（worker 池）；
+- tid=677 `mach_msg2_trap`：发 72B 到 rport=0xdf07、等 124B 回包、to=5000、st=0x41——同步 RPC 在等；tid=744 `__ulock_wait`←`_dlock_wait+0x34`（dispatch 锁）wait=0xfffffff598fc57c0——**与 1041 的等待对象同一页、相距 96 字节，疑似同一结构内的两把锁**；tid=757 `__psynch_mutexwait`←`__pthread_mutex_firstfit_lock_wait+0x50`；
+- match 线程（本轮 tid=777/800/1736）**不在前 16 行内**——collect 上限 16 截断，H691 已把 `native_sb_rows[16]` 提到 `[48]`（kernel `6f6487ba…`，patch `sbpc-rows48.patch` 入 series 146）。
+
+**解读**：§394/§395 的"bb 主线程忙轮询而非阻塞"现在有实体：**一条线程在 os_unfair_lock 上自旋-阻塞循环（88s CPU），同时另一条线程以 ~250Hz 非阻塞轮询一个 16KB 接收口**。这把锁把 bb 挡在 IOServiceOpen 之前（CA io 循环同被拖死 → deq=0），而 0xf517 轮询线程等的大概率是显示/唤醒侧的消息源。下一步 H691（rows 48）看 match 线程在哪个调用里，并确认 777/800/1736 与 1041/870 的分工；0xf517 的对端身份（peer pid、端口 owner）由 SBPORT 行补齐。
+
+**工件登记**：kernel 链 v11 `d4dd9ab6` →(H688 驱动排布) `eec90a0d` →(H689 index) `f479a7b4` →(H690 inline-flush) `4247546114c4` →(H691 rows48) `6f6487ba`；boot：H689=`0f086d5b`（boot id 0x34ac02dd）、H690=`d289013b`（boot id 0x34ad7752）、payload H689=`e6c982aa`/H690=`9922914f`；trust=19b8efb9、addon=c47f86a7 沿用；observer/trace 不变。boot-args 逐字节不变。设备两轮均 panic 序列后自行回 Android，无分区写入。日志 `logs/H689/device/H689-live.raw.bin`、`logs/H690/device/H690-live.raw.bin` 与对应 `tmp/h68*-decoded.txt`；符号化工具 `Mac:/tmp/h690-sym.py`（slide 由 CoreFoundation/libdispatch/CMImaging/MetalFilter 四基址一致推定）。

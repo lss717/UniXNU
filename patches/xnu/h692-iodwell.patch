@@ -1,0 +1,76 @@
+--- a/osfmk/kern/task.c	2026-11-26 14:20:10
++++ b/osfmk/kern/task.c	2026-11-26 14:20:10
+@@ -10773,8 +10773,51 @@
+ static char native_xpc_names[16][48];
+ static unsigned native_xpc_names_n;
+ static unsigned native_xpc_names_printed;
++
++/* H692: backboardd's display matcher threads exit without ever opening a
++ * user client (STATUS 398), so the beat sampler never sees them.  Walk the
++ * caller's user frame chain at the match return itself to name the code that
++ * decides "match, but do not open".  Bounded per boot; only backboardd. */
++static unsigned native_dwell_calls;
+ 
+ void
++native_display_match_walk(void)
++{
++	char comm[17] = {};
++
++	proc_selfname(comm, sizeof comm);
++	if (strcmp(comm, "backboardd") != 0 || native_dwell_calls >= 6) {
++		return;
++	}
++	native_dwell_calls++;
++	thread_t th = current_thread();
++	arm_saved_state_t *state = get_user_regs(th);
++	if (state == NULL || !is_saved_state64(state) || th->task == TASK_NULL) {
++		printf("NATIVE_IODWELL: miss regs\n");
++		return;
++	}
++	uint64_t fp = get_saved_state_reg(state, 29);
++	printf("NATIVE_IODWELL: tid=%llu pc=0x%llx lr=0x%llx fp=0x%llx\n",
++	    (unsigned long long) thread_tid(th),
++	    (unsigned long long) get_saved_state_pc(state),
++	    (unsigned long long) get_saved_state_lr(state),
++	    (unsigned long long) fp);
++	for (unsigned d = 0; d < 14 && fp != 0; d++) {
++		uint64_t frame[2] = { 0, 0 };
++		if (copyinmap(get_task_map(th->task), (user_addr_t) fp,
++		    frame, sizeof frame) != 0) {
++			break;
++		}
++		printf("NATIVE_IODWELL: d=%u lr=0x%llx\n", d,
++		    (unsigned long long) frame[1]);
++		if (frame[0] <= fp) {
++			break;
++		}
++		fp = frame[0];
++	}
++}
++
++void
+ native_sb_pc_sample_instance(const char *name, unsigned sample, unsigned instance)
+ {
+ 	char native_sb_qname1[17];
+--- a/iokit/Kernel/IOUserClient.cpp	2026-11-26 14:20:10
++++ b/iokit/Kernel/IOUserClient.cpp	2026-11-26 14:20:10
+@@ -2566,6 +2566,8 @@
+ extern "C" uint64_t thread_tid(thread_t);
+ extern "C" thread_t current_thread(void);
+ extern "C" uint64_t mach_absolute_time(void);
++
++extern "C" void native_display_match_walk(void);
+ 
+ static void
+ native_iotime(const char *op, const char *cls, uint64_t t0, unsigned ret)
+@@ -2980,6 +2982,10 @@
+ 		kr = *service ? kIOReturnSuccess : kIOReturnNotFound;
+ 		native_iotime("match_one", native_dict_string(dict, "IOProviderClass"),
+ 		    native_t0, kr);
++		if (kr == kIOReturnSuccess && *service && native_dict_string(dict, "IOProviderClass") != NULL &&
++		    strcmp(native_dict_string(dict, "IOProviderClass"), "NativeLegacyDisplay") == 0) {
++			native_display_match_walk();
++		}
+ 	} else {
+ 		kr = kIOReturnBadArgument;
+ 	}
