@@ -1,0 +1,98 @@
+--- a/osfmk/kern/task.c	2026-11-26 17:56:06
++++ b/osfmk/kern/task.c	2026-11-26 17:56:06
+@@ -11721,7 +11721,87 @@
+ 		break;
+ 	}
+ }
++
++/* H698: per-event journal for the bound CA port only. The render counters
++ * merge Q and D into enq (case 'Q': case 'D') and only R raises deq, and the
++ * generic IPC ring is flooded by launchd traffic (lost>260k), so no existing
++ * log line can say what happened to a specific SpringBoard message on the
++ * port this boot bound. Kind letters are the ipc-layer events: S send,
++ * Q queued, D direct hand-off (tid known), R dequeued (pid+tid), X destroyed.
++ * Lock-free single-writer ring; the beat exports paced chunks. */
++struct native_bound_event {
++	uint64_t serial;
++	uint64_t tid;
++	uint64_t port;
++	uint32_t ms;
++	uint32_t id;
++	uint32_t size;
++	int32_t from;
++	int32_t to;
++	uint32_t kind;
++	uint32_t result;
++};
++
++#define NATIVE_BOUND_RING 128
++static struct native_bound_event native_bound_events[NATIVE_BOUND_RING];
++static unsigned native_bound_written;
++static unsigned native_bound_lost;
+ 
++void
++native_boundport_export(void)
++{
++	static unsigned native_bound_cur;
++	extern void native_log_flush_hook(void);
++	unsigned total = native_bound_written;
++	unsigned emitted = 0;
++
++	if (total > NATIVE_BOUND_RING) {
++		total = NATIVE_BOUND_RING;
++	}
++	while (native_bound_cur < total && emitted < 6) {
++		struct native_bound_event *e = &native_bound_events[native_bound_cur];
++		printf("NATIVE_BND_EVT: serial=%llu kind=%c ms=%u id=0x%x size=%u "
++		    "from=%d to=%d port=0x%llx tid=%llu result=0x%x\n",
++		    (unsigned long long) e->serial, (int) e->kind, e->ms, e->id,
++		    e->size, e->from, e->to, (unsigned long long) e->port,
++		    (unsigned long long) e->tid, e->result);
++		native_bound_cur++;
++		emitted++;
++		native_log_flush_hook();
++		IOSleep(900);
++	}
++}
++
++static void
++native_bound_note(unsigned kind, ipc_kmsg_t kmsg, ipc_port_t port,
++    int from_pid, int to_pid, uint64_t receiver_tid, unsigned result)
++{
++	mach_msg_header_t *hdr;
++	struct native_bound_event *e;
++	unsigned w;
++
++	if (native_render_port == IP_NULL || port != native_render_port) {
++		return;
++	}
++	w = __atomic_fetch_add(&native_bound_written, 1, __ATOMIC_RELAXED);
++	if (w >= NATIVE_BOUND_RING) {
++		__atomic_fetch_add(&native_bound_lost, 1, __ATOMIC_RELAXED);
++		return;
++	}
++	hdr = kmsg ? ikm_header(kmsg) : NULL;
++	e = &native_bound_events[w];
++	e->serial = w + 1;
++	e->tid = receiver_tid;
++	e->port = (uint64_t)(uintptr_t)port;
++	e->ms = (uint32_t) (mach_absolute_time() / 19200ULL);
++	e->id = hdr ? (uint32_t) hdr->msgh_id : 0;
++	e->size = hdr ? (uint32_t) hdr->msgh_size : 0;
++	e->from = from_pid;
++	e->to = to_pid;
++	e->kind = kind;
++	e->result = result;
++}
++
+ static void
+ native_render_control_send(void)
+ {
+@@ -12289,6 +12369,7 @@
+ 		from_pid = proc_getpid(current_proc());
+ 	}
+ 	native_bks_event_note(kind, kmsg, port, from_pid, to_pid, receiver_tid, result);
++	native_bound_note(kind, kmsg, port, from_pid, to_pid, receiver_tid, result);
+ 	if (!native_xpc_tracked(from_pid) && !native_xpc_tracked(to_pid)) {
+ 		return;
+ 	}
