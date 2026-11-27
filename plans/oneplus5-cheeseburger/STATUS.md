@@ -30866,3 +30866,6 @@ X 事件 = 0（无未读丢弃）
 **验收(不变,分列)**:①回调返回:仍无直接证据;②带内容图层:取得进展但未达——当前 SB 代(411)确有内联大事务(3888B,非 COMPLEX),尚无证据进入合成或送显,复制路径被清屏主导;③真实 swap:达成(copy 2802 帧,1297–2745);④可见锁屏:无。复位原因本轮 storm=0/panic=0,不适用。
 
 **live4 收尾(6173→7664,采集窗内内核始终存活)**:sbhist 518→629(+111,Δbytes≈10960,均值≈99B,常规小消息,cx 192→265),szmax 恒 3888 无新洪泛;copy 恒 2802,blank 1538→2157 持续清屏;SB 又三代 499 exit@6532.9、522:6533.8→6947.5、566 exec@7393.1(窗末在世),NATIVE_MTL 与 rebind/dead 行仍为零;整 boot 至列 7664 未复位,“晚期复位”非必然事件。另离线核对 dylib 打印通道:`line()` 受 gBudget(1024/进程)限制且需 connect_accelerator 隧道,`line_reserved()` 只免预算、同样依赖隧道;/dev/console 支路(H436_SBSCENE)在四个 live 窗 0 命中,内核侧唯一证据来自隧道。构造器 observer load 行在 h708–h714 所有 live 窗从未出现(可能早于 CDC 开窗,也可能隧道未就绪),故“后代 SB 零行”无法区分 未装载/未到挂点/隧道失效 三种解释,H715 以后代 SB 是否打印 h593 与心跳判据共同判别。
+
+**洪泛窗共发现象(4726.8–4789.1,离线补充)**:同窗 NATIVE_A540_ACCEL 1063 行、IOUC 514 行(多为 WidgetRenderer_D 的 AGXDeviceUserClient MACF 拒绝)、NATIVE_DISPLAY_OPEN service=AGXAccelerator process=WidgetRenderer_D 1073 次、NATIVE_LEGACY swap 校验/传输/回收 288 行(done 3630→3635@4726、3633+@4731,~5.5Hz 短促连发)——即 SB-411 的 160 笔内联大事务与 WidgetRenderer 连环重启、GPU 打开风暴同窗出现,彼此先后与因果未证,整体登记为“锁屏呈现尝试”现象簇。**H715 守卫离线审计**:a06f9ac 的 gRepollStuck else 分支在单线程顺序执行下不可达(repoll 挂死则线程回不到下一拍,h715_repoll_stuck 行实际不会打印),真正的判别力来自“状态行先行”:每个 interval 的 tx_state 行先于 repoll 打印,末行 interval 号即冻结点;H715 验收以 ①心跳行数≥4(即活到 interval 4)②后代 SB 是否出现 h593/h578 行为主,不依赖 stuck 自报行。
+
