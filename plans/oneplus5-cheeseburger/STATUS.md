@@ -30894,3 +30894,21 @@ X 事件 = 0（无未读丢弃）
 **面板/呈现**:copy=2457,SAMPLE=2457 全部 same=256/nz=0(覆盖 276→5676 连续无断档,采样随复制走、复制未早停),blank=1414 自 ~3900 起爬升(清屏主导再现,但比 H714 晚),retirement done=3871 1:1。SB 十代(27→474)寿命 211–513s,全部同栈自 abort;窗末 474 在世。重启前尾部实拍:后继 SB 仍在 NATIVE_IOKIT op=match cls=AppleCLCD ret=0xe00002f0(无 provider,与 stock 匹配缺失一致)。**验收**:①回调返回未证;②带内容图层未达(layerCommits 九代恒 0);③真实 swap 达成(3871);④可见锁屏无。
 
 **设备收尾**:UXC1 424602 于列 5881.685 ACK 执行 normal reboot,回 Android 后 adb 唯一 target 复核。**下一轮建议(定性 abort 归因)**:H717 单变量 = 仅禁用 h672/h674 GOT 重绑定(install_h674_got_rebinding 关闭路径,其余 dylib 逻辑与内核全同),验“九代同形 abort 是否消失/改变”;若消失→钩子介入致因成立,恢复时改安全转发;若不变→QC 内部断言为既有死亡路径,回到呈现链本身继续。
+
+### §428 H717 实测(单变量:dylib c778934+5b35d6b 关闭 install_h674_got_rebinding;内核沿用 H716 96c11b174754,CPU/GPU 配置与预算改造原样;boot img 11870076,payload 0529ab1a,dylib CDHash c0f87dc8,boot 3C355CCC(H410 控制台实测);CDC 19:55:48 开,窗 5400s,内核列 281→5681,194698 行 / 22.6MB;2026-11-27)
+
+**H674 重绑定未安装的运行时确认(三重)**:①13 条 observer load 全部打印 build=H717(实际装载即本轮 dylib);②h652_publish 行的 h672 计数器全程 `of=0 mm=0 mt=0 ok=0 sw=0/0/0/0/0/0`(替换桩零命中、零交换);③h674_at / h674_state 行整窗 0 条。开机前 fastboot 设备唯一,fastboot boot 临时启动,无分区写入。
+
+**Q1:同代 SB 是否仍沿 H716 那组 QuartzCore 调用位置到 abort——是,且十三代全同形**。13 次 SB 退出(27/338/349/365/387/413/425/441/462/485/506/527/551)全部 status=0x6 ns=2 code=0x6 sender=自身,每次退出前的 signal=6 dump 帧链 frame0–5 返回址逐一相同(slide=0xda2000 下):abort+0x68、QC!+0x212380、QC!+0x82dbc、QC!+0x82b78、QC!+0xa440、QC!+0x7b2d4,外层继续 QC!+0x136fd4 → A540Trace!+0x761c → libdispatch×5 → _pthread_wqthread。寿命 142–2692s(pid27 最长 2692,比 H716 首死 2436 多 256s,后继代反而更短)。
+
+**§427 归因更正(重要)**:H716 栈中“SpringBoardSceneObserver!h674_msg2trap_stub+0x2ef0”帧是**最近符号误归因**——本机 dylib 已 strip -x,静态函数无独立符号。反汇编 /tmp/h717build/SpringBoardSceneObserver.dylib 证实 0x6ae4 是 `trace_layer_set_contents`(CA hooks 的 setContents: IMP 替换,install_ca_event_hooks 安装,**与 GOT 重绑定无关,H717 下依然生效**)在 0x6ae0 `blr x8` 转发原 IMP 之后的返回点。因此 H717 关闭重绑定后该帧照旧出现、abort 链逐字节不变:**H716 的“经 h674 转发桩进入 QC”推断不成立,单变量结果直接排除 GOT 重绑定致因**。
+
+**QuartzCore 终止条件定性完成(离线反汇编 /Users/lss/dsc-work/ext QuartzCore,IOS 21H461 cache)**:六个 QC 偏移的返回点前一条指令构成唯一确定链:`-[CALayer setContents:]+0x7c → bl CA::Layer::begin_change+0x40 → bl CA::Transaction::ensure_implicit → bl(+0x120 处) CA::Transaction::push → bl(+0x174 处,先 cbnz 主线程判定) CA_ABORT_ON_NON_MAIN_THREAD_TRANSACTION_PUSH(0x18963b368,内部 _x_log_crash+abort)`。即 **Apple 有意的“非主线程隐式事务 push”显式 abort**。最外层调用者是插件自身:A540TracePlugin.mm:2474–2493 的 “Two paths to the panel” 探测块在 libdispatch 工作队列上执行 `objc_msgSend(layer, setContents:, surface)`(2487 行;2478 行同一块的 present 亦有同类风险)。结论:**近期所有 boot 的 SB 周期性自 abort 是注入探测代码在非主线程调 CA 图层 setter 触发的确定性 abort,不是 SpringBoard 自身故障,也与 H674/GOT 无关**。这也统一解释了 H714/H715/H716 十三余代同形 abort。
+
+**Q2:可识别的锁屏图层提交——未出现**。layerCommits 十三代恒 0;ca_layer_set_contents 事件 133 条全部 window=status(状态栏层,非锁屏);SAMPLE 3528 全零;sbmax 槽全 boot 峰值仅 284B(0x10000000@27 代 col≈1220;后继代 0x40000000 族 268–284B),无 KB 级内容消息;copy=3528 冻结后 blank 爬至 2070。两处 sbhist 突发拍(2802→2866 +48 笔 / 4083→4146 +33 笔,均值≈82B)是小消息簇非洪泛;H714 式 3888B 突发在本 boot(含 79–80 分钟窗)未再现,支持“单 boot 事件”登记。
+
+**预算改造运行数据**:共享池在 col 5612 首次打出 NATIVE_MTL_BUDGET(logged=20000 dropped=1 tx=55 load=14 arm=659)——本轮日志量比旧配置大一个数量级仍覆盖全窗,仅最后一拍起丢弃;专属额度按设计工作(h717 marker 行因隧道未就绪丢在前拍,load 行 14>13 亦含一次重发)。下一轮把共享池再调大即可消除尾窗丢弃。
+
+**下一轮建议(H718,单变量)**:仅修改 A540TracePlugin.mm 的 worker 线程 setContents:/present 调用(移回主线程 dispatch_sync 或直接删除该探测块),其余全部沿用本轮。预期:SB 不再出现本链 abort、寿命越过 5681 采集窗;若届时仍无首帧,“场景创建→首笔提交”的阻塞即为无注入干扰下的真实卡点,可安全继续 §424/§427 的呈现链追查。**风险登记**:删除/改道该块会同时失去“disp/contents set”证据行,须保留其余计数通道。
+
+**设备收尾**:UXC1 424603 执行 normal reboot,回 Android 后 adb 唯一 target 复核。
