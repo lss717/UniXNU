@@ -30938,3 +30938,21 @@ X 事件 = 0（无未读丢弃）
 **对照锚点**:02:06:58 H718(4126cafa)再次正常起链(CDC 列 ~280,采集 02:07:35 开始)——设备此刻仍可 boot,c 的死亡不是全局环境崩溃。
 
 **下一轮待办(优先级)**:①现役 H718 对照结束后拉全环(--slots 247),补列 201–280 的正常记录并比对 c 环尾;②H718c 隔离矩阵:先 c-trust+b-addon(kernel 死→trust 侧;仅 SB 被 LV 拒→kernel 无恙),再 b-trust+c-addon 反向;③若归因 OBS 二进制本体,把 cover 探针改为完全复用既有行格式串重编译对照;④b2 列 1225 死亡与 c 早死是否同源用环 boot_id/序列对照。
+
+
+### §431 H718 对照收官 + H718d 门控实验(2026-11-28 03:30)
+
+**对照启动(boot 312AD458,img 4126cafa,H718 镜像)完整健康收官**:CDC 两段 0→1042.4 与 1457.8→2052.6(中间 1042–1458 由磁盘环 1074→1768 补回,环∩CDC 重叠 5941 行中 4776 行逐字一致,boot 归属确证;环内 boot=20d8f034 是 H469 会话标,非 UXL1 boot id)。全程零 abort、零 SB exit、零 panic;环内取得完整锁屏链:h515 did_finish_launching@1215.100 → h541_did_finish_return@1215.949(main=1)→ h541_application_state windows=15 scenes=1(idx0–7 行预算截止)→ ca_layer_commit×16@1217.100 → NATIVE_SURF×2@1225.485/1225.690(bb pid=56 tid=570,1080x1920 planes=2)→ retirement done=1→1830 至 1768.9,swap validate 712 次全 accepted=1,713 行 SAMPLE 全 same=256 nz=0 fnz=0。**环境侧彻底洗清**:c 簇与 b2 崩溃均为镜像系特异。02:33 我按既有授权用 UXC1 424609 普通重启收官(内核日志可见 executing normal reboot@2056.176),随后 adb reboot recovery 进 TWRP 拉环(02:38)——用户当时报告"已重启到 TWRP"与实际不符,设备彼时仍在 UniXNU 内流日志(COM8 在线,uptime 连续增长);先以 DTR 探测证伪"挂死",再走授权链完成收尾。对照 boot 还持续输出 WidgetRenderer_Default SIGILL 重拉环(~17s 周期)与 KeyStore open ret=0xe00002d8 重试,均为已知非致命背景。
+
+**b2 内核 panic 定性**(col 1439.432,NATIVE_PANIC_STR 全文在 h718b2-live.decoded.txt):pc=0xfffffff007ac6ed4=补丁内核 kernel.macho __TEXT_EXEC+0x856ed4=_memcpy+0x64(278573 符号表);lr=0xfffffff00b68971c=com.apple.filesystems.apfs __TEXT_EXEC+0x4971c;esr=0x96000007(data abort,L3 translation fault,读);far=x1=0xfffffff691e12000;拷贝 x2=0x1fe0=8160B,x0=0xfffffff80640a000→x3=x0+0x2000;x8–x15 残留 ASCII 串碎片(…wDelegate…ScratchpadVie…nestic…DParameterDescription)。**结论:APFS 读路径 bcopy 撞上失效源页,属本平台长期 UFS/APFS 脆弱性家族(对照环 lock_wait_max_ms=65877、watchdog_seen=2160),与显示链无关**。注意:先前对 21H461 vanilla kernelcache.decompressed 的段查找是错的——上机内核是构建产物 kernel.macho(52793344B,sha 96c11b174754),已改从 payload 提取 kernel.macho 解析(脚本 tmp/h718_kmap.py、h718_ksym.py、h718_pi5.py)。
+
+**镜像字节级对照**(tmp/h718_fat3.py/h718_adt2.py/h718_gpu5.py,payload 是 FAT32 ESP,内核文件在 EFI/UniXNU/Payloads/):三构建 kernel.macho 与 scratch-data.img 逐字节相同;kernel.macho.adt 仅 444–507 的 64B 差异=chosen/random-seed(构建期随机);kernel.macho.trustcache 差异=OBS cdhash 表项(派生);gpuaddon 容器 12 条目中唯一内容差异=lib/SpringBoardSceneObserver.dylib(b packed=36377 / c packed=36844 / d packed=36848,raw 三者同为 160240)。→ §430 的 trust×addon 交叉矩阵**无判别力,取消**:trust 与 addon 的哈希一致是打包必然,差异项全是派生数据。
+
+**H718d 门控实验**(OBS f3a5040,主仓 e6b725f9,img sha 109ca68b9bd3,03:23:58 fastboot boot):cover 属性循环加 phase 门控 strstr(phase,"did_finish"),tick 路径恢复 b 形态。**结果:与 c 同窗死亡**——环尾 h718d-ring.txt:observer load build=H718d@173.461(加载与 constructor 正常),195.368 configd 唤醒风暴违例(所有 boot 都有,非特异),198.528 chronod exec、198.659 TC_QUERY pid=27、198.876 NATIVE_FRAME event=5 client=2 为最后落盘行;03:27:44 设备自行回 Android(存活≈225s)。tick0(≈203.5)在 c2 环(活到 212.46)与 d 环里都没有输出任何 h541 行——SB 主队列在该阶段被上游阻塞,枚举代码根本没执行。**推论:死亡跟随 c/d 的重编译系(二进制内容),与 cover 代码是否执行无关;而 b 系的两次 a133d60 原样启动与 H718 系的多次启动都跨过了同窗**。b→d 的实际代码差只有:cover 循环(门控后为死代码)+ 标记串 + 由 -Os 重排引起的二进制布局差。
+
+**下一轮(判别序列)**:
+1. **H718b 镜像原样三跑**(66509941,盘上现存):若再次健康跨过 212 → 排除设备状态漂移,b 系存活率≥3/3 成立;若这次同窗死 → 归因转向设备状态,后续一切重议。
+2. **H718e = a133d60 源码仅改标记串重编译**:跨过同窗 → "重编译行为本身"无罪,嫌疑锁定 c 系的死代码/布局;同窗死 → 嫌疑锁定"a133d60 之后的任何重编译"(工具链时间戳/签名 nonce 类),再查。
+3. d 的环无 panic 文本 + 设备回 Android:与 c 一致的静默复位签名;复位机制仍未证实。
+
+**运维记录**:本轮曾发生两件事:①本轮开头我按旧约定清场时误杀了正在写入的对照采集进程(h718-live.raw.bin 停在 02:18:54),内核侧无恙,DTR 重接后 live2 从 1457 恢复;1042–1458 缺口由磁盘环覆盖 1074–1458 补回,真正盲区只剩 1042–1074。②h718d-live.raw.bin 未生成(CDC 未到),watcher 空转已停。设备现处 TWRP。
