@@ -30,7 +30,7 @@
  		native_xpc_register(native_sb_rcv.port, native_sb_pid, name, 'r');
  		native_xpc_register(native_sb_req.port, native_sb_pid, name, 'q');
  		native_xpc_dump(sample);
-@@ -11349,6 +11358,479 @@
+@@ -11349,6 +11358,503 @@
  		native_xpc_pids[3] = pid;
  	}
  }
@@ -73,6 +73,10 @@
 +static struct native_render_rec native_render_rec[8];
 +static unsigned native_render_rec_n;
 +static unsigned native_render_rec_drop;
++static uint32_t native_render_sb_szmax;
++static uint32_t native_render_sb_bytes;
++struct native_render_idcnt { uint32_t id; uint32_t n; };
++static struct native_render_idcnt native_render_sb_ids[12];
 +/* bind/lookup/dead events are recorded here and printed by the
 + * sampler: the note path runs under the destination port lock and must
 + * never print (STATUS 387/388 lock-order rule). */
@@ -232,6 +236,17 @@
 +		native_render_att++;
 +		if (from == native_xpc_pids[0]) {
 +			native_render_sb_att++;
++			if (hdr != NULL) {
++				if (hdr->msgh_size > native_render_sb_szmax) native_render_sb_szmax = hdr->msgh_size;
++				native_render_sb_bytes += hdr->msgh_size;
++				unsigned k;
++				for (k = 0; k < 12; k++) if (native_render_sb_ids[k].id == (uint32_t)hdr->msgh_id) break;
++				if (k < 12) native_render_sb_ids[k].n++;
++				else {
++					for (k = 1; k < 12; k++) if (native_render_sb_ids[k].id == 0) break;
++					if (k < 12) { native_render_sb_ids[k].id = (uint32_t)hdr->msgh_id; native_render_sb_ids[k].n = 1; }
++				}
++			}
 +		}
 +		if (hdr != NULL) {
 +			if (native_render_rec_n < 8) {
@@ -364,6 +379,15 @@
 +	    native_render_bind_id, native_render_bind_recv,
 +	    native_render_calib_state, native_render_calib_id,
 +	    native_render_calib_port);
++	{unsigned shown = 0; char hb[160]; unsigned at = 0;
++		hb[0] = 0;
++		for (unsigned k = 0; k < 12 && shown < 5; k++) {
++			if (native_render_sb_ids[k].n == 0) continue;
++			at += snprintf(hb+at,sizeof(hb)-at,"%s0x%x:%u",shown?" ":"",native_render_sb_ids[k].id,native_render_sb_ids[k].n);
++			shown++;
++		}
++		printf("NATIVE_RENDER: sbhist sb=%u szmax=%u bytes=%llu ids=%s\n", native_render_sb_att, native_render_sb_szmax, (unsigned long long)native_render_sb_bytes, hb);
++	}
 +	if (native_render_evt_bound) {
 +		native_render_evt_bound = 0;
 +		printf("NATIVE_RENDER: bound via=%s pid=%u ctx=0x%llx port=0x%llx\n",
@@ -510,7 +534,7 @@
  
  struct native_ipc_event {
  	uint64_t serial;
-@@ -11398,4 +11880,84 @@
+@@ -11398,4 +11904,84 @@
  static uint64_t native_bks_request_port;
  static uint64_t native_bks_reply_port;
 +/* H682: third bind path, layout-free.  The first real message from
@@ -595,7 +619,7 @@
 +}
  static unsigned native_bks_msg_id;
  static int native_bks_responder_pid;
-@@ -11609,7 +12171,9 @@
+@@ -11609,7 +12195,9 @@
  	e->bits = hdr ? (unsigned)hdr->msgh_bits : 0;
  	e->kind = kind;
  	e->result = result;
