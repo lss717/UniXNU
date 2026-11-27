@@ -12,7 +12,7 @@
  void native_xpc_track_exec(int pid, const char *comm);
  void native_ipc_event_note(unsigned kind, ipc_kmsg_t kmsg, ipc_port_t port,
      int from_pid, int to_pid, uint64_t receiver_tid, unsigned result);
-@@ -10797,6 +10797,9 @@
+@@ -10797,6 +10802,9 @@
  	proc_iterate(1U | 4U, native_sb_collect, NULL, NULL, NULL);
  	{
  		extern void native_lsd_gate(uint32_t);
@@ -22,7 +22,7 @@
 +		printf("NATIVE_SBPC: sample=%u miss name=%s\n", sample, name);
 +	}
  	if (native_sb_pid > 0) {
-@@ -11175,6 +11175,7 @@
+@@ -11175,6 +11183,7 @@
  			    waiter_state, waiter_rname);
  		}
  		native_ipc_focus_emit(sample, native_sb_hdr[5], native_sb_req.port, native_sb_local.port);
@@ -30,7 +30,7 @@
  		native_xpc_register(native_sb_rcv.port, native_sb_pid, name, 'r');
  		native_xpc_register(native_sb_req.port, native_sb_pid, name, 'q');
  		native_xpc_dump(sample);
-@@ -11349,6 +11349,475 @@
+@@ -11349,6 +11358,479 @@
  		native_xpc_pids[3] = pid;
  	}
  }
@@ -510,7 +510,7 @@
  
  struct native_ipc_event {
  	uint64_t serial;
-@@ -11398,4 +11398,84 @@
+@@ -11398,4 +11880,84 @@
  static uint64_t native_bks_request_port;
  static uint64_t native_bks_reply_port;
 +/* H682: third bind path, layout-free.  The first real message from
@@ -595,7 +595,7 @@
 +}
  static unsigned native_bks_msg_id;
  static int native_bks_responder_pid;
-@@ -11609,6 +11609,8 @@
+@@ -11609,7 +12171,9 @@
  	e->bits = hdr ? (unsigned)hdr->msgh_bits : 0;
  	e->kind = kind;
  	e->result = result;
