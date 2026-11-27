@@ -31013,6 +31013,7 @@ X 事件 = 0（无未读丢弃）
 **判定③(传输层首次正向消息)**:sbhist 时间序列 1301(sb=33, szmax=132)→ **1443(sb=45, szmax=1404, ids 新增 0x20000000×12)** → 1443-2296 保持 45 不变。提交波后 SB→CARenderServer 通道出现了第一批载荷级消息(最大 1404B,12 条,消息 id=0x20000000 与 H690 时代 NATIVE_PAIR_EVT 的 S/Q 配对同族),此后无后续流量;run2/f 至被切断从未出现该消息。**"提交→传输"不是静态死链,至少有一批 publish 出栈;"传输→服务端合成→送显"仍然全黑(bb CAWindowServerDisplay presentSurface:withOptions: 钩子全程 0 事件,预算 16 未尽=有效否定)。**
 
 **判定④(新缺口:bb 侧观察队列在 col≈747 卡死)**:bb 进程内 bundle 的 state/srvpos/srvq/srvpub 通道全部止于 686-747:最后一轮 srvpos#800-803@746.78 打印到 "found pos(1,1) step1" 即中断,900/1200/1500 的新增 state 轮与 srvpos 第 9-30 轮全部未跑。bb 本体活着(NATIVE_SBPC sample=10051@2170 线程表完整,1406 后仍有 IOKit match;draw#@2398 重启是 mediaserverd pid268@1935 exec 后加载 bundle 的新实例)。**卡死点恰在 did_finish(1177)之前 430s,导致服务端在 cover ctx 注册/提交波后是否新增 context、display 是否挂接完全失去观察——这是本 boot 之后的头号观测障碍。**f 轮 srvpos 也停在 521/748(调度 4 轮跑完),未见 mid-round 截断;h719 把 rounds 拉到 30 后暴露出 mid-round 卡死,提示 probe 循环内某个同步调用(候选:taskNamePortOfContextId/clientPortOfContextId MIG 往返、srvpub ABI handle 读、bootstrap_look_up)在 747 时刻阻塞了全局 utility 队列。
+**[复核更正,见 §435]**:上述"队列卡死"根因不成立——srvpub 前缀缺失是 query_published_desktop_context 自身 8 次调用上限(686.2 恰好吃满),静默止于 srvpos#803 是 bundle 每进程 gBudget=800 出条额度耗尽;bb 探测循环 747 后一直在跑,只是行不再上链。presentSurface 的"全程有效否定"相应降级为"仅 [0,747s) 窗口内否定"。
 
 **面板与验收**:swap/retirement 正常推进但 SAMPLE 依旧全零(PANEL blank=0 copy 持续增长;无 PIXEL 警报)。真实锁屏可见未达成;本轮把断点从"是否提交"推进到"publish 已发出(12 条),服务端处理不可见(bb 观察队列死)"。
 
@@ -31024,3 +31025,15 @@ X 事件 = 0（无未读丢弃）
 **运维**:live2 采集至 06:09(约 col 2730),随后 UXC1 424613 正常重启收官→TWRP 拉环(环尾当前~1154+,早段 0-330 只有环里有:observer load、n=3..5 mirror 创建期)。UXC1 下一 RequestId=424613。
 
 **H719 收官(环回捞)**:UXC1 424613 于 2745.90s 正常重启回 Android,TWRP 拉环 h719-ring.txt 覆盖 2579.17→2745.87(环窗 166s,WidgetRenderer 风暴提前截断,boot 早期段未入环但已在 CDC live1 全程捕获)。CDC 断流段 2621→2745 内仅 WR 重启风暴(pid 334→342,每代约 11s SIGBUS 0xb,AGX MACF 拒绝),无 SB 事件、无 panic、无非零 SAMPLE、无复位正文。设备现处 TWRP。
+
+### §435 H719 判定④复核改判:非队列卡死,是 bundle 自身两道额度;H720 = 纯数值放宽观测上限(2026-11-28 06:50)
+
+**复核证据(live1 尾部逐行)**:
+1. 第 13 轮 srvpos 的 abi 行 #799 实际存在(745.125,嵌在 ustate 噪声行后,前几轮同样有内嵌);该轮 6 条 srvpub 前缀行整体缺失 = query_published_desktop_context 内部 calls>=8 守卫在 686.2 吃满(第 8 次调用 = srvpub#693-698),非 abort、非截断。
+2. bb 实例 seq 止于 803 = gBudget=800 每进程出条额度:caller() 先增 seq、emit() 在 gBudget=0 时静默丢弃。全 boot NATIVE_MTL 总行约 4.5k,远低于 H716 提过的内核共享额度 20000,且零条 NATIVE_MTL_BUDGET 丢弃计数行 → 内核通道未堵,丢弃全在用户态。
+3. 745.125→746.78 的 1.66s 间隔是 CAWindowServer 锁竞争的一次实例(此前整轮耗时 <2ms),解释本轮变慢,不解释 747 之后的永久静默。
+**结论:bb 探测环 747 后持续运行,行未上链;§434 判定④作废,H720 不再需要私有队列/enter-exit 自报改造。**
+**连带修正**:gServerDisplaySurfaceEvents 在 emit 之前计数,但其唯一可见出口是事件行本身(无任何汇总行读取该计数),gBudget 耗尽后计数继续静默推进 → "presentSurface 0 事件=全程有效否定"降级为"[0,747s) 内否定,波后未知"。
+
+**H720 改动(仅 bundle,纯数值三处,无新字符串;OBS 冻结 7ec934ae,内核不动)**:gBudget 800→6000(AdrenoMetal 1db6334);srvpub calls 8→24、census calls 8→16(1710178)。上限时序核对:srvpos 轮 32 轮×60s 覆盖至 ~1900s+,state 轮 {900,1200,1500} 与 census 16 上限均在提交波(1360-1376)之后仍有余量。
+**验收判据**:①bb 线 seq>803 持续出现=预算理论直接证明;②波后 srvq census 是否收录 cover 侧 ctx(0xed0f974d/0x49e65d66、n=9/n=15 secure mirror);③srvpub published id 在 1443 载荷批(0x20000000×12)后是否变化/换绑;④srv event_display_surface(presentSurface)是否首次 >0;⑤面板 SAMPLE 与真实锁屏可见独立验收不变,WidgetRenderer AGX MACF 风暴继续单列登记。
