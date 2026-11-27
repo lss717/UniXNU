@@ -30928,3 +30928,13 @@ X 事件 = 0（无未读丢弃）
 **外部参考核实**:UniXNU devices.toml 官方 cheeseburger 条目(DinnerABC,ipados-17.7.11-21H461)summary 为 Root, PID 1 and RAM Data; watchdogd SIGTRAP under investigation,无锁屏首帧修复可套用;sagit 两条一 pending 一 iOS16 profile。HakiOS common 分支未检索到 kern.hakios.fb_surface(changelog/文档无该词),可核实的是其 MiniIOMobileFramebuffer 自备 swap/vsync/scanout;本项目等价能力 = NATIVE_SURF 注册表 + accept dump 同指针(本轮已用于桥接)。
 
 **下一步(镜像已备好)**:H718b(img 66509941,双端一致;observer a133d60 = 仅加 class-first 枚举 idx<16 + build=H718b 标记,内核/CPU/GPU 与 H718 全同)。run2 窗 00:27 结束后立即上机,回答 idx8–14 窗口身份。
+
+### §430 H718b/H718c 交接(2026-11-28 02:10)
+
+**H718b(class-first 枚举, img 66509941, OBS cdhash 449a51bd)两轮均验证装载与产出**:b1(boot 3942E6C4)did_finish_return@1186.305、h541_window_class 两阶段 1186/1189 完整 idx0–14;b2(第二次 boot)did_finish@~1302、类枚举 1303.10/1307.39 完整复现。两轮共同锁定:idx8=_SBWallpaperSecureWindow、idx9=SBCoverSheetWindow、idx10=SBStatusBarWindow、idx11=SBControlCenterWindow、idx12=SSScreenshotsWindow、idx13=SBRecordingIndicatorWindow、idx14=SBAlertItemWindow(windows=15,scenes=1)。b1 采到列 1754(UXC1 424607 主动结束);b2 采到列 ~1225(最后 MTL 行 h572 sample=1050 interval 35)后通道静默,~01:53 设备自行回 Android——非计划死亡,原因未归。
+
+**H718c(cover 定点属性探针, OBS cdhash 5af442ff)四次 boot 全部在列 ~201–212 内核死亡**(环1 boot_id 3872483498 末行 201.69 arch#58 dealloc;环2 boot_id 4083159894 末行 212.46 NATIVE_TC_QUERY pid=56;第三、四次同窗)。死亡在 SpringBoard 启动(~列 280+)之前,探针代码不可能执行;工件自检全过(addon 内 dylib=构建产物、codesign strict OK、trust 含 5af442ff 无陈旧项、A540 重编译 cdhash 与 b 一致)。注释 0x13 字节修复后重建,cdhash 不变、上机仍同窗死亡。**判读:H718c 存在与其载荷(OBS 二进制或其 trust 槽位)相关的确定性早死,机制未明。**同晚 b2 的列 ~1225 死亡为独立事件,未归因(电量 100%/4.317V 排除电源)。
+
+**对照锚点**:02:06:58 H718(4126cafa)再次正常起链(CDC 列 ~280,采集 02:07:35 开始)——设备此刻仍可 boot,c 的死亡不是全局环境崩溃。
+
+**下一轮待办(优先级)**:①现役 H718 对照结束后拉全环(--slots 247),补列 201–280 的正常记录并比对 c 环尾;②H718c 隔离矩阵:先 c-trust+b-addon(kernel 死→trust 侧;仅 SB 被 LV 拒→kernel 无恙),再 b-trust+c-addon 反向;③若归因 OBS 二进制本体,把 cover 探针改为完全复用既有行格式串重编译对照;④b2 列 1225 死亡与 c 早死是否同源用环 boot_id/序列对照。
