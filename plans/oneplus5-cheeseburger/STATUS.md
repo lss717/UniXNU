@@ -30912,3 +30912,19 @@ X 事件 = 0（无未读丢弃）
 **下一轮建议(H718,单变量)**:仅修改 A540TracePlugin.mm 的 worker 线程 setContents:/present 调用(移回主线程 dispatch_sync 或直接删除该探测块),其余全部沿用本轮。预期:SB 不再出现本链 abort、寿命越过 5681 采集窗;若届时仍无首帧,“场景创建→首笔提交”的阻塞即为无注入干扰下的真实卡点,可安全继续 §424/§427 的呈现链追查。**风险登记**:删除/改道该块会同时失去“disp/contents set”证据行,须保留其余计数通道。
 
 **设备收尾**:UXC1 424603 执行 normal reboot,回 Android 后 adb 唯一 target 复核。
+
+### §429 H718 双 boot 实测(内核 96c11b174754 同 H716;A540Trace 首次随源码重编译入包 cdhash 98d0ad28;run1 boot 312ABE83 / run2 boot 34CF4ACD;2026-11-28)
+
+**先记一次自身失误(已修正)**:H718 首次打包脚本在 codesign 前读取 dylib 字节写进 addon,产出的 observer 未签名——run1(312ABE83)因此出现 Library Validation failed: Rejecting SpringBoardSceneObserver.dylib(SB 159/174 因缺库自杀),该 boot 判废,日志保留为 h718-live-invalid-unsigned-obs.*。修正(签名后重读+双端核验)后重建 payload 0529ab1a / img 4126cafa,run1 用 UXC1 424604 提前结束;run2(34CF4ACD)为有效轮,observer load build=H718 与 draw# active-calls-disabled-h718 门标均在位。**流水线新认知:近期各轮的 A540Trace.bundle 一直是 H704 时代的冻结二进制,H718 起才随源码重建(本次 A540 源码未改,重编译 cdhash 与产物一致可作确定性对照)。**
+
+**主结果:probe_drawable 门控消除了换代风暴。** run1 列 276–2404、run2 列 281–5119+(采集窗内)均 0 次 CA 断言/abort/signal=6,SB pid 27 单代存活至采集窗末(历史首见,此前各 boot 首死于列 2281–2692),run2 全程 NATIVE_EXIT comm=SpringBoard 计数 0。原断言未复现的结论限定于插件不再在工作线程调 CAMetalLayer 创建/setContents;死亡链本身已在 §428 定性为 Apple 主线程守卫的确定性 abort。
+
+**run2 锁屏链增量(按列号)**:did_finish_return@1340.414;h541 两阶段完整 dump 1340.42/1345.02(windows=15 scenes=1,idx0–7 无锁屏窗类;scene idx0 delegate=SBEmbeddedDisplayWindowSceneDelegate;root_visibility 三行两次完整);ca_layer_commit ×16 @1344.333–1344.377(Switcher/AlertItem/StatusBarReusePool/pill/grabber/swipe 根层,contents=0);sbhist szmax 132→660→4072、oolmax→12、cx→3984、bytes→2.23MB;NATIVE_SURF new ×2(1358.470/1363.357,bb tid571,1080x1920 planes=2 submits=1),accept dump n=1..4 的 surface 指针与 NATIVE_SURF 一一对应(对象指针桥接,15µs 内被送显链接受);SBCHAIN@1440.423 sb=27 msg=0x9c42 req=78083/56/backboardd。**首个缺失环节收敛为:15 窗 idx8–14 从未枚举(枚举上限 8 且观察线程随后停摆),锁屏窗是否存在仍不可判**;0x9c42↔1344 commit↔具体 surface 仍无共同 ID(SBCHAIN req 与 accept dump r/kt 语义未证一致,不得当桥)。
+
+**观察者线程停摆(修正 §426/§427 的纯预算归因,repoll 嫌疑恢复)**:SB 侧最后保留额度行为 h593/h578/h572 @1354.369(interval 39);此后循环线程再无 interval 40 行(上限 40,应现于 ~1384)→ 阻塞点收敛在 h680_repoll_render_ports(39) 的 h680_emit 路径(vm_read_overwrite self + 悬垂 handle 读取)。tx 行自 interval 39 起消失是另一机制:tx 走 line()(客户端 gBudget=1024/进程)已耗尽,属丢弃非停摆。主线程证据:h575_cxx_throw pid=27 main=1 type=10TException caller=0x1c2059d54 两次(1379.873/4737.200,同 caller 同线程)——SB 主线程在 did_finish 后周期抛未捕获 C++ 异常(terminate=1 挂钩一直吞下,进程无恙);h541 tick 链在 tick0 后中断(tick1 canary 缺),4737 行仍打出 → tunnel 与主线程健在,是探针重排链断。
+
+**面板/送显(与换代解耦记录)**:run2 copy=4721、SAMPLE=4724 全 same=256/nz=0、blank=0(全程无清屏)、swap reason 全 0、retirement done 1:1(列 5074)。**验收**:①回调返回=已证(1340.414);②带内容图层=未达(commit 树 contents=0、锁屏窗未证存在);③真实 swap=达成并持续;④可见锁屏=无。
+
+**外部参考核实**:UniXNU devices.toml 官方 cheeseburger 条目(DinnerABC,ipados-17.7.11-21H461)summary 为 Root, PID 1 and RAM Data; watchdogd SIGTRAP under investigation,无锁屏首帧修复可套用;sagit 两条一 pending 一 iOS16 profile。HakiOS common 分支未检索到 kern.hakios.fb_surface(changelog/文档无该词),可核实的是其 MiniIOMobileFramebuffer 自备 swap/vsync/scanout;本项目等价能力 = NATIVE_SURF 注册表 + accept dump 同指针(本轮已用于桥接)。
+
+**下一步(镜像已备好)**:H718b(img 66509941,双端一致;observer a133d60 = 仅加 class-first 枚举 idx<16 + build=H718b 标记,内核/CPU/GPU 与 H718 全同)。run2 窗 00:27 结束后立即上机,回答 idx8–14 窗口身份。
