@@ -30869,3 +30869,14 @@ X 事件 = 0（无未读丢弃）
 
 **洪泛窗共发现象(4726.8–4789.1,离线补充)**:同窗 NATIVE_A540_ACCEL 1063 行、IOUC 514 行(多为 WidgetRenderer_D 的 AGXDeviceUserClient MACF 拒绝)、NATIVE_DISPLAY_OPEN service=AGXAccelerator process=WidgetRenderer_D 1073 次、NATIVE_LEGACY swap 校验/传输/回收 288 行(done 3630→3635@4726、3633+@4731,~5.5Hz 短促连发)——即 SB-411 的 160 笔内联大事务与 WidgetRenderer 连环重启、GPU 打开风暴同窗出现,彼此先后与因果未证,整体登记为“锁屏呈现尝试”现象簇。**H715 守卫离线审计**:a06f9ac 的 gRepollStuck else 分支在单线程顺序执行下不可达(repoll 挂死则线程回不到下一拍,h715_repoll_stuck 行实际不会打印),真正的判别力来自“状态行先行”:每个 interval 的 tx_state 行先于 repoll 打印,末行 interval 号即冻结点;H715 验收以 ①心跳行数≥4(即活到 interval 4)②后代 SB 是否出现 h593/h578 行为主,不依赖 stuck 自报行。
 
+### §426 H715 实测(同内核 e60e43c679b9 + dylib a06f9ac,boot img 8d39c698;CDC 16:55:10 开,窗 2100s,内核列 250→2376,42822 行 / 5.07MB,boot 35CBBB4E;2026-11-27)
+
+**先更正一条贯穿三轮的误判(H713/714/715 的 dylib“周期循环挂死”)**:NativeA540AcceleratorProbe.cpp:297-298 的内核侧 NATIVE_MTL 隧道日志有 **static 1200 行总预算(跨进程、自首次调用计,超出后静默丢弃且无计数打印)**。三轮可见 dylib 行数 661/796/788,与各自 CDC 开窗前消耗合计≈1200;H715 末行 416.287 之后进程与 kext 均继续服务(1051.5s user client granted、1506s 后 sbhist/retirement 正常推进、SB-27 活到 2281),排除“挂死拖死服务通道”。因此 ①“循环冻结在 repoll(interval 3/6)”降级为**未证**——静默点与预算耗尽点一致,与循环是否存活无关;②§425 “后代 SB 零 dylib 行”同样不再支持“未装载/未到挂点”,是预算内的不可判;③a06f9ac 的 interval 2–6 比 H714 的 2–3 多出的行数,只是预算余量差,不代表守卫起效;h715_repoll_stuck 行未出现(与 §425 审计的死分支一致)。循环真实存活与否需 H716 提预算后重测。
+
+**首轮 SB 代际终点首次入镜**:pid=27 NATIVE_EXIT@2281.645(status=0x6 ns=2 code=0x6 sender=自身,与前代同形),325 exec@2284.175,窗内未再退出。sbhist 全程 sb 20→33、szmax 恒 132(无 H714 式洪泛,大消息 0)、cx 17→20、ids 恒 0x9d0a 族小消息。retirement 1201@2286.2,done/presented/frames 1:1。面板 copy=1198、SAMPLE=1198 行全部 same=256/nz=0(501→2281 每个复制帧采样皆零值),blank 仅 3。**验收**:①回调返回未证;②带内容图层未达(layerCommits 末值 0,ctxs=6 hosts=2);③真实 swap 达成(1201);④可见锁屏无。
+
+**WidgetRenderer 形态(本轮新事实)**:501.5s 首现,48 次 exec / 48 次 exit,status=0xb ns=2 code=0xb(**SIGSEGV**,sender=自身),节奏 10–30s 至窗末 2275;与 H714 的 RBSTerminateContext(0xB111B111)自杀形态不同,登记现象,因果未证。AGX IOUC MACF 拒绝同窗持续。
+
+**CPU 核对(本轮交办)**:boot args 区段 1034B,H714/H715 payload 逐字节一致,关键项含 **cpus=2**(msm8998 8 核被限为 2)、native-cpufreq-early=2、sheng-gpu-power=7、h114-gic=1、h109-tick=0、offline-accelerator=1、_offline-accelerator-plugin=A540Trace、h103-log-secs=60、sheng-lite=1 等。窗内**无在线核数与频率打印**(SMP/cpufreq 早期行在 CDC 开窗前,h103 环只存尾部);NATIVE_IRQ 的 timer 计数正常。日志中“process X caught waking the CPU … averaging NNN wakes/s”是 XNU 按进程的任务唤醒限流告警(wake 计数),不是核占用,不能用于饱和判断。窗内未见线程级 cpu 字段样本。按交办标准,单核持续饱和未证,**不做核数对照**,留作 H716 之后的独立核对项。
+
+**H716 候选(纯观测、只动内核预算与直方图,dylib 沿用 a06f9ac)**:①NATIVE_MTL 预算 1200→20000 并打印丢弃计数;②当前绑定代最大消息专用槽(id/from/size/t);③sb_ids 12 槽全量打印。上机判据:预算提升后若后续代 SB 出现 h593 行即证装载正常;若 tx_state 心跳能连续走到 interval≥20 即证循环从未挂死,repoll 嫌疑彻底解除。
