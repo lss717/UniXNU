@@ -30966,9 +30966,37 @@ X 事件 = 0（无未读丢弃）
 
 **Cover 首份完整被动快照(f 轮,live h718f-live.decoded.txt)**:
 - h541_window phase=h542_after_did_finish index=9 class=SBCoverSheetWindow hidden=0 hasHidden=1 visible=1 hasVisible=1 layer=UIWindowLayer scene=SBWindowScene activation=0 @1323.170705;index=8 _SBWallpaperSecureWindow 同构 @1323.170377。h541_first pass(1328.867)一致。
-- h541_window_layer index=9 layer=0x303a7af40 contents=0 contextId=0x0 hasContextId=0 @1323.170791;index=8 layer=0x303a9fcc0 同 @1328.867268。**Cover 与 WallpaperSecure 的根层从未绑定 CA context;而同 boot 的 host 层(ca_host_visible @352.804 host=0x17a8848f hasContextId=1)证明 host-context 机制本身在工作。**
+- h541_window_layer index=9 layer=0x303a7af40 contents=0 contextId=0x0 hasContextId=0 @1323.170791;index=8 layer=0x303a9fcc0 同 @1328.867268。（§433 审计更正:此处的 `contextId=0x0 hasContextId=0` 是探针构造性输出——`contextId` getter 只存在于 CAContext/CALayerHost,UIWindowLayer 上没有该实例方法,`read_integer` 必然返回 false;15 个窗口全部同值,包括 Home。**该字段不能推出"未绑定渲染 context"**。）
 - WallpaperSecure 窗口对象 0x100d4a490 早在 col 352.805/352.821 出现 uiwindow_scene_visible/set_hidden(scene=SBWindowScene,visible=1 hidden=0)——SB 曾主动操作过该窗,层仍无内容无 context。
 - ca_layer_commit×16@1325.04–.10(Home 侧层,root contents=0);sbhist 14→19→25→33、szmax=132、oolmax=5,ids 无大消息——SB 依旧从未发出内联内容事务。
-**首个可定位断点由此确立:锁屏断的不是可见性/scene 挂接,而是 SBCoverSheetWindow 根层的 render context 绑定(contextId=0)——Cover 场景从未与渲染宿主连接,合成器侧因此永远收不到其提交。**
+**断点定位以 §433 审计版为准:窗口可见性与 scene 挂接为正面证据;"contextId=0"不成立;真正的断链在 SB 本地 secure 远程 context 已提交(1379/1384 两波)之后,客户端→CARenderServer 服务端的注册/绑定/present 环节无任何正面见证。**
 
-**下一步**:①沿 contextId=0 追 FrontBoard 侧 cover 场景的 host 连接路径(现有 f 内核观测面内可做:scene→host 视图→CALayerHost 绑定链,对照 Home 场景为什么有 host 层);②c/d 死亡机制留案(二分已把它逼进"cover 代码体本身进 binary 即触发"的小盒子,不再阻塞观测);③f 轮 CDC+环已存 logs/h718f/device/。设备现停 TWRP,UXC1 已用至 424612。
+**下一步**:见 §433 末(H719 = bundle 单侧扩预算,重审 bb 服务端注册链)。f 轮 CDC+环已存 logs/h718f/device/。设备现停 TWRP,UXC1 已用至 424612。
+
+
+### §433 H719 离线审计:hasContextId 语义更正、Cover 提交实证与断点重定位(2026-11-28 05:30)
+
+**探针审计(源码 81d3919)**:h541_window_layer 的 contextId 读取走 read_integer(window.layer,"contextId"),而 read_integer 先经 instance_encoding→class_getInstanceMethod 要求该对象类存在名为 contextId 的整数属性方法。UIWindowLayer/CALayer 并无此方法(contextId 在 CAContext 与 CALayerHost 上),故 15 窗口的 ctxId=0x0/hasCtx=0 全部是**选择器缺失的结构化产物**,包括 Home 窗口。§432 初稿据此推"Cover 根层从未绑定 CA context"不成立,已就地更正。对照组 run2 与 ctrl 环中同字段同值,可复核。
+
+**ctx/host 事件的真实语义(同一 f boot 33D5D3F7)**:
+- srv#43-56 @1379.558-561:-[CALayer _didCommitLayer:] 钩子(A540TracePlugin.mm:534,gServerLayerCommitEvents 上限 32)记录 **ctx=0xed0f974d** 的一棵 14 节点提交树:root=0x303a7af10(UIWindowLayer,depth0)→ _UIWindowTransformLayer×2 → **0x303a7af40(depth3,恰为 windows[9] SBCoverSheetWindow.layer)** → 更深 CALayer/CAShapeLayer 到 depth13,全部 contents=-。即 **Cover 窗口根层在 did_finish 后确有本地提交,且其所在层树归属 CAContext 0xed0f974d**——该 context 是 ca_context_remote_create@1288.592079 创建、h654_mirror n=9 secure=1、CALayerHost 0x303a7e370 绑定+可见(window=root)@1288.594 的那个。
+- srv#57-74 @1384.602-608:另一 ctx=0x49e65d66(h654 n=15 secure=1 @1320.321)的多棵树提交,其中 **5 个节点 contents=__NSCFType(CALayer.contents 实为 CGImage),含 _UILabelLayer**——SB 进程内带真实位图内容的提交发生过;root 集合含 0x303bfb840(=windows[11] SBControlCenterWindow.layer)。
+- 两波之后 srv 提交事件 32/32 用尽——1384.608 之后的提交活动不可见(记未定,不是无)。
+- SB 全 boot 共 18 个 secure 远程 CAContext(n=2..19,296→1323s 创建);h654_mirror 的 displayId 字段仅 n=11(0x7d9b0c26)为 0x1,其余为 0x0。
+**注意**:上述 ctxId/contents 读取对象是 CAContext/CALayerHost——与 §432 误读的窗口层字段无关;语义成立。
+
+**服务端(bb)侧见证与缺口**:
+- bb 进程 CAWindowServer 上下文表:state observer 固定 4 次(291/340/521/701)全部 ctxs=2(0x73a9c173、0x3bb0b1d0,304.62 创建,root CALayer subs=2 rootContents=-);srvpos 定位探针(pos(1,1)→0x3bb0b1d0,排除后其余采样点全 0x0)最后一轮 521。**701/521 之后 bb 服务端注册表状态:未观测(预算),不能断言 cover ctx 从未注册**。
+- CAWindowServerDisplay presentSurface:withOptions: 钩子安装成功(displaySurface=1),整 boot 0 事件且配额 16 未耗尽——"bb 的窗口服务器从未调用过 presentSurface"是**已验证的否定**(探针在位、预算未尽)。真实送显走内核 NativeLegacyDisplay 回环,与 CARenderServer 呈现路径无联系,与既有架构一致。
+- 传输层:SB→bb render 通道 sbhist @1443/1514/1582/1650(即提交两波之后):sb=33→34、szmax=132 整 boot 不变、oolmax=5、ids 中 0x9d0a(XRegisterClient)累计 20 次。**本地提交与带位图的 ctx 树增长没有转化为任何载荷级 CA 传输**;0x9d0a×20 的时间线(n=9..20 创建期)与"每 ctx 注册一次/重试"相符,但其服务端归宿仍是 H698/H699 未结缺口。
+- 面板:SURF 对 @1336.72/1336.92(bb tid556),retirement 到 961@1714,SAMPLE 全零,与提交波同时段——合成端消费的是空 surface。
+
+**修正后的"最后一个有正面证据的环节"链(f boot,列号)**:
+1323.15 did_finish 返回 → 1288.59/1320.32 cover/CC secure 远程 CAContext 创建 + CALayerHost 绑定可见 → 1323.17 Cover/Wallpaper 窗口 hidden=0/visible=1/scene 挂接 → 1336.7 bb 两块 1080x1920 surface 进入换帧 → **1379.56 Cover 窗口根层 0x303a7af40 在 ctx 0xed0f974d 树下完成 14 节点提交(无位图)** → **1384.60 secure ctx 0x49e65d66 树内出现 _UILabelLayer/CALayer 的 __NSCFType 位图提交** → [证据边界] → 传输层 1443-1651 仍无任何载荷消息(szmax=132)、bb ctxs=2@701、presentSurface 全 boot 0 → 面板 961 帧全黑。
+**断点从"窗口/场景/上下文没建立"更正为:SB 客户端已把 Cover/secure 场景的内容提交进本地 CAContext 树;此后到 CARenderServer 服务端注册/绑定/呈现的链路上,除 20 条 132B 级 0x9d0a 外无任何正向见证,且 701s 后服务端状态因预算失察。**
+
+**环境声明收敛**:单个健康对照(e/f/ctrl)只排除"必死环境",不排除概率性环境因素——b2(H718b 镜像)也在 col 1439 死于 APFS memcpy 缺陷,且 b 系两次启动一次自发死。c/d 的 col 201-225 死与 b2 的 APFS 死是否同一失效通道,需另案用环 boot_id/正对照分辨,本轮不追。
+
+**H719 设计(最小、被动、OBS 字节冻结为 f/7ec934ae)**:唯二目标=把"提交波之后的见证"变成可判定。改动全部在 A540TracePlugin.mm(该 bundle 自 H718 以来逐字节不变,457537c9):
+1) 提交事件预算 32→256;2) state observer 调度 {30,120,300,480} 追加 {900,1200,1500};3) srvpos 15 轮→30 轮;4) census_server_context_table 4→8 次。
+判定矩阵:若 H719 在 201-225 死 → bundle 内容与 OBS 一样"入包即死",死亡假设升级为"注入二进制本体敏感性",转纯内核侧观测;若活过 did_finish:用新预算直接判定 bb 服务端 ctx 表在提交波前后是否出现 cover 的 ctxId(0xed0f974d/0x49e65d66)、presentSurface 是否仍为 0、sbhist 是否出现首个载荷类消息——三问任一阳性都改写断点位置。
