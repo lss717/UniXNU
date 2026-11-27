@@ -31000,3 +31000,27 @@ X 事件 = 0（无未读丢弃）
 **H719 设计(最小、被动、OBS 字节冻结为 f/7ec934ae)**:唯二目标=把"提交波之后的见证"变成可判定。改动全部在 A540TracePlugin.mm(该 bundle 自 H718 以来逐字节不变,457537c9):
 1) 提交事件预算 32→256;2) state observer 调度 {30,120,300,480} 追加 {900,1200,1500};3) srvpos 15 轮→30 轮;4) census_server_context_table 4→8 次。
 判定矩阵:若 H719 在 201-225 死 → bundle 内容与 OBS 一样"入包即死",死亡假设升级为"注入二进制本体敏感性",转纯内核侧观测;若活过 did_finish:用新预算直接判定 bb 服务端 ctx 表在提交波前后是否出现 cover 的 ctxId(0xed0f974d/0x49e65d66)、presentSurface 是否仍为 0、sbhist 是否出现首个载荷类消息——三问任一阳性都改写断点位置。
+
+
+### §434 H719 实测:bundle 预算扩容通过死窗、Cover 提交波完整捕获、传输层首现载荷消息、bb 侧队列 747 卡死新案(2026-11-28 06:05)
+
+**H719(boot 33BB7EE1,img 5916bb4ba8fe;OBS 字节与 f 完全一致=7ec934ae,bundle 57ec3a7 新 cdhash 6139ecc9,预算 32→256/state 4→7/srvpos 15→30/census 4→8)**:05:25:59 上机,CDC col 253 正常上线,健康跨过 201-225 死窗;did_finish_enter@1177.2、return@1177.3(main=1),h541 idx8/9 复现(cover layer=0x302058ae0),SURF 对@1185.3/1185.5(bb tid559),retirement 持续(2512+ 帧,copy=2800),全 boot 零 abort/SB exit。
+**判定①:bundle(A540TracePlugin)字节同样可以变动而不死——c/d 死亡窗与 OBS delta 的绑定进一步强化;e/f/719 三个非 OBS-delta 变体全存活。**
+
+**判定②(提交波,256 预算完整捕获)**:srv event_layer_commit 共 255 行,1360.3-1376.1 一波完成(不再截半):
+- **Cover 窗口根层 0x302058ae0 以 depth=3 反复出现在 ctx=0x6a5b1117 的树里(root=0x302058b10,srv#113/127/141/155…,owner=27/SpringBoard)**——0x6a5b1117=h654_mirror n=9 secure=1(ca_context_remote_create@1146.4,ca_host_context_bind 0x302054900@1146.4)。Cover 场景本地提交连续且重复(同一波内 cover 根层出现≥5 轮),与 f 波尾证据同构且更完整。
+- 位图提交复现:ctx=0x6a5b1117 内 6 节点 contents=__NSCFType、ctx=0x67d08e6c(n=15 secure@1175)内 10 节点 __NSCFType;另有 27 行 ctx=0xffffffff(layer.context 不可读哨兵)。
+**判定③(传输层首次正向消息)**:sbhist 时间序列 1301(sb=33, szmax=132)→ **1443(sb=45, szmax=1404, ids 新增 0x20000000×12)** → 1443-2296 保持 45 不变。提交波后 SB→CARenderServer 通道出现了第一批载荷级消息(最大 1404B,12 条,消息 id=0x20000000 与 H690 时代 NATIVE_PAIR_EVT 的 S/Q 配对同族),此后无后续流量;run2/f 至被切断从未出现该消息。**"提交→传输"不是静态死链,至少有一批 publish 出栈;"传输→服务端合成→送显"仍然全黑(bb CAWindowServerDisplay presentSurface:withOptions: 钩子全程 0 事件,预算 16 未尽=有效否定)。**
+
+**判定④(新缺口:bb 侧观察队列在 col≈747 卡死)**:bb 进程内 bundle 的 state/srvpos/srvq/srvpub 通道全部止于 686-747:最后一轮 srvpos#800-803@746.78 打印到 "found pos(1,1) step1" 即中断,900/1200/1500 的新增 state 轮与 srvpos 第 9-30 轮全部未跑。bb 本体活着(NATIVE_SBPC sample=10051@2170 线程表完整,1406 后仍有 IOKit match;draw#@2398 重启是 mediaserverd pid268@1935 exec 后加载 bundle 的新实例)。**卡死点恰在 did_finish(1177)之前 430s,导致服务端在 cover ctx 注册/提交波后是否新增 context、display 是否挂接完全失去观察——这是本 boot 之后的头号观测障碍。**f 轮 srvpos 也停在 521/748(调度 4 轮跑完),未见 mid-round 截断;h719 把 rounds 拉到 30 后暴露出 mid-round 卡死,提示 probe 循环内某个同步调用(候选:taskNamePortOfContextId/clientPortOfContextId MIG 往返、srvpub ABI handle 读、bootstrap_look_up)在 747 时刻阻塞了全局 utility 队列。
+
+**面板与验收**:swap/retirement 正常推进但 SAMPLE 依旧全零(PANEL blank=0 copy 持续增长;无 PIXEL 警报)。真实锁屏可见未达成;本轮把断点从"是否提交"推进到"publish 已发出(12 条),服务端处理不可见(bb 观察队列死)"。
+
+**下一步(H720 候选,按判别力排序)**:
+1. **修 bb 观察通道自身**:probe_display_context_positions/srvpub 内逐调用加 enter/exit 自报,并把这三族 probe 从 global utility 队列改到 bundle 私有串行队列(单点阻塞不再冻结全体调度);同一 boot 内即可定位 747 卡死调用。
+2. 传输追链:0x20000000×12 的接收端——bb 端 R(deq)/PairEvt 配对在修好观察队列后应可见;或内核侧 NATIVE_RENDER 通道加 from=27 id=0x20000000 的投递/回执见证(小补丁)。
+3. ctx=0xffffffff 的 27 行:layer.context 读取失败的类分布(root 侧),低优先。
+4. c/d 死亡机制与 bb-747 卡死是否同族(均为同步调用/内核路径挂死后无 panic 文本)值得并案——但仍是独立缺陷。
+**运维**:live2 采集至 06:09(约 col 2730),随后 UXC1 424613 正常重启收官→TWRP 拉环(环尾当前~1154+,早段 0-330 只有环里有:observer load、n=3..5 mirror 创建期)。UXC1 下一 RequestId=424613。
+
+**H719 收官(环回捞)**:UXC1 424613 于 2745.90s 正常重启回 Android,TWRP 拉环 h719-ring.txt 覆盖 2579.17→2745.87(环窗 166s,WidgetRenderer 风暴提前截断,boot 早期段未入环但已在 CDC live1 全程捕获)。CDC 断流段 2621→2745 内仅 WR 重启风暴(pid 334→342,每代约 11s SIGBUS 0xb,AGX MACF 拒绝),无 SB 事件、无 panic、无非零 SAMPLE、无复位正文。设备现处 TWRP。
