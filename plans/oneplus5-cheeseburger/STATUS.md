@@ -30880,3 +30880,5 @@ X 事件 = 0（无未读丢弃）
 **CPU 核对(本轮交办)**:boot args 区段 1034B,H714/H715 payload 逐字节一致,关键项含 **cpus=2**(msm8998 8 核被限为 2)、native-cpufreq-early=2、sheng-gpu-power=7、h114-gic=1、h109-tick=0、offline-accelerator=1、_offline-accelerator-plugin=A540Trace、h103-log-secs=60、sheng-lite=1 等。窗内**无在线核数与频率打印**(SMP/cpufreq 早期行在 CDC 开窗前,h103 环只存尾部);NATIVE_IRQ 的 timer 计数正常。日志中“process X caught waking the CPU … averaging NNN wakes/s”是 XNU 按进程的任务唤醒限流告警(wake 计数),不是核占用,不能用于饱和判断。窗内未见线程级 cpu 字段样本。按交办标准,单核持续饱和未证,**不做核数对照**,留作 H716 之后的独立核对项。
 
 **H716 候选(纯观测、只动内核预算与直方图,dylib 沿用 a06f9ac)**:①NATIVE_MTL 预算 1200→20000 并打印丢弃计数;②当前绑定代最大消息专用槽(id/from/size/t);③sb_ids 12 槽全量打印。上机判据:预算提升后若后续代 SB 出现 h593 行即证装载正常;若 tx_state 心跳能连续走到 interval≥20 即证循环从未挂死,repoll 嫌疑彻底解除。
+
+**收尾**:boot 标识经 H410 控制台复核为 35CBBB4E(与 UXL1 头一致)。UXC1 request 424601 于列 2504.2 ACK 并执行 normal reboot,设备回 Android 后 adb 唯一 target 复核通过。重启前最后观测:WidgetRenderer pid=334 于 2500.125 同形 SIGSEGV 退出(Corpse allowed 4 of 5),窗后小风暴延续;NATIVE_IRQ ipi 仍恒 0,与窗内一致。
