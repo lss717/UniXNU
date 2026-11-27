@@ -30956,3 +30956,19 @@ X 事件 = 0（无未读丢弃）
 3. d 的环无 panic 文本 + 设备回 Android:与 c 一致的静默复位签名;复位机制仍未证实。
 
 **运维记录**:本轮曾发生两件事:①本轮开头我按旧约定清场时误杀了正在写入的对照采集进程(h718-live.raw.bin 停在 02:18:54),内核侧无恙,DTR 重接后 live2 从 1457 恢复;1042–1458 缺口由磁盘环覆盖 1074–1458 补回,真正盲区只剩 1042–1074。②h718d-live.raw.bin 未生成(CDC 未到),watcher 空转已停。设备现处 TWRP。
+
+
+### §432 H718e/H718f 判别链与 Cover 属性快照(2026-11-28 05:00)
+
+**e(72b1f88/OBS 515a8f48:与 a133d60 逐字节同码,仅 build 标记 H718b→H718e)**:03:47:46 上机(boot 3062DEC1,img 7e53337c5302),CDC col 254 上线,健康跨过 c/d 死窗;did_finish_enter@274.125、h541_did_finish_return@1300.759(main=1)、windows=15 scenes=1、idx8/9=_SBWallpaperSecureWindow/SBCoverSheetWindow 类名复现、SURF×2@1317.286/1322.151(bb tid566,1080x1920,planes=2)、retirement done=1102@1776、713+ SAMPLE 全 zero、零 abort/exit/panic;04:16 采集窗自然结束,04:16:5x UXC1 424611 正常重启收官(内核 col 1740 ack)。环 1155→1739 补 CDC 尾段。**结论:纯重编译+同长度标记替换不死 → "重编译本身"无罪。**
+
+**f(81d3919/7ec934ae:在 e 基础上仅把 h541_window 属性通道 idx<8 扩到 idx<16,零新增字符串,标记 H718e→H718f 同长度;img 5ad07671d998)**:04:26:21 上机(boot 33D5D3F7),CDC col 256 上线,健康跨窗,04:55:2x UXC1 424612 收官(ack col 1776.39)。**死窗判别矩阵就此闭合:任何 OBS 字节变更(e/f 皆变)不死,c/d 特有 delta(cover 循环本体+新字符串)必死(5/5),且该 delta 在死窗内从未执行。**机制未明,但绕行成立:**f 就是可用观测器**。
+
+**Cover 首份完整被动快照(f 轮,live h718f-live.decoded.txt)**:
+- h541_window phase=h542_after_did_finish index=9 class=SBCoverSheetWindow hidden=0 hasHidden=1 visible=1 hasVisible=1 layer=UIWindowLayer scene=SBWindowScene activation=0 @1323.170705;index=8 _SBWallpaperSecureWindow 同构 @1323.170377。h541_first pass(1328.867)一致。
+- h541_window_layer index=9 layer=0x303a7af40 contents=0 contextId=0x0 hasContextId=0 @1323.170791;index=8 layer=0x303a9fcc0 同 @1328.867268。**Cover 与 WallpaperSecure 的根层从未绑定 CA context;而同 boot 的 host 层(ca_host_visible @352.804 host=0x17a8848f hasContextId=1)证明 host-context 机制本身在工作。**
+- WallpaperSecure 窗口对象 0x100d4a490 早在 col 352.805/352.821 出现 uiwindow_scene_visible/set_hidden(scene=SBWindowScene,visible=1 hidden=0)——SB 曾主动操作过该窗,层仍无内容无 context。
+- ca_layer_commit×16@1325.04–.10(Home 侧层,root contents=0);sbhist 14→19→25→33、szmax=132、oolmax=5,ids 无大消息——SB 依旧从未发出内联内容事务。
+**首个可定位断点由此确立:锁屏断的不是可见性/scene 挂接,而是 SBCoverSheetWindow 根层的 render context 绑定(contextId=0)——Cover 场景从未与渲染宿主连接,合成器侧因此永远收不到其提交。**
+
+**下一步**:①沿 contextId=0 追 FrontBoard 侧 cover 场景的 host 连接路径(现有 f 内核观测面内可做:scene→host 视图→CALayerHost 绑定链,对照 Home 场景为什么有 host 层);②c/d 死亡机制留案(二分已把它逼进"cover 代码体本身进 binary 即触发"的小盒子,不再阻塞观测);③f 轮 CDC+环已存 logs/h718f/device/。设备现停 TWRP,UXC1 已用至 424612。
