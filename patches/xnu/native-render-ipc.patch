@@ -30,7 +30,7 @@
  		native_xpc_register(native_sb_rcv.port, native_sb_pid, name, 'r');
  		native_xpc_register(native_sb_req.port, native_sb_pid, name, 'q');
  		native_xpc_dump(sample);
-@@ -11349,6 +11358,503 @@
+@@ -11349,6 +11358,510 @@
  		native_xpc_pids[3] = pid;
  	}
  }
@@ -77,6 +77,8 @@
 +static uint32_t native_render_sb_bytes;
 +struct native_render_idcnt { uint32_t id; uint32_t n; };
 +static struct native_render_idcnt native_render_sb_ids[12];
++static uint32_t native_render_sb_cx;
++static uint32_t native_render_sb_oolmax;
 +/* bind/lookup/dead events are recorded here and printed by the
 + * sampler: the note path runs under the destination port lock and must
 + * never print (STATUS 387/388 lock-order rule). */
@@ -239,6 +241,11 @@
 +			if (hdr != NULL) {
 +				if (hdr->msgh_size > native_render_sb_szmax) native_render_sb_szmax = hdr->msgh_size;
 +				native_render_sb_bytes += hdr->msgh_size;
++				if (hdr->msgh_bits & MACH_MSGH_BITS_COMPLEX) {
++					native_render_sb_cx++;
++					mach_msg_body_t *bodp = (mach_msg_body_t *)(hdr + 1);
++					if (bodp->msgh_descriptor_count > native_render_sb_oolmax) native_render_sb_oolmax = bodp->msgh_descriptor_count;
++				}
 +				unsigned k;
 +				for (k = 0; k < 12; k++) if (native_render_sb_ids[k].id == (uint32_t)hdr->msgh_id) break;
 +				if (k < 12) native_render_sb_ids[k].n++;
@@ -386,7 +393,7 @@
 +			at += snprintf(hb+at,sizeof(hb)-at,"%s0x%x:%u",shown?" ":"",native_render_sb_ids[k].id,native_render_sb_ids[k].n);
 +			shown++;
 +		}
-+		printf("NATIVE_RENDER: sbhist sb=%u szmax=%u bytes=%llu ids=%s\n", native_render_sb_att, native_render_sb_szmax, (unsigned long long)native_render_sb_bytes, hb);
++		printf("NATIVE_RENDER: sbhist sb=%u szmax=%u bytes=%llu cx=%u oolmax=%u ids=%s\n", native_render_sb_att, native_render_sb_szmax, (unsigned long long)native_render_sb_bytes, native_render_sb_cx, native_render_sb_oolmax, hb);
 +	}
 +	if (native_render_evt_bound) {
 +		native_render_evt_bound = 0;
@@ -534,7 +541,7 @@
  
  struct native_ipc_event {
  	uint64_t serial;
-@@ -11398,4 +11904,84 @@
+@@ -11398,4 +11911,84 @@
  static uint64_t native_bks_request_port;
  static uint64_t native_bks_reply_port;
 +/* H682: third bind path, layout-free.  The first real message from
@@ -619,7 +626,7 @@
 +}
  static unsigned native_bks_msg_id;
  static int native_bks_responder_pid;
-@@ -11609,7 +12195,9 @@
+@@ -11609,7 +12202,9 @@
  	e->bits = hdr ? (unsigned)hdr->msgh_bits : 0;
  	e->kind = kind;
  	e->result = result;
