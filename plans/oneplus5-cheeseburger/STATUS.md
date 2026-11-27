@@ -30882,3 +30882,15 @@ X 事件 = 0（无未读丢弃）
 **H716 候选(纯观测、只动内核预算与直方图,dylib 沿用 a06f9ac)**:①NATIVE_MTL 预算 1200→20000 并打印丢弃计数;②当前绑定代最大消息专用槽(id/from/size/t);③sb_ids 12 槽全量打印。上机判据:预算提升后若后续代 SB 出现 h593 行即证装载正常;若 tx_state 心跳能连续走到 interval≥20 即证循环从未挂死,repoll 嫌疑彻底解除。
 
 **收尾**:boot 标识经 H410 控制台复核为 35CBBB4E(与 UXL1 头一致)。UXC1 request 424601 于列 2504.2 ACK 并执行 normal reboot,设备回 Android 后 adb 唯一 target 复核通过。重启前最后观测:WidgetRenderer pid=334 于 2500.125 同形 SIGSEGV 退出(Corpse allowed 4 of 5),窗后小风暴延续;NATIVE_IRQ ipi 仍恒 0,与窗内一致。
+
+### §427 H716 实测(内核 96c11b174754=e60e43c6+sbmax/12槽/预算改造,子模块 e860024,dylib 沿用 a06f9ac;boot img 37eea01c,boot 38FC4E15;CDC 17:57:58 开,窗 5400s,内核列 276→5677,149205 行 / 17.69MB;2026-11-27)
+
+**观测预算改造直接验证 §426 结论(循环挂死=预算假象)**:专属额度生效后 pid=27 心跳走到 interval=30(远超 H714/H715 的 2–3/6),每个后继代(320/331/353/364/385/403/434/456/474)都打出自己的 observer load process=SpringBoard(9 条,自 2481.97 起)与 h593 行;NATIVE_MTL_BUDGET 行整窗 0 条(共享池 20000 未耗尽)。**结论:用户态周期循环与装载从未停摆,静默纯为预算;H713–H715 的 repoll 嫌疑彻底解除,“旧日志静默丢弃”与“循环持续推进”两项已分别验证。**注意 dylib 标记仍打印 build=H715(H716 沿用未动 dylib,预期)。
+
+**SB 自 abort 完整栈首次入镜(九代同形)**:每代退出前 `signal=6 addr=pc=0x1e682ef74 lr=0x1f86c8fa4`(sp 恒为线程栈基+0x620),回溯符号化链(以 pid=403@4579.504 为例,slide=0xa80000,boot 内一致):start_wqthread → _pthread_wqthread → libdispatch×5(工作队列 block) → A540Trace!+0x761c → QuartzCore!+0x136fd4 → SpringBoardSceneObserver h674_msg2trap_stub(+0x6f3c) → QuartzCore!+0x7b2d4 → +0xa440 → +0x82b78 → +0x82dbc → +0x212380 → libsystem_c!abort+0x68 → pthread_kill → __pthread_kill。六代(320–403)系统帧逐字节相同,注入帧仅 ASLR 差;sp 相同偏移但栈基不同,abort 在每条代的新线程上。归因边界:abort 发生于**经我方 h674 GOT 转发桩进入的 QuartzCore 内部路径**上,由 QC 断言式失败触发;现有证据不能区分“QC 自身状态损坏必然 abort”与“钩子介入改变路径”,需后续单变量对照(禁用 h672/h674 重绑定再验)才能定性,先登记现象与栈本身。另 9 次 signal=6 dump 与 9 代 exit 一一对应,h578_abort_frame 行无 pid 字段,归属靠紧邻顺序。
+
+**洪泛(H714 的 4726.8→4789.0 +160 笔/3888B)未复现**:本 boot 全程 sbhist 无 Δsb>30 或 Δbytes>30000 的拍,整窗 szmax 恒 132;新 sbmax 槽(每拍打印,own 随代切换自复位)记录全 boot 最大消息=132B(0x9d0a 族),后继各代 own/from 正确(27→320→…→474)。同窗 4726–4790 无 WidgetRenderer/AGX 风暴(82 条 display-open,无 MACF 拒绝潮),而 H714 该窗正是 widget 连环重启+AGX 1073 次打开;H716 的 widget 退出亦达 150 次(SIGSEGV 形态延续)但与 SB 换代/该窗无同窗相关。登记:H714 洪泛=单 boot 事件,与“第 79–80 分钟”时刻无关,其同窗伴随者在 H716 未同时出现,洪泛本身亦未再现——不支持“固定定时内容提交”解释,也暂无可对齐的合成器接收/像素(无洪泛可追)。
+
+**面板/呈现**:copy=2457,SAMPLE=2457 全部 same=256/nz=0(覆盖 276→5676 连续无断档,采样随复制走、复制未早停),blank=1414 自 ~3900 起爬升(清屏主导再现,但比 H714 晚),retirement done=3871 1:1。SB 十代(27→474)寿命 211–513s,全部同栈自 abort;窗末 474 在世。重启前尾部实拍:后继 SB 仍在 NATIVE_IOKIT op=match cls=AppleCLCD ret=0xe00002f0(无 provider,与 stock 匹配缺失一致)。**验收**:①回调返回未证;②带内容图层未达(layerCommits 九代恒 0);③真实 swap 达成(3871);④可见锁屏无。
+
+**设备收尾**:UXC1 424602 于列 5881.685 ACK 执行 normal reboot,回 Android 后 adb 唯一 target 复核。**下一轮建议(定性 abort 归因)**:H717 单变量 = 仅禁用 h672/h674 GOT 重绑定(install_h674_got_rebinding 关闭路径,其余 dylib 逻辑与内核全同),验“九代同形 abort 是否消失/改变”;若消失→钩子介入致因成立,恢复时改安全转发;若不变→QC 内部断言为既有死亡路径,回到呈现链本身继续。
