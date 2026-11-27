@@ -91,6 +91,7 @@ def main():
             legacy_vtable='0xfffffff006f38560',
             pure_virtual='0xfffffff0077785e0',
             iosurface_descriptor='0xfffffff005b9ead0',
+            iosurface_id='0xfffffff005b9ec14',
             iosurface_width='0xfffffff005b9ebbc',
             iosurface_height='0xfffffff005b9ebc4',
             iosurface_stride='0xfffffff005b9ebd4',

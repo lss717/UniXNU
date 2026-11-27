@@ -68,6 +68,7 @@
 +	unsigned id;
 +	unsigned size;
 +	unsigned ctx;
++	uint64_t t;
 +};
 +static struct native_render_rec native_render_rec[8];
 +static unsigned native_render_rec_n;
@@ -241,6 +242,7 @@
 +				native_render_rec[u].ctx =
 +				    hdr->msgh_size >= 32 ?
 +				    (unsigned)((uint32_t *)hdr)[7] : 0;
++				native_render_rec[u].t = mach_absolute_time();
 +			} else {
 +				native_render_rec_drop++;
 +			}
@@ -385,10 +387,12 @@
 +		printf("NATIVE_RENDER: dead\n");
 +	}
 +	for (unsigned u = 0; u < native_render_rec_n; u++) {
-+		printf("NATIVE_RENDER: sample=%u send from=%u id=0x%x size=%u ctx=0x%x\n",
++		printf("NATIVE_RENDER: sample=%u send from=%u id=0x%x size=%u ctx=0x%x t=%llu\n",
 +		    sample, native_render_rec[u].from,
 +		    native_render_rec[u].id, native_render_rec[u].size,
-+		    native_render_rec[u].ctx);
++		    native_render_rec[u].ctx,
++		    (unsigned long long)native_render_rec[u].t);
++		    native_render_rec_n = 0;
 +	}
 +}
 +

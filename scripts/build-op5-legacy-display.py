@@ -223,7 +223,7 @@ def main():
     bindings = {k: int(v, 16) for k, v in audit['bindings'].items()}
     for k in ('legacy_gMetaClass', 'legacy_constructor', 'legacy_destructor', 'legacy_vtable',
               'iosurface_descriptor', 'iosurface_width', 'iosurface_height', 'iosurface_stride',
-              'iosurface_allocation', 'iosurface_format', 'iosurface_planes', 'vsync_notify',
+              'iosurface_allocation', 'iosurface_format', 'iosurface_planes', 'iosurface_id', 'vsync_notify',
               'set_refresh_properties', 'client_initializer'):
         bindings[k] += slide
     bindings['pure_virtual'] = 0
@@ -247,6 +247,7 @@ def main():
             bindings[name] = bindings['legacy_vtable']
         elif name in ('_native_legacy_surface_descriptor', '_native_legacy_surface_width', '_native_legacy_surface_height',
                       '_native_legacy_surface_stride', '_native_legacy_surface_allocation', '_native_legacy_surface_format',
+                      '_native_legacy_surface_id',
                       '_native_legacy_surface_planes'):
             bindings[name] = bindings[name.replace('_native_legacy_surface_', 'iosurface_')]
         elif name in ('_native_legacy_vsync_notify', '_native_legacy_set_refresh_properties', '_native_legacy_client_initializer'):
