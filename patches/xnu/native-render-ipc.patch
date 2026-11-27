@@ -392,8 +392,8 @@
 +		    native_render_rec[u].id, native_render_rec[u].size,
 +		    native_render_rec[u].ctx,
 +		    (unsigned long long)native_render_rec[u].t);
-+		    native_render_rec_n = 0;
 +	}
++	native_render_rec_n = 0;
 +}
 +
 +/* H680: second bind path.  The SpringBoard observer reports the
