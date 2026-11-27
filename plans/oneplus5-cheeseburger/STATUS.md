@@ -31037,3 +31037,25 @@ X 事件 = 0（无未读丢弃）
 
 **H720 改动(仅 bundle,纯数值三处,无新字符串;OBS 冻结 7ec934ae,内核不动)**:gBudget 800→6000(AdrenoMetal 1db6334);srvpub calls 8→24、census calls 8→16(1710178)。上限时序核对:srvpos 轮 32 轮×60s 覆盖至 ~1900s+,state 轮 {900,1200,1500} 与 census 16 上限均在提交波(1360-1376)之后仍有余量。
 **验收判据**:①bb 线 seq>803 持续出现=预算理论直接证明;②波后 srvq census 是否收录 cover 侧 ctx(0xed0f974d/0x49e65d66、n=9/n=15 secure mirror);③srvpub published id 在 1443 载荷批(0x20000000×12)后是否变化/换绑;④srv event_display_surface(presentSurface)是否首次 >0;⑤面板 SAMPLE 与真实锁屏可见独立验收不变,WidgetRenderer AGX MACF 风暴继续单列登记。
+
+### §436 H720 实测:预算理论上机坐实;波后服务端观测恢复;presentSurface 整 boot 有效否定;H719 载荷批不复现;gen1 死于 UFS 风暴、gen2 完整周期仍无帧(2026-11-28 07:55)
+
+**H720(boot 0x317E154F,img 76aabe18740e;唯一变量=bundle 三处数值上限 gBudget 800→6000 / srvpub 8→24 / census 8→16;kernel 96c11b174754 不动;OBS 字节复用 o-H719=7ec934ae)**:06:35:28 上机,CDC col250 上线,UXC1 424614 于 col3894 正常重启收官;ring 覆盖 971.9→3893.4,与 live 交叉一致。
+
+**判定①(预算理论直接证明)**:bb 侧 srvpos 轮平稳跨过旧死点 803(#800-807@753.7 整轮完整,#814-821@813.6,至 #1415@2014 共 29 轮);srvq 波后轮恢复(#1166@1900.7、#1346@1902.5);NATIVE_MTL_BUDGET 零条。H719 的"747 队列卡死"正式定性为用户态出条额度耗尽,探测环从未挂死。
+**判定②(波后服务端 ctx 表)**:波前 allctx=2 持续(351/487/514/693/1114);gen1 SIGBUS 死亡后 census@1900 allctx=1,集合整体换代(0xc99c7797、0xfc997085),旧桌面 0x433941d6 与旧 published 链路消失。wave1(1279-1329,268 行)gen1 位图提交(contents=__NSCFType,含 _UILabelLayer)在 mirror n=15 ctx=0xef0a201e 内,cover 根层反复入树,与 H719 同构、ctx 随 boot 动态。
+**判定③(published 桌面演进,首见完整链条)**:0x2e57b703(345→1173)→ 0x387c0bb0(1173.8,=mirror n=9,did_finish 前后)→ 0x8b9357ca(1899.1,text n=20 d1=1,SB 死亡后 gen2 换绑)。桌面 published id 会随启动阶段与 SB 换代换绑,"注册静止"不成立。
+**判定④(presentSurface 升级为全程有效否定)**:bb 装载行 srv#3 displaySurface=1 钩在;bb 出条通道 747 后持续存活(见①);event_display_surface 全 boot(至 col 3894 + ring)= 0 → 服务端从未调用 CAWindowServerDisplay presentSurface:withOptions:,覆盖整个观测窗口。断点收敛为:**服务端收了提交、维护了 ctx 表与桌面换绑,但从不进入合成→送显路径**。
+**判定⑤(H719 载荷批定性修正)**:本 boot sbhist szmax=132 恒定(波后至收官),cx 5→42,无 0x20000000 突发 → H719 col1443 的 12 条载荷批为单 boot 偶发共现,不是提交→送显的必经环节;§434 判定③相应降级为偶发观察。
+
+**新案:gen1 死于 UFS 风暴(平台随机性,H713 家族)**:UFS errors 128@373→256@1218;1855-1878 disk6/disk4 I/O timeout(err 5/60,read errs 17→24+);gen1 worker 线程 1874/1895 两次 SIGBUS(sig=10 code=0xa,WiFiKit 页入失败 lr=0x21bfaff9c,TRAP 栈 Foundation→libsystem_pthread worker);Corpse too many 6。**gen1 did_finish 阻塞 915s(276.8→1192.3)**,收官前 H469 行仍见 lock_wait_max_ms=128582/waiters=3/watchdog 7620,同族证据加一条。
+**新案:gen2 完整周期仍无帧**:pid257 exec@1950.8,did_finish 仅 36s(1950→1986),wave2(1986-2022)提交 cover 树到新 ctx=0x9ac46e4e(root=0x3008138a0);wave2 恰好 256 行=子预算上限,**截断风险登记**(不能据此判"提交完成")。gen2 稳定至收官,面板 retirement 31467@3874(波后 swap ~10Hz、reason=5,H719 为 5.5Hz reason=0——调用方与速率突变待查),SAMPLE 全零,锁屏不可见。srvpos@2014 出现 (1,1) 四点 4-ctx 叠层(旧 boot 恒 1)。
+
+**验收**:真实锁屏未达成。本轮净得:观测层恢复(①)+服务端 never-present 全程有效否定(④)+提交链两代完整记录(②③)+UFS 死亡机制归档。
+**下一步(H721,按判别力)**:
+1. **帧驱动缺失判定(头号)**:bb CAWindowServerDisplay 的 vsync/显示回调入口是否有任何到达——先用现成 dump 通道列 CAWindowServerDisplay/CAWindowServer 帧相关选择器,再挂被动计数;零到达 → 上游 NativeLegacyDisplay 的 vsync/异步回调发布(NMD 侧),非零到达无 presentSurface → 服务端合成条件。
+2. NATIVE_LEGACY swap 调用方归因:reason=5/10Hz vs H719 reason=0/5.5Hz 的差值说明送显泵在跑但不带内容;给 swap validate 加 comm/pid 标签(NMD 小补丁,单变量,可与 1 同轮不同通道)。
+3. wave2 截断风险处置:commit 子预算 256→512,仅当下一轮需要读 gen2 波全貌时启用(与 1/2 分开登记)。
+4. gen1 did_finish 915s 阻塞与 UFS lock 等待并案(既有 H701/702 锁链证据),不新增观测。
+
+**运维**:bundle AdrenoMetal 1710178(父仓 94290b85);OBS 打包新规:必须复用 /tmp/o-H719.dylib(重编译 cdhash 必然漂移,LC_ID_DYLIB 含输出路径,h720-pack.py 已改为 copy 方案,后续轮沿用);decode 有 1 处 seq 缺口(frame 边界,CDC 侧),ring 全窗交叉未见同类内容缺失。设备现处 TWRP。UXC1 下一 RequestId=424615。
