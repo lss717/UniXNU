@@ -30846,3 +30846,21 @@ X 事件 = 0（无未读丢弃）
 **心跳挂死(新缺陷,H715 修)**:h714_tx_state 仅 interval 2/3,H713 的 h578/h572 同样停在 2-3 拍——rearm→repoll 之后的周期循环冻结,挂点与 h680_repoll_render_ports 共动;H715 dylib 已改为状态行先行+repoll 加锁标记自报(h715_repoll_stuck),boot 8d39c698 待 H714 窗口自然结束后上机。
 **采集口径**:直方图仅覆盖绑定的单一渲染端口(该 boot 绑定=27→326 世代更替时的重绑记录未细究,写报告时按"端口绑定期间"限定);采样记录受消费-刷新制影响,大消息可能仅存于直方图计数;非黑样本 0 依旧只是 256 点口径。
 **验收**:①仍未证(回调返回无行);②带内容图层未达;③真实 swap 达成(全程 ~3400 笔,含 H714-live 2653+live2 745,1:1);④可见锁屏无。
+
+### §425 H714 补记(按用户意见离线复核 live1–live3,修正 §424 两处表述;boot 81f147ce,2026-11-27)
+
+**sbhist 计数语义(先修正归因口径)**:`sb` 统计 `native_xpc_pids[0]` 向已绑渲染端口的发送,而 pids[0] 由 log-process-state / launchservices-stable-gate / springboard-pc-image 三补丁随 `native_sb_pid` **静默**更新(SB exec/exit 观察器驱动),不经 native-render-ipc 自己的 bind/rebind 打印路径;本轮日志证实:bound via= / rebind / gen 三类行整窗 0 条,而 evt_dead 标志行 5733.106 正常打印——标志打印通路完好,绑定切换确实全静默。ctxport rebind 才会清零 sb_att,本轮未触发,故 sb 为整 boot 累计、跨代连续(23→68→214→247→508)。判读:`sb` 增量应归**当时的当前 SB 代**,不是端口首个绑定者,也不是同窗 sample 记录里恰好占满 8 槽的其他进程。
+
+**洪泛窗(修正后)**:4726.813→4789.011,Δsb=160、Δbytes=233852(均值≈1461B)、szmax 188→3888、cx 恒 126(这批消息全部非 COMPLEX、无 OOL/端口描述符增量)、oolmax 恒 5。当时在世 SB 代=411(exec 4439.442,exit 4945.097)。即**首次出现当前 SB 代发出的千字节级内联事务**。同窗 8 条采样记录被 WidgetRenderer_D(422)的 44/48/132B 心跳占满,3888B 消息的 msgh_id 未取得——登记为采集缺口(H716 起加 max-msg 专用槽存 id/from/size/t,并把 sb_ids 从只显示前 5 槽改为全 12 槽)。
+
+**SB 代际时间线(本轮实测,exec→exit,status 全部 0x6 ns=2 code=0x6 sender=自身)**:27→? (live1 末 2409 仍活,exit 行未见于任何窗,列未知);326 exit@3110.5;358:3113.9→3515.8;372:3519.0→3948.4;387:3952.1→4438.8;411:4439.4→4945.1;446:4946.5→5277.1;462:5285.9→5673.7;484:5679.8→6065.1;499:6065.7→(live4 窗内)。寿命 331~506s,无固定定时器特征。bb=56 至 6102 无 exit,NATIVE_SBPC 持续报 comm=backboardd。
+
+**WidgetRenderer_D 风暴(新现象)**:4653→4936 内 415/419/420/421/422/423/424/425/428/429/440/441/442/443/444/445 以 ~10s 节奏连环 exec;NATIVE_EXIT_DESC 显示 357/386/410/498 均 RBSTerminateContext code=0xB111B111(“Terminating process [app<com…]”)自杀;IOUC AGXDeviceUserClient MACF 拒绝见 428@4777.9、452@5200.4、482@5669.4;NATIVE_DISPLAY_OPEN service=AGXAccelerator process=WidgetRenderer_D grant=backboardd match=0 见 4684.8/4941.4。锁屏小组件路径已启动并持续向渲染端口发心跳,但渲染服务授权被 MACF 拒。因果未定,登记现象。
+
+**面板计数器(修正 §424“本轮无 PATH 清屏切换”)**:copy 自 2745.2(live2 首行)到 6102.2 恒 2802@2,blank 2→1538 单调递增(≈0.46/s,步进见 live2 2846 起逐增);NATIVE_LEGACY retirement 同期仍推进(3655@4746.5→3888@4899.99)。即**清屏主导在 ~2846 后已发生**,§424 所述“无翻转”系 dylib 周期循环挂死导致 PATH 事件行缺失造成的误读,以内核计数为准。洪泛(4727–4789)未恢复 copy。
+
+**像素采样覆盖(修正“洪泛后 SAMPLE 仍全零”的说法)**:NATIVE_LEGACY_SAMPLE 仅存在于 live1(2652 行,1297.223→2409.899,全部 same=256/diff=0/nz=0);live2/live3 窗 0 行(SAMPLE 随 copy 停止)。因此 **2745 之后没有任何像素证据**,不能说“洪泛后采样全零”;同样,copy=2802 那批帧全部采自 1297–2410,当时 SB 代=27,洪泛属于另一代,两者不能互推。
+
+**dylib 覆盖面(新增待解释项)**:NATIVE_MTL 行仅 pid=27(live1 共 68 行)与 pid=56 一行;live2/live3 中 326–499 各代 SB **零行**,包括本应在 ui-run-enter 处一次性打印的 h593_signal_hooks(非周期行,不受循环挂死影响)。可能解释:后代 SB 未装载 dylib、装载后未到达 ui-run-enter、或打印通道对该族丢行(未见丢行证据,其他族同窗正常)。H715 判据两条:①心跳存活≥interval4 或出现 h715_repoll_stuck 自报;②后代 SB 是否打印 h593/h578 行。
+
+**验收(不变,分列)**:①回调返回:仍无直接证据;②带内容图层:取得进展但未达——当前 SB 代(411)确有内联大事务(3888B,非 COMPLEX),尚无证据进入合成或送显,复制路径被清屏主导;③真实 swap:达成(copy 2802 帧,1297–2745);④可见锁屏:无。复位原因本轮 storm=0/panic=0,不适用。
