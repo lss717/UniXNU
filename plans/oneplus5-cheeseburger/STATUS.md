@@ -31091,3 +31091,17 @@ X 事件 = 0（无未读丢弃）
 **更正**:§438"零改动重建字节级复现 96c11b174754"是在两构建并发竞态期间读到的交错输出,证据作废。事故时间线:08:05 启动基线构建(h722-baseline.log);08:25:45 在基线未结束时误启第二实例(h722b,日志 BEFORE 读到基线编译中间态 7d201927,证明并发);08:33 基线日志出现 AFTER-PRELINK 96c11b…(与冻结一致,但写入方与竞态窗口无法区分);08:43 h722b 结束写 a01eb03f。两实例共享 xnu-work 与 kernel.macho 输出路径,任何一份的产物均不可信。
 **恢复**:08:45 起单实例重跑 h687-build.sh(h722c,父仓 d0707d6a,NM=1710178/NMD=19a70d9)。08:55 完成:KERNEL_SCRIPT_EXIT=0、AFTER-PRELINK **a1cdf7f58d0b**、字符串核验 vsync 审计行×1、swap pid/comm 扩展×1 均在位。基线是否字节确定性=未定,列为待办(需一次严格单实例的 e860024 重建对比 96c11b174754,不阻塞 H722 上机:a1cdf7f5 由带补丁源码全新产出,与 H719/H720 谱系的差异只有 NMD 补丁一处,血统干净)。
 **规则**:同一 xnu-work 同时只允许一个 h687-build.sh;启动前必须 pgrep 检查为空。
+
+### §441 H722 实测:内核车道零死窗验证通过;交换泵归因 backboardd 全窗;vsync 注册确认从未发生;bb 从未打开 GPU 客户端;服务端显示树为空挂载(2026-11-28 10:20)
+
+**H722(img f3755f81ba53;唯一结构变化=kernel a1cdf7f58d0b(NMD 19a70d9:swap validate 行带 pid/comm + 每600笔 retirement 的 vsync 审计行);bundle=1710178 与 H720 逐字节同、OBS=7ec934ae 复用、gpuaddon 0699c49b 与 H720 全等;08:58:08 fastboot boot,CDC 09:02:21(col253),采集 3600s 至 col≈3866,UXC1 424615 于 col≈3882 正常重启收官,ring h722-ring.txt 覆盖 3695.7→3882.3)**:
+
+**判定①(内核车道安全)**:新内核带新代码新字符串,全程零死窗、正常跨 col203(与两轮注入二进制 201-212 死亡对照成立)。NATIVE_LEGACY_PREPARE 行首次在本谱系出现(1351.48,家族首见)。
+**判定②(交换泵归因)**:全 boot accepted swap 3052 笔,100% reason=0、pid=56 comm=backboardd;双缓冲 0x…b98/0x…f50 交替、1080x1920、首笔 st=0x7FFFFFFF/0x7FFFFFFE/0xFF000000(H705 同款)。reason=5 全程 0 —— H720 的 10Hz reason=5 相位系 SB 死亡/gen2 特有,非提交波常态。节奏 0.79/s,与 vsync 无关。**服务端自发泵帧,内容面从未非黑(SAMPLE 全零)。**
+**判定③(vsync 注册缺席实锤)**:审计 5 行(done=600→3000)全 hz=0 arms=0 sent=0 idle=0;client enter=0、reg 行=0、C2 bb 客户端 calls=16 regs=0(与 H69x 16 次 selector 同谱)——**bb 从未调用 selector 72(vsync 客户端注册),刷新时钟从未武装;这是 presentSurface=0(本 boot 再次全程有效)与内容空白的机制级上游。**
+**判定④(bb 无 GPU 通道)**:bb 零 AGX/A540 accel 打开;打开者仅 mediaserverd(19)/SpringBoard(1)/WidgetRenderer_Default(10722 请求,MACF 拒→SIGBUS 风暴延续,单列登记)。无 GPU 客户端=合成器即使被驱动也无法出图;与 renderer=3 一致。真实锁屏需要 vsync 注册+GPU 两条腿。
+**判定⑤(提交链健康)**:wave1=255 行 owner=27(子预算 256 恰停,截断风险照登);owner=56 12 行;服务端 ctx 表 ctxs=2(0xafd781b/0xbf3da10a,display=1,rootContents=-,renderContext=-)自 285 至收官不变,1710 增 0x66b47f75(display=1);显示 ctx 的 layer sublayers=0——宿主内容从未挂进显示树。published 链 n=19 d1=2 0x6877a1db@1342→n=20 d1=2 0x6e2cc702@1538(d1=2 与 H720 的 d1=1 不同,仅登记差异不作因果)。SB/bb 零退出;UFS errors=666 高锁待未致命。
+
+**断点推进**:提交→服务端采纳→(缺)vsync 客户端注册+GPU 客户端→(缺)显示 ctx 挂载→presentSurface→内容送显。H723 主问题=**bb 的显示用户客户端调用序列停在哪一步**(现 client io 仅 12 行稀疏打印,16 次调用不可见)。
+**H723(NMD 单轮)**:①解稀疏门控,记录 NativeLegacyDisplay 每笔 selector 调用(pid/sel/status,按 pid 限量),还原 bb 16 步序列与最后一步返回值;②selector 72 加显式到达行;③vsync 审计照旧。判读:序列终止于 unsupported/NotReady 步 → 该步真实现(存 port、接 tick)为 H724 行为修复候选;若 72 到达而无 tick → 查队列语义。
+**运维**:bundle 保持 1710178(GopFramebuffer 19a70d9 基础上追加 H723);设备 TWRP;UXC1 下一 RequestId=424616。
