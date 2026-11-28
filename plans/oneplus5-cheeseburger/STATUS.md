@@ -31223,3 +31223,11 @@ X 事件 = 0（无未读丢弃）
 **判定④(新信号 d1=1)**:h652_publish n=11..19 **d1=1**(SB 客户端读回 CAContext.displayId==1)——本谱系首次,与 2531.3s 首笔含 __NSCFType 位的 Cover 提交(srv#43-48,ctx=0xce152f91,cover 层 0x303bf8f90 depth=3 root=0x303bf8fc0)同轮出现;SAMPLE/presentSurface 判据不变(全零/零调用,至死亡无变化)。
 **断点重排(H730 问题)**:要建"同一笔提交→服务端采纳"的可验证关联,必须先答 **SB 的 publish/commit RPC 实际发到哪个内核端口对象**。H730=kernel-lane 单变量:task.c 对**任意进程**发出的 0x9d0a(132B)消息记录目的地端口对象(新增 native_bnd_seen_port/serial/ms/from 三元组,非 bound 端口也记),validate 行 join 改指"最近一笔 0x9d0a 的目的端口是否与 native_render_port 同对象"。判读:若 SB 消息目的端口≠bound port→bound 端口选择(h680 绑定)在 SB 侧漂移,转查绑定源;若同对象但本轮无流量→SB publish 根本不发 RPC(纯本地),断点转入"谁替 SB 送达"。pos 预算(rounds>=32)与 h652 观测在 H730 不动(先答端口问题)。**注意 H730 仅 task.c 数值/只读记录,内核车道。**
 **运维**:设备 TWRP;UXC1 下一 RequestId=424618;bundle 基线 1710178、OBS 7ec934ae 不变。
+
+### §454 H730 定义:0x9d0a 目的端口观测(SB-pid 键,kernel lane)+ 位置采样预算常量(96)
+**三条改动,两条车道(一条 boot 验证,判读彼此独立)**:
+1. **kernel/task.c h730-ctxreq-watch.patch**(已入 series 尾;工作树已手工应用,与 --clean 重放等价,git apply --check 双向通过):native_ipc_event_note 全端口挂 native_ctxreq_note——对 0x9d0a/132B:按**运行时追踪的 SpringBoard pid(native_xpc_pids[0],随代际更新,不用 bound port)**记录最新 SEND(seq@ms、发送 pid、**目的端口对象**),那一刻与 native_render_port 比对(bound_hits/other_ports 分列);同端口的 D(投递 ms+tid)/R(接收)分开计数;≤8 目的端口槽×{s/q/d/r} 计数;≤10 发送者 pid 计数;**为防零命中被误读,另记 SpringBoard-pid 发出的全部 {id,size} 直方图**(≤12)——零命中只说明"该 id/尺寸未见",其他 id/尺寸的 RPC 会被直方图暴露;三类槽各有 drop 计数。native_ctxreq_dump 每 600 笔 retirement 打印 4-10 行。
+2. **NMD e341e05**:validate 行的 join 字段改挂 SB-pid 键(sb s=seq@ms p=port d=count@ms/tid r=count n=req/bnd/other)。
+3. **bundle 05966c1(codex/h730-posrounds,基于 1710178,纯数值)**:位置采样 rounds 32→96、published 查询 calls 24→96——§453 判读③要求"先核对已存在的采集方式能否把位置采样留到 Cover 提交附近":答案是**能**(预算常量,无新字符串/代码路径,H720 同类已验证可启动)。若仍到不了 Cover 提交时刻,才作为独立缺口登记。
+**预登记判读**(事件时序相近只列候选):A=SB 的 0x9d0a 目的端口==bound port(bnd>0)→H729 的漂移是代际现象,join 可回退使用;B=目的端口≠bound(other>0)→沿该端口在 port 槽里核对 d/r 计数与 tid,即"接收者与处理在另一端口";C=req=0 但 sbids 直方图非空→SB 的 publish 不是 0x9d0a/132B,报告实际看到的 id/size 组合;D=req=0 且 sbids 也空→仅报告"覆盖窗口内未观测到 SpringBoard 发起的 RPC",不得断定 publish 无 RPC(bound note 的挂接点覆盖性本身只覆盖 native_ipc_event_note 的调用面,此点如实保留)。
+**构建**:task.c 工作树已编辑(与补丁一致),kernel 走非-clean 复用增量;bundle 走 build-a540-trace-plugin;OBS 7ec934ae 字节复用。img=H730。设备 TWRP。

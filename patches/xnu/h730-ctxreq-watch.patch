@@ -1,0 +1,219 @@
+--- a/osfmk/kern/task.c
++++ b/osfmk/kern/task.c
+@@ -13024,9 +13024,208 @@
+ 		shown++;
+ 	}
+ 	__atomic_store_n(&native_bks_events_emitted, emitted, __ATOMIC_RELAXED);
++}
++
++/* H730 (STATUS 453): the bound render port is NOT a trustworthy SpringBoard
++ * viewpoint (H729 saw only WidgetRenderer generations there). Key instead on
++ * the runtime-tracked SpringBoard pid (native_xpc_pids[0], updated per
++ * generation). For every send of the 0x9d0a/132B context request observe the
++ * DESTINATION port object: newest SB send (seq, event ms, pid, port), whether
++ * that port equals native_render_port at that instant (bound_hits vs
++ * other_ports), and per-destination-port send/enq/deliver/dequeue counts so
++ * the send->deliver->receive stages on the SB port are followed even when the
++ * port is not the bound one. To keep a zero-hit honest (not proof that
++ * publish has no RPC), also histogram every message id/size sent BY the
++ * tracked SpringBoard pid and every sender pid seen for 0x9d0a/132B.
++ * Read-only counters; no locks, no allocation, same rules as bound ring. */
++#define NATIVE_CTXREQ_PORTS 8
++#define NATIVE_CTXREQ_SENDERS 10
++#define NATIVE_CTXREQ_IDS 12
++struct native_ctxreq_port {
++	uint64_t port;
++	unsigned sends, enqs, delivers, dequeues;
++};
++struct native_ctxreq_sender {
++	int pid;
++	unsigned sends;
++};
++struct native_ctxreq_idsize {
++	uint32_t id, size;
++	unsigned count;
++};
++static struct native_ctxreq_port native_ctxreq_ports[NATIVE_CTXREQ_PORTS];
++static unsigned native_ctxreq_ports_used, native_ctxreq_port_drop;
++static struct native_ctxreq_sender native_ctxreq_senders[NATIVE_CTXREQ_SENDERS];
++static unsigned native_ctxreq_senders_used, native_ctxreq_sender_drop;
++static struct native_ctxreq_idsize native_ctxreq_ids[NATIVE_CTXREQ_IDS];
++static unsigned native_ctxreq_ids_used, native_ctxreq_id_drop;
++volatile unsigned long long native_ctxreq_sb_send_seq;
++volatile unsigned long long native_ctxreq_sb_send_ms;
++volatile uint64_t native_ctxreq_sb_port;
++volatile int native_ctxreq_sb_send_pid;
++volatile unsigned long long native_ctxreq_sb_deliver_ms;
++volatile unsigned long long native_ctxreq_sb_deliver_tid;
++volatile unsigned long long native_ctxreq_sb_deliver_count;
++volatile unsigned long long native_ctxreq_sb_dequeue_ms;
++volatile unsigned long long native_ctxreq_sb_dequeue_count;
++volatile unsigned long long native_ctxreq_sb_requests;
++volatile unsigned long long native_ctxreq_sb_bound_hits;
++volatile unsigned long long native_ctxreq_sb_other_ports;
++
++static unsigned
++native_ctxreq_port_slot(uint64_t port)
++{
++	for (unsigned i = 0; i < native_ctxreq_ports_used; i++) {
++		if (native_ctxreq_ports[i].port == port) {
++			return i;
++		}
++	}
++	if (native_ctxreq_ports_used < NATIVE_CTXREQ_PORTS) {
++		unsigned i = native_ctxreq_ports_used++;
++		native_ctxreq_ports[i].port = port;
++		native_ctxreq_ports[i].sends = 0;
++		native_ctxreq_ports[i].enqs = 0;
++		native_ctxreq_ports[i].delivers = 0;
++		native_ctxreq_ports[i].dequeues = 0;
++		return i;
++	}
++	native_ctxreq_port_drop++;
++	return NATIVE_CTXREQ_PORTS;
++}
++
++static void
++native_ctxreq_sender_note(int pid)
++{
++	for (unsigned i = 0; i < native_ctxreq_senders_used; i++) {
++		if (native_ctxreq_senders[i].pid == pid) {
++			native_ctxreq_senders[i].sends++;
++			return;
++		}
++	}
++	if (native_ctxreq_senders_used < NATIVE_CTXREQ_SENDERS) {
++		unsigned i = native_ctxreq_senders_used++;
++		native_ctxreq_senders[i].pid = pid;
++		native_ctxreq_senders[i].sends = 1;
++		return;
++	}
++	native_ctxreq_sender_drop++;
++}
++
++static void
++native_ctxreq_id_note(uint32_t id, uint32_t size)
++{
++	for (unsigned i = 0; i < native_ctxreq_ids_used; i++) {
++		if (native_ctxreq_ids[i].id == id && native_ctxreq_ids[i].size == size) {
++			native_ctxreq_ids[i].count++;
++			return;
++		}
++	}
++	if (native_ctxreq_ids_used < NATIVE_CTXREQ_IDS) {
++		unsigned i = native_ctxreq_ids_used++;
++		native_ctxreq_ids[i].id = id;
++		native_ctxreq_ids[i].size = size;
++		native_ctxreq_ids[i].count = 1;
++		return;
++	}
++	native_ctxreq_id_drop++;
+ }
+ 
+ void
++native_ctxreq_note(unsigned kind, ipc_kmsg_t kmsg, ipc_port_t port,
++    int from_pid, int to_pid, uint64_t receiver_tid, unsigned result)
++{
++	mach_msg_header_t *hdr;
++	unsigned long long ms;
++	uint64_t p;
++	int sb;
++	unsigned slot;
++
++	(void) to_pid;
++	(void) result;
++	hdr = kmsg ? ikm_header(kmsg) : NULL;
++	if (!hdr) {
++		return;
++	}
++	p = (uint64_t)(uintptr_t)port;
++	sb = __atomic_load_n(&native_xpc_pids[0], __ATOMIC_RELAXED);
++	if (kind == (unsigned) 0x53 && hdr->msgh_id == 0x9d0a && hdr->msgh_size == 132) {
++		native_ctxreq_sender_note(from_pid);
++		if (sb > 0 && from_pid == sb) {
++			ms = (unsigned long long) (mach_absolute_time() / 19200ULL);
++			native_ctxreq_sb_requests++;
++			native_ctxreq_sb_send_seq = native_ctxreq_sb_requests;
++			native_ctxreq_sb_send_ms = ms;
++			native_ctxreq_sb_port = p;
++			native_ctxreq_sb_send_pid = from_pid;
++			if (native_render_port != IP_NULL && port == native_render_port) {
++				native_ctxreq_sb_bound_hits++;
++			} else {
++				native_ctxreq_sb_other_ports++;
++			}
++		}
++	}
++	if (hdr->msgh_id == 0x9d0a && hdr->msgh_size == 132) {
++		slot = native_ctxreq_port_slot(p);
++		if (slot < NATIVE_CTXREQ_PORTS) {
++			if (kind == (unsigned) 0x53) native_ctxreq_ports[slot].sends++;
++			else if (kind == (unsigned) 0x51) native_ctxreq_ports[slot].enqs++;
++			else if (kind == (unsigned) 0x44) native_ctxreq_ports[slot].delivers++;
++			else if (kind == (unsigned) 0x52) native_ctxreq_ports[slot].dequeues++;
++		}
++		if (native_ctxreq_sb_port != 0 && p == native_ctxreq_sb_port && kind != (unsigned) 0x53) {
++			ms = (unsigned long long) (mach_absolute_time() / 19200ULL);
++			if (kind == (unsigned) 0x44) {
++				native_ctxreq_sb_deliver_ms = ms;
++				native_ctxreq_sb_deliver_tid = receiver_tid;
++				native_ctxreq_sb_deliver_count++;
++			} else if (kind == (unsigned) 0x52) {
++				native_ctxreq_sb_dequeue_ms = ms;
++				native_ctxreq_sb_dequeue_count++;
++			}
++		}
++	}
++	if (kind == (unsigned) 0x53 && sb > 0 && from_pid == sb) {
++		native_ctxreq_id_note((uint32_t) hdr->msgh_id, (uint32_t) hdr->msgh_size);
++	}
++}
++
++void
++native_ctxreq_dump(unsigned sample)
++{
++	printf("NATIVE_CTXREQ: sample=%u sbpid=%d req=%llu bnd=%llu other=%llu send=%llu@%llu port=0x%llx dly=%llu@%llu tid=%llu deq=%llu@%llu\n",
++	    sample, native_ctxreq_sb_send_pid,
++	    (unsigned long long) native_ctxreq_sb_requests,
++	    (unsigned long long) native_ctxreq_sb_bound_hits,
++	    (unsigned long long) native_ctxreq_sb_other_ports,
++	    (unsigned long long) native_ctxreq_sb_send_seq,
++	    (unsigned long long) native_ctxreq_sb_send_ms,
++	    (unsigned long long) native_ctxreq_sb_port,
++	    (unsigned long long) native_ctxreq_sb_deliver_count,
++	    (unsigned long long) native_ctxreq_sb_deliver_ms,
++	    (unsigned long long) native_ctxreq_sb_deliver_tid,
++	    (unsigned long long) native_ctxreq_sb_dequeue_count,
++	    (unsigned long long) native_ctxreq_sb_dequeue_ms);
++	for (unsigned i = 0; i < native_ctxreq_ports_used; i++) {
++		printf("NATIVE_CTXREQ: port[%u]=0x%llx s=%u q=%u d=%u r=%u\n", i,
++		    (unsigned long long) native_ctxreq_ports[i].port,
++		    native_ctxreq_ports[i].sends, native_ctxreq_ports[i].enqs,
++		    native_ctxreq_ports[i].delivers, native_ctxreq_ports[i].dequeues);
++	}
++	printf("NATIVE_CTXREQ: senders");
++	for (unsigned i = 0; i < native_ctxreq_senders_used; i++) {
++		printf(" %d:x%u", native_ctxreq_senders[i].pid, native_ctxreq_senders[i].sends);
++	}
++	printf(" drop=%u\n", native_ctxreq_sender_drop);
++	printf("NATIVE_CTXREQ: sbids");
++	for (unsigned i = 0; i < native_ctxreq_ids_used; i++) {
++		printf(" 0x%x/%u:x%u", native_ctxreq_ids[i].id, native_ctxreq_ids[i].size,
++		    native_ctxreq_ids[i].count);
++	}
++	printf(" drop=%u ports_drop=%u ids_drop=%u\n", native_ctxreq_id_drop,
++	    native_ctxreq_port_drop, native_ctxreq_sender_drop);
++}
++
++void
+ native_ipc_event_note(unsigned kind, ipc_kmsg_t kmsg, ipc_port_t port,
+     int from_pid, int to_pid, uint64_t receiver_tid, unsigned result)
+ {
+@@ -13039,6 +13238,7 @@
+ 	native_bks_event_note(kind, kmsg, port, from_pid, to_pid, receiver_tid, result);
+ 	native_bound_note(kind, kmsg, port, from_pid, to_pid, receiver_tid, result);
+ 	native_pair_note(kind, kmsg, port, from_pid, to_pid, receiver_tid, result);
++	native_ctxreq_note(kind, kmsg, port, from_pid, to_pid, receiver_tid, result);
+ 	if (!native_xpc_tracked(from_pid) && !native_xpc_tracked(to_pid)) {
+ 		return;
+ 	}
