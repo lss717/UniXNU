@@ -72,7 +72,7 @@ diff --git a/bsd/kern/kern_exit.c b/bsd/kern/kern_exit.c
  	/* H129: SpringBoard's exit status is the evidence for the missing UI.
  	 * H130: every exit that carries an os_reason is traced too (ObjC
  	 * exception, dyld abort, jetsam, exec failure), together with the
-@@ -1544,8 +1596,9 @@
+@@ -1544,7 +1596,8 @@
  		return;
  	}
 -	printf("NATIVE_EXIT: pid=%d ppid=%d comm=%s status=0x%x ns=%u code=0x%llx\n",
