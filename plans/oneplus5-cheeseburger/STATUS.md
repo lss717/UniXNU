@@ -31075,3 +31075,13 @@ X 事件 = 0（无未读丢弃）
 3. gate 读数(isBlanked 等)暂由内核路径替代:NMD 无法读 ObjC——若 2a 显示 armed=0(从未注册),则问题定性为"服务端更新循环从未启动",ObjC 门控位只影响修复路径选择,不再阻塞结论;届时再评估 OBS 零字符串变体(复用现有格式编码数值)是否可行。
 
 **运维**:设备现处 TWRP。bundle 分支回退策略:c7af442 保留为失败样本,不删;下轮基线以 1710178 为准(=H720 已验)。UXC1 下一 RequestId=424615。
+
+### §438 H722 定义与基线:NMD 内核车道开诊(交换者归因+vsync 注册审计),零改动重建字节级复现 96c11b174754(2026-11-28 08:26)
+
+**基线复现(H722a,未上机)**:Mac 上以现行提交链重跑 h687-build.sh(git pull ab4c2b55 → xnu-work 补丁 reverse/re-forward → macos-build-kernel.sh JOBS=8 → unixnu build prelink)。BEFORE kernel.macho sha 96c11b174754d8cc…;编译后 7f16f849835d(未 prelink 中间态);**prelink 后 96c11b174754d8cc… 与在用冻结内核逐字节一致**。结论:XNU+NMD+prelink 管线确定性,基线免上机;内核车道新增观测不构成谱系混淆,单变量即补丁本身。备份存档 H716-kernel-backup.macho。
+
+**H722b 补丁(NMD 19a70d9,仅 LegacyDisplayProbe.cpp 两处)**:
+1. **swap validate 行加提交者**:pid=%d comm=%s(current_proc/proc_name,与 accept dump 同一线程语义,STATUS §414 已核实校验跑在提交线程上)。直接回答 §436 悬案:波后 10Hz reason=5(空 surface 白屏交换)由谁发起——backboardd 则证明服务端交换循环活着只是不带内容;其它进程(如 GOP 呈现器/内核工作线程)则改写结论。
+2. **周期性 vsync 审计行**:retirement 每 600 笔输出 hz/arms/sent/idle(refresh-timer 计数器,sheng-vsync 的 work-loop 桩)。arms=0 且 sent=0 → 从未有客户端经 selector 72 注册 vsync 客户端,服务端帧钟从未武装,与 H69x"无客户端注册 wake/vsync"和 presentSurface=0 全链一致;arms>0 → 钟在走,问题转向 tick→合成→present 之间的服务端条件。
+
+**H722 观测面其余纪律**:OBS 固定复用 o-H719.dylib;bundle 固定用 1710178(H720 已验版本;c7af442 死样本已从父仓指针回退,打包前 Mac 端 submodule 必须核对到 1710178);gpuaddon/trustcache 按 H721 同源流程重打但输入=b1710178 bundle+OBS 复用,真正变化的文件只有 kernel.macho 与由它派生的 kernel.macho.adt。验收:①boot 跨过 201-212 窗(内核车道理论安全,仍需实机确认——首次上机即是该确认);②reason=5 行 comm 归因;③vsync 行 arms/sent 读数;④CDC/心跳/面板链照常;⑤真实锁屏仍单列。
