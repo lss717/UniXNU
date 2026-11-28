@@ -31231,3 +31231,12 @@ X 事件 = 0（无未读丢弃）
 3. **bundle 05966c1(codex/h730-posrounds,基于 1710178,纯数值)**:位置采样 rounds 32→96、published 查询 calls 24→96——§453 判读③要求"先核对已存在的采集方式能否把位置采样留到 Cover 提交附近":答案是**能**(预算常量,无新字符串/代码路径,H720 同类已验证可启动)。若仍到不了 Cover 提交时刻,才作为独立缺口登记。
 **预登记判读**(事件时序相近只列候选):A=SB 的 0x9d0a 目的端口==bound port(bnd>0)→H729 的漂移是代际现象,join 可回退使用;B=目的端口≠bound(other>0)→沿该端口在 port 槽里核对 d/r 计数与 tid,即"接收者与处理在另一端口";C=req=0 但 sbids 直方图非空→SB 的 publish 不是 0x9d0a/132B,报告实际看到的 id/size 组合;D=req=0 且 sbids 也空→仅报告"覆盖窗口内未观测到 SpringBoard 发起的 RPC",不得断定 publish 无 RPC(bound note 的挂接点覆盖性本身只覆盖 native_ipc_event_note 的调用面,此点如实保留)。
 **构建**:task.c 工作树已编辑(与补丁一致),kernel 走非-clean 复用增量;bundle 走 build-a540-trace-plugin;OBS 7ec934ae 字节复用。img=H730。设备 TWRP。
+
+### §455 H730 实测:769s 无正文早复位,三个观测面均未到触发点,本轮 A/B/C/D 判读全部未定;下一步=同镜像重跑一次作随机性判定(2026-11-28 20:25)
+
+**H730(boot.img 14cace75eddc;kernel 0a49b895=h730 ctxreq 观测(工作树已应用+series 重放双向校验);bundle 05966c1=纯数值 rounds/calls 32/24→96;OBS 7ec934ae 字节复用;19:55:03 fastboot boot)**:
+**停更点**:CDC 流 t=768.947766 后断(h552_telephony_shared_return,SpringBoard pid=27 主线程正常返回行);raw 838,958B/decoded 698,734B/checkpoint seq=4572、stalled=true(20:07:21 起无增长);设备 20:15 已自动回 Android(sys.boot_completed=1),随即按授权进 TWRP 回环。
+**环证据**(h730-ring.txt 410,317B,覆盖 42.26→764.78s):**无 panic 正文、无 abort、无 watchdog**;最后非心跳行 764.778(A540/PANEL 10s 心跳组)+ 763.7 TC_QUERY(geod)+ 768.535(NATIVE_SIG launchd sig=20,自 264s 起每 ~150s 一次的常规 SIGCHLD);762.86-764.78 服务启动正常(geod/audiomxd exec)——死亡形态=**无正文静默复位**,与 H726(209s 无正文)同类但时刻不同;SBLIVE 728s parked=0/curlock=0(SB 主线程未卡在 LS 锁,与 H729 形态不同)。
+**观测面执行情况**:validate 行 sb 字段、NATIVE_CTXREQ dump(挂 retirement%600)、扩展后的 pos 预算(96 轮)——**全部未触发**(首笔 swap 在历史轮最早 ~1204s,本轮 769s 即止;ring/CDC 双通道 0 条 NATIVE_CTXREQ/swap validate 行)。**A/B/C/D 判读全部未定**,SB 目的端口问题本轮无数据。
+**归因边界(如实)**:本轮相对 H729 有两处结构差异(kernel ctxreq patch + bundle 纯数值常量)。无正文早死先例:H726=202-212s(bundle 新代码)、H723/725=1682/3325s(有 memmove panic 正文)、H728/H729 满窗存活。769s 无正文死亡**不能归因到任一差异**:bundle 纯数值类先例(H720 世代)满窗存活,内核车道先例(H722/723/728/729)全部到波;两种归因假设都不成立或都无排除证据——**死因登记为未知**。
+**下一步(H730 重跑判定,同镜像 14cace75eddc 原样,零改动)**:随机性判定——若重跑到波(≥1350s),本轮观测面照常取数,死亡按散发登记;若再在 ~700-800s 无正文早死,则与本轮变量的因果嫌疑成立,转二分(先回退 bundle 常量保 kernel ctxreq 单跑)。设备现停 TWRP,可直接 fastboot boot。UXC1 下一 RequestId=424618。
