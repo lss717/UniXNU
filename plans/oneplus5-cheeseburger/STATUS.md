@@ -31085,3 +31085,9 @@ X 事件 = 0（无未读丢弃）
 2. **周期性 vsync 审计行**:retirement 每 600 笔输出 hz/arms/sent/idle(refresh-timer 计数器,sheng-vsync 的 work-loop 桩)。arms=0 且 sent=0 → 从未有客户端经 selector 72 注册 vsync 客户端,服务端帧钟从未武装,与 H69x"无客户端注册 wake/vsync"和 presentSurface=0 全链一致;arms>0 → 钟在走,问题转向 tick→合成→present 之间的服务端条件。
 
 **H722 观测面其余纪律**:OBS 固定复用 o-H719.dylib;bundle 固定用 1710178(H720 已验版本;c7af442 死样本已从父仓指针回退,打包前 Mac 端 submodule 必须核对到 1710178);gpuaddon/trustcache 按 H721 同源流程重打但输入=b1710178 bundle+OBS 复用,真正变化的文件只有 kernel.macho 与由它派生的 kernel.macho.adt。验收:①boot 跨过 201-212 窗(内核车道理论安全,仍需实机确认——首次上机即是该确认);②reason=5 行 comm 归因;③vsync 行 arms/sent 读数;④CDC/心跳/面板链照常;⑤真实锁屏仍单列。
+
+### §439 更正 §438 的基线声明+构建竞态事故记录;H722c 为唯一可信内核(2026-11-28 08:58)
+
+**更正**:§438"零改动重建字节级复现 96c11b174754"是在两构建并发竞态期间读到的交错输出,证据作废。事故时间线:08:05 启动基线构建(h722-baseline.log);08:25:45 在基线未结束时误启第二实例(h722b,日志 BEFORE 读到基线编译中间态 7d201927,证明并发);08:33 基线日志出现 AFTER-PRELINK 96c11b…(与冻结一致,但写入方与竞态窗口无法区分);08:43 h722b 结束写 a01eb03f。两实例共享 xnu-work 与 kernel.macho 输出路径,任何一份的产物均不可信。
+**恢复**:08:45 起单实例重跑 h687-build.sh(h722c,父仓 d0707d6a,NM=1710178/NMD=19a70d9)。08:55 完成:KERNEL_SCRIPT_EXIT=0、AFTER-PRELINK **a1cdf7f58d0b**、字符串核验 vsync 审计行×1、swap pid/comm 扩展×1 均在位。基线是否字节确定性=未定,列为待办(需一次严格单实例的 e860024 重建对比 96c11b174754,不阻塞 H722 上机:a1cdf7f5 由带补丁源码全新产出,与 H719/H720 谱系的差异只有 NMD 补丁一处,血统干净)。
+**规则**:同一 xnu-work 同时只允许一个 h687-build.sh;启动前必须 pgrep 检查为空。
