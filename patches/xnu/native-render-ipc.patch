@@ -643,7 +643,7 @@
 +}
  static unsigned native_bks_msg_id;
  static int native_bks_responder_pid;
-@@ -11609,7 +12219,9 @@
+@@ -11609,6 +12219,8 @@
  	e->bits = hdr ? (unsigned)hdr->msgh_bits : 0;
  	e->kind = kind;
  	e->result = result;
