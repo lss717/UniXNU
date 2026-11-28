@@ -25,7 +25,7 @@
 +	uint32_t result;
 +};
 +
-+#define NATIVE_BOUND_RING 128
++#define NATIVE_BOUND_RING 512
 +static struct native_bound_event native_bound_events[NATIVE_BOUND_RING];
 +static unsigned native_bound_written;
 +static unsigned native_bound_lost;
@@ -41,7 +41,7 @@
 +	if (total > NATIVE_BOUND_RING) {
 +		total = NATIVE_BOUND_RING;
 +	}
-+	while (native_bound_cur < total && emitted < 6) {
++	while (native_bound_cur < total && emitted < 24) {
 +		struct native_bound_event *e = &native_bound_events[native_bound_cur];
 +		printf("NATIVE_BND_EVT: serial=%llu kind=%c ms=%u id=0x%x size=%u "
 +		    "from=%d to=%d port=0x%llx tid=%llu result=0x%x\n",
