@@ -31059,3 +31059,19 @@ X 事件 = 0（无未读丢弃）
 4. gen1 did_finish 915s 阻塞与 UFS lock 等待并案(既有 H701/702 锁链证据),不新增观测。
 
 **运维**:bundle AdrenoMetal 1710178(父仓 94290b85);OBS 打包新规:必须复用 /tmp/o-H719.dylib(重编译 cdhash 必然漂移,LC_ID_DYLIB 含输出路径,h720-pack.py 已改为 copy 方案,后续轮沿用);decode 有 1 处 seq 缺口(frame 边界,CDC 侧),ring 全窗交叉未见同类内容缺失。设备现处 TWRP。UXC1 下一 RequestId=424615。
+
+### §437 H721 实测:bundle 加代码+字符串触发确定性 203-210 死窗,注入二进制编辑规则收紧(2026-11-28 08:15)
+
+**H721(boot 0x212A0C1B 系,img e41c2f885e8f;唯一改动=bundle 新增 probe_display_gate:srvpos 每轮只读 isBlanked/disablesUpdates/blankingRemovesPower/minimumFrameTime/syncNotificationQueue/updateRequestCallback + 记录 registerForSyncNotifications:withBlock:/renderForTime: 编码;OBS/kernel/payload 结构不变,bundle 部署核验:160592B、字符串在位、cdhash d1a67e76 与 trust 槽一致)**:
+- run1:06:35 上机流程,fastboot boot 07:50:41,CDC 未上线;环 h721-ring.txt 覆盖 28.99→202.96,末行簇为 h593/h578/h572 观察器行、TC_QUERY pid56(blob 227136)、bb IOAccessoryManager match;07:54:29 设备已回 Android。
+- run2(同镜像原样重放,07:58:40):CDC 未上线;环 h721-run2-ring.txt 覆盖 39.81→209.90,末行簇与 run1 逐事件同形(MobileGestalt als match ×2 + bb IOAccessoryManager match);08:01:44 确认已回 Android。
+- 两次均无 panic 正文、无复位行,静默止于 202.96/209.90 → 与 H718c/d 的 OBS 死窗(201.69-212.46)同型:**判死为确定性,不是一次环境巧合**。新代码在新窗口未执行(srvpos 首轮≈285+,从未到达),死因是载荷存在本身。
+
+**注入二进制编辑经验规则(合并 OBS+bundle 全部证据)**:纯常量/立即数改动安全(H719/H720/e/f);同源码重编译安全(e);**新增代码段或新增字符串(OBS c/d,bundle H721)→ 201-212 确定性静默死,机制未明,疑与 ~203s exec 风暴中的 AMFI/trust 评估路径死锁有关(两 run 末行同为 TC_QUERY/H66_FCNTL 簇,设备 ~25s 后回 Android)**。后续客户端观测只允许"零新增字符串 + 纯常量"级别的改动;要新增观测面,走内核侧(NMD 历史上多次带新代码构建,从未出现该死窗)。
+
+**H722 计划(内核侧,两步)**:
+1. **基线复现**:Mac 以现行子模块重编内核(零改动)。若 kernel.macho sha 复现 96c11b174754 → 免上机直接进 2;若不复现 → 先 fastboot boot 新基线验一次正常启动(含 203 窗健康 + CDC 上线),排除"重编译本身"变量。
+2. **单变量观测补丁(NMD)**:a) vsync 三计数(armed/sent/idle,LegacyDisplayProbe 已有计数结构)接入现有周期打印行(H469_STATUS 或 UFS_ALIVE),直接回答"bb 的 CARenderServer 是否曾注册 vsync";b) NATIVE_LEGACY swap validate 行加调用方 comm/pid,归因 H720 波后 10Hz/reason=5 的调用者。两点同镜像不同通道,一轮可分。
+3. gate 读数(isBlanked 等)暂由内核路径替代:NMD 无法读 ObjC——若 2a 显示 armed=0(从未注册),则问题定性为"服务端更新循环从未启动",ObjC 门控位只影响修复路径选择,不再阻塞结论;届时再评估 OBS 零字符串变体(复用现有格式编码数值)是否可行。
+
+**运维**:设备现处 TWRP。bundle 分支回退策略:c7af442 保留为失败样本,不删;下轮基线以 1710178 为准(=H720 已验)。UXC1 下一 RequestId=424615。
