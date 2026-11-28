@@ -31203,3 +31203,12 @@ X 事件 = 0（无未读丢弃）
 **判定⑤(新信号+断链)**:26 行 commit 带 contents=__NSCFType(23 行 ctx=0xc1b4f0d1=n=15,3 行 Cover ctx=0xb05814b6 含 srv#100 _UILabelLayer)——本谱系首次出现带位图类的提交行,全部集中在 1425.5-1429.6 一波,之后无。而 swap 侧:accept dump n=1..4(1341.47-1342.03,tid=**584**)源面=固定双缓冲 …b98/…f50,**两缓冲 id9c 同值 0x700(共享标识可疑,H712 读取语义待核)**;kickOnce SAMPLE 的 src 面 256 点 zs=256 → **swap 源缓冲自身恒零,并非"提交的内容进不了屏"——是合成从未写入源面**;首笔 accept(1341.47)早于全部 commit 消息(1425+),提交消息投给 tid579、swap 由 tid584 发,**二者无任何共享标识关联**。
 **断点(H729 问题)**:commit 事务(BND serial)↔ 合成输出面 ↔ swap accept 源面 ↔ 同帧 COPY 目标——内核 lane 现成的可验证标识=BND serial+ms 与 swap seq+accept dump。H729 单变量(kernel lane):task.c 暴露最近投递未处理 commit 的 (serial,ms,id) 访问器,NMD 在 swap validate accepted 行追加"上一笔 SB→render-port 投递的 serial+ms"字段。判读:若 swap 行携带的 last-D 随提交波移动(每次 commit 后紧跟的 swap 引用新 serial)→ 合成在消费 commit(断点在输出面写入);若 last-D 恒旧/空 → swap 与 commit 完全脱钩,首个缺失环节确认为 **CARenderServer 侧"commit→合成"步骤**,届时再评估该步的最小被动观测(或死亡机制课题前置)。**id9c=0x700 语义核对同轮顺带完成**(dims 行补打 _gIOSurfaceIdentifier 当前值对照)。SAMPLE 平面/格式:sampling 面=src(source->getVirtualAddress,BGRA stride 已检)与 scanout 同点位 256 网格(16×16 中点),非全帧判定维持。
 **运维**:设备 TWRP;UXC1 下一 RequestId=424617。
+
+### §452 H729 定义:kernel-lane join(validate 行携带 0x9d0a SEND/DELIVER serial@ms)+ 上机
+**变量(唯一一条)**:kernel = task.c h729-commit-join.patch(bound journal 新增 volatile u64:native_bnd_9d0a_send/deliver serial+ms 与 native_bnd_lost)+ NMD 0b4e6df(swap validate 行尾追加 `9d0a s=serial@ms d=serial@ms lost=N`)。xnu-work 直接编辑(与 h698 同流程),补丁文件入库留证。**注意**:NMD 与 task.c 同批构建,xnu-work 已含 H728 的 ring512/beat24。
+**键选择理由**:0x9d0a/132B 是与 h652 publish 1:1 配对的消息对(§451 判定③);SB pid 随代际变,键用 id+size。serial 连续、ms=事件毫秒——validate 行与 BND 行、提交行可用同一条 serial 三向对齐。lost=0 在每行自证覆盖。
+**判读预登记**:
+1. 提交波(预期 ~1425s 段)前/中/后,validate 行的 d=serial 若随 commit 消息推进(s/d 同步增长)且 swap 源面仍零 → **commit 被投递、swap 与投递在时间上耦合但不消费其内容** → 断点钉在"合成写入源面"。
+2. 若 validate 行的 s/d 在提交波后仍停在波前 serial → swap 与投递解耦(提交波期间无新 0x9d0a?那与 publish 配对矛盾)→ 转查投递→处理链。
+3. 首笔 accept(预期仍早于全部 commit)与首笔带新 d 的 accept 的时间差,即"commit 后 swap 是否跟随"的直接测量。
+**运维**:Mac 构建(单实例)→ img → fastboot boot → 实时解码;本轮按用户要求**不等满窗**:拿到提交波后一段时间数据即收尾分析、回 Android、捞环、落 §453。设备当前 TWRP。UXC1 下一 RequestId=424617。

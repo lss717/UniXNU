@@ -1,0 +1,43 @@
+--- a/osfmk/kern/task.c
++++ b/osfmk/kern/task.c
+@@ -12383,6 +12383,16 @@
+ static struct native_bound_event native_bound_events[NATIVE_BOUND_RING];
+ static unsigned native_bound_written;
+ static unsigned native_bound_lost;
++/* H729 (STATUS 451): pair the CA context-request traffic with the display
++ * submit path. 0x9d0a/132B is the only message on this port whose cadence
++ * matches the h652 publish rows 1:1. The newest SEND and newest DELIVER of
++ * that pair are exposed non-static so the display probe can print them on
++ * every swap validate row; the mirror lost counter is u64 for the same row. */
++volatile unsigned long long native_bnd_9d0a_send_serial;
++volatile unsigned long long native_bnd_9d0a_send_ms;
++volatile unsigned long long native_bnd_9d0a_deliver_serial;
++volatile unsigned long long native_bnd_9d0a_deliver_ms;
++volatile unsigned long long native_bnd_lost;
+ 
+ void
+ native_boundport_export(void)
+@@ -12423,6 +12433,7 @@
+ 	w = __atomic_fetch_add(&native_bound_written, 1, __ATOMIC_RELAXED);
+ 	if (w >= NATIVE_BOUND_RING) {
+ 		__atomic_fetch_add(&native_bound_lost, 1, __ATOMIC_RELAXED);
++		__atomic_fetch_add(&native_bnd_lost, 1, __ATOMIC_RELAXED);
+ 		return;
+ 	}
+ 	hdr = kmsg ? ikm_header(kmsg) : NULL;
+@@ -12437,6 +12448,15 @@
+ 	e->to = to_pid;
+ 	e->kind = kind;
+ 	e->result = result;
++	if (e->id == 0x9d0a && e->size == 132) {
++		if (kind == (unsigned) 0x53) {
++			native_bnd_9d0a_send_serial = e->serial;
++			native_bnd_9d0a_send_ms = e->ms;
++		} else if (kind == (unsigned) 0x44) {
++			native_bnd_9d0a_deliver_serial = e->serial;
++			native_bnd_9d0a_deliver_ms = e->ms;
++		}
++	}
+ }
+ 
+ static void
